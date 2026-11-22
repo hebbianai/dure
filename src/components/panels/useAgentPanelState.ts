@@ -385,6 +385,19 @@ export function useNativeAgentPanelState(agent: Agent) {
 	};
 }
 
+/** Store facts the native Agent toolbar reads on every surface (its pane and
+ * its large window), so both decide each control from the same state. */
+export function useNativeAgentToolbarState(agent: Agent) {
+	const accounts = useStore((state) => state.accounts);
+	const project = useStore((state) =>
+		state.projects.find((candidate) => candidate.id === agent.projectId),
+	);
+	const agentRuntimeState = useStore(
+		(state) => state.sessionAgentRuntimeState[agent.sessionId],
+	);
+	return { accounts, project, agentRuntimeState, getAgentById };
+}
+
 export function useStructuredAgentPanelState(agent: Agent) {
 	const agentCwd = useStore((state) => state.sessionCwd[agent.sessionId]);
 	const project = useStore((state) =>

@@ -142,7 +142,24 @@ vi.mock("@/components/panels/useRemoteAgentCredentialActions", () => ({
 		copyAccountToHost: vi.fn(),
 	}),
 }));
+function mockedProject(agent: Agent) {
+	return mocks.projectOverride === null
+		? {
+				id: agent.projectId,
+				name: "Project",
+				path: "/repo",
+				kind: "local",
+				isRepo: true,
+			}
+		: mocks.projectOverride;
+}
 vi.mock("@/components/panels/useAgentPanelState", () => ({
+	useNativeAgentToolbarState: (agent: Agent) => ({
+		accounts: mocks.accounts,
+		project: mockedProject(agent),
+		agentRuntimeState: undefined,
+		getAgentById: () => agent,
+	}),
 	useNativeAgentPanelState: (agent: Agent) => ({
 		agentCwd: agent.worktreePath,
 		terminalTitle: mocks.terminalTitle,
@@ -153,16 +170,7 @@ vi.mock("@/components/panels/useAgentPanelState", () => ({
 		accounts: mocks.accounts,
 		activeAccounts: mocks.activeAccounts,
 		sshHosts: mocks.sshHosts,
-		project:
-			mocks.projectOverride === null
-				? {
-						id: agent.projectId,
-						name: "Project",
-						path: "/repo",
-						kind: "local",
-						isRepo: true,
-					}
-				: mocks.projectOverride,
+		project: mockedProject(agent),
 		restartReq: 0,
 		getActiveSpaceId: () => undefined,
 		getAgentById: () => agent,
@@ -233,13 +241,17 @@ vi.mock("@/components/panels/AgentPanelToolbarFrame", () => ({
 }));
 vi.mock("@/components/agents/AgentViewControl", () => ({
 	AgentViewControl: ({
-		onSwitch,
+		port,
 		disabled,
 	}: {
-		onSwitch(): Promise<void>;
+		port: { requestChat(): Promise<unknown> };
 		disabled?: boolean;
 	}) => (
-		<button type="button" disabled={disabled} onClick={() => void onSwitch()}>
+		<button
+			type="button"
+			disabled={disabled}
+			onClick={() => void port.requestChat()}
+		>
 			profile switch
 		</button>
 	),
@@ -964,7 +976,7 @@ describe("NativeAgentPanel mount", () => {
 		expect(switchToStructuredChat).toHaveBeenCalledWith(
 			agent.id,
 			accountA.id,
-			undefined,
+			"preserve",
 			undefined,
 		);
 	});
@@ -1366,7 +1378,7 @@ describe("NativeAgentPanel mount", () => {
 		expect(switchToStructuredChat).toHaveBeenCalledWith(
 			agent.id,
 			null,
-			undefined,
+			"preserve",
 			undefined,
 		);
 	});

@@ -230,7 +230,7 @@ export const workspaceEnglishTranslations = {
 	"workspace.externalOpen.terminalGroup": "External terminal",
 	"workspace.paneDrop.splitLeft": "Split Left",
 	"workspace.paneMenu.worktreeRemovalAvailable": "Worktree removal available",
-	"workspace.agentWindow.accountSwitchPaneMissing": "The source pane could not be found, so the account cannot be switched",
+	"workspace.agentWindow.sourcePaneMissing": "The source pane could not be found, so this cannot be changed from the large window",
 	"workspace.agentWindow.forkPresentationFailed": "The fork was created, but the source window could not open its Agent pane",
 	"workspace.popout.returnAction": "Return",
 	"workspace.popout.returnToOrigin": "Return to original position",

@@ -216,7 +216,7 @@ export const workspace: Record<string, string> = {
 	"workspace.externalOpen.terminalGroup": "Terminal externe",
 	"workspace.paneDrop.splitLeft": "Diviser à gauche",
 	"workspace.paneMenu.worktreeRemovalAvailable": "Suppression du worktree disponible",
-	"workspace.agentWindow.accountSwitchPaneMissing": "Le pane d’origine est introuvable, impossible de changer de compte.",
+	"workspace.agentWindow.sourcePaneMissing": "Le pane d’origine est introuvable, impossible de modifier ce réglage depuis la grande fenêtre.",
 	"workspace.agentWindow.forkPresentationFailed": "Le fork a été créé, mais la fenêtre source n’a pas pu ouvrir son pane Agent",
 	"workspace.popout.returnAction": "Revenir",
 	"workspace.popout.returnToOrigin": "Revenir à la position d'origine",

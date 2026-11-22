@@ -216,7 +216,7 @@ export const workspace: Record<string, string> = {
 	"workspace.externalOpen.terminalGroup": "外部终端",
 	"workspace.paneDrop.splitLeft": "向左拆分",
 	"workspace.paneMenu.worktreeRemovalAvailable": "可选择删除工作树",
-	"workspace.agentWindow.accountSwitchPaneMissing": "找不到原始窗格，因此无法切换账户",
+	"workspace.agentWindow.sourcePaneMissing": "找不到原始窗格，因此无法在大窗口中更改",
 	"workspace.agentWindow.forkPresentationFailed": "分叉已创建，但源窗口无法打开其 Agent 窗格",
 	"workspace.popout.returnAction": "还原到原位置",
 	"workspace.popout.returnToOrigin": "还原到原始位置",

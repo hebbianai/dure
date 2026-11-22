@@ -1,11 +1,19 @@
 import { NativeAgentResponseView } from "@/components/agents/NativeAgentResponseView";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 import { PanelStatus } from "@/components/common/PanelStatus";
 import { Titled } from "@/components/ui/tooltip";
 import { TerminalView } from "@/components/terminal/TerminalView";
-import { AgentSessionWindowToolbar } from "@/components/workspace/AgentSessionWindowToolbar";
+import { NativeAgentToolbar } from "@/components/panels/NativeAgentToolbar";
+import { useAgentSessionWindowToolbarRuntime } from "@/components/workspace/useAgentSessionWindowToolbarRuntime";
 import {
   SecondaryWindowShell,
   useSecondaryWindowBoot,
@@ -20,7 +28,10 @@ import {
 } from "@/lib/terminal/geometry/terminalDocumentResizeTransaction";
 import { bindTerminalNativeWindowResize } from "@/lib/terminal/geometry/terminalNativeWindowResize";
 import type { TerminalWindowFocusProbe } from "@/lib/terminal/terminalWindowFocusProbe";
-import { isHmuxPaneBinding } from "@/lib/terminal/terminalBinding";
+import {
+  isHmuxPaneBinding,
+  type TerminalPaneBindingV1,
+} from "@/lib/terminal/terminalBinding";
 import { useNativeWindowTheme } from "@/lib/platform/windowAppearance";
 import { useResolvedDark } from "@/lib/theme/themePreference";
 import { toggleWindowMaximizeAtomic } from "@/lib/ipc/system";
@@ -217,6 +228,29 @@ export function AgentSessionWindowRoot({
     });
   }, [binding?.sessionId, toolbarSource.windowLabel]);
 
+  // This window presents the Agent's terminal. Once the Agent runs in Chat —
+  // moved by this window's View control or anywhere else — there is nothing
+  // left to present here: hand the user back to the source pane, which now
+  // shows that Chat. Without a terminal binding there is no surface to
+  // retire, so this is an ordinary close.
+  const runsInChat = agent?.interactionProfile?.kind === "structured_protocol";
+  const followSourceWindowLabel = toolbarSource.windowLabel;
+  useEffect(() => {
+    if (!runsInChat) return;
+    void restoreWindowAfterSecondaryClose(followSourceWindowLabel)
+      .catch(() => {})
+      .then(() =>
+        withSecondaryWindowTimeout(
+          "large view close after the Agent moved to Chat",
+          getCurrentWindow().close(),
+          SECONDARY_WINDOW_CLOSE_TIMEOUT_MS,
+        ),
+      )
+      .catch((error) => {
+        console.warn("[large-view] failed to close after moving to Chat", error);
+      });
+  }, [runsInChat, followSourceWindowLabel]);
+
   useDurableWindowClose({
     enabled: Boolean(returnIdentity),
     prepare: async () => {
@@ -348,40 +382,62 @@ export function AgentSessionWindowRoot({
           </span>
         </Titled>
       </header>
-      {agent && binding && !closing && (
-        <AgentSessionWindowToolbar
+      {agent && binding && !closing ? (
+        <AgentSessionWindowPresentation
           agent={agent}
           binding={binding}
-          sourceWindowLabel={toolbarSource.windowLabel}
-          sourcePaneOwnerId={toolbarSource.paneOwnerId}
-        />
-      )}
-      <div className="relative min-h-0 flex-1">
-        {agent && binding && !closing ? (
-          <NativeAgentResponseView agent={agent}>
-            <TerminalView
-              sessionId={binding.sessionId}
-              providerHint={agent.provider}
-              surfaceId={`agent-session:${agentId}`}
-              kind={agent.sessionKind}
-              binding={binding}
-              runtimeWorkingDirectory={agent.worktreePath}
-              windowFocusProbe={windowFocusProbe}
-              onGeometryObserved={onGeometryObserved}
-              onStructuredSurfaceRetirement={onStructuredSurfaceRetirement}
-            />
-          </NativeAgentResponseView>
-        ) : (
+          source={toolbarSource}
+        >
+          <TerminalView
+            sessionId={binding.sessionId}
+            providerHint={agent.provider}
+            surfaceId={`agent-session:${agentId}`}
+            kind={agent.sessionKind}
+            binding={binding}
+            runtimeWorkingDirectory={agent.worktreePath}
+            windowFocusProbe={windowFocusProbe}
+            onGeometryObserved={onGeometryObserved}
+            onStructuredSurfaceRetirement={onStructuredSurfaceRetirement}
+          />
+        </AgentSessionWindowPresentation>
+      ) : (
+        <div className="relative min-h-0 flex-1">
           <PanelStatus>
             {agent
               ? t("workspace.agentWindow.unavailable")
               : t("common.agentDeleted")}
           </PanelStatus>
-        )}
-      </div>
+        </div>
+      )}
       {/* 창 경계 — 자식이 가장자리까지 채워 루트 inset 그림자를 덮으므로
           경계선은 맨 위 오버레이가 그린다(windowShellShape 주석). */}
       {shellEdgeOverlay && <div aria-hidden className={shellEdgeOverlay} />}
     </SecondaryWindowShell>
+  );
+}
+
+/** The Agent's one toolbar and its response view, both driven by the source
+ * pane's runtime through the same View port. */
+function AgentSessionWindowPresentation({
+  agent,
+  binding,
+  source,
+  children,
+}: {
+  agent: Agent;
+  binding: TerminalPaneBindingV1;
+  source: AgentSessionSource;
+  children: ReactNode;
+}) {
+  const runtime = useAgentSessionWindowToolbarRuntime(agent, source);
+  return (
+    <>
+      <NativeAgentToolbar agent={agent} binding={binding} runtime={runtime} />
+      <div className="relative min-h-0 flex-1">
+        <NativeAgentResponseView agent={agent} setView={runtime.view.setView}>
+          {children}
+        </NativeAgentResponseView>
+      </div>
+    </>
   );
 }

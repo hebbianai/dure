@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	AGENT_TOOLBAR_CONTROLS,
+	agentToolbarControlOffered,
 	agentToolbarControlVisible,
 	hiddenAgentToolbarControlDescriptors,
 	withAgentToolbarControlHidden,
@@ -94,5 +95,52 @@ describe("agent toolbar control visibility", () => {
 			"view-switch",
 			"launch-model",
 		]);
+	});
+});
+
+describe("agent toolbar surfaces", () => {
+	it("offers every control in the pane", () => {
+		for (const control of AGENT_TOOLBAR_CONTROLS) {
+			expect(agentToolbarControlOffered(control.id, "pane")).toBe(true);
+		}
+	});
+
+	it("names the large window's routed controls and why the others are absent", () => {
+		const offered = AGENT_TOOLBAR_CONTROLS.filter((control) =>
+			agentToolbarControlOffered(control.id, "large_window"),
+		).map((control) => control.id);
+		// The View control (#624) and the account run in the source pane over
+		// the bridge; the diff and source-control windows need no pane at all.
+		expect(offered.sort()).toEqual([
+			"account",
+			"diff-window",
+			"source-control-window",
+			"view-switch",
+		]);
+		for (const control of AGENT_TOOLBAR_CONTROLS) {
+			if (control.largeWindow.offered) continue;
+			expect(control.largeWindow.reason.length, control.id).toBeGreaterThan(0);
+		}
+	});
+
+	it("lets no attention signal show a control its surface does not offer", () => {
+		expect(
+			agentToolbarControlVisible(
+				"launch-model",
+				{ interfaceMode: "pro", surface: "large_window" },
+				{ mustShow: true },
+			),
+		).toBe(false);
+		expect(
+			agentToolbarControlVisible(
+				"view-switch",
+				{
+					interfaceMode: "basic",
+					surface: "large_window",
+					hiddenToolbarControls: ["view-switch"],
+				},
+				{ mustShow: true },
+			),
+		).toBe(true);
 	});
 });

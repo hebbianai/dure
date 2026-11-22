@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentViewControl } from "@/components/agents/AgentViewControl";
 import {
 	type ChatHandoverSwitch,
+	localNativeAgentViewPort,
 	setNativeAgentView,
 } from "@/lib/agents/chatHandoverRuntime";
 import { t } from "@/lib/i18n";
@@ -52,8 +53,10 @@ function Harness({
 			conversationOffered
 			conversationAvailable
 			chatAvailable
-			onViewChange={onViewChange}
-			onSwitch={onSwitch}
+			port={{
+				...localNativeAgentViewPort(AGENT_ID, onSwitch),
+				setView: async (view) => onViewChange(view),
+			}}
 		/>
 	);
 }
@@ -222,6 +225,8 @@ describe("AgentViewControl", () => {
 			}),
 		);
 		expect(pending()).toBeUndefined();
-		expect(onViewChange).toHaveBeenCalledWith("conversation");
+		await waitFor(() =>
+			expect(onViewChange).toHaveBeenCalledWith("conversation"),
+		);
 	});
 });

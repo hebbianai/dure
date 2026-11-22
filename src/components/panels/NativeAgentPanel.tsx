@@ -1,36 +1,18 @@
-import { AgentProjectMove } from "@/components/agents/AgentProjectMove";
 import { NativeAgentResponseView } from "@/components/agents/NativeAgentResponseView";
 import { useEffect, useState } from "react";
 import { Alert } from "@/components/ui/alert";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import {
-  managedCredentialSwitchFailureMessage,
-  managedCredentialSwitchIdentityBlock,
-} from "@/lib/agents/freshCredentialSwitch";
 import { t } from "@/lib/i18n";
 import type { Agent } from "@/types";
-import { AgentViewControl } from "@/components/agents/AgentViewControl";
 import {
-  setNativeAgentView,
+  localNativeAgentViewPort,
   useChatHandoverInFlight,
 } from "@/lib/agents/chatHandoverRuntime";
-import { nativeConversationViewAvailability } from "@/lib/agents/nativeConversationView";
-import { AgentLaunchSelectionControls } from "@/components/agents/AgentLaunchSelectionControls";
-import { agentProviderCatalogSource } from "@/lib/agents/providerModelCatalogSource";
-import { AgentCredentialSwitcher } from "@/components/agents/AgentCredentialSwitcher";
-import {
-  useAgentLaunchControlsPresentation,
-  useAgentToolbarControls,
-  useAgentToolbarGroupPresentation,
-} from "@/components/agents/useAgentToolbarControls";
 import { RetiredLegacyPane } from "@/components/terminal/RetiredLegacyPane";
 import { TerminalView } from "@/components/terminal/TerminalView";
 import { useWorkspaceRuntimeDesktopId } from "@/components/workspace/WorkspaceRuntimeContext";
 import type { AgentConversationTarget } from "@/components/agents/AgentConversationControls";
-import {
-  AgentConversationHistoryControl,
-  type AgentConversationHistoryActionLease,
-} from "@/components/agents/AgentConversationHistoryControl";
+import type { AgentConversationHistoryActionLease } from "@/components/agents/AgentConversationHistoryControl";
 import { AgentExitedSessionSurface } from "@/components/agents/AgentExitedSessionSurface";
 import { useManagedAgentTerminalFallback } from "@/components/agents/useManagedAgentTerminalFallback";
 import {
@@ -51,7 +33,6 @@ import {
 } from "@/lib/agents/providers";
 import { openCommandTerminalOn } from "@/lib/workspace/dock/openCommandTerminal";
 import { isRemoteCredentialUnavailable } from "@/lib/agents/remoteAccountOverlay";
-import { AccountsDialog } from "@/components/agents/AccountsDialog";
 import {
   applyDeferredCredentialSwitchNow,
   cancelDeferredCredentialSwitch,
@@ -78,30 +59,18 @@ import { conversationHistoryCredentialProfile } from "@/lib/agents/agentConversa
 import { agentCredentialReferenceId } from "@/lib/agents/agentLaunchCredential";
 import { agentRuntimePresentationOwnerKey } from "@/lib/agents/agentRuntimePresentationOwner";
 import { applyAutomaticPaneTitle } from "@/lib/workspace/pane/paneTitleOverrideStore";
-import {
-  runCredentialSwitchWithFeedback,
-  type CredentialProfileRecovery,
-} from "@/lib/agents/credentialSwitchRecovery";
-import { AgentPanelWindowActions } from "@/components/panels/AgentPanelWindowActions";
 import type { AgentPanelDockProps } from "@/components/panels/agentPanelContract";
 import { useNativeAgentPanelState } from "@/components/panels/useAgentPanelState";
 import { useRemoteAgentCredentialActions } from "@/components/panels/useRemoteAgentCredentialActions";
 import { useNamedPaneAction } from "@/components/workspace/useNamedPaneAction";
-import {
-  AgentPanelToolbarFrame,
-  presentForkInAgentPanelDesktop,
-} from "@/components/panels/AgentPanelToolbarFrame";
+import { presentForkInAgentPanelDesktop } from "@/components/panels/AgentPanelToolbarFrame";
+import { NativeAgentToolbar } from "@/components/panels/NativeAgentToolbar";
 import { AgentPluginClaimStatus } from "@/components/plugins/AgentPluginClaimStatus";
 import { DelegateTaskControl } from "@/components/agents/DelegateTaskControl";
 import type { DureAgentRuntimeSourceStopPolicyV1 } from "@/lib/ipc/dureAgentRuntime";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
 import { agentRuntimePaneActionOwnerKey, runAgentRuntimePaneAction } from "@/lib/agents/agentRuntimePaneAction";
 import type { AgentCredentialTransitionResult } from "@/lib/agents/agentCredentialTransition";
-
-const WINDOW_ACTION_CONTROL_IDS = [
-  "diff-window",
-  "source-control-window",
-] as const;
 
 export function NativeAgentPanel({
   agent,
@@ -134,7 +103,6 @@ export function NativeAgentPanel({
     agentCwd,
     terminalTitle,
     activity,
-    agentRuntimeState,
     exitedAtSignIn,
     setAgentActivity,
     accounts,
@@ -142,7 +110,6 @@ export function NativeAgentPanel({
     project,
     restartReq,
     getActiveSpaceId,
-    getAgentById,
     getProjectSshHost,
   } = useNativeAgentPanelState(agent);
   const binding = agent.runtimeBinding;
@@ -165,15 +132,6 @@ export function NativeAgentPanel({
     // ready에 못 닿는 종료(스폰 실패·조기 닫힘·provider 전환)는 샘플을 버린다.
     return () => workspacePerformance.cancelPaneOpen(paneId);
   }, [paneId, paneProvider, paneDesktopId, props.api, getActiveSpaceId]);
-  const [ownedAccountsOpen, setAccountsOpen] =
-    useRuntimeOwnedValue<boolean>(runtimeOwnerKey);
-  const accountsOpen = ownedAccountsOpen ?? false;
-  const [accountRecovery, setAccountRecovery] =
-    useRuntimeOwnedValue<CredentialProfileRecovery>(runtimeOwnerKey);
-  const [accountFailure, setAccountFailure] =
-    useRuntimeOwnedValue<string>(runtimeOwnerKey);
-  const [remoteRecoveryAccount, setRemoteRecoveryAccount] =
-    useRuntimeOwnedValue<(typeof accounts)[number]>(runtimeOwnerKey);
   useAgentPaneAttentionAck(agentId, props.api);
   const [ownedResuming, setResuming] =
     useRuntimeOwnedValue<boolean>(runtimeOwnerKey);
@@ -199,12 +157,6 @@ export function NativeAgentPanel({
         ),
       ),
     agentRuntimePaneActionOwnerKey(agent),
-  );
-  const toolbarControls = useAgentToolbarControls();
-  const launchControlsPresentation =
-    useAgentLaunchControlsPresentation(launchSelection);
-  const windowActionsPresentation = useAgentToolbarGroupPresentation(
-    WINDOW_ACTION_CONTROL_IDS,
   );
   const [staleManagedRecoveryVisible, setStaleManagedRecoveryVisible] =
     useState(false);
@@ -278,13 +230,10 @@ export function NativeAgentPanel({
   }
   const isSshSession = binding.source === "ssh";
   const terminalKind = isSshSession ? "ssh" : "pty";
-  const structuredRuntimeActionsAvailable =
-    backendManaged && supportsStructuredChat(agent.provider);
   const conversationMutation = evaluateAgentProviderMutation(
     binding,
     "conversation",
   );
-  const credentialMutation = evaluateAgentProviderMutation(binding, "credential");
   const standaloneMutationMessage = t("common.standaloneProviderSwapBlocked");
   // Exited conversation actions replace this exact pane. Header history on a
   // live source remains the separate, non-destructive sibling action. Exact
@@ -366,7 +315,6 @@ export function NativeAgentPanel({
   const accountPool = supportsAccounts(agent.provider)
     ? accounts.filter((a) => a.provider === agent.provider)
     : [];
-  const followsGlobal = false;
   const effectiveAccountId = agentCredentialReferenceId(agent) ?? null;
   const currentAccount = effectiveAccountId
     ? accountPool.find((a) => a.id === effectiveAccountId)
@@ -470,265 +418,99 @@ export function NativeAgentPanel({
     runtimeTransitioning ||
     structuredAttachRecoveryVisible ||
     staleManagedRecoveryVisible;
-  const conversationView = nativeConversationViewAvailability(
-    agent,
-    agentRuntimeState,
-    responseViewDisabled,
+  const viewPort = localNativeAgentViewPort(
+    agent.id,
+    (sourceStopPolicy, expectedSourceRevision) =>
+      switchToStructuredChat(
+        agent.id,
+        effectiveAccountId,
+        sourceStopPolicy,
+        expectedSourceRevision,
+      ),
   );
-  const presentedView =
-    conversationView.available && agent.nativeView === "conversation"
-      ? "conversation"
-      : "terminal";
-  const pendingCredentialSwitch =
-    binding?.runtime === "hmux_managed_v1" &&
-    (!agent.pendingCredentialSwitch?.targetLaunchSelection ||
-      agent.pendingCredentialSwitch.targetCredentialId !==
-        agent.pendingCredentialSwitch.sourceCredentialId)
-      ? agent.pendingCredentialSwitch
-      : undefined;
-  const managedCredentialIdentityBlock =
-    binding?.runtime === "hmux_managed_v1" &&
-    !structuredRuntimeActionsAvailable
-      ? managedCredentialSwitchIdentityBlock(agent, agentRuntimeState)
-      : undefined;
-  const agentHost = remoteAgentHost;
 
   /** Credential 변경은 확인된 conversation id를 명시적으로 유지한다.
    * managed Host만 실행 중인 provider 프로세스를 교체할 수 있다 —
    * legacy PTY/SSH migration 경로는 2026-08-16 은퇴했다. */
   const switchAccount = async (accountId: string | null) => {
-    if (
-      !credentialMutation.allowed ||
-      binding?.runtime !== "hmux_managed_v1"
-    ) {
-      throw new Error(standaloneMutationMessage);
-    }
-    setResuming(true);
-    try {
-      const targetAccount = accountId
-        ? accountPool.find((account) => account.id === accountId)
-        : undefined;
-      if (accountId && !targetAccount) {
-        throw new Error("credential_reference_unavailable");
-      }
-      const result = await switchCredential(agent.id, accountId);
-      setActiveConvId(result.conversationId);
-    } finally {
-      setResuming(false);
-    }
-  };
-
-  const openAccountRecovery = (recovery: CredentialProfileRecovery) => {
-    setAccountFailure(undefined);
-    setAccountRecovery(recovery);
-    setAccountsOpen(true);
-  };
-
-  // 왜 막혔는지까지 보여준다. "실패했습니다"만으로는 기다리면 되는 상태(첫
-  // 메시지 전)와 사용자가 정리해야 하는 상태(대화 여러 개)를 구분할 수 없다.
-  const reportAccountSwitchFailure = (error: unknown) => {
-    if (structuredRuntimeActionsAvailable) {
-      setAccountFailure(error instanceof Error ? error.message : String(error));
-      return;
-    }
-    const currentAgent = getAgentById(agent.id);
-    setAccountFailure(managedCredentialSwitchFailureMessage(currentAgent, error));
-  };
-
-  const runAccountSwitch = (accountId: string | null) => {
-    setAccountFailure(undefined);
-    setRemoteRecoveryAccount(undefined);
-    const targetAccount = accountId
-      ? accountPool.find((account) => account.id === accountId)
-      : undefined;
-    void runCredentialSwitchWithFeedback({
-      execute: () => switchAccount(accountId),
-      account: targetAccount,
-      onRecovery: (recovery) => {
-        setRemoteRecoveryAccount(targetAccount);
-        openAccountRecovery(recovery);
-      },
-      onFailure: (error) => {
-        setRemoteRecoveryAccount(targetAccount);
-        return reportAccountSwitchFailure(error);
-      },
-    }).then((outcome) => {
-      if (outcome === "completed") setRemoteRecoveryAccount(undefined);
-    });
-  };
-
-  const applyPendingAccountSwitch = () => {
-    setAccountFailure(undefined);
-    const targetAccount = pendingCredentialSwitch?.targetCredentialId
-      ? accountPool.find(
-          (account) =>
-            account.id === pendingCredentialSwitch.targetCredentialId,
-        )
-      : undefined;
-    setResuming(true);
-    void runCredentialSwitchWithFeedback({
-      execute: () => applyDeferredCredentialSwitchNow(agent.id),
-      account: targetAccount,
-      onRecovery: openAccountRecovery,
-      onFailure: reportAccountSwitchFailure,
-    }).finally(() => setResuming(false));
+    const result = await switchCredential(agent.id, accountId);
+    setActiveConvId(result.conversationId);
   };
 
   return (
     <div className="flex h-full flex-col">
-      <AgentPanelToolbarFrame
+      <NativeAgentToolbar
         agent={agent}
-        hmux={isHmux}
-        presentFork={(forkedAgent) =>
-          presentForkInAgentPanelDesktop(
-            { desktopId: paneDesktopId, panelId: paneId },
-            forkedAgent,
-          )
-        }
-      >
-        <AgentPluginClaimStatus
-          agent={agent}
-          paneId={paneId}
-          onNavigate={() => props.api.setActive()}
-        />
-        {paneDesktopId && (
-          <DelegateTaskControl
-            agent={agent}
-            desktopId={paneDesktopId}
-            hiddenTrigger
-            panelId={paneId}
-          />
-        )}
-        {/* 계정 스위처 — 이 pane에서만 바뀌고, 대화는 이어서 재시작된다 */}
-        {supportsAccounts(agent.provider) &&
-          toolbarControls.visible("account", {
-            mustShow:
-              !!pendingCredentialSwitch || !!accountFailure || accountMenuOpen,
-          }) &&
-          toolbarControls.slot(
-            "account",
-            <AgentCredentialSwitcher
-            agentId={agent.id}
-            provider={agent.provider}
-            open={accountMenuOpen}
-            onOpenChange={setAccountMenuOpen}
-            accounts={accountPool}
-            currentAccount={currentAccount}
-            recoveryAccount={remoteRecoveryAccount}
-            followsGlobal={followsGlobal}
-            pending={pendingCredentialSwitch}
-            failure={accountFailure}
-            hostName={agentHost?.name}
-            accountBusy={accountBusy}
-            disabled={
-              runtimeTransitioning ||
-              accountBusy ||
-              !credentialMutation.allowed ||
-              !!managedCredentialIdentityBlock
-            }
-            disabledTitle={
-              managedCredentialIdentityBlock
-                ? managedCredentialIdentityBlock.reason ??
-                  t("common.accountSwitchAfterFirstMessage")
-                : credentialMutation.allowed
-                ? t("common.paneAccount")
-                : standaloneMutationMessage
-            }
-            onSwitch={runAccountSwitch}
-            onApplyNow={applyPendingAccountSwitch}
-            onCancel={() => cancelDeferredCredentialSwitch(agent.id)}
-            onRemoteLogin={(account) => void openRemoteLogin(account)}
-            onCopyToHost={(account) => void copyAccountToHost(account)}
-            onManageAccounts={() => {
-              setAccountRecovery(undefined);
-              setAccountsOpen(true);
-            }}
-          />,
-          )}
-        {backendManaged && (
-          <AgentLaunchSelectionControls
-            provider={agent.provider}
-            launch={launchSelection}
-            catalogSource={agentProviderCatalogSource(agent, project, accounts)}
-            busy={runtimeTransitioning || !!agent.pendingCredentialSwitch}
-            presentation={launchControlsPresentation}
-          />
-        )}
-        {(structuredRuntimeActionsAvailable || conversationView.offered) &&
-          toolbarControls.visible("view-switch", {
-            mustShow: !!agent.pendingChatHandover,
-          }) &&
-          toolbarControls.slot(
-            "view-switch",
-            <AgentViewControl
-              key={`runtime-profile:${runtimeOwnerKey}`}
-              agentId={agent.id}
-              view={presentedView}
-              pending={agent.pendingChatHandover}
-              conversationOffered={conversationView.offered}
-              conversationAvailable={conversationView.available}
-              chatAvailable={structuredRuntimeActionsAvailable}
-              disabled={runtimeTransitioning}
-              disabledTitle={runtimeTransitioning ? t("common.loading") : undefined}
-              chatDisabledTitle={
-                agent.pendingCredentialSwitch
-                  ? t("agents.runtime.finishCredentialSwitchFirst")
-                  : undefined
-              }
-              onViewChange={(view) => setNativeAgentView(agent.id, view)}
-              onSwitch={(sourceStopPolicy, expectedSourceRevision) =>
-                switchToStructuredChat(
-                  agent.id,
-                  effectiveAccountId,
-                  sourceStopPolicy,
-                  expectedSourceRevision,
-                )
-              }
-              onSwitchingChange={setResuming}
-            />,
-          )}
-        {backendManaged && supportsStructuredChat(agent.provider) && toolbarControls.visible("project-move") &&
-          toolbarControls.slot("project-move", <AgentProjectMove
-            key={`project-move:${runtimeOwnerKey}`}
-            agentId={agent.id}
-            disabled={runtimeTransitioning || !!agent.pendingCredentialSwitch || !!agent.pendingCmd}
-            onBusyChange={setResuming}
-          />)}
-        <AgentPanelWindowActions
-          agent={agent}
-          project={project}
-          showDiff={project?.kind !== "ssh"}
-          presentation={windowActionsPresentation}
-        />
-        {toolbarControls.visible("conversation-history") &&
-          toolbarControls.slot(
-            "conversation-history",
-            <AgentConversationHistoryControl
-              key={`conversation-history:${runtimeOwnerKey}`}
-          actionLease={historyActionLease}
-          activeConversationId={agent.conversationId ?? activeConvId}
-          activity={activity}
-          agent={agent}
-          binding={binding}
-          conversations={convs}
-          mutationAllowed={conversationMutation.allowed}
-          mutationDisabledTitle={standaloneMutationMessage}
-          onError={reportConversationError}
-          onLoad={() => void loadConversations()}
-          onSwitchExisting={switchConversation}
-          paneDesktopId={paneDesktopId}
-          panelId={props.api.id}
-          projectKind={project?.kind}
-          resuming={runtimeTransitioning}
-        />,
-          )}
-      </AgentPanelToolbarFrame>
+        binding={binding}
+        runtime={{
+          surface: "pane",
+          transitioning: runtimeTransitioning,
+          setTransitioning: setResuming,
+          conversationViewDisabled:
+            structuredAttachRecoveryVisible || staleManagedRecoveryVisible,
+          presentFork: (forkedAgent) =>
+            presentForkInAgentPanelDesktop(
+              { desktopId: paneDesktopId, panelId: paneId },
+              forkedAgent,
+            ),
+          account: {
+            switch: switchAccount,
+            applyPending: () => applyDeferredCredentialSwitchNow(agent.id),
+            cancelPending: async () => cancelDeferredCredentialSwitch(agent.id),
+            menu: { open: accountMenuOpen, onOpenChange: setAccountMenuOpen },
+            remote: {
+              hostName: remoteAgentHost?.name,
+              busy: accountBusy,
+              openLogin: (account) => void openRemoteLogin(account),
+              copyToHost: (account) => void copyAccountToHost(account),
+            },
+          },
+          view: viewPort,
+          ...(backendManaged ? { launchSelection } : {}),
+          history: {
+            actionLease: historyActionLease,
+            activeConversationId: agent.conversationId ?? activeConvId,
+            activity,
+            conversations: convs,
+            mutationAllowed: conversationMutation.allowed,
+            mutationDisabledTitle: standaloneMutationMessage,
+            onError: reportConversationError,
+            onLoad: () => void loadConversations(),
+            onSwitchExisting: switchConversation,
+            paneDesktopId,
+            panelId: props.api.id,
+            projectKind: project?.kind,
+            resuming: runtimeTransitioning,
+          },
+          paneStatus: (
+            <>
+              <AgentPluginClaimStatus
+                agent={agent}
+                paneId={paneId}
+                onNavigate={() => props.api.setActive()}
+              />
+              {paneDesktopId && (
+                <DelegateTaskControl
+                  agent={agent}
+                  desktopId={paneDesktopId}
+                  hiddenTrigger
+                  panelId={paneId}
+                />
+              )}
+            </>
+          ),
+        }}
+      />
 
       <div
         className="relative min-h-0 flex-1"
         onKeyDownCapture={terminalFallback.onTerminalKeyDown}
       >
-        <NativeAgentResponseView agent={agent} disabled={responseViewDisabled}>
+        <NativeAgentResponseView
+          agent={agent}
+          disabled={responseViewDisabled}
+          setView={viewPort.setView}
+        >
           <TerminalView
             sessionId={agent.sessionId}
             providerHint={agent.provider}
@@ -791,15 +573,6 @@ export function NativeAgentPanel({
           }
         />
       </div>
-      {accountsOpen && (
-        <AccountsDialog
-          recovery={accountRecovery}
-          onClose={() => {
-            setAccountsOpen(false);
-            setAccountRecovery(undefined);
-          }}
-        />
-      )}
     </div>
   );
 }

@@ -85,7 +85,11 @@ function Terminal() {
 	return <input aria-label="Native prompt" defaultValue="unsent draft" />;
 }
 const view = (current = agent, disabled = false) => (
-	<NativeAgentResponseView agent={current} disabled={disabled}>
+	<NativeAgentResponseView
+		agent={current}
+		disabled={disabled}
+		setView={async (next) => setNativeAgentView(current.id, next)}
+	>
 		<Terminal />
 	</NativeAgentResponseView>
 );

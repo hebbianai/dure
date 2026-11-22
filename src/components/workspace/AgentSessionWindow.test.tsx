@@ -22,6 +22,11 @@ import type {
 	PreparedLargeViewReturn,
 } from "@/lib/workspace/window/largeViewReturnHandoff";
 import { LargeViewReturnSourceTransaction } from "@/lib/workspace/window/largeViewReturnTransaction";
+import { createPendingChatHandover } from "@/lib/agents/chatHandover";
+import {
+	AGENT_TOOLBAR_CONTROLS,
+	agentToolbarControlOffered,
+} from "@/lib/workspace/pane/agentToolbarControls";
 import { useStore } from "@/store";
 import { agentFixture } from "@/test/agentFixtures";
 import type { Agent } from "@/types";
@@ -66,13 +71,20 @@ const mocks = vi.hoisted(() => ({
 	publishAgentSessionRuntimeState: vi.fn(async () => {}),
 	settleDurableAppState: vi.fn(async () => {}),
 	rehydrateDurableStore: vi.fn(async () => {}),
-	requestAgentSessionCredentialCommand: vi.fn(async () => ({
-		kind: "completed" as const,
-		conversationId: "conversation-1",
-	})),
+	requestAgentSessionCredentialCommand: vi.fn(
+		async (_request: Record<string, unknown>) => ({
+			kind: "completed" as const,
+			conversationId: "conversation-1",
+		}),
+	),
 	requestAgentSessionForkPresentation: vi.fn(async () => ({
 		kind: "presented" as const,
 	})),
+	requestAgentSessionViewCommand: vi.fn(
+		async (_request: Record<string, unknown>): Promise<unknown> => ({
+			kind: "view_set" as const,
+		}),
+	),
 	forkAgent: vi.fn(),
 	messageDialog: vi.fn(async () => {}),
 	requestManagedCredentialSwitch: vi.fn(async () => ({
@@ -107,12 +119,70 @@ vi.mock("@tauri-apps/api/window", () => ({
 		onCloseRequested: mocks.onCloseRequested,
 	}),
 }));
-vi.mock("@/lib/workspace/window/agentSessionWindowCommand", () => ({
-	requestAgentSessionCredentialCommand:
-		mocks.requestAgentSessionCredentialCommand,
-	requestAgentSessionForkPresentation:
-		mocks.requestAgentSessionForkPresentation,
-}));
+vi.mock("@/lib/workspace/window/agentSessionWindowCommand", () => {
+	// The ports' own command mapping is covered by the bridge's tests; here
+	// they record which source route each toolbar action was sent to.
+	const route = (source: {
+		agentId: string;
+		sourceWindowLabel: string;
+		sourcePaneOwnerId?: string;
+	}) => {
+		if (!source.sourcePaneOwnerId) throw new Error("source pane missing");
+		return source;
+	};
+	type Route = Parameters<typeof route>[0];
+	return {
+		requestAgentSessionForkPresentation:
+			mocks.requestAgentSessionForkPresentation,
+		agentSessionWindowCredentialPort: (source: Route) => ({
+			switch: async (targetCredentialId: string | null) =>
+				mocks.requestAgentSessionCredentialCommand({
+					action: "switch",
+					targetCredentialId,
+					...route(source),
+				}),
+			applyPending: async () =>
+				mocks.requestAgentSessionCredentialCommand({
+					action: "apply_pending",
+					...route(source),
+				}),
+			cancelPending: async () =>
+				mocks.requestAgentSessionCredentialCommand({
+					action: "cancel_pending",
+					...route(source),
+				}),
+		}),
+		agentSessionWindowViewPort: (source: Route) => ({
+			setView: async (view: string) => {
+				await mocks.requestAgentSessionViewCommand({
+					action: "set_native_view",
+					view,
+					...route(source),
+				});
+			},
+			requestChat: async () =>
+				mocks.requestAgentSessionViewCommand({
+					action: "chat_handover",
+					step: "request",
+					...route(source),
+				}),
+			applyChatNow: async () => {
+				await mocks.requestAgentSessionViewCommand({
+					action: "chat_handover",
+					step: "apply_now",
+					...route(source),
+				});
+			},
+			cancelChat: async () => {
+				await mocks.requestAgentSessionViewCommand({
+					action: "chat_handover",
+					step: "cancel",
+					...route(source),
+				});
+			},
+		}),
+	};
+});
 vi.mock("@/lib/agents/agentInstalls", () => ({
 	useAvailableProviders: () => ["codex"],
 }));
@@ -190,6 +260,9 @@ vi.mock("@/lib/workspace/window/windowShortcutHooks", () => ({
 	useTerminalFontShortcut: vi.fn(),
 }));
 vi.mock("@/components/Toaster", () => ({ Toaster: () => null }));
+vi.mock("@/components/scm/useGitAvailability", () => ({
+	useGitAvailability: () => ({ state: { status: "available" } }),
+}));
 vi.mock("@/components/terminal/TerminalView", () => ({
 	TerminalView: ({
 		sessionId,
@@ -269,6 +342,9 @@ beforeEach(() => {
 	});
 	mocks.requestAgentSessionForkPresentation.mockReset().mockResolvedValue({
 		kind: "presented",
+	});
+	mocks.requestAgentSessionViewCommand.mockReset().mockResolvedValue({
+		kind: "view_set",
 	});
 	mocks.forkAgent.mockReset().mockResolvedValue({
 		...target,
@@ -631,6 +707,152 @@ describe("AgentSessionWindowRoot", () => {
 			),
 		);
 		expect(mocks.requestManagedCredentialSwitch).not.toHaveBeenCalled();
+	});
+
+	it("renders the controls the toolbar catalog offers on the large window", () => {
+		useStore.setState({
+			projects: [
+				{
+					id: target.projectId,
+					name: "Project",
+					path: "/repo",
+					kind: "local",
+					isRepo: true,
+				},
+			],
+		});
+		const rendered = render(
+			<AgentSessionWindowRoot
+				agentId="agent-1"
+				sourceWindowLabel="win-workspace-2"
+				sourcePaneOwnerId="desktop-2:agent:agent-1"
+			/>,
+		);
+
+		// The window's own runtime must supply every control the catalog
+		// offers here; offering one without routing it fails this check.
+		expect(
+			[
+				...rendered.container.querySelectorAll("[data-agent-toolbar-control]"),
+			]
+				.map((node) => node.getAttribute("data-agent-toolbar-control"))
+				.sort(),
+		).toEqual(
+			AGENT_TOOLBAR_CONTROLS.map((control) => control.id)
+				.filter((id) => agentToolbarControlOffered(id, "large_window"))
+				.sort(),
+		);
+	});
+
+	it("moves the Agent into Chat from the large window through its source pane", async () => {
+		mocks.requestAgentSessionViewCommand.mockResolvedValueOnce({
+			kind: "chat_handover",
+			outcome: "completed",
+		});
+		render(
+			<AgentSessionWindowRoot
+				agentId="agent-1"
+				sourceWindowLabel="win-workspace-2"
+				sourcePaneOwnerId="desktop-2:agent:agent-1"
+			/>,
+		);
+
+		fireEvent.pointerDown(
+			screen.getByRole("button", { name: t("agents.runtime.viewLabel") }),
+			{ button: 0 },
+		);
+		fireEvent.click(
+			await screen.findByRole("menuitemradio", {
+				name: t("agents.runtime.chatTarget"),
+			}),
+		);
+
+		await waitFor(() =>
+			expect(mocks.requestAgentSessionViewCommand).toHaveBeenCalledWith({
+				action: "chat_handover",
+				step: "request",
+				agentId: "agent-1",
+				sourceWindowLabel: "win-workspace-2",
+				sourcePaneOwnerId: "desktop-2:agent:agent-1",
+			}),
+		);
+	});
+
+	it("cancels a scheduled Chat move in the source pane before showing the terminal", async () => {
+		useStore.setState({
+			agents: [
+				{
+					...target,
+					pendingChatHandover: createPendingChatHandover(
+						target,
+						undefined,
+						"handover-1",
+						1,
+					),
+				},
+			],
+		});
+		render(
+			<AgentSessionWindowRoot
+				agentId="agent-1"
+				sourceWindowLabel="win-workspace-2"
+				sourcePaneOwnerId="desktop-2:agent:agent-1"
+			/>,
+		);
+
+		fireEvent.pointerDown(
+			screen.getByRole("button", { name: t("agents.runtime.viewLabel") }),
+			{ button: 0 },
+		);
+		fireEvent.click(
+			await screen.findByRole("menuitemradio", { name: t("common.terminal") }),
+		);
+
+		await waitFor(() =>
+			expect(mocks.requestAgentSessionViewCommand).toHaveBeenCalledTimes(2),
+		);
+		expect(
+			mocks.requestAgentSessionViewCommand.mock.calls.map(([call]) => call),
+		).toEqual([
+			expect.objectContaining({ action: "chat_handover", step: "cancel" }),
+			expect.objectContaining({ action: "set_native_view", view: "terminal" }),
+		]);
+	});
+
+	it("returns to the source pane once the Agent runs in Chat", async () => {
+		render(
+			<AgentSessionWindowRoot
+				agentId="agent-1"
+				sourceWindowLabel="win-workspace-2"
+				sourcePaneOwnerId="desktop-2:agent:agent-1"
+			/>,
+		);
+		expect(mocks.close).not.toHaveBeenCalled();
+
+		act(() => {
+			useStore.setState({
+				agents: [
+					{
+						...target,
+						runtimeBinding: undefined,
+						interactionProfile: {
+							schemaVersion: 1,
+							kind: "structured_protocol",
+							backendProfileId: "local",
+							interactionSessionId: "interaction-1",
+						},
+					},
+				],
+			});
+		});
+
+		await waitFor(() => expect(mocks.close).toHaveBeenCalledOnce());
+		expect(mocks.restoreWindowAfterSecondaryClose).toHaveBeenCalledWith(
+			"win-workspace-2",
+		);
+		expect(
+			mocks.restoreWindowAfterSecondaryClose.mock.invocationCallOrder[0],
+		).toBeLessThan(mocks.close.mock.invocationCallOrder[0]);
 	});
 
 	it("asks the source window to present a fork created from the large view", async () => {

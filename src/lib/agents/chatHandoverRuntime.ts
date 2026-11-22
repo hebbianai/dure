@@ -3,6 +3,7 @@ import { agentCredentialReferenceId } from "@/lib/agents/agentLaunchCredential";
 import {
 	createPendingChatHandover,
 	evaluatePendingChatHandover,
+	type NativeAgentViewPort,
 	type NativeAgentViewV1,
 	type PendingChatHandoverV1,
 	rebaselinePendingChatHandover,
@@ -24,6 +25,21 @@ export type ChatHandoverSwitch = (
 export type ChatHandoverRequestResult =
 	| { kind: "completed" }
 	| { kind: "scheduled" };
+
+/** The pane's View port: every move runs in this window. */
+export function localNativeAgentViewPort(
+	agentId: string,
+	switchRuntime: ChatHandoverSwitch,
+): NativeAgentViewPort {
+	return {
+		setView: async (view) => setNativeAgentView(agentId, view),
+		requestChat: () => requestChatHandover(agentId, switchRuntime),
+		applyChatNow: () => applyChatHandoverNow(agentId, switchRuntime),
+		cancelChat: async () => {
+			cancelChatHandover(agentId);
+		},
+	};
+}
 
 function agentById(agentId: string): Agent | undefined {
 	return useStore.getState().agents.find((agent) => agent.id === agentId);

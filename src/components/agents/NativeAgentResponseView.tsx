@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
 import { agentRuntimePresentationOwnerKey } from "@/lib/agents/agentRuntimePresentationOwner";
 import { nativeAgentChatIdle } from "@/lib/agents/chat/nativeAgentChat";
-import { setNativeAgentView } from "@/lib/agents/chatHandoverRuntime";
+import type { NativeAgentViewPort } from "@/lib/agents/chatHandover";
 import { nativeConversationViewAvailability } from "@/lib/agents/nativeConversationView";
 import { nativeFinalResponse } from "@/lib/agents/nativeFinalResponse";
 import { t } from "@/lib/i18n";
@@ -18,15 +18,18 @@ import { nativeAgentTranscriptSource } from "../../../cli/lib/agent-transcript.m
 
 /** Both docked and detached panes keep the same native terminal mounted and
  * sized. Only its presentation is covered; input/recovery never changes owners.
- * The pane's View menu flips it to the Conversation; that choice is
- * remembered per Agent and never switches the runtime. */
+ * The View menu flips it to the Conversation; that choice is remembered per
+ * Agent and never switches the runtime. Leaving the Conversation goes through
+ * the same `setView` as the toolbar's View menu on this surface. */
 export function NativeAgentResponseView({
 	agent,
 	disabled = false,
+	setView,
 	children,
 }: {
 	agent: Agent;
 	disabled?: boolean;
+	setView: NativeAgentViewPort["setView"];
 	children: ReactNode;
 }) {
 	const mode = useInterfaceMode();
@@ -148,9 +151,11 @@ export function NativeAgentResponseView({
 						runtime={conversation.runtime}
 						state={state}
 						chat={chat}
-						onContinueInTerminal={() =>
-							setNativeAgentView(agent.id, "terminal")
-						}
+						onContinueInTerminal={() => {
+							void setView("terminal").catch((error) =>
+								console.warn("[native-view] could not show the terminal", error),
+							);
+						}}
 					/>
 				)}
 				{responseCovered && (

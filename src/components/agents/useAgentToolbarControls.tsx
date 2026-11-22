@@ -1,4 +1,11 @@
-import { type ReactElement, type ReactNode, useCallback, useMemo } from "react";
+import {
+	createContext,
+	type ReactElement,
+	type ReactNode,
+	useCallback,
+	useContext,
+	useMemo,
+} from "react";
 import { AgentToolbarSlot } from "@/components/agents/AgentToolbarSlot";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
 import { t } from "@/lib/i18n";
@@ -7,6 +14,7 @@ import {
 	AGENT_TOOLBAR_CONTROLS,
 	type AgentToolbarControlId,
 	type AgentToolbarControlSignals,
+	type AgentToolbarSurface,
 	agentToolbarControlVisible,
 	withAgentToolbarControlHidden,
 } from "@/lib/workspace/pane/agentToolbarControls";
@@ -20,6 +28,13 @@ function agentToolbarControlLabel(id: AgentToolbarControlId): string {
 	const key = LABEL_KEY_BY_ID.get(id);
 	return key ? t(key) : id;
 }
+
+const AgentToolbarSurfaceContext = createContext<AgentToolbarSurface>("pane");
+
+/** Names the surface a toolbar renders on, so every control gate below —
+ * including the launch pills and window actions resolved inside their own
+ * components — applies the same surface rule from AGENT_TOOLBAR_CONTROLS. */
+export const AgentToolbarSurfaceProvider = AgentToolbarSurfaceContext.Provider;
 
 export interface AgentToolbarControlsProjection {
 	visible: (
@@ -35,6 +50,7 @@ export interface AgentToolbarControlsProjection {
  * visibility. Every surface (panel toolbars, chat composer pills) resolves
  * through the same lib resolver and writes hides through the same pref. */
 export function useAgentToolbarControls(): AgentToolbarControlsProjection {
+	const surface = useContext(AgentToolbarSurfaceContext);
 	const interfaceMode = useStore(
 		(s) => resolveEffectiveInterfaceMode(s.uiPrefs?.interfaceMode).mode,
 	);
@@ -45,10 +61,10 @@ export function useAgentToolbarControls(): AgentToolbarControlsProjection {
 		(id: AgentToolbarControlId, signals?: AgentToolbarControlSignals) =>
 			agentToolbarControlVisible(
 				id,
-				{ interfaceMode, hiddenToolbarControls },
+				{ interfaceMode, hiddenToolbarControls, surface },
 				signals,
 			),
-		[interfaceMode, hiddenToolbarControls],
+		[interfaceMode, hiddenToolbarControls, surface],
 	);
 	const hide = useCallback((id: AgentToolbarControlId) => {
 		const state = useStore.getState();
@@ -62,6 +78,7 @@ export function useAgentToolbarControls(): AgentToolbarControlsProjection {
 	const slot = useCallback(
 		(id: AgentToolbarControlId, node: ReactNode) => (
 			<AgentToolbarSlot
+				controlId={id}
 				controlLabel={agentToolbarControlLabel(id)}
 				onHide={() => hide(id)}
 			>

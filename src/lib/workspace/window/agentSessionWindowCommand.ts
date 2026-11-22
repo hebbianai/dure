@@ -24,6 +24,11 @@ import {
 	MAX_EXTERNAL_DROP_BYTES,
 	MAX_EXTERNAL_DROP_FILES,
 } from "@/lib/files/externalFileDrop";
+import type {
+	NativeAgentViewPort,
+	NativeAgentViewV1,
+} from "@/lib/agents/chatHandover";
+import { t } from "@/lib/i18n";
 import { isRecord } from "@/lib/payloadGuards";
 import { listenWhenReady } from "@/lib/platform/tauriBridge";
 import { parseLargeViewSourcePaneOwnerId } from "./largeViewReturnSourceCoordinator";
@@ -45,6 +50,15 @@ type AgentSessionForkPresentationCommand = {
 	action: "present_fork";
 	forkedAgentId: string;
 };
+
+const NATIVE_VIEWS: readonly NativeAgentViewV1[] = ["terminal", "conversation"];
+const CHAT_HANDOVER_STEPS = ["request", "apply_now", "cancel"] as const;
+type AgentSessionChatHandoverStep = (typeof CHAT_HANDOVER_STEPS)[number];
+
+/** The View control's moves, executed where the source pane owns the runtime. */
+type AgentSessionViewCommand =
+	| { action: "set_native_view"; view: NativeAgentViewV1 }
+	| { action: "chat_handover"; step: AgentSessionChatHandoverStep };
 
 export interface AgentSessionDraftAppendRequest {
 	readonly target: PreparedAgentChatDraftTarget;
@@ -79,6 +93,7 @@ type AgentSessionWindowCommand =
 	| AgentSessionDraftMoveCommand
 	| AgentSessionCredentialCommand
 	| AgentSessionForkPresentationCommand
+	| AgentSessionViewCommand
 	| AgentSessionDraftAppendCommand;
 
 export type AgentSessionCredentialCommandResult =
@@ -91,9 +106,17 @@ export type AgentSessionCredentialCommandResult =
 
 export type AgentSessionForkPresentationResult = { kind: "presented" };
 
+type AgentSessionViewCommandResult =
+	| { kind: "view_set" }
+	| {
+			kind: "chat_handover";
+			outcome: "completed" | "scheduled" | "applied" | "cancelled";
+	  };
+
 export type AgentSessionWindowCommandResult =
 	| AgentSessionCredentialCommandResult
 	| AgentSessionForkPresentationResult
+	| AgentSessionViewCommandResult
 	| { kind: "drafted" }
 	| AgentChatDraftMoveReceipt
 	| AgentChatPaneMoveResult;
@@ -108,6 +131,12 @@ export type AgentSessionCredentialCommandRequest =
 export type AgentSessionForkPresentationRequest = {
 	agentId: string;
 	forkedAgentId: string;
+	sourceWindowLabel: string;
+	sourcePaneOwnerId: string;
+};
+
+type AgentSessionViewCommandRequest = AgentSessionViewCommand & {
+	agentId: string;
 	sourceWindowLabel: string;
 	sourcePaneOwnerId: string;
 };
@@ -238,6 +267,18 @@ function parseCommand(value: unknown): CommandPayload | undefined {
 			? (payload as unknown as CommandPayload)
 			: undefined;
 	}
+	if (payload.action === "set_native_view") {
+		return NATIVE_VIEWS.includes(payload.view as NativeAgentViewV1)
+			? (payload as unknown as CommandPayload)
+			: undefined;
+	}
+	if (payload.action === "chat_handover") {
+		return CHAT_HANDOVER_STEPS.includes(
+			payload.step as AgentSessionChatHandoverStep,
+		)
+			? (payload as unknown as CommandPayload)
+			: undefined;
+	}
 	if (payload.action === "switch") {
 		if (
 			payload.targetCredentialId !== null &&
@@ -320,6 +361,7 @@ function requestAgentSessionWindowCommand(
 		| (AgentSessionForkPresentationRequest & {
 				action: "present_fork";
 		  })
+		| AgentSessionViewCommandRequest
 		| ((
 				| AgentSessionDraftAppendCommand
 				| AgentSessionDraftMoveCommand
@@ -405,6 +447,82 @@ export function requestAgentSessionForkPresentation(
 		transport,
 		now,
 	).then((result) => result as AgentSessionForkPresentationResult);
+}
+
+async function requestAgentSessionViewCommand(
+	request: AgentSessionViewCommandRequest,
+	transport: AgentSessionWindowCommandBackend = backend,
+	now: () => number = Date.now,
+): Promise<AgentSessionViewCommandResult> {
+	const result = await requestAgentSessionWindowCommand(request, transport, now);
+	const expected =
+		request.action === "set_native_view" ? "view_set" : "chat_handover";
+	if (result.kind !== expected)
+		throw new Error("The view command receipt is invalid; the outcome is uncertain.");
+	return result as AgentSessionViewCommandResult;
+}
+
+/** The source pane a large window presents, as the window remembers it. */
+export interface AgentSessionWindowRoute {
+	readonly agentId: string;
+	readonly sourceWindowLabel: string;
+	/** Absent when the window no longer knows its source pane. */
+	readonly sourcePaneOwnerId?: string;
+}
+
+function sourcePaneRoute(route: AgentSessionWindowRoute) {
+	if (!route.sourcePaneOwnerId)
+		throw new Error(t("workspace.agentWindow.sourcePaneMissing"));
+	return {
+		agentId: route.agentId,
+		sourceWindowLabel: route.sourceWindowLabel,
+		sourcePaneOwnerId: route.sourcePaneOwnerId,
+	};
+}
+
+/** A large window's account moves, executed by the window that owns the
+ * source pane exactly as that pane runs them. */
+export function agentSessionWindowCredentialPort(
+	route: AgentSessionWindowRoute,
+	transport: AgentSessionWindowCommandBackend = backend,
+) {
+	const send = async (command: AgentSessionCredentialCommand) =>
+		requestAgentSessionCredentialCommand(
+			{ ...command, ...sourcePaneRoute(route) },
+			transport,
+		);
+	return {
+		switch: (targetCredentialId: string | null) =>
+			send({ action: "switch", targetCredentialId }),
+		applyPending: () => send({ action: "apply_pending" }),
+		cancelPending: () => send({ action: "cancel_pending" }),
+	};
+}
+
+/** A large window's View control. Every move runs in the window that owns the
+ * source pane, through the same handover runtime the pane itself uses; this
+ * window then follows the durable Agent the source commits. */
+export function agentSessionWindowViewPort(
+	route: AgentSessionWindowRoute,
+	transport: AgentSessionWindowCommandBackend = backend,
+): NativeAgentViewPort {
+	const send = async (command: AgentSessionViewCommand) =>
+		requestAgentSessionViewCommand(
+			{ ...command, ...sourcePaneRoute(route) },
+			transport,
+		);
+	return {
+		setView: async (view) => {
+			await send({ action: "set_native_view", view });
+		},
+		requestChat: () => send({ action: "chat_handover", step: "request" }),
+		applyChatNow: async () => {
+			await send({ action: "chat_handover", step: "apply_now" });
+		},
+		cancelChat: async () => {
+			await send({ action: "chat_handover", step: "cancel" });
+		},
+	};
 }
 
 export async function requestAgentSessionDraftAppend(
@@ -572,11 +690,64 @@ export type AgentSessionWindowCommandExecution =
 			desktopId: string;
 			panelId: string;
 	  })
+	| (AgentSessionViewCommand & {
+			agentId: string;
+			desktopId: string;
+			panelId: string;
+	  })
 	| (AgentSessionDraftAppendCommand & {
 			agentId: string;
 			desktopId: string;
 			panelId: string;
 	  });
+
+/** The source window's copy of a parsed command: the sender's routing fields
+ * are replaced by the exact desktop and panel its source pane names. */
+function commandExecution(
+	payload: CommandPayload,
+	source: { desktopId: string; panelId: string },
+): AgentSessionWindowCommandExecution {
+	const target = {
+		agentId: payload.agentId,
+		desktopId: source.desktopId,
+		panelId: source.panelId,
+	};
+	switch (payload.action) {
+		case "draft_move":
+		case "move_chat_pane":
+		case "drop_chat_pane":
+		case "recover_chat_draft":
+			return { ...payload, ...target };
+		case "append_draft":
+			return {
+				action: "append_draft",
+				...target,
+				target: payload.target,
+				owner: payload.owner,
+				text: payload.text,
+				attachments: payload.attachments,
+			};
+		case "present_fork":
+			return {
+				action: "present_fork",
+				...target,
+				forkedAgentId: payload.forkedAgentId,
+			};
+		case "set_native_view":
+			return { action: "set_native_view", ...target, view: payload.view };
+		case "chat_handover":
+			return { action: "chat_handover", ...target, step: payload.step };
+		case "switch":
+			return {
+				action: "switch",
+				...target,
+				targetCredentialId: payload.targetCredentialId,
+			};
+		case "apply_pending":
+		case "cancel_pending":
+			return { action: payload.action, ...target };
+	}
+}
 
 /** Installs commands executed by the window that owns the selected pane. */
 export function subscribeAgentSessionWindowCommands(
@@ -594,45 +765,7 @@ export function subscribeAgentSessionWindowCommands(
 			if (!payload || payload.expiresAtMs <= now()) return;
 			const source = parseLargeViewSourcePaneOwnerId(payload.sourcePaneOwnerId);
 			if (!source) return;
-			const command: AgentSessionWindowCommandExecution =
-				payload.action === "draft_move" ||
-				payload.action === "move_chat_pane" ||
-				payload.action === "drop_chat_pane" ||
-				payload.action === "recover_chat_draft"
-					? { ...payload, desktopId: source.desktopId, panelId: source.panelId }
-					: payload.action === "append_draft"
-						? {
-								action: "append_draft",
-								agentId: payload.agentId,
-								desktopId: source.desktopId,
-								panelId: source.panelId,
-								target: payload.target,
-								owner: payload.owner,
-								text: payload.text,
-								attachments: payload.attachments,
-							}
-						: payload.action === "present_fork"
-							? {
-									action: "present_fork",
-									agentId: payload.agentId,
-									desktopId: source.desktopId,
-									panelId: source.panelId,
-									forkedAgentId: payload.forkedAgentId,
-								}
-							: payload.action === "switch"
-								? {
-										action: "switch",
-										agentId: payload.agentId,
-										desktopId: source.desktopId,
-										panelId: source.panelId,
-										targetCredentialId: payload.targetCredentialId,
-									}
-								: {
-										action: payload.action,
-										agentId: payload.agentId,
-										desktopId: source.desktopId,
-										panelId: source.panelId,
-									};
+			const command = commandExecution(payload, source);
 			void execute(command)
 				.then(
 					(result) =>
