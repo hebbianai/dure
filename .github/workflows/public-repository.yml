@@ -28,6 +28,7 @@ jobs:
       run_hmux_checks: ${{ steps.plan.outputs.run_hmux_checks }}
       run_app_checks: ${{ steps.plan.outputs.run_app_checks }}
       run_desktop_checks: ${{ steps.plan.outputs.run_desktop_checks }}
+      run_relay_checks: ${{ steps.plan.outputs.run_relay_checks }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -514,6 +515,35 @@ jobs:
       - name: Verify the desktop app
         run: pnpm verify:push:desktop
 
+  relay:
+    name: Relay checks
+    needs: plan
+    if: ${{ needs.plan.outputs.run_relay_checks == 'true' }}
+    # The relay ships only as a Linux container (crates/dure-relay/Dockerfile).
+    # The desktop job already builds its library on macOS for the hub dialer's
+    # tests; this job runs the relay's own tests and lints.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare repository-pinned Rust
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: crates/dure-relay -> target
+          # Pull requests restore main's cache without evicting it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Enable the pinned package manager
+        run: corepack enable
+      - name: Verify the relay
+        run: pnpm relay:verify
+
   dependency-advisories:
     name: Dependency advisories
     needs: plan
@@ -579,6 +609,7 @@ jobs:
       - hmux
       - app
       - desktop
+      - relay
       - dependency-advisories
     # A cancelled pull request run still fails this required check. A cancelled
     # push or dispatch run stays cancelled instead of reporting a failure.
@@ -600,6 +631,7 @@ jobs:
           RUN_HMUX_CHECKS: ${{ needs.plan.outputs.run_hmux_checks }}
           RUN_APP_CHECKS: ${{ needs.plan.outputs.run_app_checks }}
           RUN_DESKTOP_CHECKS: ${{ needs.plan.outputs.run_desktop_checks }}
+          RUN_RELAY_CHECKS: ${{ needs.plan.outputs.run_relay_checks }}
           DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
           SCRIPTS_VITEST_RESULT: ${{ needs.scripts-vitest.result }}
@@ -611,5 +643,6 @@ jobs:
           HMUX_RESULT: ${{ needs.hmux.result }}
           APP_RESULT: ${{ needs.app.result }}
           DESKTOP_RESULT: ${{ needs.desktop.result }}
+          RELAY_RESULT: ${{ needs.relay.result }}
           DEPENDENCY_ADVISORIES_RESULT: ${{ needs.dependency-advisories.result }}
         run: node scripts/public-ci.mjs check

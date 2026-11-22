@@ -28,6 +28,7 @@ export const PUBLIC_CI_JOB_NAMES = Object.freeze([
   "Hmux checks",
   "App core checks",
   "Desktop checks",
+  "Relay checks",
   "Public repository checks",
 ]);
 

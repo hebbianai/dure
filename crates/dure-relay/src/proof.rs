@@ -88,7 +88,7 @@ mod tests {
         let certified =
             rcgen::generate_simple_self_signed(vec!["hub.invalid".to_string()]).expect("인증서");
         let der = certified.cert.der().to_vec();
-        let key_der = certified.key_pair.serialize_der();
+        let key_der = certified.signing_key.serialize_der();
         let key = EcdsaKeyPair::from_pkcs8(
             &ECDSA_P256_SHA256_ASN1_SIGNING,
             &key_der,
