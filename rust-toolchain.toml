@@ -6,8 +6,11 @@ channel = "1.97.1"
 # internalizes, so iOS release builds link.
 components = ["clippy", "llvm-tools", "rustfmt"]
 profile = "minimal"
+# x86_64-pc-windows-msvc: `pnpm hmux:windows` type-checks the Windows Hmux
+# runtime, which no macOS or Linux build compiles.
 targets = [
   "aarch64-apple-ios",
   "aarch64-unknown-linux-musl",
+  "x86_64-pc-windows-msvc",
   "x86_64-unknown-linux-musl",
 ]
