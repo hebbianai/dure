@@ -307,10 +307,7 @@ async fn observe_child(
         return Ok(None);
     };
     let count = inspection.turn_completed_count().unwrap_or(0);
-    let marker = match outcome {
-        ChildOutcome::Exited => format!("exited:{}", authority.terminal_epoch),
-        _ => format!("{}:{}:{count}", outcome.code(), authority.terminal_epoch),
-    };
+    let marker = outcome_marker(outcome, &authority.terminal_epoch, &inspection);
     // Only an answered turn has a final response; a pending question or
     // approval is the provider's prompt, not its result.
     let answered =
@@ -343,6 +340,26 @@ pub(crate) fn classify(inspection: &HmuxSessionInspection) -> Option<ChildOutcom
     }
     (inspection.is_agent_quiescent() && inspection.turn_completed_count().unwrap_or(0) > 0)
         .then_some(ChildOutcome::TurnCompleted)
+}
+
+/// Distinguishes this outcome from every earlier one of the same Run. A
+/// provider exits once per terminal, and a finished turn is known by its
+/// count. One turn can ask several questions or approvals, so a pending one
+/// is also known by the ID the Host gave that request.
+pub(crate) fn outcome_marker(
+    outcome: ChildOutcome,
+    terminal_epoch: &str,
+    inspection: &HmuxSessionInspection,
+) -> String {
+    if outcome == ChildOutcome::Exited {
+        return format!("exited:{terminal_epoch}");
+    }
+    let count = inspection.turn_completed_count().unwrap_or(0);
+    let marker = format!("{}:{terminal_epoch}:{count}", outcome.code());
+    match inspection.attention_id() {
+        Some(attention_id) => format!("{marker}:{attention_id}"),
+        None => marker,
+    }
 }
 
 /// The parent's current generation, or `None` once its Session has exited.
@@ -592,6 +609,54 @@ mod tests {
         let mut background = runtime("waiting", "none", "1");
         background["background_work"] = json!(true);
         assert_eq!(classify(&inspection("ready", background)), None);
+    }
+
+    #[test]
+    fn each_pending_request_in_one_turn_is_its_own_outcome() {
+        let pending = |attention: &str, attention_id: &str, turns: &str| {
+            let mut state = runtime("working", attention, turns);
+            state["attention_id"] = json!(attention_id);
+            inspection("ready", state)
+        };
+        let marker = |outcome, observed: &HmuxSessionInspection| {
+            outcome_marker(outcome, "terminal", observed)
+        };
+        let first = pending("approval_required", "attention-4", "1");
+        let approval = ChildOutcome::ApprovalRequired;
+        assert_eq!(
+            marker(approval, &first),
+            "approval_required:terminal:1:attention-4"
+        );
+        // The same request observed again is the same outcome.
+        assert_eq!(
+            marker(approval, &first),
+            marker(approval, &pending("approval_required", "attention-4", "1"))
+        );
+        // A later request in the same turn is a new one.
+        assert_ne!(
+            marker(approval, &first),
+            marker(approval, &pending("approval_required", "attention-7", "1"))
+        );
+        assert_eq!(
+            marker(
+                ChildOutcome::InputRequired,
+                &pending("input_required", "attention-9", "1")
+            ),
+            "input_required:terminal:1:attention-9"
+        );
+        // A finished turn has no pending request, and an exit is once per terminal.
+        let finished = inspection("ready", runtime("waiting", "none", "2"));
+        assert_eq!(
+            marker(ChildOutcome::TurnCompleted, &finished),
+            "turn_completed:terminal:2"
+        );
+        assert_eq!(
+            marker(
+                ChildOutcome::Exited,
+                &inspection("exited", runtime("waiting", "none", "2"))
+            ),
+            "exited:terminal"
+        );
     }
 
     #[test]

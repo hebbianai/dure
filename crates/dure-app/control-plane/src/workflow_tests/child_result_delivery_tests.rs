@@ -64,15 +64,17 @@ async fn spawn_linked_child(state: &ServiceState) -> (AgentSpawnJournalReceiptV1
     )
 }
 
-/// What the fixture Host reports for the child's exact Session.
+/// What the fixture Host reports for the child's exact Session. A pending
+/// attention carries the ID the Host gave that request.
 fn report_child(
     state: &ServiceState,
     authority: &AgentCheckpointBindingAuthorityV1,
     lifecycle: &str,
     activity: &str,
-    attention: &str,
+    attention: (&str, Option<&str>),
     turns: &str,
 ) {
+    let (attention, attention_id) = attention;
     let session = json!({
         "schema_version": 1,
         "session_id": authority.binding.session_id,
@@ -96,7 +98,7 @@ fn report_child(
             "lifecycle": if lifecycle == "exited" { "exited" } else { "running" },
             "activity": activity,
             "attention": attention,
-            "attention_id": if attention == "none" { None } else { Some("attention-1") },
+            "attention_id": attention_id,
             "background_work": false,
         },
     });
@@ -133,7 +135,7 @@ async fn parent_message(state: &ServiceState, context: &Value, interaction_id: &
 async fn a_child_outcome_reaches_its_parent_once_as_a_durable_message() {
     let (_root, state, launcher, prompt_deliverer) = fixture_with_delivery(
         vec![LaunchOutcome::Succeed],
-        vec![DeliveryOutcome::Succeed; 3],
+        vec![DeliveryOutcome::Succeed; 4],
     )
     .await;
     let (context, _) = prepare_exact_session_run(&state).await;
@@ -153,14 +155,14 @@ async fn a_child_outcome_reaches_its_parent_once_as_a_durable_message() {
     let mut deliveries = ChildResultDeliveries::default();
 
     // A child that is still working has nothing to report.
-    report_child(&state, &authority, "ready", "working", "none", "0");
+    report_child(&state, &authority, "ready", "working", ("none", None), "0");
     child_result_delivery::tick(&state, &mut deliveries)
         .await
         .unwrap();
     assert!(prompt_deliverer.requests().is_empty());
 
     // A finished turn opens one Message on the parent and wakes it once.
-    report_child(&state, &authority, "ready", "waiting", "none", "1");
+    report_child(&state, &authority, "ready", "waiting", ("none", None), "1");
     child_result_delivery::tick(&state, &mut deliveries)
         .await
         .unwrap();
@@ -190,27 +192,59 @@ async fn a_child_outcome_reaches_its_parent_once_as_a_durable_message() {
     assert_eq!(prompt_deliverer.requests().len(), 1);
 
     // A pending approval is its own outcome, and so is the Run's exit.
+    let approval_in_turn = |attention_id: &str| {
+        child_result_delivery::interaction_id(
+            &child.operation_id,
+            &parent,
+            &format!("approval_required:{epoch}:1:{attention_id}"),
+        )
+    };
     report_child(
         &state,
         &authority,
         "ready",
         "working",
-        "approval_required",
+        ("approval_required", Some("attention-4")),
         "1",
     );
     child_result_delivery::tick(&state, &mut deliveries)
         .await
         .unwrap();
-    let approval = child_result_delivery::interaction_id(
-        &child.operation_id,
-        &parent,
-        &format!("approval_required:{epoch}:1"),
-    );
     assert_eq!(
-        parent_message(&state, &context, &approval).await["common"]["title"],
+        parent_message(&state, &context, &approval_in_turn("attention-4")).await["common"]["title"],
         "fix-12 needs approval"
     );
-    report_child(&state, &authority, "exited", "waiting", "none", "2");
+    assert_eq!(prompt_deliverer.requests().len(), 2);
+
+    // The same pending request is not sent again.
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    assert_eq!(prompt_deliverer.requests().len(), 2);
+
+    // Once answered, the child works on in the same turn and asks again. The
+    // new request is a new outcome even though no turn finished in between.
+    report_child(&state, &authority, "ready", "working", ("none", None), "1");
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    report_child(
+        &state,
+        &authority,
+        "ready",
+        "working",
+        ("approval_required", Some("attention-7")),
+        "1",
+    );
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    assert_eq!(
+        parent_message(&state, &context, &approval_in_turn("attention-7")).await["common"]["title"],
+        "fix-12 needs approval"
+    );
+    assert_eq!(prompt_deliverer.requests().len(), 3);
+    report_child(&state, &authority, "exited", "waiting", ("none", None), "2");
     child_result_delivery::tick(&state, &mut deliveries)
         .await
         .unwrap();
@@ -223,14 +257,14 @@ async fn a_child_outcome_reaches_its_parent_once_as_a_durable_message() {
         parent_message(&state, &context, &exited).await["common"]["title"],
         "fix-12 exited"
     );
-    assert_eq!(prompt_deliverer.requests().len(), 3);
+    assert_eq!(prompt_deliverer.requests().len(), 4);
 
     // An exited Run is finished; nothing more is observed or sent.
-    report_child(&state, &authority, "ready", "waiting", "none", "3");
+    report_child(&state, &authority, "ready", "waiting", ("none", None), "3");
     child_result_delivery::tick(&state, &mut deliveries)
         .await
         .unwrap();
-    assert_eq!(prompt_deliverer.requests().len(), 3);
+    assert_eq!(prompt_deliverer.requests().len(), 4);
 }
 
 #[tokio::test]
@@ -245,7 +279,7 @@ async fn a_child_whose_parent_exited_is_not_reported() {
         .await
         .unwrap()
         .unwrap();
-    report_child(&state, &authority, "ready", "waiting", "none", "1");
+    report_child(&state, &authority, "ready", "waiting", ("none", None), "1");
     let parent = json!({
         "schema_version": 1,
         "session_id": PARENT_SESSION,

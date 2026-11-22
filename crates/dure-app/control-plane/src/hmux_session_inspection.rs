@@ -130,6 +130,12 @@ impl HmuxSessionInspection {
             .map(AgentRuntimeState::turn_completed_count)
     }
 
+    /// The Host's ID for the pending question, approval or error. A new
+    /// request gets a new ID, even within one turn.
+    pub(crate) fn attention_id(&self) -> Option<&str> {
+        self.agent_runtime_state.as_ref()?.attention_id.as_deref()
+    }
+
     pub(crate) fn is_agent_quiescent(&self) -> bool {
         self.agent_runtime_state.as_ref().is_some_and(|state| {
             state.lifecycle == AgentRuntimeLifecycle::Running
