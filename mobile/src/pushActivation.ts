@@ -28,6 +28,8 @@ export interface PushActivation {
 export interface AlertActions {
 	/** Face ID before an approval: the approval actions then open the app. */
 	readonly ownerCheck: boolean;
+	/** Alerts may name the agent and what it asks or said (`alertDetails`). */
+	readonly details: boolean;
 	readonly approve: string;
 	readonly deny: string;
 	/** What the phone says when an answer from an alert did not land. */

@@ -179,29 +179,33 @@ test("HTTP/2 APNs alert has a valid ES256 provider token and carries the agent's
     assert.equal(JSON.parse(Buffer.from(jwt[0], "base64url")).alg, "ES256");
     assert.equal(JSON.parse(Buffer.from(jwt[1], "base64url")).iss, "TESTTEAM12");
     assert(verify("sha256", Buffer.from(`${jwt[0]}.${jwt[1]}`), { key: publicKey, dsaEncoding: "ieee-p1363" }, Buffer.from(jwt[2], "base64url")));
-    // The whole payload: generic text and the opaque id of the agent a tap opens.
+    // The whole payload: generic text, and identifiers only beside it — the
+    // agent a tap opens, what happened and this computer, as the phone's
+    // paired entry names it (unpadded). The phone's notification service
+    // reads who and what from that computer (`mutable-content`).
     assert.deepEqual(body, {
-      aps: { alert: { title: "Dure", body: ko["notifications.push.approvalBody"] }, sound: "default" },
-      dure: { session: "managed_0123456789abcdef" },
+      aps: { alert: { title: "Dure", body: ko["notifications.push.approvalBody"] }, sound: "default", "mutable-content": 1 },
+      dure: { session: "managed_0123456789abcdef", kind: "approval", hub: fingerprint.replace(/=+$/, "") },
     });
-    // An older desktop names no agent; its alert opens the app as before.
+    assert.equal(body.dure.hub.length, "SHA256:".length + 43);
+    // An older desktop names no agent; its alert opens the app as before,
+    // and there is nothing for the phone to read.
     assert.deepEqual(await sender.send(baseMessage(), fingerprint), { status: "accepted" });
     assert.deepEqual(bodies[1], { aps: { alert: { title: "Dure", body: en["notifications.push.approvalBody"] }, sound: "default" } });
-    // An answerable approval adds its actions, its identity and this computer,
-    // as the phone's paired entry names it (unpadded): still no request text.
+    // An answerable approval adds its actions and its identity: still no request text.
     const answerable = baseMessage();
     answerable.event.sessionId = "managed_0123456789abcdef";
     answerable.event.approval = { attentionId: "attention-3", terminalEpoch: "7" };
     assert.deepEqual(await sender.send(answerable, fingerprint), { status: "accepted" });
     assert.deepEqual(bodies[2], {
-      aps: { alert: { title: "Dure", body: en["notifications.push.approvalBody"] }, sound: "default", category: "dure.approval" },
+      aps: { alert: { title: "Dure", body: en["notifications.push.approvalBody"] }, sound: "default", category: "dure.approval", "mutable-content": 1 },
       dure: {
         session: "managed_0123456789abcdef",
+        kind: "approval",
         hub: fingerprint.replace(/=+$/, ""),
         approval: { attentionId: "attention-3", terminalEpoch: "7" },
       },
     });
-    assert.equal(bodies[2].dure.hub.length, "SHA256:".length + 43);
     // A finished turn the phone can reply to adds its reply action and process.
     const repliable = baseMessage();
     repliable.event.kind = "done";
@@ -209,8 +213,8 @@ test("HTTP/2 APNs alert has a valid ES256 provider token and carries the agent's
     repliable.event.reply = { terminalEpoch: "7" };
     assert.deepEqual(await sender.send(repliable, fingerprint), { status: "accepted" });
     assert.deepEqual(bodies[3], {
-      aps: { alert: { title: "Dure", body: en["notifications.push.doneBody"] }, sound: "default", category: "dure.reply" },
-      dure: { session: "managed_0123456789abcdef", hub: fingerprint.replace(/=+$/, ""), reply: { terminalEpoch: "7" } },
+      aps: { alert: { title: "Dure", body: en["notifications.push.doneBody"] }, sound: "default", category: "dure.reply", "mutable-content": 1 },
+      dure: { session: "managed_0123456789abcdef", kind: "done", hub: fingerprint.replace(/=+$/, ""), reply: { terminalEpoch: "7" } },
     });
     // A question in the terminal says so, and takes no reply.
     const question = baseMessage();
@@ -218,8 +222,8 @@ test("HTTP/2 APNs alert has a valid ES256 provider token and carries the agent's
     question.event.sessionId = "managed_0123456789abcdef";
     assert.deepEqual(await sender.send(question, fingerprint), { status: "accepted" });
     assert.deepEqual(bodies[4], {
-      aps: { alert: { title: "Dure", body: en["notifications.push.inputBody"] }, sound: "default" },
-      dure: { session: "managed_0123456789abcdef" },
+      aps: { alert: { title: "Dure", body: en["notifications.push.inputBody"] }, sound: "default", "mutable-content": 1 },
+      dure: { session: "managed_0123456789abcdef", kind: "input", hub: fingerprint.replace(/=+$/, "") },
     });
   } finally {
     sender.close();

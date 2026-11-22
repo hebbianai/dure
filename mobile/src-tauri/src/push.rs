@@ -82,6 +82,11 @@ pub struct AlertActions {
     /// Face ID before an approval (the screen's `approvalBiometric`). The
     /// approval actions then open the app, whose approval sheet asks.
     owner_check: bool,
+    /// Name the agent and what it asks or said in its alerts (the screen's
+    /// `alertDetails`). Off, or from a mirror older than the setting, the
+    /// notification service extension leaves every alert generic.
+    #[serde(default)]
+    details: bool,
     approve: String,
     deny: String,
     /// What the phone says when an answer from an alert did not land.
@@ -96,11 +101,23 @@ pub struct AlertActions {
 
 impl AlertActions {
     fn path(app: &tauri::AppHandle) -> Result<PathBuf, CommandError> {
-        Ok(crate::config_root(app)?.join("push-alert-actions.json"))
+        Ok(Self::path_in(&crate::config_root(app)?))
     }
 
-    fn load(path: &Path) -> Option<Self> {
+    /// The mirror's file in the device configuration directory, which the
+    /// notification service extension reads too.
+    pub(crate) fn path_in(root: &Path) -> PathBuf {
+        root.join("push-alert-actions.json")
+    }
+
+    pub(crate) fn load(path: &Path) -> Option<Self> {
         serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    }
+
+    /// Whether alerts may name the agent and what it asks or said.
+    #[cfg(any(target_os = "ios", test))]
+    pub(crate) fn details(&self) -> bool {
+        self.details
     }
 
     fn load_for(app: &tauri::AppHandle) -> Option<Self> {
@@ -641,6 +658,7 @@ mod tests {
         );
         let actions = owner_check.map(|owner_check| AlertActions {
             owner_check,
+            details: true,
             approve: "Allow once".into(),
             deny: "Deny".into(),
             failed: "Dure could not answer that approval.".into(),
@@ -813,10 +831,15 @@ mod tests {
         let (_, actions) = approval_alert(Some(true));
         let actions = actions.unwrap();
         actions.save(&path).unwrap();
-        assert_eq!(AlertActions::load(&path), Some(actions));
+        assert_eq!(AlertActions::load(&path), Some(actions.clone()));
         assert!(!path.with_extension("json.tmp").exists());
         std::fs::write(&path, br#"{"ownerCheck":false}"#).unwrap();
         assert_eq!(AlertActions::load(&path), None);
+        // A mirror written before the details setting keeps alerts generic.
+        let mut older = serde_json::to_value(&actions).unwrap();
+        older.as_object_mut().unwrap().remove("details");
+        std::fs::write(&path, serde_json::to_vec(&older).unwrap()).unwrap();
+        assert!(!AlertActions::load(&path).unwrap().details());
     }
 
     #[test]

@@ -28,10 +28,11 @@ describe("settingsPreferences", () => {
 		).toEqual(DEFAULT_SETTINGS_PREFERENCES);
 	});
 
-	it("ships haptics on and the approval Face ID gate off", () => {
+	it("ships haptics on, the approval Face ID gate off and alert details on", () => {
 		expect(DEFAULT_SETTINGS_PREFERENCES).toMatchObject({
 			haptics: true,
 			approvalBiometric: false,
+			alertDetails: true,
 		});
 	});
 
@@ -58,6 +59,7 @@ describe("settingsPreferences", () => {
 			scrollSpeed: "slow",
 			haptics: true,
 			approvalBiometric: false,
+			alertDetails: true,
 		});
 	});
 
@@ -74,6 +76,18 @@ describe("settingsPreferences", () => {
 					}),
 			}),
 		).toEqual(DEFAULT_SETTINGS_PREFERENCES);
+		expect(
+			loadSettingsPreferences({
+				getItem: () =>
+					JSON.stringify({
+						language: "ko",
+						notifications: "all",
+						fontSize: 14,
+						scrollSpeed: "slow",
+						alertDetails: "off",
+					}),
+			}),
+		).toEqual(DEFAULT_SETTINGS_PREFERENCES);
 	});
 
 	it("round-trips one validated preference record", () => {
@@ -86,6 +100,7 @@ describe("settingsPreferences", () => {
 				scrollSpeed: "fast",
 				haptics: false,
 				approvalBiometric: true,
+				alertDetails: false,
 			},
 			{ setItem: (_key, value) => (written = value) },
 		);
@@ -97,6 +112,7 @@ describe("settingsPreferences", () => {
 			scrollSpeed: "fast",
 			haptics: false,
 			approvalBiometric: true,
+			alertDetails: false,
 		});
 	});
 

@@ -66,6 +66,10 @@ targets:
         CFBundleVersion: "8"
     entitlements:
       path: dure-mobile_iOS/dure-mobile_iOS.entitlements
+      properties:
+        aps-environment: $(DURE_APNS_ENVIRONMENT)
+        # Shared with the notification service extension (`src/shared_config.rs`).
+        com.apple.security.application-groups: [group.dev.hebbian.ide.mobile]
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full
@@ -85,6 +89,9 @@ targets:
         EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
       groups: [app]
     dependencies:
+      - target: RustLibrary
+      - target: NotificationService
+        embed: true
       - framework: libapp.a
         embed: false
       - sdk: CoreGraphics.framework
@@ -94,7 +101,66 @@ targets:
       - sdk: Security.framework
       - sdk: UIKit.framework
       - sdk: WebKit.framework
-    preBuildScripts:
+  # Rewrites each remote alert that names an agent with who and what it is
+  # about, read from the paired computer by the app's Rust library
+  # (`src/alert_content.rs`). It links the same libapp.a, and the frameworks
+  # that library needs, as the app.
+  NotificationService:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: NotificationService
+    info:
+      path: NotificationService/Info.plist
+      properties:
+        CFBundleDisplayName: Dure
+        # The app's version, which the extension must carry too.
+        CFBundleShortVersionString: 0.1.8
+        CFBundleVersion: "8"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: NotificationService
+    entitlements:
+      path: NotificationService/NotificationService.entitlements
+      properties:
+        # The app's configuration lives in this group (`src/shared_config.rs`).
+        com.apple.security.application-groups: [group.dev.hebbian.ide.mobile]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.hebbian.ide.mobile.NotificationService
+        DEVELOPMENT_TEAM: 8L5WFHS4F9
+        TARGETED_DEVICE_FAMILY: 1
+        ENABLE_BITCODE: false
+        ARCHS: [arm64]
+        VALID_ARCHS: arm64
+        LIBRARY_SEARCH_PATHS[arch=x86_64]: $(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
+        LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
+        EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
+    dependencies:
+      - target: RustLibrary
+      - framework: libapp.a
+        embed: false
+      - sdk: CoreGraphics.framework
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
+      - sdk: QuartzCore.framework
+      - sdk: Security.framework
+      - sdk: UIKit.framework
+      - sdk: WebKit.framework
+aggregateTargets:
+  # Builds libapp.a once for both the app and its notification service
+  # extension, before either links it. Its settings give the script the same
+  # architectures and search paths the app target gave it: an aggregate
+  # target has no built-products search paths of its own.
+  RustLibrary:
+    settings:
+      ARCHS: [arm64]
+      VALID_ARCHS: arm64
+      EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
+      FRAMEWORK_SEARCH_PATHS: ["$(inherited)", "$(BUILT_PRODUCTS_DIR)", "\".\""]
+      HEADER_SEARCH_PATHS: ["$(inherited)", "$(BUILT_PRODUCTS_DIR)/include"]
+      SDKROOT: iphoneos
+    buildScripts:
       - script: pnpm tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths "${FRAMEWORK_SEARCH_PATHS:?}" --header-search-paths "${HEADER_SEARCH_PATHS:?}" --gcc-preprocessor-definitions "${GCC_PREPROCESSOR_DEFINITIONS:-}" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}
         name: Build Rust Code
         basedOnDependencyAnalysis: false

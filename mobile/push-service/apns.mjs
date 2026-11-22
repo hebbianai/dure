@@ -59,10 +59,12 @@ export function createApnsSender({ key, keyId, teamId, openConnection = connect,
       const { subscription, event } = message;
       const catalog = subscription.language === "ko" ? ko : en;
       // Beside the generic text, only identifiers (`PushAlertContext` in
-      // dure-hub-protocol): the agent a tap opens and, for an approval or a
-      // finished turn the phone can answer, that approval or process and the
-      // computer to answer on — as the phone's paired entry names it,
-      // unpadded. Never what was asked or said.
+      // dure-hub-protocol): the agent a tap opens, what happened, the
+      // computer that raised it — as the phone's paired entry names it,
+      // unpadded — and, for an approval or a finished turn the phone can
+      // answer, that approval or process. Never what was asked or said: the
+      // phone's notification service reads that from the computer itself
+      // (`mutable-content`) and keeps this text when it cannot.
       const approval = event.approval && event.sessionId ? event.approval : undefined;
       const reply = event.reply && event.sessionId ? event.reply : undefined;
       const category = approval ? APPROVAL_CATEGORY : reply ? REPLY_CATEGORY : undefined;
@@ -71,10 +73,12 @@ export function createApnsSender({ key, keyId, teamId, openConnection = connect,
           alert: { title: "Dure", body: catalog[BODY[event.kind]] },
           sound: "default",
           ...(category ? { category } : {}),
+          ...(event.sessionId ? { "mutable-content": 1 } : {}),
         },
         ...(event.sessionId ? { dure: {
           session: event.sessionId,
-          ...(category ? { hub: sender.replace(/=+$/, "") } : {}),
+          kind: event.kind,
+          hub: sender.replace(/=+$/, ""),
           ...(approval ? { approval } : {}),
           ...(reply ? { reply } : {}),
         } } : {}),

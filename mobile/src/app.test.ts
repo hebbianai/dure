@@ -4089,6 +4089,7 @@ describe("홈 화면", () => {
     ).toEqual([
       ["true", false],
       ["false", true],
+      ["true", false],
     ]);
   });
 
@@ -4129,6 +4130,27 @@ describe("홈 화면", () => {
     expect(row.textContent).not.toContain("Face ID");
     expect(row.getAttribute("aria-checked")).toBe("false");
     expect(row.querySelector(".settings__row-detail")).toBeNull();
+  });
+
+  /**
+   * #625: alert details are a plain switch, on by default, and the native
+   * mirror follows it, so the notification service keeps alerts generic
+   * from the next alert on.
+   */
+  it("the alert details switch keeps phone alerts generic and tells the native mirror", async () => {
+    const root = await launch();
+    pick(root, ".home__settings").click();
+    await settle();
+
+    const row = settingsRow(root, "alert-details");
+    expect(row.textContent).toContain(t("settings.security.alertDetails"));
+    expect(row.getAttribute("aria-checked")).toBe("true");
+    row.click();
+    await settle();
+    expect(loadSettingsPreferences().alertDetails).toBe(false);
+    expect(settingsRow(root, "alert-details").getAttribute("aria-checked")).toBe("false");
+    const mirrored = invocations.filter(({ command }) => command === "push_alert_actions");
+    expect(mirrored[mirrored.length - 1]?.args.actions).toMatchObject({ details: false });
   });
 
   it("센서가 없으면 Face ID 행은 꺼진 채 이유를 말한다", async () => {
@@ -4216,6 +4238,7 @@ describe("홈 화면", () => {
       scrollSpeed: "fast",
       haptics: true,
       approvalBiometric: false,
+      alertDetails: true,
     });
   });
 

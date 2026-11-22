@@ -6,20 +6,84 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXAggregateTarget section */
+		ECF63B440B18596775FD84C9 /* RustLibrary */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = 9E93BEDCDB52A8017B7F87B0 /* Build configuration list for PBXAggregateTarget "RustLibrary" */;
+			buildPhases = (
+				C28D4EE035753A480BD510EE /* Build Rust Code */,
+			);
+			dependencies = (
+			);
+			name = RustLibrary;
+			packageProductDependencies = (
+			);
+			productName = RustLibrary;
+		};
+/* End PBXAggregateTarget section */
+
 /* Begin PBXBuildFile section */
+		0B05FFA29EFB31EFD7FFC8D4 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 77155BB14764B570BBA686C0 /* QuartzCore.framework */; };
 		136BB968EA9C26ACCCE96A03 /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B9F0A99E434B28F68EA98001 /* MetalKit.framework */; };
+		2578AA27BF371A7C0012CB3D /* NotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 506DCA907D3FF020DBBE7305 /* NotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		38FDB883C831236E037F063E /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 9E11EA2A17FD39F9A236123F /* assets */; };
 		3EE53A67D768F17FB93E7025 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = ECE0F83B51C3C4ACBDD94625 /* Metal.framework */; };
 		43D3B982C802124428AFC887 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BF062799C87B88D2744DFD1A /* libapp.a */; };
 		48B75F172DB2DFA819C180F2 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 77155BB14764B570BBA686C0 /* QuartzCore.framework */; };
 		4D9AA7423057AE43C1CA0862 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4E3E4A076EC98A3DD0EE4DE2 /* UIKit.framework */; };
+		512C25CCAB2F9CAE937A03DA /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B9F0A99E434B28F68EA98001 /* MetalKit.framework */; };
 		5EA8100EA7F9A605C6CCF610 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 0948F13894D9AB3EE02A10C6 /* main.mm */; };
+		7AB84AA254AC2504C7EDB0F1 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D2CB731F913D3F783EE6E60B /* Security.framework */; };
+		7D9110FC0330CC2484153637 /* NotificationService.m in Sources */ = {isa = PBXBuildFile; fileRef = 87AB684DAB90920CF35EEB83 /* NotificationService.m */; };
+		95CF46434C23F0C169A8835E /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4E3E4A076EC98A3DD0EE4DE2 /* UIKit.framework */; };
+		B40C9C0303C322E6A24DB2DB /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 81E90D66BAE642732022E316 /* WebKit.framework */; };
 		B567B0F48982867CAC0A24FD /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 81E90D66BAE642732022E316 /* WebKit.framework */; };
 		CCA2C015D8273D0EE70A54CD /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FBE4AFB9266BD073776CE310 /* Assets.xcassets */; };
 		D55C4FE2C308D1FCF202C722 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 713FE02827E9CD010603D096 /* CoreGraphics.framework */; };
+		D9AB002C6C52B065FF927586 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = ECE0F83B51C3C4ACBDD94625 /* Metal.framework */; };
+		EC2B4A18AF078127BA175D2F /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 713FE02827E9CD010603D096 /* CoreGraphics.framework */; };
 		EF82998519A6B287C18575CB /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 206A94E45BCC2D3B7856CB42 /* LaunchScreen.storyboard */; };
+		F92BE9038A6480DB58C1083E /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BF062799C87B88D2744DFD1A /* libapp.a */; };
 		FC09222A79D586ED000EF3AE /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D2CB731F913D3F783EE6E60B /* Security.framework */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		0153226D2B0679EA104A0D86 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A687DD6FA85971AC99EC05F8 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ECF63B440B18596775FD84C9;
+			remoteInfo = RustLibrary;
+		};
+		54D3B7D447CE6F7CDCB30747 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A687DD6FA85971AC99EC05F8 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ECF63B440B18596775FD84C9;
+			remoteInfo = RustLibrary;
+		};
+		632AEE17E8DECBDBAE9D7160 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A687DD6FA85971AC99EC05F8 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9F4682EA7C36D4B038E27F9B;
+			remoteInfo = NotificationService;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		FD024F0FD7CEE83FAFB00781 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				2578AA27BF371A7C0012CB3D /* NotificationService.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		0217A34A250FF7D681F15856 /* identity_store.rs */ = {isa = PBXFileReference; path = identity_store.rs; sourceTree = "<group>"; };
@@ -28,18 +92,22 @@
 		190FD1391B9576D99735E0E7 /* dure-mobile_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "dure-mobile_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		206A94E45BCC2D3B7856CB42 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		31F3ABC746537F994609E38A /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
+		39CB34C672D6D1983D741DB1 /* NotificationService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NotificationService.entitlements; sourceTree = "<group>"; };
 		4ACCDDFFDB3EAF2681E9AADF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		4E3E4A076EC98A3DD0EE4DE2 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
 		4EC776D859E0A96940624EEA /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
 		50660470EE7FE09B458F016C /* pairing.rs */ = {isa = PBXFileReference; path = pairing.rs; sourceTree = "<group>"; };
+		506DCA907D3FF020DBBE7305 /* NotificationService.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = NotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		6D1768370392D70D20F5FCAF /* attach.rs */ = {isa = PBXFileReference; path = attach.rs; sourceTree = "<group>"; };
 		6EBDC78B4BB97FD63775A544 /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
 		713FE02827E9CD010603D096 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
 		77155BB14764B570BBA686C0 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
 		7C697C194772CD8EFFB519EF /* device_identity.rs */ = {isa = PBXFileReference; path = device_identity.rs; sourceTree = "<group>"; };
 		81E90D66BAE642732022E316 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		87AB684DAB90920CF35EEB83 /* NotificationService.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = NotificationService.m; sourceTree = "<group>"; };
 		9D4927AB730873F5CEF7A221 /* dure-mobile_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "dure-mobile_iOS.entitlements"; sourceTree = "<group>"; };
 		9E11EA2A17FD39F9A236123F /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
+		A286F67C58E91879B8C07DE3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		B2B19ADAA7160B7716B94CCF /* census.rs */ = {isa = PBXFileReference; path = census.rs; sourceTree = "<group>"; };
 		B9F0A99E434B28F68EA98001 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
 		BF062799C87B88D2744DFD1A /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
@@ -66,6 +134,21 @@
 				FC09222A79D586ED000EF3AE /* Security.framework in Frameworks */,
 				4D9AA7423057AE43C1CA0862 /* UIKit.framework in Frameworks */,
 				B567B0F48982867CAC0A24FD /* WebKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B7480D0E8C6C8892247E6D45 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F92BE9038A6480DB58C1083E /* libapp.a in Frameworks */,
+				EC2B4A18AF078127BA175D2F /* CoreGraphics.framework in Frameworks */,
+				D9AB002C6C52B065FF927586 /* Metal.framework in Frameworks */,
+				512C25CCAB2F9CAE937A03DA /* MetalKit.framework in Frameworks */,
+				0B05FFA29EFB31EFD7FFC8D4 /* QuartzCore.framework in Frameworks */,
+				7AB84AA254AC2504C7EDB0F1 /* Security.framework in Frameworks */,
+				95CF46434C23F0C169A8835E /* UIKit.framework in Frameworks */,
+				B40C9C0303C322E6A24DB2DB /* WebKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -140,10 +223,21 @@
 			path = arm64;
 			sourceTree = "<group>";
 		};
+		8FD406FA1B6FC772C28B58DC /* NotificationService */ = {
+			isa = PBXGroup;
+			children = (
+				A286F67C58E91879B8C07DE3 /* Info.plist */,
+				39CB34C672D6D1983D741DB1 /* NotificationService.entitlements */,
+				87AB684DAB90920CF35EEB83 /* NotificationService.m */,
+			);
+			path = NotificationService;
+			sourceTree = "<group>";
+		};
 		BD6AFBD307A3A4767CA736B9 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				190FD1391B9576D99735E0E7 /* dure-mobile_iOS.app */,
+				506DCA907D3FF020DBBE7305 /* NotificationService.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -181,6 +275,7 @@
 				206A94E45BCC2D3B7856CB42 /* LaunchScreen.storyboard */,
 				5171EFB49D685D6A29AF0161 /* Externals */,
 				D0AA910756604210AB39681A /* dure-mobile_iOS */,
+				8FD406FA1B6FC772C28B58DC /* NotificationService */,
 				777F5711FA4B575E22E1B991 /* Sources */,
 				272C40131F386FEB4E251E1F /* src */,
 				46898BD51013960668BD2715 /* Frameworks */,
@@ -198,18 +293,39 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		E78B6F680F81C0FE93CC1DBC /* dure-mobile_iOS */ = {
+		9F4682EA7C36D4B038E27F9B /* NotificationService */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 612EA2E7ED58C45A13A05D09 /* Build configuration list for PBXNativeTarget "dure-mobile_iOS" */;
+			buildConfigurationList = D886E2DC703D99C94ADE60D6 /* Build configuration list for PBXNativeTarget "NotificationService" */;
 			buildPhases = (
-				C28D4EE035753A480BD510EE /* Build Rust Code */,
-				55D2FAB0A1F421B123DCE608 /* Sources */,
-				00B330F96DC90799BE21F005 /* Resources */,
-				8422F92B1FC04D64C85A01EB /* Frameworks */,
+				91AE0CEB85EF1290224783C5 /* Sources */,
+				B7480D0E8C6C8892247E6D45 /* Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				3A5FB9668919144A937A0913 /* PBXTargetDependency */,
+			);
+			name = NotificationService;
+			packageProductDependencies = (
+			);
+			productName = NotificationService;
+			productReference = 506DCA907D3FF020DBBE7305 /* NotificationService.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		E78B6F680F81C0FE93CC1DBC /* dure-mobile_iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 612EA2E7ED58C45A13A05D09 /* Build configuration list for PBXNativeTarget "dure-mobile_iOS" */;
+			buildPhases = (
+				55D2FAB0A1F421B123DCE608 /* Sources */,
+				00B330F96DC90799BE21F005 /* Resources */,
+				8422F92B1FC04D64C85A01EB /* Frameworks */,
+				FD024F0FD7CEE83FAFB00781 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				48C62AE28D1193870AB351E1 /* PBXTargetDependency */,
+				F066114C869091F43F4560E3 /* PBXTargetDependency */,
 			);
 			name = "dure-mobile_iOS";
 			packageProductDependencies = (
@@ -227,6 +343,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					9F4682EA7C36D4B038E27F9B = {
+						DevelopmentTeam = 8L5WFHS4F9;
+					};
 					E78B6F680F81C0FE93CC1DBC = {
 						DevelopmentTeam = 8L5WFHS4F9;
 					};
@@ -247,6 +366,8 @@
 			projectRoot = "";
 			targets = (
 				E78B6F680F81C0FE93CC1DBC /* dure-mobile_iOS */,
+				9F4682EA7C36D4B038E27F9B /* NotificationService */,
+				ECF63B440B18596775FD84C9 /* RustLibrary */,
 			);
 		};
 /* End PBXProject section */
@@ -297,7 +418,33 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		91AE0CEB85EF1290224783C5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7D9110FC0330CC2484153637 /* NotificationService.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		3A5FB9668919144A937A0913 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = ECF63B440B18596775FD84C9 /* RustLibrary */;
+			targetProxy = 54D3B7D447CE6F7CDCB30747 /* PBXContainerItemProxy */;
+		};
+		48C62AE28D1193870AB351E1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = ECF63B440B18596775FD84C9 /* RustLibrary */;
+			targetProxy = 0153226D2B0679EA104A0D86 /* PBXContainerItemProxy */;
+		};
+		F066114C869091F43F4560E3 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9F4682EA7C36D4B038E27F9B /* NotificationService */;
+			targetProxy = 632AEE17E8DECBDBAE9D7160 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		38D06F027337217F8DE886CE /* debug */ = {
@@ -327,6 +474,77 @@
 				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
 				PRODUCT_BUNDLE_IDENTIFIER = dev.hebbian.ide.mobile;
 				PRODUCT_NAME = "Dure";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				VALID_ARCHS = arm64;
+			};
+			name = debug;
+		};
+		7C0BBF6EBD5E94F49C3260CD /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = (
+					arm64,
+				);
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILT_PRODUCTS_DIR)",
+					"\".\"",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILT_PRODUCTS_DIR)/include",
+				);
+				SDKROOT = iphoneos;
+				VALID_ARCHS = arm64;
+			};
+			name = debug;
+		};
+		957EFE47480D81BEB65D137B /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = (
+					arm64,
+				);
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILT_PRODUCTS_DIR)",
+					"\".\"",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILT_PRODUCTS_DIR)/include",
+				);
+				SDKROOT = iphoneos;
+				VALID_ARCHS = arm64;
+			};
+			name = release;
+		};
+		B0B3185286EEC7CBC6D049A9 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = (
+					arm64,
+				);
+				CODE_SIGN_ENTITLEMENTS = NotificationService/NotificationService.entitlements;
+				DEVELOPMENT_TEAM = 8L5WFHS4F9;
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = NotificationService/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.hebbian.ide.mobile.NotificationService;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = 1;
 				VALID_ARCHS = arm64;
@@ -429,6 +647,35 @@
 			};
 			name = release;
 		};
+		D84A0662D752E374E4AF7E8E /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = (
+					arm64,
+				);
+				CODE_SIGN_ENTITLEMENTS = NotificationService/NotificationService.entitlements;
+				DEVELOPMENT_TEAM = 8L5WFHS4F9;
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = NotificationService/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.hebbian.ide.mobile.NotificationService;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				VALID_ARCHS = arm64;
+			};
+			name = release;
+		};
 		F013BD7D0AB973D259020FAD /* release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -497,11 +744,29 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = debug;
 		};
+		9E93BEDCDB52A8017B7F87B0 /* Build configuration list for PBXAggregateTarget "RustLibrary" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7C0BBF6EBD5E94F49C3260CD /* debug */,
+				957EFE47480D81BEB65D137B /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
 		BC72D0F14DD9D63BBD05A133 /* Build configuration list for PBXProject "dure-mobile" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				B4B044AFB520C46A333B92BC /* debug */,
 				F013BD7D0AB973D259020FAD /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		D886E2DC703D99C94ADE60D6 /* Build configuration list for PBXNativeTarget "NotificationService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B0B3185286EEC7CBC6D049A9 /* debug */,
+				D84A0662D752E374E4AF7E8E /* release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = debug;

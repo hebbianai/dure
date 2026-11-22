@@ -335,6 +335,7 @@ export const en: Record<string, string> = {
   "호스트 제거": "Remove host",
   "보안": "Security",
   "settings.security.approvalBiometric": "Biometric authentication for approvals",
+  "settings.security.alertDetails": "Agent details in notifications",
   "이 기기에서 사용할 수 없음": "Not available on this device",
   "settings.security.enableApprovalBiometricReason":
     "Confirm to require biometric authentication for approvals",

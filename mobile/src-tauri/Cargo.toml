@@ -127,10 +127,12 @@ tauri-plugin-biometric = "2"
 # UIKit clipboard reads are explicit user actions on the main thread.
 # UserNotifications: responses to remote alerts and the notice an answer
 # from one posts when it fails (`push_ios.rs`); completion handlers are blocks.
+# NSFileManager and NSURL: the App Group container the notification service
+# extension shares (`shared_config.rs`).
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6"
 block2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSData", "NSString", "NSError", "NSBundle", "NSDictionary", "NSJSONSerialization"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSData", "NSString", "NSError", "NSBundle", "NSDictionary", "NSFileManager", "NSJSONSerialization", "NSURL"] }
 objc2-ui-kit = { version = "0.3", default-features = false, features = ["UIPasteboard", "UIImage", "UIApplication"] }
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 

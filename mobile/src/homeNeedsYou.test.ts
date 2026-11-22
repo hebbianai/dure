@@ -356,6 +356,7 @@ describe("answering from home", () => {
 		await settle();
 		expect(native.pushAlertActions).toHaveBeenCalledWith({
 			ownerCheck: true,
+			details: true,
 			approve: t("home.needsYou.approve"),
 			deny: t("home.needsYou.deny"),
 			failed: t("notifications.push.answer.failed"),

@@ -2662,6 +2662,7 @@ export function startApp(root: HTMLElement): () => void {
     try {
       await ipc.pushAlertActions({
         ownerCheck: state.settings.approvalBiometric,
+        details: state.settings.alertDetails,
         approve: t("home.needsYou.approve"),
         deny: t("home.needsYou.deny"),
         failed: t("notifications.push.answer.failed"),
@@ -3347,11 +3348,13 @@ export function startApp(root: HTMLElement): () => void {
 
   function updateSettings(next: SettingsPreferences, refocus?: SettingsRefocus): void {
     const changedLanguage = next.language !== state.settings.language;
-    const changedApproval = next.approvalBiometric !== state.settings.approvalBiometric;
+    const changedAlerts =
+      next.approvalBiometric !== state.settings.approvalBiometric ||
+      next.alertDetails !== state.settings.alertDetails;
     saveSettingsPreferences(next);
     setState({ settings: next });
     if (changedLanguage) syncPush();
-    if (changedLanguage || changedApproval) void syncAlertActions();
+    if (changedLanguage || changedAlerts) void syncAlertActions();
     refocusSettings(refocus);
   }
 
@@ -3618,6 +3621,13 @@ export function startApp(root: HTMLElement): () => void {
           keyTapFeedback(haptics);
         },
         toggleApprovalBiometric: () => void toggleApprovalBiometric(),
+        // A plain tap, unlike the Face ID gate: whoever can flip it already
+        // holds the open app, which shows the same agents and requests.
+        toggleAlertDetails: () =>
+          updateSettings(
+            { ...state.settings, alertDetails: !state.settings.alertDetails },
+            rowRefocus("alert-details"),
+          ),
       },
     );
   }

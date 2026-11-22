@@ -167,8 +167,13 @@ pub struct PushAlertContext {
     /// The agent a tap on the alert opens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<PushId>,
+    /// What happened, which the alert's text already says in general terms:
+    /// it tells the phone what to read about the agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<PushKind>,
     /// The computer that raised the alert, as the phone's paired entry names
-    /// it ([`crate::fingerprint::of_der`]). Sent with an approval only.
+    /// it ([`crate::fingerprint::of_der`]). Sent with every alert that names
+    /// an agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hub: Option<String>,
     /// The approval Allow once and Deny answer.
@@ -194,12 +199,20 @@ impl PushAlertContext {
         let mut field = |name: &str| context.remove(name).unwrap_or_default();
         Self {
             session: serde_json::from_value(field("session")).ok(),
+            kind: serde_json::from_value(field("kind")).ok(),
             hub: serde_json::from_value::<String>(field("hub"))
                 .ok()
                 .filter(|hub| crate::fingerprint::is_fingerprint(hub)),
             approval: serde_json::from_value(field("approval")).ok(),
             reply: serde_json::from_value(field("reply")).ok(),
         }
+    }
+
+    /// What the phone reads to say who and what this alert is about: the
+    /// computer to ask, the agent and what happened. None for an alert from
+    /// an older relay, which keeps its generic text.
+    pub fn subject(&self) -> Option<(&str, &PushId, PushKind)> {
+        Some((self.hub.as_deref()?, self.session.as_ref()?, self.kind?))
     }
 
     /// What a reply from this alert needs: the computer to ask, the agent
@@ -297,6 +310,32 @@ mod tests {
                 PushAlertContext::from_payload(unusable),
                 PushAlertContext::default()
             );
+        }
+    }
+
+    #[test]
+    fn an_alert_names_its_subject_only_with_its_computer_agent_and_kind() {
+        let hub = crate::fingerprint::of_der(b"hub certificate");
+        let context = |dure: &str| {
+            PushAlertContext::from_payload(format!(r#"{{"aps":{{}},"dure":{dure}}}"#).as_bytes())
+        };
+        let done = context(&format!(
+            r#"{{"session":"managed_1","kind":"done","hub":"{hub}"}}"#
+        ));
+        let (computer, session, kind) = done.subject().unwrap();
+        assert_eq!(
+            (computer, session.as_str(), kind),
+            (hub.as_str(), "managed_1", PushKind::Done)
+        );
+        // An older relay names no kind or computer; an unknown kind is absent.
+        for unusable in [
+            r#"{"session":"managed_1"}"#.to_string(),
+            format!(r#"{{"session":"managed_1","hub":"{hub}"}}"#),
+            format!(r#"{{"session":"managed_1","kind":"later","hub":"{hub}"}}"#),
+            format!(r#"{{"kind":"approval","hub":"{hub}"}}"#),
+        ] {
+            let context = context(&unusable);
+            assert!(context.subject().is_none(), "{unusable}");
         }
     }
 
