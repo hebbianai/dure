@@ -32,7 +32,7 @@ impl AgentRuntimeTransitionStore for SqliteDomainStore {
         selection: &'a dure_app::AgentRuntimeSelectionV1,
     ) -> DomainStoreFuture<'a, dure_app::AgentRuntimeSelectionV1> {
         Box::pin(agent_runtime_transition::initialize_selection(
-            &self.pool, selection,
+            self, selection,
         ))
     }
 

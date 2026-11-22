@@ -105,8 +105,9 @@ impl SqliteDomainStore {
     /// Open the write transaction for `operation`, retrying only a `Busy`
     /// start on the store's schedule (see `retry_busy_start`). Nothing inside
     /// the transaction runs again, so a `FnOnce` reservation still executes at
-    /// most once.
-    async fn begin_immediate_with_retry(
+    /// most once. The Agent binding and runtime selection a launch publishes
+    /// once its provider runs start the same way.
+    pub(crate) async fn begin_immediate_with_retry(
         &self,
         operation: &'static str,
     ) -> Result<Transaction<'static, Sqlite>, DomainStoreErrorV1> {
@@ -272,7 +273,7 @@ impl SqliteDomainStore {
 /// returned. Dropping a sqlx transaction only queues the `ROLLBACK` on the
 /// connection's worker thread, so a caller acting on the error could still
 /// find the write lock held and see `Busy` instead of the decided outcome.
-async fn commit_or_rollback<T, E>(
+pub(crate) async fn commit_or_rollback<T, E>(
     transaction: Transaction<'static, Sqlite>,
     operation: &'static str,
     result: Result<T, E>,

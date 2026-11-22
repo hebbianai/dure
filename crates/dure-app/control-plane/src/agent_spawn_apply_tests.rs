@@ -1852,6 +1852,135 @@ async fn runtime_launch_failure_is_journaled_before_client_retry() {
     );
 }
 
+/// The Host started the provider with the prompt, then the Agent binding could
+/// not be recorded. The receipt names the running session and the store's
+/// cause, and a retry with the same request binds that session through its
+/// launch key instead of leaving it orphaned.
+#[tokio::test]
+async fn a_binding_lost_after_launch_names_the_running_session_and_binds_it_on_retry() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+        .await
+        .unwrap();
+    let planned = planned_prompt_spawn(&store).await;
+    let session_id = native_launch(&planned.plan).unwrap().0.to_owned();
+    let body = apply_body(&planned, "private prompt");
+    let launcher = RecordingLauncher::default();
+    let prompt_calls = Arc::new(AtomicUsize::new(0));
+    let prompt_deliverer = FixturePromptDeliverer {
+        calls: Arc::clone(&prompt_calls),
+        uncertain: false,
+    };
+    let prompt_activity = FixturePromptActivityObserver::observed();
+    let launch_argument = || {
+        execution_with_prompt_target(
+            &launcher,
+            &prompt_deliverer,
+            &FIXTURE_PROVIDER_STATE_PREPARER,
+            &prompt_activity,
+            dure_app::AgentProviderPromptTargetV1::LaunchArgument,
+        )
+    };
+    let fault_pool = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new().filename(store.database_path()),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER fail_spawn_binding BEFORE INSERT ON session_bindings \
+         BEGIN SELECT RAISE(ABORT, 'fault-injected binding publication'); END",
+    )
+    .execute(&fault_pool)
+    .await
+    .unwrap();
+
+    let unbound = apply(
+        &store,
+        authorize(&store, "dure-local", &body).await.unwrap(),
+        &body,
+        Some(launch_argument()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(unbound.state, AgentSpawnJournalStateV1::RetryRequired);
+    let AgentSpawnRecoveryDirectiveV1::RetryRequired {
+        stage: AgentSpawnStageV1::RuntimeLaunch,
+        ref error_code,
+        error_detail: Some(ref detail),
+        ..
+    } = unbound.recovery
+    else {
+        panic!(
+            "expected a runtime launch retry, got {:?}",
+            unbound.recovery
+        );
+    };
+    assert_eq!(error_code, "agent_spawn_native_binding_failed");
+    assert!(detail.contains(&session_id), "{detail}");
+    assert!(
+        detail.contains("fault-injected binding publication"),
+        "{detail}"
+    );
+    assert!(!detail.contains("private prompt"), "{detail}");
+    assert_eq!(
+        store
+            .agent_checkpoint_binding_authority(&planned.plan.agent_id)
+            .await
+            .unwrap(),
+        None
+    );
+
+    sqlx::query("DROP TRIGGER fail_spawn_binding")
+        .execute(&fault_pool)
+        .await
+        .unwrap();
+    fault_pool.close().await;
+    let mut retry = body.clone();
+    retry.expected_last_sequence = unbound.last_sequence;
+    let bound = apply(
+        &store,
+        authorize(&store, "dure-local", &retry).await.unwrap(),
+        &retry,
+        Some(launch_argument()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(bound.state, AgentSpawnJournalStateV1::Succeeded);
+    let (session, launch_idempotency_key) = bound
+        .completed
+        .iter()
+        .find_map(|stage| match &stage.evidence {
+            AgentSpawnStageEvidenceV1::RuntimeLaunch {
+                session,
+                launch_idempotency_key,
+                initial_prompt_accepted: true,
+                ..
+            } => Some((session, launch_idempotency_key.as_deref())),
+            _ => None,
+        })
+        .unwrap();
+    // The retry asks the Host for the same launch, which reconciles the
+    // running session rather than starting another provider.
+    assert_eq!(session.session_id, session_id);
+    assert_eq!(
+        launch_idempotency_key,
+        Some(format!("spawn-runtime:{}", planned.operation_id.as_str()).as_str())
+    );
+    assert_eq!(
+        store
+            .agent_checkpoint_binding_authority(&bound.plan.agent_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .binding
+            .session_id,
+        session_id
+    );
+    assert_eq!(prompt_calls.load(Ordering::SeqCst), 0);
+}
+
 #[tokio::test]
 async fn concurrent_apply_uses_the_journal_fence_and_crosses_each_boundary_once() {
     let root = tempfile::tempdir().unwrap();

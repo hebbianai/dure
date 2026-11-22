@@ -775,7 +775,7 @@ impl DomainStore for SqliteDomainStore {
         &'a self,
         record: &'a AgentCheckpointBindingAuthorityV1,
     ) -> DomainStoreFuture<'a, ()> {
-        Box::pin(checkpoint_bindings::upsert(&self.pool, record))
+        Box::pin(checkpoint_bindings::upsert(self, record))
     }
 
     fn agent_checkpoint_binding_authority<'a>(
