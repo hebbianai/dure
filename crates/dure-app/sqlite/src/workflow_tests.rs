@@ -2,6 +2,7 @@ use std::time::Duration;
 
 mod busy_writes;
 mod deadlines;
+mod history_writes;
 mod launch_tests;
 
 use agent_orchestration::contract::{

@@ -7,6 +7,9 @@ mod interaction_progress;
 #[path = "interaction_vertical_slice/event_inspection.rs"]
 mod event_inspection;
 
+#[path = "interaction_vertical_slice/store_validation.rs"]
+mod store_validation;
+
 use agent_orchestration::contract::{
     AnswerDecisionRequest, CompleteDispatchRequest, CreateRunRequest, DeliveryWakeState,
     DeliveryWakeTransition, DispatchContextReceipt, EventAcknowledgement, GetInteractionRequest,
