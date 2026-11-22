@@ -15,6 +15,11 @@ import { IconButton } from "@/components/ui/icon-button";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
 import type { ToolbarControlReveal } from "@/components/ui/toolbar-control";
 import { usePaneActions } from "@/components/workspace/usePaneActions";
+import {
+	type AgentLaunchSelectionSurface,
+	agentLaunchSelectionCommandRunner,
+	agentLaunchSelectionPresentation,
+} from "@/lib/agents/agentLaunchSelectionSurface";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
 import { agentRuntimeSettingActions } from "@/lib/agents/agentRuntimeSettingActions";
 import type { ProviderCatalogSource } from "@/lib/agents/providerModelCatalogSource";
@@ -93,26 +98,75 @@ function SelectionPill({
 	);
 }
 
-/** One provider-neutral launch-selection surface shared by Chat and Terminal.
- * Selection callbacks derive their complete target from the controller's
+interface AgentLaunchSelectionOwnerOptions {
+	provider: Provider;
+	/** The launch selection this surface owns; none offers no pills. */
+	launch: AgentRuntimeLaunchSelectionView | undefined;
+	observedModel?: string | null;
+	catalog?: readonly ObservedProviderModelV1[] | null;
+	catalogSource?: ProviderCatalogSource;
+	busy: boolean;
+}
+
+/** The launch pills of the surface that owns an Agent's launch selection.
+ * Its menus and its `settings.*` pane actions are composed from one provider
+ * catalog, and selections derive their complete target from the controller's
  * action-time source snapshot, never from an unloaded pane projection. */
-export function AgentLaunchSelectionControls({
+export function useAgentLaunchSelectionOwner({
 	provider,
 	launch,
 	observedModel = null,
 	catalog = null,
 	catalogSource,
 	busy,
+}: AgentLaunchSelectionOwnerOptions): AgentLaunchSelectionSurface | undefined {
+	const discovered = useProviderCatalog(catalogSource);
+	const models = discovered.models ?? (discovered.error ? [] : (catalog ?? []));
+	const settings = launch
+		? agentRuntimeSettingActions({
+				provider,
+				launch,
+				models,
+				observedModel,
+				busy,
+				refreshCatalog: catalogSource ? discovered.refresh : undefined,
+			})
+		: undefined;
+	usePaneActions(
+		launch?.ownerKey,
+		launch?.paneId && settings
+			? { paneId: launch.paneId, actions: settings.actions }
+			: undefined,
+	);
+	if (!launch || !settings) return undefined;
+	return {
+		presentation: agentLaunchSelectionPresentation({
+			launch,
+			settings,
+			observedModel,
+			catalog: {
+				offered: catalogSource !== undefined,
+				status: discovered.loading
+					? "loading"
+					: discovered.error
+						? "failed"
+						: "idle",
+			},
+		}),
+		run: agentLaunchSelectionCommandRunner(settings, launch),
+	};
+}
+
+/** One provider-neutral launch-selection surface shared by Chat and Terminal,
+ * for the surface that owns the launch selection. */
+export function AgentLaunchSelectionControls({
+	busy,
 	className,
 	presentation,
-	modelPickerRequest = 0,
-}: {
-	provider: Provider;
+	modelPickerRequest,
+	...owner
+}: Omit<AgentLaunchSelectionOwnerOptions, "launch"> & {
 	launch: AgentRuntimeLaunchSelectionView;
-	observedModel?: string | null;
-	catalog?: readonly ObservedProviderModelV1[] | null;
-	catalogSource?: ProviderCatalogSource;
-	busy: boolean;
 	className?: string;
 	/** Interface-mode / hidden-control gating resolved by the caller through
 	 * useAgentLaunchControlsPresentation — this component stays store-free. */
@@ -120,26 +174,57 @@ export function AgentLaunchSelectionControls({
 	/** Each increment opens the model menu, as `/model` in the composer asks. */
 	modelPickerRequest?: number;
 }): ReactElement | null {
-	const discovered = useProviderCatalog(catalogSource);
+	const surface = useAgentLaunchSelectionOwner({ ...owner, busy });
+	if (!surface) return null;
+	return (
+		<AgentLaunchSelectionSurfaceControls
+			surface={surface}
+			busy={busy}
+			className={className}
+			presentation={presentation}
+			modelPickerRequest={modelPickerRequest}
+		/>
+	);
+}
+
+/** Renders launch pills from a surface's presentation, wherever its commands
+ * run: in this window for the owner, or in the source pane's window for an
+ * Agent's large window. */
+export function AgentLaunchSelectionSurfaceControls({
+	surface: { presentation: launch, run },
+	busy,
+	className,
+	presentation,
+	modelPickerRequest = 0,
+}: {
+	surface: AgentLaunchSelectionSurface;
+	busy: boolean;
+	className?: string;
+	presentation?: AgentLaunchControlsPresentation;
+	modelPickerRequest?: number;
+}): ReactElement {
 	const [modelMenuOpen, setModelMenuOpen] = useState(false);
 	const handledModelPickerRequest = useRef(modelPickerRequest);
-	const openCatalog = useRef(discovered.onOpenChange);
-	openCatalog.current = discovered.onOpenChange;
+	const runRef = useRef(run);
+	runRef.current = run;
 	useEffect(() => {
 		if (modelPickerRequest === handledModelPickerRequest.current) return;
 		handledModelPickerRequest.current = modelPickerRequest;
 		setModelMenuOpen(true);
-		openCatalog.current(true);
+		void runRef.current({ kind: "load_catalog" });
 	}, [modelPickerRequest]);
 	useEffect(() => {
 		if (busy) setModelMenuOpen(false);
 	}, [busy]);
-	const models = discovered.models ?? (discovered.error ? [] : (catalog ?? []));
-	const catalogStatus = discovered.loading
-		? t("common.loading")
-		: discovered.error
-			? t("agents.catalog.loadFailed")
-			: undefined;
+	const loadCatalogOnOpen = (open: boolean) => {
+		if (open) void run({ kind: "load_catalog" });
+	};
+	const catalogStatus =
+		launch.catalog.status === "loading"
+			? t("common.loading")
+			: launch.catalog.status === "failed"
+				? t("agents.catalog.loadFailed")
+				: undefined;
 	const pill = (
 		id: "launch-model" | "launch-effort" | "launch-permissions",
 		node: ReactElement,
@@ -149,19 +234,8 @@ export function AgentLaunchSelectionControls({
 			: presentation.hidden.has(id)
 				? null
 				: presentation.slot(id, node);
-	const { actions, modelOptions, permissionOptions, effortOptions } =
-		agentRuntimeSettingActions({
-			provider,
-			launch,
-			models,
-			observedModel,
-			busy,
-			refreshCatalog: catalogSource ? discovered.refresh : undefined,
-		});
-	usePaneActions(
-		launch.ownerKey,
-		launch.paneId ? { paneId: launch.paneId, actions } : undefined,
-	);
+	const { modelOptions, effortOptions, permissionOptions, observedModel } =
+		launch;
 	const selectableModelOptions = [
 		{ value: null, label: t("agents.quickDispatch.autoModel") },
 		...modelOptions,
@@ -192,7 +266,7 @@ export function AgentLaunchSelectionControls({
 						size="xs"
 						variant="ghost"
 						disabled={busy}
-						onClick={launch.retryHydration}
+						onClick={() => void run({ kind: "retry_hydration" })}
 					>
 						{t("common.retry")}
 					</Button>
@@ -207,7 +281,7 @@ export function AgentLaunchSelectionControls({
 						title={t("common.close")}
 						showTooltip={false}
 						className="size-5 shrink-0 text-destructive/70 hover:text-destructive"
-						onClick={launch.dismissError}
+						onClick={() => void run({ kind: "dismiss_error" })}
 					>
 						<X aria-hidden="true" />
 					</IconButton>
@@ -240,7 +314,7 @@ export function AgentLaunchSelectionControls({
 						<DropdownMenuItem
 							disabled={busy}
 							onSelect={() => {
-								void actions["settings.applyPending"]();
+								void run({ kind: "apply_pending" });
 							}}
 						>
 							{t("agents.runtime.applySettingsNow")}
@@ -248,7 +322,7 @@ export function AgentLaunchSelectionControls({
 						<DropdownMenuItem
 							disabled={busy}
 							onSelect={() => {
-								void actions["settings.cancelPending"]();
+								void run({ kind: "cancel_pending" });
 							}}
 						>
 							{t("agents.runtime.cancelPendingSettings")}
@@ -257,7 +331,7 @@ export function AgentLaunchSelectionControls({
 				</DropdownMenu>
 			)}
 			{(modelOptions.length > 0 ||
-				catalogSource !== undefined ||
+				launch.catalog.offered ||
 				selection.model !== null ||
 				observedModel !== null) &&
 				pill(
@@ -285,7 +359,7 @@ export function AgentLaunchSelectionControls({
 						open={modelMenuOpen}
 						onOpenChange={(open) => {
 							setModelMenuOpen(open);
-							discovered.onOpenChange(open);
+							loadCatalogOnOpen(open);
 						}}
 						status={
 							launch.pending
@@ -294,13 +368,13 @@ export function AgentLaunchSelectionControls({
 						}
 						disabled={busy}
 						onSelect={(value) => {
-							void actions["settings.model"]({ value });
+							void run({ kind: "select", field: "model", value });
 						}}
 					/>,
 				)}
 			{(effortOptions.length > 0 ||
 				selection.effort !== null ||
-				catalogSource !== undefined) &&
+				launch.catalog.offered) &&
 				pill(
 					"launch-effort",
 					<SelectionPill
@@ -316,7 +390,7 @@ export function AgentLaunchSelectionControls({
 						}
 						checkedValue={selection.loaded ? selection.effort : null}
 						options={selectableEffortOptions}
-						onOpenChange={discovered.onOpenChange}
+						onOpenChange={loadCatalogOnOpen}
 						status={
 							launch.pending
 								? t("agents.runtime.settingsPending")
@@ -324,7 +398,7 @@ export function AgentLaunchSelectionControls({
 						}
 						disabled={busy}
 						onSelect={(value) => {
-							void actions["settings.effort"]({ value });
+							void run({ kind: "select", field: "effort", value });
 						}}
 					/>,
 				)}
@@ -351,7 +425,7 @@ export function AgentLaunchSelectionControls({
 					}
 					disabled={busy || permissionOptions.length === 0}
 					onSelect={(value) => {
-						void actions["settings.permission"]({ value });
+						void run({ kind: "select", field: "permissionMode", value });
 					}}
 				/>,
 			)}

@@ -56,12 +56,11 @@ export interface AgentToolbarControlDescriptorV1 {
 	readonly largeWindow: AgentToolbarLargeWindowRule;
 }
 
-// Not yet routed through the bridge; each is a follow-up slice of #624, and
-// the control runs only where the source pane's own runtime state lives.
-const LAUNCH_SELECTION_NOT_ROUTED: AgentToolbarLargeWindowRule = {
-	offered: false,
-	reason:
-		"The committed launch selection is runtime state of the source window and its changes have no bridge command yet.",
+// The source pane owns the launch selection: the large window renders the
+// presentation the pane publishes and runs each pill command in its window.
+const LAUNCH_SELECTION_FROM_SOURCE_PANE: AgentToolbarLargeWindowRule = {
+	offered: true,
+	runs: "source_pane",
 };
 
 export const AGENT_TOOLBAR_CONTROLS: readonly AgentToolbarControlDescriptorV1[] =
@@ -114,19 +113,19 @@ export const AGENT_TOOLBAR_CONTROLS: readonly AgentToolbarControlDescriptorV1[] 
 			id: "launch-model",
 			tier: "pro",
 			labelKey: "agents.chat.modelLabel",
-			largeWindow: LAUNCH_SELECTION_NOT_ROUTED,
+			largeWindow: LAUNCH_SELECTION_FROM_SOURCE_PANE,
 		},
 		{
 			id: "launch-effort",
 			tier: "pro",
 			labelKey: "agents.chat.effortLabel",
-			largeWindow: LAUNCH_SELECTION_NOT_ROUTED,
+			largeWindow: LAUNCH_SELECTION_FROM_SOURCE_PANE,
 		},
 		{
 			id: "launch-permissions",
 			tier: "pro",
 			labelKey: "agents.chat.permissionLabel",
-			largeWindow: LAUNCH_SELECTION_NOT_ROUTED,
+			largeWindow: LAUNCH_SELECTION_FROM_SOURCE_PANE,
 		},
 	];
 

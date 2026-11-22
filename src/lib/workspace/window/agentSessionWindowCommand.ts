@@ -33,6 +33,14 @@ import { t } from "@/lib/i18n";
 import { isRecord } from "@/lib/payloadGuards";
 import { listenWhenReady } from "@/lib/platform/tauriBridge";
 import {
+	type AgentSessionLaunchSelectionCommand,
+	type AgentSessionLaunchSelectionMirror,
+	type AgentSessionLaunchSelectionResult,
+	agentSessionLaunchSelectionMirror,
+	agentSessionLaunchSelectionStep,
+	agentSessionLaunchSelectionStepValid,
+} from "./agentSessionWindowLaunchSelection";
+import {
 	type AgentSessionProjectMoveCommand,
 	type AgentSessionProjectMoveResult,
 	agentSessionProjectMovePort,
@@ -103,6 +111,7 @@ type AgentSessionWindowCommand =
 	| AgentSessionForkPresentationCommand
 	| AgentSessionViewCommand
 	| AgentSessionProjectMoveCommand
+	| AgentSessionLaunchSelectionCommand
 	| AgentSessionDraftAppendCommand;
 
 export type AgentSessionCredentialCommandResult =
@@ -127,16 +136,20 @@ export type AgentSessionWindowCommandResult =
 	| AgentSessionForkPresentationResult
 	| AgentSessionViewCommandResult
 	| AgentSessionProjectMoveResult
+	| AgentSessionLaunchSelectionResult
 	| { kind: "drafted" }
 	| AgentChatDraftMoveReceipt
 	| AgentChatPaneMoveResult;
 
+/** A command addressed to the window that owns an Agent's source pane. */
+type SourcePaneRequest<Command> = Command & {
+	agentId: string;
+	sourceWindowLabel: string;
+	sourcePaneOwnerId: string;
+};
+
 export type AgentSessionCredentialCommandRequest =
-	AgentSessionCredentialCommand & {
-		agentId: string;
-		sourceWindowLabel: string;
-		sourcePaneOwnerId: string;
-	};
+	SourcePaneRequest<AgentSessionCredentialCommand>;
 
 export type AgentSessionForkPresentationRequest = {
 	agentId: string;
@@ -145,17 +158,8 @@ export type AgentSessionForkPresentationRequest = {
 	sourcePaneOwnerId: string;
 };
 
-type AgentSessionViewCommandRequest = AgentSessionViewCommand & {
-	agentId: string;
-	sourceWindowLabel: string;
-	sourcePaneOwnerId: string;
-};
-
-type AgentSessionProjectMoveCommandRequest = AgentSessionProjectMoveCommand & {
-	agentId: string;
-	sourceWindowLabel: string;
-	sourcePaneOwnerId: string;
-};
+type AgentSessionViewCommandRequest =
+	SourcePaneRequest<AgentSessionViewCommand>;
 
 type CommandPayload = AgentSessionWindowCommand & {
 	generation: string;
@@ -329,6 +333,11 @@ function parseCommand(value: unknown): CommandPayload | undefined {
 			? (payload as unknown as CommandPayload)
 			: undefined;
 	}
+	if (payload.action === "launch_selection") {
+		return agentSessionLaunchSelectionStepValid(payload)
+			? (payload as unknown as CommandPayload)
+			: undefined;
+	}
 	if (payload.action === "switch") {
 		if (
 			payload.targetCredentialId !== null &&
@@ -412,19 +421,16 @@ function requestAgentSessionWindowCommand(
 		| (AgentSessionForkPresentationRequest & {
 				action: "present_fork";
 		  })
-		| AgentSessionViewCommandRequest
-		| AgentSessionProjectMoveCommandRequest
-		| ((
+		| SourcePaneRequest<
+				| AgentSessionViewCommand
+				| AgentSessionProjectMoveCommand
+				| AgentSessionLaunchSelectionCommand
 				| AgentSessionDraftAppendCommand
 				| AgentSessionDraftMoveCommand
 				| AgentSessionPaneMoveCommand
 				| AgentSessionPaneDropCommand
 				| AgentSessionDraftRecoveryCommand
-		  ) & {
-				agentId: string;
-				sourceWindowLabel: string;
-				sourcePaneOwnerId: string;
-		  }),
+		  >,
 	transport: AgentSessionWindowCommandBackend,
 	now: () => number = Date.now,
 ): Promise<AgentSessionWindowCommandResult> {
@@ -593,6 +599,27 @@ export function agentSessionWindowProjectMovePort(
 	);
 }
 
+/** A large window's launch pills: the source pane's presentation, followed
+ * as it changes, and every pill command run in the window that owns the
+ * source pane. Undefined while the window does not know its source pane. */
+export function agentSessionWindowLaunchSelection(
+	route: AgentSessionWindowRoute,
+	transport: AgentSessionWindowCommandBackend = backend,
+): AgentSessionLaunchSelectionMirror | undefined {
+	const source = route.sourcePaneOwnerId
+		? parseLargeViewSourcePaneOwnerId(route.sourcePaneOwnerId)
+		: undefined;
+	if (!source) return undefined;
+	return agentSessionLaunchSelectionMirror(
+		{ sourceWindowLabel: route.sourceWindowLabel, paneId: source.panelId },
+		(command) =>
+			requestAgentSessionWindowCommand(
+				{ ...command, ...sourcePaneRoute(route) },
+				transport,
+			),
+	);
+}
+
 export async function requestAgentSessionDraftAppend(
 	request: AgentSessionDraftAppendRequest,
 	transport: AgentSessionWindowCommandBackend = backend,
@@ -732,47 +759,18 @@ export async function requestAgentSessionDraftRecovery(
 	return result;
 }
 
-export type AgentSessionWindowCommandExecution =
-	| (AgentSessionDraftRecoveryCommand & {
-			agentId: string;
-			desktopId: string;
-			panelId: string;
+/** Every command, as executed against the exact source pane it names. */
+export type AgentSessionWindowCommandExecution = {
+	agentId: string;
+	desktopId: string;
+	panelId: string;
+} & (
+	| Exclude<AgentSessionWindowCommand, AgentSessionLaunchSelectionCommand>
+	| (AgentSessionLaunchSelectionCommand & {
+			/** The window that sent the step; a `watch` names it as the watcher. */
+			replyWindowLabel: string;
 	  })
-	| ((AgentSessionPaneMoveCommand | AgentSessionPaneDropCommand) & {
-			agentId: string;
-			desktopId: string;
-			panelId: string;
-	  })
-	| (AgentSessionDraftMoveCommand & {
-			agentId: string;
-			desktopId: string;
-			panelId: string;
-	  })
-	| (AgentSessionCredentialCommand & {
-			agentId: string;
-			desktopId: string;
-			panelId: string;
-	  })
-	| (AgentSessionForkPresentationCommand & {
-			agentId: string;
-			desktopId: string;
-			panelId: string;
-	  })
-	| (AgentSessionViewCommand & {
-			agentId: string;
-			desktopId: string;
-			panelId: string;
-	  })
-	| (AgentSessionProjectMoveCommand & {
-			agentId: string;
-			desktopId: string;
-			panelId: string;
-	  })
-	| (AgentSessionDraftAppendCommand & {
-			agentId: string;
-			desktopId: string;
-			panelId: string;
-	  });
+);
 
 /** The source window's copy of a parsed command: the sender's routing fields
  * are replaced by the exact desktop and panel its source pane names. */
@@ -812,6 +810,12 @@ function commandExecution(
 			return { action: "chat_handover", ...target, step: payload.step };
 		case "project_move":
 			return { ...target, ...agentSessionProjectMoveStep(payload) };
+		case "launch_selection":
+			return {
+				...target,
+				...agentSessionLaunchSelectionStep(payload),
+				replyWindowLabel: payload.replyWindowLabel,
+			};
 		case "switch":
 			return {
 				action: "switch",

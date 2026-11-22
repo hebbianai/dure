@@ -32,6 +32,7 @@ import {
 	type AgentSessionWindowCommandRuntime,
 	executeAgentSessionWindowCommand,
 } from "./agentSessionWindowCommandRuntime";
+import { publishAgentSessionLaunchSelection } from "./agentSessionWindowLaunchSelection";
 
 const forkedAgent = agentFixture({
 	id: "agent-fork",
@@ -303,6 +304,101 @@ describe("Agent session window command runtime", () => {
 				),
 			).rejects.toThrow("project move command source Agent mismatch");
 			expect(projectMove.prepareAgentProjectMove).not.toHaveBeenCalled();
+		});
+	});
+	describe("a large window's launch pills", () => {
+		const source = {
+			action: "launch_selection" as const,
+			agentId: "agent-source",
+			desktopId: "desktop-source",
+			panelId: "agent:agent-source",
+			replyWindowLabel: "win-large-view",
+		};
+		function publishSourcePane() {
+			const run = vi.fn(async () => {});
+			const publication = publishAgentSessionLaunchSelection(
+				source.panelId,
+				{
+					presentation: {
+						loaded: true,
+						hydrationError: false,
+						model: "gpt-5.5",
+						effort: null,
+						permissionMode: "default",
+						switching: false,
+						error: null,
+						observedModel: null,
+						catalog: { offered: false, status: "idle" },
+						modelOptions: [],
+						effortOptions: [],
+						permissionOptions: [],
+					},
+					run,
+				},
+				{
+					currentWindowLabel: () => "win-workspace",
+					emitPresentation: vi.fn(async () => {}),
+					listenPresentation: vi.fn(async () => () => {}),
+				},
+			);
+			return { run, publication };
+		}
+
+		it("runs a pill command on the launch pills the source pane publishes", async () => {
+			const { runtime } = presentationRuntime();
+			const { run, publication } = publishSourcePane();
+			try {
+				await expect(
+					executeAgentSessionWindowCommand(
+						{ ...source, step: "watch" },
+						runtime,
+					),
+				).resolves.toMatchObject({
+					kind: "launch_selection_watched",
+					presentation: { model: "gpt-5.5" },
+				});
+				await expect(
+					executeAgentSessionWindowCommand(
+						{ ...source, step: "run", command: { kind: "apply_pending" } },
+						runtime,
+					),
+				).resolves.toEqual({ kind: "launch_selection_ran" });
+				expect(run).toHaveBeenCalledWith({ kind: "apply_pending" });
+			} finally {
+				publication.dispose();
+				await executeAgentSessionWindowCommand(
+					{ ...source, step: "unwatch" },
+					runtime,
+				);
+			}
+		});
+
+		it("refuses a pill command when the source pane now holds another Agent", async () => {
+			const { runtime } = presentationRuntime();
+			const { run, publication } = publishSourcePane();
+			try {
+				await expect(
+					executeAgentSessionWindowCommand(
+						{
+							...source,
+							agentId: "agent-moved-away",
+							step: "run",
+							command: { kind: "cancel_pending" },
+						},
+						runtime,
+					),
+				).rejects.toThrow("launch selection command source Agent mismatch");
+				expect(run).not.toHaveBeenCalled();
+				// Unwatching only forgets the large window, whatever the pane holds.
+				await expect(
+					executeAgentSessionWindowCommand(
+						{ ...source, agentId: "agent-moved-away", step: "unwatch" },
+						runtime,
+					),
+				).resolves.toEqual({ kind: "launch_selection_unwatched" });
+			} finally {
+				publication.dispose();
+			}
 		});
 	});
 });

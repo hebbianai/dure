@@ -3,7 +3,7 @@ import { AccountsDialog } from "@/components/agents/AccountsDialog";
 import type { AgentForkPresenter } from "@/components/agents/AgentContextMenu";
 import { AgentConversationHistoryControl } from "@/components/agents/AgentConversationHistoryControl";
 import { AgentCredentialSwitcher } from "@/components/agents/AgentCredentialSwitcher";
-import { AgentLaunchSelectionControls } from "@/components/agents/AgentLaunchSelectionControls";
+import { AgentLaunchSelectionSurfaceControls } from "@/components/agents/AgentLaunchSelectionControls";
 import { AgentProjectMove } from "@/components/agents/AgentProjectMove";
 import { AgentViewControl } from "@/components/agents/AgentViewControl";
 import {
@@ -17,9 +17,9 @@ import { AgentPanelToolbarFrame } from "@/components/panels/AgentPanelToolbarFra
 import { AgentPanelWindowActions } from "@/components/panels/AgentPanelWindowActions";
 import { useNativeAgentToolbarState } from "@/components/panels/useAgentPanelState";
 import { agentCredentialReferenceId } from "@/lib/agents/agentLaunchCredential";
+import type { AgentLaunchSelectionSurface } from "@/lib/agents/agentLaunchSelectionSurface";
 import type { AgentProjectMovePort } from "@/lib/agents/agentProjectMoveTypes";
 import { evaluateAgentProviderMutation } from "@/lib/agents/agentProviderMutationPolicy";
-import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
 import { agentRuntimePresentationOwnerKey } from "@/lib/agents/agentRuntimePresentationOwner";
 import type { NativeAgentViewPort } from "@/lib/agents/chatHandover";
 import {
@@ -31,7 +31,6 @@ import {
 	managedCredentialSwitchIdentityBlock,
 } from "@/lib/agents/freshCredentialSwitch";
 import { nativeConversationViewAvailability } from "@/lib/agents/nativeConversationView";
-import { agentProviderCatalogSource } from "@/lib/agents/providerModelCatalogSource";
 import {
 	supportsAccounts,
 	supportsStructuredChat,
@@ -83,8 +82,10 @@ export interface NativeAgentToolbarRuntime {
 	readonly account: NativeAgentToolbarAccountRuntime;
 	readonly view: NativeAgentViewPort;
 	readonly projectMove: AgentProjectMovePort;
-	/** Pane-only until AGENT_TOOLBAR_CONTROLS offers them on the large window. */
-	readonly launchSelection?: AgentRuntimeLaunchSelectionView;
+	/** The launch pills: the pane's own, or its source pane's in a large
+	 * window. Absent while there is nothing to present. */
+	readonly launchSelection?: AgentLaunchSelectionSurface;
+	/** Pane-only until AGENT_TOOLBAR_CONTROLS offers it on the large window. */
 	readonly history?: Omit<
 		ComponentProps<typeof AgentConversationHistoryControl>,
 		"agent" | "binding"
@@ -121,7 +122,7 @@ function NativeAgentToolbarControls({
 		useNativeAgentToolbarState(agent);
 	const toolbarControls = useAgentToolbarControls();
 	const launchControlsPresentation = useAgentLaunchControlsPresentation(
-		runtime.launchSelection,
+		runtime.launchSelection?.presentation,
 	);
 	const windowActionsPresentation = useAgentToolbarGroupPresentation(
 		WINDOW_ACTION_CONTROL_IDS,
@@ -315,10 +316,8 @@ function NativeAgentToolbarControls({
 						/>,
 					)}
 				{backendManaged && runtime.launchSelection && (
-					<AgentLaunchSelectionControls
-						provider={agent.provider}
-						launch={runtime.launchSelection}
-						catalogSource={agentProviderCatalogSource(agent, project, accounts)}
+					<AgentLaunchSelectionSurfaceControls
+						surface={runtime.launchSelection}
 						busy={transitioning || !!agent.pendingCredentialSwitch}
 						presentation={launchControlsPresentation}
 					/>

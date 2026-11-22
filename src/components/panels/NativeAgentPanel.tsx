@@ -65,6 +65,9 @@ import { useRemoteAgentCredentialActions } from "@/components/panels/useRemoteAg
 import { useNamedPaneAction } from "@/components/workspace/useNamedPaneAction";
 import { presentForkInAgentPanelDesktop } from "@/components/panels/AgentPanelToolbarFrame";
 import { NativeAgentToolbar } from "@/components/panels/NativeAgentToolbar";
+import { useAgentLaunchSelectionOwner } from "@/components/agents/AgentLaunchSelectionControls";
+import { useAgentSessionLaunchSelectionPublication } from "@/components/workspace/useAgentSessionWindowLaunchSelection";
+import { agentProviderCatalogSource } from "@/lib/agents/providerModelCatalogSource";
 import { AgentPluginClaimStatus } from "@/components/plugins/AgentPluginClaimStatus";
 import { DelegateTaskControl } from "@/components/agents/DelegateTaskControl";
 import type { DureAgentRuntimeSourceStopPolicyV1 } from "@/lib/ipc/dureAgentRuntime";
@@ -163,6 +166,15 @@ export function NativeAgentPanel({
     useState(false);
   const [structuredAttachRecoveryVisible, setStructuredAttachRecoveryVisible] =
     useState(false);
+  // This pane owns its launch pills; its large window renders the same ones
+  // from what the pane publishes and runs their commands here.
+  const launchControls = useAgentLaunchSelectionOwner({
+    provider: agent.provider,
+    launch: backendManaged ? launchSelection : undefined,
+    catalogSource: agentProviderCatalogSource(agent, project, accounts),
+    busy: runtimeTransitioning || !!agent.pendingCredentialSwitch,
+  });
+  useAgentSessionLaunchSelectionPublication(paneId, launchControls);
   const [conversationFailure, setConversationFailure] =
     useRuntimeOwnedValue<string>(runtimeOwnerKey);
   const reportConversationError = (error: unknown) => {
@@ -468,7 +480,7 @@ export function NativeAgentPanel({
           },
           view: viewPort,
           projectMove: localAgentProjectMovePort(agent.id),
-          ...(backendManaged ? { launchSelection } : {}),
+          ...(launchControls ? { launchSelection: launchControls } : {}),
           history: {
             actionLease: historyActionLease,
             activeConversationId: agent.conversationId ?? activeConvId,

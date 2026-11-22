@@ -3,6 +3,7 @@ import { t } from "@/lib/i18n";
 import {
 	type AgentSessionWindowCommandBackend,
 	agentSessionWindowCredentialPort,
+	agentSessionWindowLaunchSelection,
 	agentSessionWindowProjectMovePort,
 	agentSessionWindowViewPort,
 	requestAgentSessionCredentialCommand,
@@ -277,6 +278,41 @@ describe("large-view source command routing", () => {
 		stop();
 	});
 
+	it("runs the large window's launch pill steps in the exact source pane", async () => {
+		const backend = transport();
+		const execute = vi.fn(async (command: { step?: string }) =>
+			command.step === "run"
+				? { kind: "launch_selection_ran" as const }
+				: { kind: "launch_selection_unwatched" as const },
+		);
+		const stop = subscribeAgentSessionWindowCommands(execute as never, backend);
+		await vi.waitFor(() =>
+			expect(backend.listenCommand).toHaveBeenCalledOnce(),
+		);
+		const mirror = agentSessionWindowLaunchSelection(sourceRoute, backend);
+
+		await mirror?.run({ kind: "select", field: "effort", value: "max" });
+
+		expect(execute).toHaveBeenCalledWith({
+			action: "launch_selection",
+			step: "run",
+			command: { kind: "select", field: "effort", value: "max" },
+			agentId: "agent-1",
+			desktopId: "desktop-2",
+			panelId: "agent:agent-1",
+			// A watch names the large window as the one to keep informed.
+			replyWindowLabel: "win-large-view",
+		});
+		// A large window that lost its source pane has no launch pills to follow.
+		expect(
+			agentSessionWindowLaunchSelection(
+				{ agentId: "agent-1", sourceWindowLabel: "win-workspace-2" },
+				backend,
+			),
+		).toBeUndefined();
+		stop();
+	});
+
 	it("keeps a source refusal's code and not-submitted mark across the bridge", async () => {
 		const backend = transport();
 		const stop = subscribeAgentSessionWindowCommands(async () => {
@@ -490,6 +526,24 @@ describe("large-view source command routing", () => {
 		] as const) {
 			commandListener?.({
 				action: "project_move",
+				agentId: "agent-1",
+				generation,
+				sourcePaneOwnerId: "desktop-1:agent:agent-1",
+				replyWindowLabel: "win-large-view",
+				expiresAtMs: 30,
+				...step,
+			});
+		}
+		for (const [generation, step] of [
+			["generation-8", { step: "subscribe" }],
+			["generation-9", { step: "run", command: { kind: "restart" } }],
+			[
+				"generation-10",
+				{ step: "run", command: { kind: "select", field: "provider", value: "x" } },
+			],
+		] as const) {
+			commandListener?.({
+				action: "launch_selection",
 				agentId: "agent-1",
 				generation,
 				sourcePaneOwnerId: "desktop-1:agent:agent-1",

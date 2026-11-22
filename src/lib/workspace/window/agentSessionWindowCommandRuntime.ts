@@ -23,6 +23,7 @@ import type {
 	AgentSessionWindowCommandExecution,
 	AgentSessionWindowCommandResult,
 } from "./agentSessionWindowCommand";
+import { executeAgentSessionLaunchSelectionStep } from "./agentSessionWindowLaunchSelection";
 import { activateLargeViewSourcePane } from "./largeViewSourcePane";
 import { revalidateMountedPaneWindow } from "./mountedPaneWindow";
 
@@ -80,6 +81,8 @@ function sourceAgentMismatch(
 			return "view command source Agent mismatch";
 		case "project_move":
 			return "project move command source Agent mismatch";
+		case "launch_selection":
+			return "launch selection command source Agent mismatch";
 		default:
 			return "credential command source Agent mismatch";
 	}
@@ -232,6 +235,15 @@ export async function executeAgentSessionWindowCommand(
 		const projectMove = await import("./agentSessionWindowProjectMoveRuntime");
 		requireSourceAgent(command, presentationRuntime);
 		return projectMove.executeHeldAgentProjectMoveStep(command);
+	}
+
+	if (command.action === "launch_selection") {
+		// The source pane's own launch pills: the large window watches the
+		// presentation it publishes and runs pill commands on its handlers.
+		// Unwatching only forgets the sender, also after the pane moved on.
+		if (command.step !== "unwatch")
+			requireSourceAgent(command, presentationRuntime);
+		return executeAgentSessionLaunchSelectionStep(command);
 	}
 
 	if (command.action === "switch") {
