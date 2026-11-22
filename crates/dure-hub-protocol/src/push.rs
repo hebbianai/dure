@@ -57,7 +57,11 @@ pub enum PushPreference {
 #[serde(rename_all = "snake_case")]
 pub enum PushKind {
     Approval,
+    /// The agent finished its turn and waits for its next prompt.
     Done,
+    /// The provider asks a question, or shows a trust or sign-in prompt, in
+    /// its terminal. A prompt written now would answer it, so none is sent.
+    Input,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -142,6 +146,17 @@ pub struct PushApproval {
 /// The alert category whose Allow once and Deny actions answer [`PushApproval`].
 pub const PUSH_APPROVAL_CATEGORY: &str = "dure.approval";
 
+/// The process a finished turn's alert was raised in: a reply from the
+/// alert is a prompt the Host admits only while that process is idle.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PushReply {
+    pub terminal_epoch: PushId,
+}
+
+/// The alert category whose text action replies to [`PushReply`].
+pub const PUSH_REPLY_CATEGORY: &str = "dure.reply";
+
 /// The key beside `aps` under which the push relay puts [`PushAlertContext`].
 pub const PUSH_ALERT_CONTEXT_KEY: &str = "dure";
 
@@ -159,6 +174,9 @@ pub struct PushAlertContext {
     /// The approval Allow once and Deny answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<PushApproval>,
+    /// The process a reply from a finished turn's alert reaches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply: Option<PushReply>,
 }
 
 impl PushAlertContext {
@@ -180,7 +198,18 @@ impl PushAlertContext {
                 .ok()
                 .filter(|hub| crate::fingerprint::is_fingerprint(hub)),
             approval: serde_json::from_value(field("approval")).ok(),
+            reply: serde_json::from_value(field("reply")).ok(),
         }
+    }
+
+    /// What a reply from this alert needs: the computer to ask, the agent
+    /// and its process. None for any alert that takes no reply.
+    pub fn repliable(&self) -> Option<(&str, &PushId, &PushReply)> {
+        Some((
+            self.hub.as_deref()?,
+            self.session.as_ref()?,
+            self.reply.as_ref()?,
+        ))
     }
 
     /// What an answer from this alert needs: the computer to ask, the agent
@@ -269,6 +298,33 @@ mod tests {
                 PushAlertContext::default()
             );
         }
+    }
+
+    #[test]
+    fn a_finished_turn_alert_takes_a_reply_only_with_its_computer_agent_and_process() {
+        let hub = crate::fingerprint::of_der(b"hub certificate");
+        let context = |reply: &str| {
+            PushAlertContext::from_payload(
+                format!(
+                    r#"{{"aps":{{"category":"dure.reply"}},"dure":{{"session":"managed_1","hub":"{hub}","reply":{reply}}}}}"#
+                )
+                .as_bytes(),
+            )
+        };
+        let replying = context(r#"{"terminalEpoch":"7"}"#);
+        let (computer, session, reply) = replying.repliable().unwrap();
+        assert_eq!(
+            (computer, session.as_str(), reply.terminal_epoch.as_str()),
+            (hub.as_str(), "managed_1", "7")
+        );
+        assert!(replying.answerable().is_none());
+        for unusable in [r#"{"terminalEpoch":"/dev/ttys001"}"#, r#"{}"#, r#""7""#] {
+            assert!(context(unusable).repliable().is_none());
+        }
+        assert_eq!(
+            serde_json::to_value(PushKind::Input).unwrap(),
+            serde_json::json!("input")
+        );
     }
 
     #[test]

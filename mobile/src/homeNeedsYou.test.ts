@@ -11,7 +11,7 @@ const native = vi.hoisted(() => ({
 	hubAgentApprovalAnswer: vi.fn(),
 	attachHubSession: vi.fn(),
 	pushActivations: vi.fn(),
-	pushApprovalActions: vi.fn(),
+	pushAlertActions: vi.fn(),
 }));
 const biometric = vi.hoisted(() => ({ authenticate: vi.fn() }));
 vi.mock("./ipc", () => ({ ipc: native }));
@@ -297,7 +297,7 @@ describe("answering from home", () => {
 		native.hubOpen.mockResolvedValue(probe([waiting]));
 		native.hubAgentApprovalAnswer.mockResolvedValue({ state: "written_to_pty", record_id: "r" });
 		biometric.authenticate.mockResolvedValue(undefined);
-		native.pushApprovalActions.mockResolvedValue(undefined);
+		native.pushAlertActions.mockResolvedValue(undefined);
 		native.pushActivations.mockImplementation(async (listener: (activation: PushActivation) => void) => {
 			activate = listener;
 		});
@@ -351,14 +351,18 @@ describe("answering from home", () => {
 	});
 
 	/** #625: the alert's actions mirror the sheet's preference and the app's copy. */
-	it("registers the alert's Allow once and Deny with the approval preference and its copy", async () => {
+	it("registers the alert's Allow once, Deny and Reply with the approval preference and their copy", async () => {
 		dispose = startApp(root);
 		await settle();
-		expect(native.pushApprovalActions).toHaveBeenCalledWith({
+		expect(native.pushAlertActions).toHaveBeenCalledWith({
 			ownerCheck: true,
 			approve: t("home.needsYou.approve"),
 			deny: t("home.needsYou.deny"),
 			failed: t("notifications.push.answer.failed"),
+			reply: t("home.needsYou.reply"),
+			send: t("chat.composer.send"),
+			placeholder: t("chat.composer.placeholder"),
+			replyFailed: t("notifications.push.reply.failed"),
 		});
 	});
 

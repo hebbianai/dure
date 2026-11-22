@@ -131,7 +131,7 @@ describe("deriveAttentionResolution", () => {
     ]);
   });
 
-  it("classifies hmux input_required as done-kind (질문이지 승인이 아니다)", () => {
+  it("classifies hmux input_required as its own input kind (질문이지 승인도 완료도 아니다)", () => {
     const r = deriveAttentionResolution(
       prev({ a: "working" }),
       [
@@ -143,7 +143,7 @@ describe("deriveAttentionResolution", () => {
       { "sess-a": true },
     );
     expect(r.displayStates.a).toBe("input");
-    expect(r.bumps).toEqual([{ agentId: "a", kind: "done" }]);
+    expect(r.bumps).toEqual([{ agentId: "a", kind: "input" }]);
     expect(r.consumedArms).toEqual(["sess-a"]);
   });
 
@@ -164,7 +164,7 @@ describe("deriveAttentionResolution", () => {
       {},
     );
     expect(r.displayStates.a).toBe("input");
-    expect(r.bumps).toEqual([{ agentId: "a", kind: "done" }]);
+    expect(r.bumps).toEqual([{ agentId: "a", kind: "input" }]);
   });
 
   it("does not infer completion from a presentation-only waiting transition", () => {

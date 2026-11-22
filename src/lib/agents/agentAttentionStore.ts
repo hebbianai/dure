@@ -2,8 +2,11 @@ import { create } from "zustand";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
 
 /** attention 에피소드의 알림 분류 — 표시 상태(blocked)만으로는 승인과 단순
- *  입력 요청(input_required)을 구분할 수 없어 watcher가 전이 시점에 확정한다. */
-export type AttentionEpisodeKind = "approval" | "done";
+ *  입력 요청(input_required)을 구분할 수 없어 watcher가 전이 시점에 확정한다.
+ *  `done` is a finished turn, which takes a next prompt; `input` is a
+ *  question, trust or sign-in prompt open in the terminal, which a prompt
+ *  would answer, so it takes none. */
+export type AttentionEpisodeKind = "approval" | "done" | "input";
 
 export interface AttentionBump {
   agentId: string;

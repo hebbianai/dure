@@ -710,7 +710,7 @@ const handlers: Record<string, Handler> = {
   sync_push_notifications: () => ({ supported: false, outcomes: [] }),
   // No push in a demo, so no alert is ever tapped or answered.
   push_activations: () => undefined,
-  push_approval_actions: () => undefined,
+  push_alert_actions: () => undefined,
   hub_stage_session_file: (args): string[] => [`/tmp/dure-demo/${str(record(args, "file"), "fileName")}`],
 };
 

@@ -8,14 +8,24 @@ import {
 } from "@tauri-apps/plugin-notification";
 import { isMacPlatform } from "@/lib/workspace/desktop/desktopPlatform";
 
-export const pushAgentNotification = (event: {
-	kind: "approval" | "done";
-	eventId: string;
-	/** The phone's key for the agent, so a tap on the alert opens it. */
-	sessionId?: string;
-	/** The pending approval the alert's Allow once and Deny answer. */
-	approval?: { attentionId: string; terminalEpoch: string };
-}) => invoke<void>("hub_push_agent_notification", { event });
+export const pushAgentNotification = (
+	event: {
+		kind: "approval" | "done" | "input";
+		eventId: string;
+		/** The phone's key for the agent, so a tap on the alert opens it. */
+		sessionId?: string;
+		/** The pending approval the alert's Allow once and Deny answer. */
+		approval?: { attentionId: string; terminalEpoch: string };
+		/** The idle process a text reply on a finished turn's alert reaches. */
+		reply?: { terminalEpoch: string };
+	},
+	/** Not sent on: the desktop offers a reply only where it serves prompts. */
+	provider?: string,
+) =>
+	invoke<void>("hub_push_agent_notification", {
+		event,
+		provider: provider ?? null,
+	});
 
 export type NotificationAuthorization =
 	| "authorized"

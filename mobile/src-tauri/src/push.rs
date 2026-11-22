@@ -1,13 +1,17 @@
 #[cfg(target_os = "ios")]
 use crate::hub_store;
-use crate::{hub_client, hub_conversation::ApprovalAnswerInput, CommandError, HubProbe};
+use crate::{
+    hub_client,
+    hub_conversation::{ApprovalAnswerInput, PromptInput},
+    CommandError, HubProbe,
+};
 use dure_hub_protocol::{
     conversation::{AgentPromptState, HubAgentPromptResult},
     frame,
     hello::HubRequest,
     push::{
-        PushAlertContext, PushApproval, PushId, PushLanguage, PushPreference, PushSubscription,
-        PushSubscriptionResult, PUSH_APPROVAL_CATEGORY,
+        PushAlertContext, PushApproval, PushId, PushLanguage, PushPreference, PushReply,
+        PushSubscription, PushSubscriptionResult, PUSH_APPROVAL_CATEGORY, PUSH_REPLY_CATEGORY,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -51,7 +55,7 @@ impl PushActivation {
     }
 }
 
-/// The alert actions [`push_approval_actions`] registers under
+/// The alert actions [`push_alert_actions`] registers under
 /// [`PUSH_APPROVAL_CATEGORY`], and the Host choice each one sends.
 const APPROVAL_ACTIONS: [(&str, &str); 2] = [
     ("dure.approval.approve", "approve"),
@@ -66,28 +70,41 @@ pub fn action_choice(action: &str) -> Option<&'static str> {
         .map(|(_, choice)| *choice)
 }
 
-/// The screen's approval preference and copy, kept here for alert actions,
-/// which run when no screen does. The screen owns them and sends them again
-/// whenever they change; this file is only their mirror.
+/// The text action [`push_alert_actions`] registers under [`PUSH_REPLY_CATEGORY`].
+pub const REPLY_ACTION: &str = "dure.reply.send";
+
+/// The screen's approval preference and alert copy, kept here for alert
+/// actions, which run when no screen does. The screen owns them and sends
+/// them again whenever they change; this file is only their mirror.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ApprovalActions {
+pub struct AlertActions {
     /// Face ID before an approval (the screen's `approvalBiometric`). The
-    /// actions then open the app, whose approval sheet asks.
+    /// approval actions then open the app, whose approval sheet asks.
     owner_check: bool,
     approve: String,
     deny: String,
     /// What the phone says when an answer from an alert did not land.
     failed: String,
+    /// The reply action, its send button and its field's placeholder.
+    reply: String,
+    send: String,
+    placeholder: String,
+    /// What the phone says when a reply from an alert did not land.
+    reply_failed: String,
 }
 
-impl ApprovalActions {
+impl AlertActions {
     fn path(app: &tauri::AppHandle) -> Result<PathBuf, CommandError> {
-        Ok(crate::config_root(app)?.join("push-approval-actions.json"))
+        Ok(crate::config_root(app)?.join("push-alert-actions.json"))
     }
 
     fn load(path: &Path) -> Option<Self> {
         serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    }
+
+    fn load_for(app: &tauri::AppHandle) -> Option<Self> {
+        Self::load(&Self::path(app).ok()?)
     }
 
     /// Written whole and swapped in, so an alert never reads half a file.
@@ -126,7 +143,7 @@ enum AlertAnswer {
 
 fn alert_answer(
     context: &PushAlertContext,
-    actions: Option<&ApprovalActions>,
+    actions: Option<&AlertActions>,
     choice: &'static str,
 ) -> AlertAnswer {
     let Some((hub, session, approval)) = context.answerable() else {
@@ -182,10 +199,8 @@ pub fn answer_from_alert(
     done: impl FnOnce(Option<FailureNotice>) + Send + 'static,
 ) {
     let context = PushAlertContext::from_payload(payload);
-    let actions = ApprovalActions::path(app)
-        .ok()
-        .and_then(|path| ApprovalActions::load(&path));
-    let notice = |actions: Option<&ApprovalActions>| {
+    let actions = AlertActions::load_for(app);
+    let notice = |actions: Option<&AlertActions>| {
         Some(FailureNotice {
             body: actions?.failed.clone(),
             session: context.session.as_ref()?.as_str().to_string(),
@@ -219,19 +234,97 @@ async fn answer_here(
     approval: &PushApproval,
     choice: &str,
 ) -> bool {
-    let Ok(entry) = crate::hub_target(app, &hub) else {
-        return false;
-    };
-    let Ok(Ok(probe)) =
-        tauri::async_runtime::spawn_blocking(move || crate::connect_to(&entry)).await
-    else {
+    let Some(probe) = catalog_of(app, &hub).await else {
         return false;
     };
     let Some(input) = approval_target(&probe, session, approval, choice) else {
         return false;
     };
+    written(crate::hub_conversation::answer_approval(app, &hub, input).await)
+}
+
+/// The prompt the chat's composer would send to this agent: the catalog
+/// names the box and workspace and must serve the agent's conversation, the
+/// alert names the process. The Host admits it only while that process is
+/// idle with nothing raised.
+fn reply_target(
+    probe: &HubProbe,
+    session: &PushId,
+    reply: &PushReply,
+    text: &str,
+) -> Option<PromptInput> {
+    let row = probe
+        .sessions
+        .iter()
+        .find(|row| row.session.session_id == session.as_str() && row.conversation)?;
+    Some(PromptInput {
+        box_id: row.box_id.clone(),
+        workspace_id: row.session.workspace_id.clone(),
+        session_id: row.session.session_id.clone(),
+        text: text.to_string(),
+        expected_terminal_epoch: reply.terminal_epoch.as_str().to_string(),
+        expected_conversation_id: None,
+    })
+}
+
+/// Text sent from a finished turn's alert. `done` is called once, when
+/// nothing more will happen, with what to tell the person if it failed. An
+/// empty reply sends nothing and says nothing.
+pub fn reply_from_alert(
+    app: &tauri::AppHandle,
+    payload: &[u8],
+    text: String,
+    done: impl FnOnce(Option<FailureNotice>) + Send + 'static,
+) {
+    let context = PushAlertContext::from_payload(payload);
+    let failed = AlertActions::load_for(app).and_then(|actions| {
+        Some(FailureNotice {
+            body: actions.reply_failed,
+            session: context.session.as_ref()?.as_str().to_string(),
+        })
+    });
+    if text.trim().is_empty() {
+        return done(None);
+    }
+    let Some((hub, session, reply)) = context.repliable() else {
+        return done(failed);
+    };
+    let (app, hub, session, reply) = (app.clone(), hub.to_string(), session.clone(), reply.clone());
+    tauri::async_runtime::spawn(async move {
+        let landed = reply_here(&app, hub, &session, &reply, &text).await;
+        done(if landed { None } else { failed });
+    });
+}
+
+async fn reply_here(
+    app: &tauri::AppHandle,
+    hub: String,
+    session: &PushId,
+    reply: &PushReply,
+    text: &str,
+) -> bool {
+    let Some(probe) = catalog_of(app, &hub).await else {
+        return false;
+    };
+    let Some(input) = reply_target(&probe, session, reply, text) else {
+        return false;
+    };
+    written(crate::hub_conversation::send_prompt(app, &hub, input).await)
+}
+
+/// The paired computer's catalog, read the way the screen's `hub_open` reads it.
+async fn catalog_of(app: &tauri::AppHandle, hub: &str) -> Option<HubProbe> {
+    let entry = crate::hub_target(app, hub).ok()?;
+    tauri::async_runtime::spawn_blocking(move || crate::connect_to(&entry))
+        .await
+        .ok()?
+        .ok()
+}
+
+/// Whether the Host confirmed it wrote the answer or prompt.
+fn written(result: Result<HubAgentPromptResult, CommandError>) -> bool {
     matches!(
-        crate::hub_conversation::answer_approval(app, &hub, input).await,
+        result,
         Ok(HubAgentPromptResult {
             state: AgentPromptState::WrittenToPty,
             ..
@@ -239,27 +332,35 @@ async fn answer_here(
     )
 }
 
-/// The screen's approval preference and copy changed, or it started: keep
+/// The screen's approval preference or copy changed, or it started: keep
 /// the mirror and register the alert actions to match. With Face ID on, the
-/// actions open the app; otherwise they answer without it, once the phone
-/// is unlocked.
+/// approval actions open the app; otherwise they answer without it, once the
+/// phone is unlocked. A reply always needs the phone unlocked.
 #[tauri::command]
-pub fn push_approval_actions(
+pub fn push_alert_actions(
     app: tauri::AppHandle,
-    actions: ApprovalActions,
+    actions: AlertActions,
 ) -> Result<(), CommandError> {
     let error = |message: String| CommandError {
         code: "push_actions_failed".into(),
         message,
     };
-    if [&actions.approve, &actions.deny, &actions.failed]
-        .iter()
-        .any(|text| text.trim().is_empty() || text.len() > 512)
+    if [
+        &actions.approve,
+        &actions.deny,
+        &actions.failed,
+        &actions.reply,
+        &actions.send,
+        &actions.placeholder,
+        &actions.reply_failed,
+    ]
+    .iter()
+    .any(|text| text.trim().is_empty() || text.len() > 512)
     {
-        return Err(error("Approval action copy is missing or too long".into()));
+        return Err(error("Alert action copy is missing or too long".into()));
     }
     actions
-        .save(&ApprovalActions::path(&app)?)
+        .save(&AlertActions::path(&app)?)
         .map_err(|failure| error(failure.to_string()))?;
     let titles = [&actions.approve, &actions.deny];
     let buttons = APPROVAL_ACTIONS
@@ -272,10 +373,21 @@ pub fn push_approval_actions(
                 .build()
         })
         .collect();
+    let reply = Action::builder(REPLY_ACTION, actions.reply.as_str())
+        .input(true)
+        .input_button_title(actions.send.as_str())
+        .input_placeholder(actions.placeholder.as_str())
+        .requires_authentication(true)
+        .build();
     app.notification()
-        .register_action_types(vec![ActionType::builder(PUSH_APPROVAL_CATEGORY)
-            .actions(buttons)
-            .build()])
+        .register_action_types(vec![
+            ActionType::builder(PUSH_APPROVAL_CATEGORY)
+                .actions(buttons)
+                .build(),
+            ActionType::builder(PUSH_REPLY_CATEGORY)
+                .actions(vec![reply])
+                .build(),
+        ])
         .map_err(|failure| error(failure.to_string()))
 }
 
@@ -519,7 +631,7 @@ mod tests {
         assert_eq!(*seen.lock().unwrap(), ["agent-2", "agent-3", "agent-4"]);
     }
 
-    fn approval_alert(owner_check: Option<bool>) -> (PushAlertContext, Option<ApprovalActions>) {
+    fn approval_alert(owner_check: Option<bool>) -> (PushAlertContext, Option<AlertActions>) {
         let hub = dure_hub_protocol::fingerprint::of_der(b"hub");
         let context = PushAlertContext::from_payload(
             format!(
@@ -527,11 +639,15 @@ mod tests {
             )
             .as_bytes(),
         );
-        let actions = owner_check.map(|owner_check| ApprovalActions {
+        let actions = owner_check.map(|owner_check| AlertActions {
             owner_check,
             approve: "Allow once".into(),
             deny: "Deny".into(),
             failed: "Dure could not answer that approval.".into(),
+            reply: "Reply".into(),
+            send: "Send".into(),
+            placeholder: "Message the agent".into(),
+            reply_failed: "Dure could not send that reply.".into(),
         });
         (context, actions)
     }
@@ -577,10 +693,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn an_alert_answer_names_the_catalog_target_and_the_alerted_approval() {
-        let entry =
-            |session: &str, approval_answer: bool| dure_hub_protocol::catalog::HubCatalogEntry {
+    /// A computer's catalog as the phone reads it: each session with whether
+    /// it serves the agent's conversation and answers its approvals.
+    fn probe_of(sessions: &[(&str, bool, bool)]) -> HubProbe {
+        let entry = |&(session, conversation, approval_answer): &(&str, bool, bool)| {
+            dure_hub_protocol::catalog::HubCatalogEntry {
                 session_id: session.into(),
                 session_name: None,
                 display_title: None,
@@ -593,19 +710,20 @@ mod tests {
                 runner_instance: "runner".into(),
                 channel_epoch: "1".into(),
                 host_instance_id: "host".into(),
-                // The catalog's process; the alert's epoch is what the answer fences on.
+                // The catalog's process; the alert's epoch is what an answer fences on.
                 terminal_epoch: "8".into(),
                 capabilities: Vec::new(),
                 launch_program: None,
-                conversation: true,
+                conversation,
                 background_work: false,
                 approval_answer,
                 box_id: "this-laptop".into(),
                 box_label: "Laptop".into(),
-            };
+            }
+        };
         let catalog = dure_hub_protocol::catalog::HubCatalog {
             hub_catalog_version: dure_hub_protocol::catalog::HUB_CATALOG_VERSION,
-            sessions: vec![entry("managed_1", true), entry("managed_2", false)],
+            sessions: sessions.iter().map(entry).collect(),
             unreachable: Vec::new(),
             layout: None,
             chat_sessions: Vec::new(),
@@ -615,7 +733,50 @@ mod tests {
             device_id: "device-1".into(),
             device_label: "phone".into(),
         };
-        let probe = crate::describe("hub-1", "Laptop", false, ack, &catalog);
+        crate::describe("hub-1", "Laptop", false, ack, &catalog)
+    }
+
+    #[test]
+    fn a_reply_from_an_alert_is_the_composers_prompt_fenced_on_the_alerted_process() {
+        assert_eq!(REPLY_ACTION, "dure.reply.send");
+        assert_eq!(action_choice(REPLY_ACTION), None);
+        let hub = dure_hub_protocol::fingerprint::of_der(b"hub");
+        let context = PushAlertContext::from_payload(
+            format!(
+                r#"{{"aps":{{}},"dure":{{"session":"managed_1","hub":"{hub}","reply":{{"terminalEpoch":"7"}}}}}}"#
+            )
+            .as_bytes(),
+        );
+        let (computer, session, reply) = context.repliable().unwrap();
+        assert_eq!(computer, hub);
+        let probe = probe_of(&[("managed_1", true, false), ("managed_2", false, false)]);
+        let input = reply_target(&probe, session, reply, "Now run the tests").unwrap();
+        assert_eq!(
+            (
+                input.box_id.as_str(),
+                input.workspace_id.as_str(),
+                input.session_id.as_str(),
+                input.text.as_str(),
+                input.expected_terminal_epoch.as_str(),
+                input.expected_conversation_id.as_deref(),
+            ),
+            (
+                "this-laptop",
+                "workspace_0123456789abcdef",
+                "managed_1",
+                "Now run the tests",
+                "7",
+                None
+            )
+        );
+        // A computer that does not serve this agent's prompts is not asked.
+        let other: PushId = "managed_2".to_string().try_into().unwrap();
+        assert!(reply_target(&probe, &other, reply, "Now run the tests").is_none());
+    }
+
+    #[test]
+    fn an_alert_answer_names_the_catalog_target_and_the_alerted_approval() {
+        let probe = probe_of(&[("managed_1", true, true), ("managed_2", true, false)]);
         let (context, _) = approval_alert(Some(false));
         let (_, session, approval) = context.answerable().unwrap();
         let input = approval_target(&probe, session, approval, "approve").unwrap();
@@ -647,18 +808,15 @@ mod tests {
     #[test]
     fn the_approval_preference_mirror_is_written_whole_and_read_back() {
         let root = tempfile::tempdir().unwrap();
-        let path = root
-            .path()
-            .join("config")
-            .join("push-approval-actions.json");
-        assert_eq!(ApprovalActions::load(&path), None);
+        let path = root.path().join("config").join("push-alert-actions.json");
+        assert_eq!(AlertActions::load(&path), None);
         let (_, actions) = approval_alert(Some(true));
         let actions = actions.unwrap();
         actions.save(&path).unwrap();
-        assert_eq!(ApprovalActions::load(&path), Some(actions));
+        assert_eq!(AlertActions::load(&path), Some(actions));
         assert!(!path.with_extension("json.tmp").exists());
         std::fs::write(&path, br#"{"ownerCheck":false}"#).unwrap();
-        assert_eq!(ApprovalActions::load(&path), None);
+        assert_eq!(AlertActions::load(&path), None);
     }
 
     #[test]

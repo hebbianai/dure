@@ -7,9 +7,10 @@
 //! module owns. The notification plugin's delegate drops every push-triggered
 //! response, so [`install_response_delegate`] stands in front of it: a tap on
 //! a remote alert goes to [`PushActivations`], Allow once and Deny go to
-//! `push::answer_from_alert`, and every other callback is forwarded to the
-//! plugin unchanged. The notice this module posts when such an answer did not
-//! land is its own too, never the plugin's.
+//! `push::answer_from_alert`, a typed reply to `push::reply_from_alert`, and
+//! every other callback is forwarded to the plugin unchanged. The notice this
+//! module posts when such an answer or reply did not land is its own too,
+//! never the plugin's.
 use crate::push::{FailureNotice, PushActivation, PushActivations};
 use block2::{DynBlock, RcBlock};
 use dure_hub_protocol::push::{ApnsEnvironment, ApnsToken, PUSH_ALERT_CONTEXT_KEY};
@@ -28,7 +29,7 @@ use objc2_user_notifications::{
     UNMutableNotificationContent, UNNotification, UNNotificationContent,
     UNNotificationDefaultActionIdentifier, UNNotificationPresentationOptions,
     UNNotificationRequest, UNNotificationResponse, UNNotificationSound, UNPushNotificationTrigger,
-    UNUserNotificationCenter, UNUserNotificationCenterDelegate,
+    UNTextInputNotificationResponse, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
 };
 use std::sync::{mpsc, Mutex, OnceLock};
 use tauri::Manager;
@@ -236,19 +237,22 @@ define_class!(
             }
             let payload = payload(&request.content()).unwrap_or_default();
             let action = response.actionIdentifier();
+            let id = action.to_string();
             let app = &self.ivars().app;
-            if let Some(choice) = crate::push::action_choice(&action.to_string()) {
-                // The system waits for the answer: the handler is called once it landed or failed.
-                let completion = Completion(completion.copy());
-                let main = app.clone();
-                crate::push::answer_from_alert(app, &payload, choice, move |notice| {
-                    let _ = main.run_on_main_thread(move || {
-                        if let Some(notice) = notice {
-                            post_notice(&notice);
-                        }
-                        completion.finish();
-                    });
-                });
+            // The system waits for an answer or reply: the handler is called
+            // once it landed or failed.
+            if let Some(choice) = crate::push::action_choice(&id) {
+                let settle = settle(app, Completion(completion.copy()));
+                crate::push::answer_from_alert(app, &payload, choice, settle);
+                return;
+            }
+            if id == crate::push::REPLY_ACTION {
+                let text = response
+                    .downcast_ref::<UNTextInputNotificationResponse>()
+                    .map(|typed| typed.userText().to_string())
+                    .unwrap_or_default();
+                let settle = settle(app, Completion(completion.copy()));
+                crate::push::reply_from_alert(app, &payload, text, settle);
                 return;
             }
             // SAFETY: a framework constant, valid for the process lifetime.
@@ -285,6 +289,23 @@ impl Completion {
     /// Taking `self` moves the whole wrapper into a closure, not its block.
     fn finish(self) {
         self.0.call(());
+    }
+}
+
+/// Ends the system's wait for an alert action, on the main thread, after
+/// telling the person when the answer or reply did not land.
+fn settle(
+    app: &tauri::AppHandle,
+    completion: Completion,
+) -> impl FnOnce(Option<FailureNotice>) + Send + 'static {
+    let main = app.clone();
+    move |notice| {
+        let _ = main.run_on_main_thread(move || {
+            if let Some(notice) = notice {
+                post_notice(&notice);
+            }
+            completion.finish();
+        });
     }
 }
 

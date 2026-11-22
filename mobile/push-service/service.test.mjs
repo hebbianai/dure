@@ -105,6 +105,26 @@ test("the relay refuses an approval reference that is not two opaque identifiers
   assert.equal(sends, 0);
 });
 
+test("the relay refuses a reply reference that is not one opaque process on a finished turn", async () => {
+  let sends = 0;
+  const post = await serving({ async send() { sends++; return { status: "accepted" }; } });
+  for (const [change, label] of [
+    [(event) => { event.reply = { terminalEpoch: "/dev/ttys001" }; }, "a path"],
+    [(event) => { event.reply = { terminalEpoch: "7", text: "run the tests" }; }, "an extra field"],
+    [(event) => { event.reply = { terminalEpoch: "7" }; event.kind = "input"; }, "a question"],
+    [(event) => { event.reply = { terminalEpoch: "7" }; delete event.sessionId; }, "no agent"],
+    [(event) => { event.reply = "7"; }, "not an object"],
+    [(event) => { event.kind = "question"; }, "an unknown kind"],
+  ]) {
+    const message = baseMessage();
+    message.event.kind = "done";
+    message.event.sessionId = "managed_1";
+    change(message.event);
+    assert.equal((await post(envelope(message))).status, 403, label);
+  }
+  assert.equal(sends, 0);
+});
+
 test("approvals-only filters completion and a provider failure remains retryable", async () => {
   let sends = 0;
   const post = await serving({ async send() { return { status: ++sends === 1 ? "unavailable" : "accepted" }; } });
@@ -182,6 +202,25 @@ test("HTTP/2 APNs alert has a valid ES256 provider token and carries the agent's
       },
     });
     assert.equal(bodies[2].dure.hub.length, "SHA256:".length + 43);
+    // A finished turn the phone can reply to adds its reply action and process.
+    const repliable = baseMessage();
+    repliable.event.kind = "done";
+    repliable.event.sessionId = "managed_0123456789abcdef";
+    repliable.event.reply = { terminalEpoch: "7" };
+    assert.deepEqual(await sender.send(repliable, fingerprint), { status: "accepted" });
+    assert.deepEqual(bodies[3], {
+      aps: { alert: { title: "Dure", body: en["notifications.push.doneBody"] }, sound: "default", category: "dure.reply" },
+      dure: { session: "managed_0123456789abcdef", hub: fingerprint.replace(/=+$/, ""), reply: { terminalEpoch: "7" } },
+    });
+    // A question in the terminal says so, and takes no reply.
+    const question = baseMessage();
+    question.event.kind = "input";
+    question.event.sessionId = "managed_0123456789abcdef";
+    assert.deepEqual(await sender.send(question, fingerprint), { status: "accepted" });
+    assert.deepEqual(bodies[4], {
+      aps: { alert: { title: "Dure", body: en["notifications.push.inputBody"] }, sound: "default" },
+      dure: { session: "managed_0123456789abcdef" },
+    });
   } finally {
     sender.close();
     for (const stream of streams) stream.destroy();

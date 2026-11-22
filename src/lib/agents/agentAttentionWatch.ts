@@ -52,8 +52,8 @@ export interface AttentionResolution {
  *  bump 정책 (기존 UX 보존 + 결함 수정):
  *  - blocked 진입: 같은 승인 신호(서명)가 pending인 동안의 재진입(휴리스틱
  *    working 플랩)은 1회만 bump. 사용자가 입력하면(armed) 서명이 리셋돼
- *    다음 승인은 다시 알린다. kind는 hmux attention이 input_required면 done
- *    (단순 입력 요청 — 승인 아님), 그 외(approval_required/error)는
+ *    다음 승인은 다시 알린다. kind는 hmux attention이 input_required면 input
+ *    (단순 입력 요청 — 승인도 턴 완료도 아님), 그 외(approval_required/error)는
  *    approval.
  *  - host 완료 카운터(turnCompletedCount) 증가: 항상 bump (kind done) + armed
  *    소비. 표시 삼중항이 그대로인 no-op 완료(waiting→waiting)도 카운터
@@ -157,7 +157,7 @@ export function deriveAttentionResolution(
       // 운영 중 새로 관측된 세션이 이미 승인 대기면 새 attention이다.
       if (!options?.baseline && episode === "blocked") {
         const kind =
-          source.tiers.hmux?.attention === "input_required" ? "done" : "approval";
+          source.tiers.hmux?.attention === "input_required" ? "input" : "approval";
         approvalSignatures.set(source.agentId, blockedSignature(source));
         beginWait();
         bumps.push({
@@ -173,7 +173,7 @@ export function deriveAttentionResolution(
     if (!isAttentionTransition(prev, next)) continue;
     if (episode === "blocked") {
       const kind =
-        source.tiers.hmux?.attention === "input_required" ? "done" : "approval";
+        source.tiers.hmux?.attention === "input_required" ? "input" : "approval";
       const signature = blockedSignature(source);
       // 사용자 입력(armed)은 서명을 무효화한다 — 입력 후의 승인은 새 사건.
       const staleSignature =
@@ -182,7 +182,7 @@ export function deriveAttentionResolution(
       if (staleSignature) continue;
       approvalSignatures.set(source.agentId, signature);
       beginWait();
-      if (kind === "done") dropArm();
+      if (kind === "input") dropArm();
       bumps.push({
         agentId: source.agentId,
         kind,

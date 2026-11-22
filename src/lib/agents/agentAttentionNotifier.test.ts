@@ -91,7 +91,7 @@ describe("phone push delivery", () => {
     expect(mocks.pushAgentNotification).toHaveBeenCalledWith({
       kind: "approval",
       eventId: "hmux:session-a:terminal-a:approval:4",
-    });
+    }, undefined);
     expect(mocks.systemNotify).not.toHaveBeenCalled();
   });
 
@@ -103,7 +103,7 @@ describe("phone push delivery", () => {
     expect(mocks.pushAgentNotification).toHaveBeenCalledWith({
       kind: "done",
       eventId: "hmux:session-a:terminal-a:turn:4",
-    });
+    }, undefined);
     expect(mocks.systemNotify).not.toHaveBeenCalled();
   });
 
@@ -128,8 +128,8 @@ describe("phone push delivery", () => {
     notifyAgentEvent("agent-a", "approval", "Approval", { eventId: "event-a" });
     notifyAgentEvent("agent-chat", "approval", "Approval", { eventId: "event-b" });
     expect(mocks.pushAgentNotification.mock.calls).toEqual([
-      [{ kind: "approval", eventId: "event-a", sessionId: "managed_0123abcd" }],
-      [{ kind: "approval", eventId: "event-b", sessionId: "agent-chat" }],
+      [{ kind: "approval", eventId: "event-a", sessionId: "managed_0123abcd" }, undefined],
+      [{ kind: "approval", eventId: "event-b", sessionId: "agent-chat" }, "claude"],
     ]);
   });
 
@@ -163,6 +163,43 @@ describe("phone push delivery", () => {
     ]);
     // Identity only: what the agent asked stays on this computer.
     expect(JSON.stringify(mocks.pushAgentNotification.mock.calls)).not.toContain("git push");
+  });
+
+  it("offers a reply on a finished turn only to an idle Hmux agent, with its process and provider", () => {
+    const idle = { terminalEpoch: "7", lifecycle: "running", activity: "waiting", attention: "none" };
+    mocks.storeState.agents = [
+      {
+        id: "agent-a",
+        name: "Claude",
+        projectId: "project-a",
+        provider: "claude",
+        sessionId: "pane-session-a",
+        runtimeBinding: { runtime: "hmux_managed_v1", sessionId: "managed_0123abcd" },
+      },
+      {
+        id: "agent-chat",
+        name: "Claude",
+        projectId: "project-a",
+        provider: "claude",
+        sessionId: "pane-session-b",
+        interactionProfile: { kind: "structured_protocol", backendProfileId: "local" },
+      },
+    ];
+    for (const [agentId, kind, runtime] of [
+      ["agent-a", "done", idle],
+      ["agent-a", "done", { ...idle, activity: "working" }],
+      ["agent-a", "input", { ...idle, attention: "input_required" }],
+      ["agent-chat", "done", idle],
+    ] as const) {
+      mocks.storeState.sessionAgentRuntimeState = { "pane-session-a": runtime, "pane-session-b": runtime };
+      notifyAgentEvent(agentId, kind, "Body", { eventId: `event-${kind}` });
+    }
+    expect(mocks.pushAgentNotification.mock.calls.map(([event, provider]) => [event.kind, event.reply, provider])).toEqual([
+      ["done", { terminalEpoch: "7" }, "claude"],
+      ["done", undefined, "claude"],
+      ["input", undefined, "claude"],
+      ["done", undefined, "claude"],
+    ]);
   });
 
   it("leaves phone delivery to the main window and an exact event identity", () => {

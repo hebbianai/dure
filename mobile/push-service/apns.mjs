@@ -4,8 +4,14 @@ import { en } from "../src/locales/en.ts";
 import { ko } from "../src/locales/ko.ts";
 
 const TOPIC = "dev.hebbian.ide.mobile";
-/** `PUSH_APPROVAL_CATEGORY` in dure-hub-protocol: the phone registers its actions. */
+/** `PUSH_APPROVAL_CATEGORY` and `PUSH_REPLY_CATEGORY` in dure-hub-protocol: the phone registers their actions. */
 const APPROVAL_CATEGORY = "dure.approval";
+const REPLY_CATEGORY = "dure.reply";
+const BODY = {
+  approval: "notifications.push.approvalBody",
+  done: "notifications.push.doneBody",
+  input: "notifications.push.inputBody",
+};
 const ENDPOINTS = {
   sandbox: "https://api.sandbox.push.apple.com",
   production: "https://api.push.apple.com",
@@ -53,19 +59,24 @@ export function createApnsSender({ key, keyId, teamId, openConnection = connect,
       const { subscription, event } = message;
       const catalog = subscription.language === "ko" ? ko : en;
       // Beside the generic text, only identifiers (`PushAlertContext` in
-      // dure-hub-protocol): the agent a tap opens and, for an approval the
-      // phone can answer, that approval and the computer to answer it on —
-      // as the phone's paired entry names it, unpadded. Never what was asked.
+      // dure-hub-protocol): the agent a tap opens and, for an approval or a
+      // finished turn the phone can answer, that approval or process and the
+      // computer to answer on — as the phone's paired entry names it,
+      // unpadded. Never what was asked or said.
       const approval = event.approval && event.sessionId ? event.approval : undefined;
+      const reply = event.reply && event.sessionId ? event.reply : undefined;
+      const category = approval ? APPROVAL_CATEGORY : reply ? REPLY_CATEGORY : undefined;
       const body = JSON.stringify({
         aps: {
-          alert: { title: "Dure", body: catalog[event.kind === "approval" ? "notifications.push.approvalBody" : "notifications.push.doneBody"] },
+          alert: { title: "Dure", body: catalog[BODY[event.kind]] },
           sound: "default",
-          ...(approval ? { category: APPROVAL_CATEGORY } : {}),
+          ...(category ? { category } : {}),
         },
         ...(event.sessionId ? { dure: {
           session: event.sessionId,
-          ...(approval ? { hub: sender.replace(/=+$/, ""), approval } : {}),
+          ...(category ? { hub: sender.replace(/=+$/, "") } : {}),
+          ...(approval ? { approval } : {}),
+          ...(reply ? { reply } : {}),
         } } : {}),
       });
       return new Promise((resolve) => {
