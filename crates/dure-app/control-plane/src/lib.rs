@@ -3558,8 +3558,17 @@ fn orchestration_service_error(error: ServiceError) -> BackendDispatchError {
             "orchestration_state_conflict",
             Some(json!({ "reasonCode": code })),
         ),
-        ServiceError::StorageUnavailable { .. } => ("orchestration_store_unavailable", None),
-        ServiceError::StorageCorrupt { .. } => ("orchestration_store_corrupt", None),
+        // The store's reason tells a busy write lock (`adapter_busy`) apart
+        // from a failed adapter, so a transient refusal does not read as an
+        // outage.
+        ServiceError::StorageUnavailable { code } => (
+            "orchestration_store_unavailable",
+            Some(json!({ "reasonCode": code })),
+        ),
+        ServiceError::StorageCorrupt { code } => (
+            "orchestration_store_corrupt",
+            Some(json!({ "reasonCode": code })),
+        ),
     };
     BackendDispatchError {
         code: code.into(),

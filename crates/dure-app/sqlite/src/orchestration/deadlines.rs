@@ -2,7 +2,10 @@ use super::*;
 
 /// Rediscover due work from SQLite on every tick, including after a restart.
 /// There is no client-owned timer, in-memory scheduling queue, or PTY effect.
-pub(crate) async fn expire(pool: &SqlitePool, now_ms: i64) -> Result<usize, StoreError> {
+pub(crate) async fn expire(
+    store: &WorkflowInteractionStore,
+    now_ms: i64,
+) -> Result<usize, StoreError> {
     if now_ms < 0 {
         return Err(StoreError::StateConflict {
             code: "clock_invalid",
@@ -17,10 +20,9 @@ pub(crate) async fn expire(pool: &SqlitePool, now_ms: i64) -> Result<usize, Stor
            AND json_extract(authority.deadline_json, '$.overdueEventCursor') IS NULL",
     )
     .bind(now_ms)
-    .fetch_all(pool)
+    .fetch_all(&store.pool)
     .await
     .map_err(|_| unavailable())?;
-    let store = WorkflowInteractionStore::new(pool.clone());
     let mut count = 0;
     let mut failure = None;
     for row in rows {

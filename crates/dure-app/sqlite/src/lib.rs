@@ -88,7 +88,7 @@ pub struct SqliteDomainStore {
     path: PathBuf,
     schema_info: StoreSchemaInfoV1,
     /// Waits between `BEGIN IMMEDIATE` attempts that found the write lock held
-    /// past the pool's busy timeout; see `session_checkout`.
+    /// past the pool's busy timeout; see `schema::retry_busy_start`.
     busy_retry_delays: &'static [Duration],
 }
 
@@ -110,7 +110,7 @@ impl SqliteDomainStore {
             pool,
             path,
             schema_info,
-            busy_retry_delays: session_checkout::BEGIN_IMMEDIATE_RETRY_DELAYS,
+            busy_retry_delays: schema::BEGIN_IMMEDIATE_RETRY_DELAYS,
         };
         if let Err(error) = operations::rebuild_receipts(&store.pool).await {
             store.pool.close().await;
@@ -252,7 +252,7 @@ impl SqliteDomainStore {
         &self,
         now_ms: i64,
     ) -> Result<usize, agent_orchestration::ports::StoreError> {
-        orchestration::deadlines::expire(&self.pool, now_ms).await
+        orchestration::deadlines::expire(&self.interaction_store(), now_ms).await
     }
 
     pub async fn queued_orchestration_wakes(
@@ -273,7 +273,13 @@ impl SqliteDomainStore {
     }
 
     pub fn interaction_service(&self) -> agent_orchestration::service::InteractionService {
-        orchestration::interaction_service(self.pool.clone())
+        orchestration::interaction_service(self.interaction_store())
+    }
+
+    /// The orchestration interaction store on this pool. Its writes start on
+    /// the same busy schedule as the rest of the store.
+    fn interaction_store(&self) -> orchestration::WorkflowInteractionStore {
+        orchestration::WorkflowInteractionStore::new(self.pool.clone(), self.busy_retry_delays)
     }
 
     pub async fn negotiate_orchestration_dispatch_context(

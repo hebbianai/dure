@@ -3445,6 +3445,42 @@ pub(crate) async fn begin_immediate(
     Ok(())
 }
 
+/// Delays between write-transaction start attempts once the pool's busy
+/// timeout has already expired. A checkpoint cleanup, a bulk close or a busy
+/// background loop that holds the write lock for a few seconds then delays a
+/// write instead of failing it; a lock held past the last delay still
+/// surfaces as `Busy`.
+pub(crate) const BEGIN_IMMEDIATE_RETRY_DELAYS: &[Duration] = &[
+    Duration::from_millis(100),
+    Duration::from_millis(300),
+    Duration::from_millis(900),
+];
+
+/// Runs `begin`, a write-transaction start, again after each of `delays`
+/// while it reports `Busy`. Any other error, and a `Busy` after the last
+/// delay, is returned unchanged. Only the start is repeated: no work inside
+/// the transaction has run, so a retried write still applies at most once.
+pub(crate) async fn retry_busy_start<T, F, Fut>(
+    delays: &[Duration],
+    mut begin: F,
+) -> Result<T, DomainStoreErrorV1>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, DomainStoreErrorV1>>,
+{
+    let mut delays = delays.iter();
+    loop {
+        let error = match begin().await {
+            Ok(started) => return Ok(started),
+            Err(error) => error,
+        };
+        match (&error, delays.next()) {
+            (DomainStoreErrorV1::Busy { .. }, Some(delay)) => tokio::time::sleep(*delay).await,
+            _ => return Err(error),
+        }
+    }
+}
+
 pub(crate) async fn finish_transaction<T>(
     connection: &mut SqliteConnection,
     operation: &'static str,
