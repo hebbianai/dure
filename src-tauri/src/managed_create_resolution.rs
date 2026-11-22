@@ -1,5 +1,5 @@
 pub(crate) use dure_session_runtime::{
-    project_checkout_advance, ManagedCreateAdvanceCommandResolution, ManagedCreateRetrySameReason,
+    project_checkout_advance, ManagedCreateAdvanceCommandResolution,
 };
 use hmux_client::{PermissionMode, TerminalDefaultColors};
 use serde::{Deserialize, Serialize};
@@ -45,6 +45,7 @@ impl<T> LegacyManagedCreateReceipt<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dure_session_runtime::ManagedCreateRetrySameReason;
 
     #[test]
     fn managed_create_accepts_initial_prompt_as_launch_material() {

@@ -4,6 +4,7 @@ use crate::session_checkout::remote::RemoteCheckoutHost;
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use dure_app::{AgentProviderLaunchPlanV1, ProviderRuntimeIntegrationV1};
 use dure_session_runtime::host_command::{CheckoutHostCommandV1, HelperCallErrorV1};
+use dure_session_runtime::ManagedCreateRetrySameReason;
 use hmux_client::{
     interactive_shell_with_command_bridge, ManagedCreateChainStopReceipt,
     ManagedCreateChainStopReceiptV2, ManagedCreateOutcome, ManagedCreateReconcileRequest,
@@ -49,7 +50,7 @@ use crate::hmux_input_contract::{
     HmuxInitialAgentPromptReceipt, HmuxInputFailure,
 };
 use crate::managed_create_resolution::{
-    LegacyManagedCreateReceipt, ManagedCreateAdvanceCommandResolution, ManagedCreateRetrySameReason,
+    LegacyManagedCreateReceipt, ManagedCreateAdvanceCommandResolution,
 };
 use crate::ssh;
 use crate::structured_terminal_access::RequestedTerminalSurfaceAccess;
