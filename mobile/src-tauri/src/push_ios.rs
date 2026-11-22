@@ -3,14 +3,16 @@
 //! future owner of these callbacks must be integrated explicitly instead of
 //! being silently overridden.
 //!
-//! Taps on remote alerts are the one notification-center callback this module
-//! owns. The notification plugin's delegate drops every push-triggered
+//! Responses to remote alerts are the one notification-center callback this
+//! module owns. The notification plugin's delegate drops every push-triggered
 //! response, so [`install_response_delegate`] stands in front of it: a tap on
-//! a remote alert goes to [`PushActivations`], and every other callback is
-//! forwarded to the plugin unchanged.
-use crate::push::{PushActivation, PushActivations};
-use block2::DynBlock;
-use dure_hub_protocol::push::{ApnsEnvironment, ApnsToken};
+//! a remote alert goes to [`PushActivations`], Allow once and Deny go to
+//! `push::answer_from_alert`, and every other callback is forwarded to the
+//! plugin unchanged. The notice this module posts when such an answer did not
+//! land is its own too, never the plugin's.
+use crate::push::{FailureNotice, PushActivation, PushActivations};
+use block2::{DynBlock, RcBlock};
+use dure_hub_protocol::push::{ApnsEnvironment, ApnsToken, PUSH_ALERT_CONTEXT_KEY};
 use objc2::{
     define_class, msg_send,
     rc::Retained,
@@ -18,12 +20,14 @@ use objc2::{
     sel, AnyThread, ClassType, DefinedClass, MainThreadMarker,
 };
 use objc2_foundation::{
-    NSBundle, NSData, NSError, NSJSONSerialization, NSJSONWritingOptions, NSString,
+    NSBundle, NSData, NSDictionary, NSError, NSJSONReadingOptions, NSJSONSerialization,
+    NSJSONWritingOptions, NSString,
 };
 use objc2_ui_kit::UIApplication;
 use objc2_user_notifications::{
-    UNNotification, UNNotificationContent, UNNotificationDefaultActionIdentifier,
-    UNNotificationPresentationOptions, UNNotificationResponse, UNPushNotificationTrigger,
+    UNMutableNotificationContent, UNNotification, UNNotificationContent,
+    UNNotificationDefaultActionIdentifier, UNNotificationPresentationOptions,
+    UNNotificationRequest, UNNotificationResponse, UNNotificationSound, UNPushNotificationTrigger,
     UNUserNotificationCenter, UNUserNotificationCenterDelegate,
 };
 use std::sync::{mpsc, Mutex, OnceLock};
@@ -188,6 +192,12 @@ define_class!(
             notification: &UNNotification,
             completion: &DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
         ) {
+            if is_notice(&notification.request()) {
+                completion.call((UNNotificationPresentationOptions::Banner
+                    | UNNotificationPresentationOptions::List
+                    | UNNotificationPresentationOptions::Sound,));
+                return;
+            }
             match self.previous(
                 sel!(userNotificationCenter:willPresentNotification:withCompletionHandler:),
             ) {
@@ -212,7 +222,7 @@ define_class!(
             let remote = request
                 .trigger()
                 .is_some_and(|trigger| trigger.isKindOfClass(UNPushNotificationTrigger::class()));
-            if !remote {
+            if !remote && !is_notice(&request) {
                 match self.previous(sel!(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:)) {
                     Some(previous) => previous
                         .userNotificationCenter_didReceiveNotificationResponse_withCompletionHandler(
@@ -224,19 +234,28 @@ define_class!(
                 }
                 return;
             }
+            let payload = payload(&request.content()).unwrap_or_default();
+            let action = response.actionIdentifier();
+            let app = &self.ivars().app;
+            if let Some(choice) = crate::push::action_choice(&action.to_string()) {
+                // The system waits for the answer: the handler is called once it landed or failed.
+                let completion = Completion(completion.copy());
+                let main = app.clone();
+                crate::push::answer_from_alert(app, &payload, choice, move |notice| {
+                    let _ = main.run_on_main_thread(move || {
+                        if let Some(notice) = notice {
+                            post_notice(&notice);
+                        }
+                        completion.finish();
+                    });
+                });
+                return;
+            }
             // SAFETY: a framework constant, valid for the process lifetime.
-            let tapped = response
-                .actionIdentifier()
-                .isEqualToString(unsafe { UNNotificationDefaultActionIdentifier });
-            if let Some(activation) = tapped
-                .then(|| payload(&request.content()))
-                .flatten()
-                .and_then(|payload| PushActivation::from_payload(&payload))
-            {
-                self.ivars()
-                    .app
-                    .state::<PushActivations>()
-                    .offer(activation);
+            if action.isEqualToString(unsafe { UNNotificationDefaultActionIdentifier }) {
+                if let Some(activation) = PushActivation::from_payload(&payload) {
+                    app.state::<PushActivations>().offer(activation);
+                }
             }
             completion.call(());
         }
@@ -253,6 +272,62 @@ impl PushResponses {
             .as_deref()
             .filter(|previous| previous.respondsToSelector(selector))
     }
+}
+
+/// A completion handler kept past its callback, until an answer settles.
+struct Completion(RcBlock<dyn Fn()>);
+
+// SAFETY: a heap copy of the system's completion block, which may be called
+// from any thread; it is only ever called on the main thread here.
+unsafe impl Send for Completion {}
+
+impl Completion {
+    /// Taking `self` moves the whole wrapper into a closure, not its block.
+    fn finish(self) {
+        self.0.call(());
+    }
+}
+
+/// The notices this module posts carry this identifier prefix; their
+/// callbacks are this module's, never the plugin's, which knows nothing of them.
+const NOTICE_PREFIX: &str = "dure.notice.";
+
+fn is_notice(request: &UNNotificationRequest) -> bool {
+    request.identifier().to_string().starts_with(NOTICE_PREFIX)
+}
+
+/// Tells the person an answer from an alert did not land. A tap opens the
+/// agent, as a tap on the alert would.
+fn post_notice(notice: &FailureNotice) {
+    let content = UNMutableNotificationContent::new();
+    content.setTitle(&NSString::from_str("Dure"));
+    content.setBody(&NSString::from_str(&notice.body));
+    content.setSound(Some(&UNNotificationSound::defaultSound()));
+    let info = serde_json::json!({ PUSH_ALERT_CONTEXT_KEY: { "session": notice.session } });
+    if let Ok(bytes) = serde_json::to_vec(&info) {
+        let data = NSData::with_bytes(&bytes);
+        let object = NSJSONSerialization::JSONObjectWithData_options_error(
+            &data,
+            NSJSONReadingOptions::empty(),
+        );
+        if let Some(info) = object
+            .ok()
+            .and_then(|object| object.downcast::<NSDictionary>().ok())
+        {
+            // SAFETY: a property list of strings, as `userInfo` requires.
+            unsafe { content.setUserInfo(&info) };
+        }
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
+        &NSString::from_str(&format!("{NOTICE_PREFIX}{stamp}")),
+        &content,
+        None,
+    );
+    UNUserNotificationCenter::currentNotificationCenter()
+        .addNotificationRequest_withCompletionHandler(&request, None);
 }
 
 /// The alert's payload as the relay sent it: APNs hands it over as `userInfo`.

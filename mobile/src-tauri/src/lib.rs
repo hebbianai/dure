@@ -3127,6 +3127,7 @@ pub fn run() {
             hub_conversation::hub_agent_approval_answer,
             push::sync_push_notifications,
             push::push_activations,
+            push::push_approval_actions,
             ssh_file_diff,
             hub_scm_write,
             hub_commit_detail,

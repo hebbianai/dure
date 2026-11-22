@@ -4,6 +4,8 @@ import { en } from "../src/locales/en.ts";
 import { ko } from "../src/locales/ko.ts";
 
 const TOPIC = "dev.hebbian.ide.mobile";
+/** `PUSH_APPROVAL_CATEGORY` in dure-hub-protocol: the phone registers its actions. */
+const APPROVAL_CATEGORY = "dure.approval";
 const ENDPOINTS = {
   sandbox: "https://api.sandbox.push.apple.com",
   production: "https://api.push.apple.com",
@@ -50,14 +52,21 @@ export function createApnsSender({ key, keyId, teamId, openConnection = connect,
     send(message, sender) {
       const { subscription, event } = message;
       const catalog = subscription.language === "ko" ? ko : en;
-      // Beside the generic text, only the identifier of the agent a tap opens
-      // (`PushAlertContext` in dure-hub-protocol): never what it asked or said.
+      // Beside the generic text, only identifiers (`PushAlertContext` in
+      // dure-hub-protocol): the agent a tap opens and, for an approval the
+      // phone can answer, that approval and the computer to answer it on —
+      // as the phone's paired entry names it, unpadded. Never what was asked.
+      const approval = event.approval && event.sessionId ? event.approval : undefined;
       const body = JSON.stringify({
         aps: {
           alert: { title: "Dure", body: catalog[event.kind === "approval" ? "notifications.push.approvalBody" : "notifications.push.doneBody"] },
           sound: "default",
+          ...(approval ? { category: APPROVAL_CATEGORY } : {}),
         },
-        ...(event.sessionId ? { dure: { session: event.sessionId } } : {}),
+        ...(event.sessionId ? { dure: {
+          session: event.sessionId,
+          ...(approval ? { hub: sender.replace(/=+$/, ""), approval } : {}),
+        } } : {}),
       });
       return new Promise((resolve) => {
         let request;

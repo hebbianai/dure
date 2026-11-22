@@ -2,7 +2,7 @@
 //! and deduplication; the existing registry owns consent and token replacement.
 use super::{commands::HubState, identity};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use dure_hub_protocol::push::{PushKind, PushSessionId, PushSubscription};
+use dure_hub_protocol::push::{PushApproval, PushId, PushKind, PushSubscription};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -19,18 +19,27 @@ pub struct PushEvent {
     /// The agent a tap on the alert opens on the phone.
     #[serde(
         default,
-        deserialize_with = "opaque_session_id",
+        deserialize_with = "opaque",
         skip_serializing_if = "Option::is_none"
     )]
-    session_id: Option<PushSessionId>,
+    session_id: Option<PushId>,
+    /// The pending approval Allow once and Deny on the alert answer. Only
+    /// beside an `approval` event whose request the phone can answer.
+    #[serde(
+        default,
+        deserialize_with = "opaque",
+        skip_serializing_if = "Option::is_none"
+    )]
+    approval: Option<PushApproval>,
 }
 
-/// A session id outside the opaque alphabet is dropped at this boundary: the
-/// alert still goes, and its tap opens the app without a target.
-fn opaque_session_id<'de, D: Deserializer<'de>>(
+/// An identifier outside the opaque alphabet is dropped at this boundary: the
+/// alert still goes, without the tap target or actions it would have named.
+fn opaque<'de, D: Deserializer<'de>, T: serde::de::DeserializeOwned>(
     deserializer: D,
-) -> Result<Option<PushSessionId>, D::Error> {
-    Ok(Option::<String>::deserialize(deserializer)?.and_then(|id| id.try_into().ok()))
+) -> Result<Option<T>, D::Error> {
+    Ok(Option::<serde_json::Value>::deserialize(deserializer)?
+        .and_then(|value| serde_json::from_value(value).ok()))
 }
 
 #[derive(Serialize)]
@@ -150,10 +159,13 @@ pub(super) fn check_registration(
 pub async fn hub_push_agent_notification(
     app: tauri::AppHandle,
     state: tauri::State<'_, HubState>,
-    event: PushEvent,
+    mut event: PushEvent,
 ) -> Result<(), String> {
     if event.event_id.is_empty() || event.event_id.len() > 512 {
         return Err("Invalid notification event identity".into());
+    }
+    if event.kind != PushKind::Approval || event.session_id.is_none() {
+        event.approval = None;
     }
     let registry = state.registry(&app)?;
     let recipients = registry.load().map_err(|error| error.to_string())?;
@@ -244,6 +256,10 @@ mod tests {
             kind: PushKind::Approval,
             event_id: "host:session:approval:1".into(),
             session_id: Some("managed_0123456789abcdef".to_string().try_into().unwrap()),
+            approval: Some(PushApproval {
+                attention_id: "attention-3".to_string().try_into().unwrap(),
+                terminal_epoch: "7".to_string().try_into().unwrap(),
+            }),
         };
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -284,6 +300,7 @@ mod tests {
                 "kind": "approval",
                 "eventId": "hmux:pane-1:7:attention:3",
                 "sessionId": session,
+                "approval": { "attentionId": "attention-3", "terminalEpoch": "7" },
             }))
             .unwrap()
         };
@@ -291,6 +308,17 @@ mod tests {
         for unusable in ["/Users/me/project", "Fix the build", ""] {
             assert!(event(unusable).session_id.is_none());
         }
+        let approval = |attention: &str| -> Option<PushApproval> {
+            serde_json::from_value::<PushEvent>(serde_json::json!({
+                "kind": "approval",
+                "eventId": "e",
+                "approval": { "attentionId": attention, "terminalEpoch": "7" },
+            }))
+            .unwrap()
+            .approval
+        };
+        assert!(approval("attention 3").is_none());
+        assert!(approval("attention-3").is_some());
         let root = tempfile::tempdir().unwrap();
         let certificate = identity::load_or_create_certificate(root.path()).unwrap();
         let signed = sign_request(
@@ -308,6 +336,7 @@ mod tests {
                 "kind": "approval",
                 "eventId": "hmux:pane-1:7:attention:3",
                 "sessionId": "managed_0123456789abcdef",
+                "approval": { "attentionId": "attention-3", "terminalEpoch": "7" },
             })
         );
         let mut fields: Vec<_> = message.as_object().unwrap().keys().cloned().collect();

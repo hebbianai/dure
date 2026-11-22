@@ -11,9 +11,11 @@ import {
   useAgentAttention,
 } from "@/lib/agents/agentAttentionStore";
 import { isDispatchedAgent } from "@/lib/agents/agentDispatchOrigin";
+import { pendingApproval } from "@/lib/agents/approvalRequest";
 import { agentDisplayName } from "@/lib/agents/agentDisplayName";
 import { agentSeatKey } from "@/lib/hub/sidebarLayout";
 import { t } from "@/lib/i18n";
+import type { HmuxAgentRuntimeState } from "@/lib/ipc/hmuxContracts";
 import { pushAgentNotification } from "@/lib/ipc/notifications";
 import { selectNotificationPaneTarget } from "@/lib/settings/notificationPaneTarget";
 import { notifyPrefs, systemNotify } from "@/lib/settings/notify";
@@ -33,6 +35,22 @@ export function episodeNotificationBody(kind: AttentionEpisodeKind): string {
   return kind === "approval"
     ? t("agents.attention.approvalNeeded")
     : t("agents.attention.turnFinished");
+}
+
+/**
+ * The approval a phone alert may answer with Allow once and Deny: the Host's
+ * pending request, by its identity, when it offers both answers. Anything
+ * else is answered where the person can read it.
+ */
+function alertApproval(
+  runtime: HmuxAgentRuntimeState | undefined,
+): { attentionId: string; terminalEpoch: string } | undefined {
+  const approval = pendingApproval(runtime);
+  if (!runtime || !approval) return undefined;
+  const { choices } = approval.request;
+  return choices.includes("approve") && choices.includes("deny")
+    ? { attentionId: approval.attentionId, terminalEpoch: runtime.terminalEpoch }
+    : undefined;
 }
 
 /** 에피소드 증가분 추출 — subscribe 콜백의 (prev, next)에서 이번에 bump된
@@ -67,10 +85,15 @@ export function notifyAgentEvent(
   // Desktop visibility and notification preferences apply only to this screen.
   if (kind !== "exited" && options?.eventId) {
     const sessionId = agentSeatKey(agent);
+    const approval =
+      kind === "approval" && sessionId
+        ? alertApproval(useStore.getState().sessionAgentRuntimeState[agent.sessionId])
+        : undefined;
     void pushAgentNotification({
       kind,
       eventId: options.eventId,
       ...(sessionId ? { sessionId } : {}),
+      ...(approval ? { approval } : {}),
     }).catch(() => {
       console.warn("Could not deliver the agent event to paired phone notifications");
     });
