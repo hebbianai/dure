@@ -37,6 +37,7 @@
  */
 
 import { normalizeDiffBadge } from "@/lib/scm/status/diffBadges";
+import { pendingApproval } from "@/lib/agents/approvalRequest";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
 import { useDiffBadges } from "@/lib/scm/status/diffBadgesStore";
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
@@ -84,6 +85,9 @@ export function useHubSidebarLayout(send: LayoutSink): void {
 	const sessionActivity = useStore((state) => state.sessionActivity);
 	const displayStates = useAgentAttention((state) => state.displayStates);
 	const activity = useStore((state) => state.agentActivity);
+	// The Host's runtime state, for the approval a row waits on: the phone's
+	// home answers it beside the row's `displayState`.
+	const runtimeStates = useStore((state) => state.sessionAgentRuntimeState);
 	// The same history the Spaces pane reads for its unopened rows, and the
 	// same live-title revision counter `useSpaces` subscribes to.
 	const history = useRecentSessionHistory(sshHosts);
@@ -151,13 +155,14 @@ export function useHubSidebarLayout(send: LayoutSink): void {
 					displayState: presentedAgentDisplayState(displayStates[agent.id], activity[agent.id]),
 					activityAt: agentRowActivityAt(sessionActivity[agent.sessionId], conversationActivityAt(agent.id, managedConversationId(agent))),
 					detail: sessionActivity[agent.sessionId]?.text || conversationPrompt(agent.id, managedConversationId(agent)),
+					approval: pendingApproval(runtimeStates[agent.sessionId]),
 				}, diffBadges[agent.id] ? normalizeDiffBadge(diffBadges[agent.id]) : undefined,
 				sessionAccountSummary(agent, accounts)),
 			};
 		});
 		// `titleRevision` is not read; it is what makes a newly published live
 		// title re-run this and reach the phone.
-	}, [agents, accounts, projects, spaces, branchOf, sessionTitle, conversationIndex, titleRevision, sshHosts, displayStates, activity, sessionActivity, diffBadges]);
+	}, [agents, accounts, projects, spaces, branchOf, sessionTitle, conversationIndex, titleRevision, sshHosts, displayStates, activity, sessionActivity, diffBadges, runtimeStates]);
 
 	// 브랜치는 space 자체의 값이 아니라 그 space 가 붙어 있는 에이전트의 값이라,
 	// 표를 만들기 직전에 얹는다.
@@ -173,11 +178,12 @@ export function useHubSidebarLayout(send: LayoutSink): void {
 				presentation: sessionPresentation({
 					...space,
 					pinned: isPanePinned(pinnedPanes, panePinKey(space.desktopId, space.key)),
+					approval: agent && pendingApproval(runtimeStates[agent.sessionId]),
 				}, space.agentId && diffBadges[space.agentId] ? normalizeDiffBadge(diffBadges[space.agentId]) : undefined,
 				agent && sessionAccountSummary(agent, accounts)),
 			};
 		}),
-		[spaces, agents, accounts, branchOf, diffBadges, pinnedPanes],
+		[spaces, agents, accounts, branchOf, diffBadges, pinnedPanes, runtimeStates],
 	);
 
 	useEffect(() => {

@@ -11,9 +11,12 @@ import { dureWordmark } from "./logo";
 import type { SpacesViewOptions } from "@/lib/spaces/spacesViewOptions";
 import iconList from "./assets/icon-list.svg";
 import { loadHomeViewOptions } from "./homeViewPreferences";
-import { projectHome, type HomeRow } from "./homeProjection";
+import { projectHome, type HomeRow, type NeedsYouCard } from "./homeProjection";
 import { isUnattachable, renderHomeSessionRow } from "./homeSessionRow";
 import { renderHomeViewMenu, type HomeMenuSection } from "./homeViewMenu";
+import { renderNeedsYou } from "./homeNeedsYou";
+import type { ApprovalAnswer } from "./chat";
+import type { AgentApprovalChoice } from "@/lib/agents/approvalRequest";
 import type { MenuAnchor } from "./sessionRowMenuPlacement";
 
 export interface CensusModel {
@@ -50,6 +53,8 @@ export interface CensusModel {
   readonly desktop?: string;
   readonly viewOptions?: SpacesViewOptions;
   readonly viewMenu?: HomeMenuSection;
+  /** This phone's answers to the Needs you cards' approvals, by attention id. */
+  readonly approvalAnswers?: Readonly<Record<string, ApprovalAnswer>>;
 }
 
 export interface CensusActions {
@@ -76,6 +81,8 @@ export interface CensusActions {
    * so by the time the menu is drawn the row this came from is gone.
    */
   readonly hold: (row: UnifiedRow, anchor: MenuAnchor) => void;
+  /** Answer a Needs you card's approval on its computer, past the approval sheet. */
+  readonly answerApproval?: (card: NeedsYouCard, choice: AgentApprovalChoice) => void;
 }
 
 function header(actions: CensusActions): HTMLElement {
@@ -207,6 +214,10 @@ export function renderHomeScreen(model: CensusModel, actions: CensusActions): HT
   // cut, and the foot fades while there is more (`fadeWhileScrollable`).
   fadeWhileScrollable(body, { start: "scroll-fade--start", end: "scroll-fade--end" }, "y");
   body.append(pullStrip(model, actions));
+  // Above the groups and outside them: a wait in another Space, or behind a
+  // filter, still waits, so the section reads every row (`needsYou`).
+  const waiting = renderNeedsYou(projected.needsYou, model.approvalAnswers ?? {}, actions);
+  if (waiting) body.append(waiting);
   const list = element("ul", "list home__list");
   const rows = selected?.rows.filter(row => row.pinned !== true) ?? [];
   const draw = (row: HomeRow): void => {

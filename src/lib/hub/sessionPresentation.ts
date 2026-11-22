@@ -1,3 +1,4 @@
+import type { PendingApproval } from "@/lib/agents/approvalRequest";
 import type { SpacesFacetSource } from "@/lib/spaces/spacesViewProjection";
 
 /** The catalog's account line. Mirrors `SessionAccountSummary` in the hub
@@ -23,10 +24,18 @@ export interface SessionPresentation
 	};
 	/** Present only when the phone may read and switch this session's account. */
 	readonly account?: SessionAccountSummary;
+	/** The approval the agent waits on, while the Host carries what its
+	 * provider asks (`pendingApproval`): the wait `displayState: "blocked"`
+	 * names, with the attention id an answer quotes. */
+	readonly approval?: PendingApproval;
 }
 
 export function sessionPresentation(
-	row: SpacesFacetSource & { readonly detail?: string; readonly pinned?: boolean },
+	row: SpacesFacetSource & {
+		readonly detail?: string;
+		readonly pinned?: boolean;
+		readonly approval?: PendingApproval;
+	},
 	git?: {
 		readonly ahead: number;
 		readonly behind: number;
@@ -58,5 +67,6 @@ export function sessionPresentation(
 				}
 			: {}),
 		...(account ? { account } : {}),
+		...(row.approval ? { approval: row.approval } : {}),
 	};
 }

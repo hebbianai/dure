@@ -108,7 +108,14 @@ import {
   yieldTrayDrawer,
 } from "./sessionScreen";
 import type { AgentRuntimeState } from "./agentRuntimeState";
-import { CHAT_TRANSCRIPT_LIMIT, defaultSessionView, offersServerChat, type SessionView } from "./chat";
+import {
+  type ApprovalAnswer,
+  approvalAnswerProblem,
+  CHAT_TRANSCRIPT_LIMIT,
+  defaultSessionView,
+  offersServerChat,
+  type SessionView,
+} from "./chat";
 import { queueKey, serverQueueKey } from "./chatQueue";
 import { type ChatController, type ChatViewOptions, createChatView, FALLBACK_TEXT } from "./chatView";
 import { AGENT_CHAT_PAGE } from "./agentChat";
@@ -125,7 +132,8 @@ import * as commandHistory from "./commandHistory";
 import { type KeyPress, pressKey } from "./terminalKeys";
 import * as keyTray from "./keyTray";
 import { renderKeyStripScreen } from "./keyStripView";
-import { projectHome } from "./homeProjection";
+import { type NeedsYouCard, projectHome } from "./homeProjection";
+import type { AgentApprovalChoice } from "@/lib/agents/approvalRequest";
 import type { RowFilter } from "./sessionRows";
 import * as recents from "./recents";
 import { attachPullToRefresh } from "./pullToRefresh";
@@ -595,6 +603,12 @@ interface State {
   terminalUnavailable?: { attachmentId: string; detail: string; connectionLost: boolean };
   /** Host runtime projection, replaced by each observation and scoped to its attachment. */
   terminalRuntime?: { attachmentId: string; runtime: AgentRuntimeState };
+  /**
+   * This phone's answers to home's Needs you approvals, by the attention id
+   * each answers. In memory only: an answer belongs to the approval it names,
+   * and a new approval comes with a new id.
+   */
+  homeApprovals: Record<string, ApprovalAnswer>;
   /** A failure, shown as a destructive toast until it is closed. */
   banner?: string;
   /** A plain report, shown as a neutral toast for the desktop's 2.5 seconds. */
@@ -744,6 +758,7 @@ export function startApp(root: HTMLElement): () => void {
     tray: keyTray.load(),
     addSheet: false,
     attachFailures: {},
+    homeApprovals: {},
   };
   let surface: StructuredTerminalSurface | undefined;
   const pushSync = createPushSync({
@@ -806,6 +821,8 @@ export function startApp(root: HTMLElement): () => void {
   let commandDraft = "";
   /** The Face ID gate on `surface`'s input; lives and dies with the attachment, like the surface. */
   let approvalGate: ApprovalGate | undefined;
+  /** The same gate for home's Needs you cards, which name the approval they answer. */
+  let homeApprovalGate: ApprovalGate | undefined;
   /**
    * The node the transcript is drawn into, and which attach it belongs to.
    *
@@ -2543,6 +2560,7 @@ export function startApp(root: HTMLElement): () => void {
         desktop: state.desktop,
         viewOptions: state.homeOptions ?? loadHomeViewOptions(),
         viewMenu: state.homeMenu,
+        approvalAnswers: state.homeApprovals,
         opening: state.opening,
         selectedSessionId: selectedTerminal(state.screen)?.session.session_id,
         // Not having asked and having asked and found nothing are different
@@ -2568,6 +2586,7 @@ export function startApp(root: HTMLElement): () => void {
         settings: () => leaveForHomeAction(() => setState({ screen: { kind: "settings" } })),
         refresh: () => void census(),
         hold: (row, anchor) => setState({ rowMenu: { sessionId: row.sessionId, anchor } }),
+        answerApproval: (card, choice) => void answerHomeApproval(card, choice),
       },
     );
   }
@@ -4090,17 +4109,62 @@ export function startApp(root: HTMLElement): () => void {
    * approval goes. `undefined`: the sheet did not pass, so nothing was sent.
    */
   function gatedApproval<T>(send: () => Promise<T>): Promise<T | undefined> {
-    return new Promise((resolve, reject) => {
+    return throughGate((run, dropped) => {
       const gate = approvalGate;
-      if (!gate) {
-        send().then(resolve, reject);
-        return;
-      }
-      gate.admit(
-        () => void send().then(resolve, reject),
-        () => resolve(undefined),
-      );
+      if (gate) gate.admit(run, dropped);
+      else run();
+    }, send);
+  }
+
+  /** `send` once `admit` lets it run; `undefined` when the sheet dropped it. */
+  function throughGate<T>(
+    admit: (run: () => void, dropped: () => void) => void,
+    send: () => Promise<T>,
+  ): Promise<T | undefined> {
+    return new Promise((resolve, reject) => {
+      admit(() => void send().then(resolve, reject), () => resolve(undefined));
     });
+  }
+
+  /**
+   * Answers a Needs you card's approval on its computer, past the same
+   * approval sheet as the chat's card or a key in the terminal. The card
+   * leaves once the answer landed; the next catalog read takes the agent out
+   * of the section when it moves on.
+   */
+  async function answerHomeApproval(card: NeedsYouCard, choice: AgentApprovalChoice): Promise<void> {
+    const source = card.view.row.source;
+    const approval = card.approval;
+    if (source.kind !== "hub" || !approval) return;
+    const { attentionId } = approval;
+    if (state.homeApprovals[attentionId]?.state === "sending") return;
+    const settle = (answer: ApprovalAnswer | undefined) => {
+      const { [attentionId]: _settled, ...others } = state.homeApprovals;
+      setState({ homeApprovals: answer ? { ...others, [attentionId]: answer } : others });
+    };
+    settle({ attentionId, state: "sending" });
+    const session = source.session;
+    const target = { boxId: session.box_id, workspaceId: session.workspace_id, sessionId: session.session_id };
+    let next: ApprovalAnswer | undefined;
+    try {
+      homeApprovalGate ??= newApprovalGate();
+      const gate = homeApprovalGate;
+      const result = await throughGate(
+        (run, dropped) => gate.answer(attentionId, run, dropped),
+        () => ipc.hubAgentApprovalAnswer(source.hubId, target, session.terminal_epoch, attentionId, choice),
+      );
+      const problem = result && approvalAnswerProblem(result);
+      next = result === undefined
+        ? undefined
+        : problem
+          ? { attentionId, state: "failed", problem }
+          : { attentionId, state: "sent" };
+    } catch {
+      next = { attentionId, state: "failed", problem: "chat.approval.failed" };
+    }
+    if (disposed) return;
+    settle(next);
+    if (next?.state === "sent") void census();
   }
 
   /** Whose chat a session screen shows, or none for a terminal-only session. */
@@ -4436,6 +4500,26 @@ export function startApp(root: HTMLElement): () => void {
     )})).filter(group => group.rows.length > 0);
   }
 
+  /** The approval sheet, as every surface that answers an approval asks it. */
+  function newApprovalGate(): ApprovalGate {
+    return createApprovalGate({
+      enabled: () => state.settings.approvalBiometric,
+      confirm: async () =>
+        confirmOwner(await biometricBridge(), t("approval.biometricRequired")),
+      // Named by outcome: a sheet the system could not show, or a face it did
+      // not accept, is not something the owner cancelled.
+      refused: (check) =>
+        setState({
+          banner:
+            check === "cancelled"
+              ? t("approval.biometricCancelled")
+              : check === "unavailable"
+                ? t("approval.biometricUnavailable")
+                : t("approval.biometricFailedToSend"),
+        }),
+    });
+  }
+
   /**
    * The transcript node for this attach, created once and reused.
    *
@@ -4471,22 +4555,7 @@ export function startApp(root: HTMLElement): () => void {
       liveAttachment(state.screen) !== terminal.attachment_id) return;
     // One gate per attachment: the approval it proves belongs to this agent,
     // and the surface it guards is disposed with the attachment.
-    const gate = createApprovalGate({
-      enabled: () => state.settings.approvalBiometric,
-      confirm: async () =>
-        confirmOwner(await biometricBridge(), t("approval.biometricRequired")),
-      // Named by outcome: a sheet the system could not show, or a face it did
-      // not accept, is not something the owner cancelled.
-      refused: (check) =>
-        setState({
-          banner:
-            check === "cancelled"
-              ? t("approval.biometricCancelled")
-              : check === "unavailable"
-                ? t("approval.biometricUnavailable")
-                : t("approval.biometricFailedToSend"),
-        }),
-    });
+    const gate = newApprovalGate();
     approvalGate = gate;
     // Same records, read for what changed while the app was off screen.
     const notifier = createNotificationObserver({
@@ -4726,6 +4795,7 @@ export function startApp(root: HTMLElement): () => void {
     window.visualViewport?.removeEventListener("scroll", refit);
     surface?.dispose();
     approvalGate?.reset();
+    homeApprovalGate?.reset();
     chat?.dispose();
     agentChat?.dispose();
     clearTimeout(hostRetryTimer);

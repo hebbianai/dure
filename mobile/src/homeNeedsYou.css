@@ -1,0 +1,134 @@
+/* Home's Needs you section (`homeNeedsYou.ts`): the agents waiting for the
+ * person, above the list, on the list's own 12px gutter. Each card wears the
+ * chat's approval colours, so a wait reads the same in both places. */
+
+.needs-you {
+  flex: none;
+  padding: 0 12px;
+}
+
+.needs-you .group-heading {
+  margin: 12px 8px 8px;
+}
+
+.needs-you__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.needs-you__card {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--warn-surface);
+  color: var(--warn-ink);
+  font: 400 13px/18px var(--font-ui);
+}
+
+.needs-you__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.needs-you__names {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.needs-you__agent,
+.needs-you__project {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.needs-you__agent {
+  color: var(--foreground);
+  font: 500 14px/16px var(--font-ui);
+}
+
+.needs-you__project {
+  flex-shrink: 1;
+  color: var(--muted-foreground);
+  font: 400 11px/15px var(--font-mono);
+}
+
+.needs-you__ask {
+  margin: 6px 0 0;
+  font-weight: 600;
+}
+
+/* A card answered elsewhere: what it waits for, and the way to the agent. */
+.needs-you__line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.needs-you__line .needs-you__ask {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.needs-you__line .needs-you__action {
+  flex: none;
+  min-height: 32px;
+}
+
+.needs-you__summary {
+  max-height: 96px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--surface-sunken);
+  color: var(--foreground);
+  font: 400 12px/16px var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.needs-you__problem {
+  margin: 6px 0 0;
+}
+
+.needs-you__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.needs-you__action {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--glass-chip);
+  color: var(--foreground);
+  font: 500 13px/18px var(--font-ui);
+}
+
+.needs-you__action--aside {
+  margin-right: auto;
+}
+
+.needs-you__action--primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.needs-you__action:disabled {
+  opacity: 0.5;
+}
