@@ -199,3 +199,114 @@ fn a_busy_root_does_not_hold_the_process_wide_reader_registry() {
         ManagedRehostResolutionLookup::NotFound
     ));
 }
+
+fn retry_required(root: &Path, source: &str, operation: &str) -> bool {
+    matches!(
+        resolve_managed_rehost_current(root, "workspace", source).unwrap(),
+        ManagedRehostResolutionLookup::RetryRequired { operation_id } if operation_id == operation
+    )
+}
+
+fn record_path(directory: &Path, operation: &str) -> PathBuf {
+    directory.join(format!(
+        "operation_{}.json",
+        digest(&format!("{MANAGED_REHOST_RECOVERY_ID_PREFIX}{operation}"))
+    ))
+}
+
+/// Records decoded by one resolution, and whether it still scanned the journal.
+fn decoded_by(resolve: impl FnOnce()) -> usize {
+    let reads = RECORD_READ_COUNT.get();
+    let scans = JOURNAL_SCAN_COUNT.get();
+    resolve();
+    assert_eq!(
+        JOURNAL_SCAN_COUNT.get() - scans,
+        1,
+        "every transaction scans and validates the journal under its own lock"
+    );
+    RECORD_READ_COUNT.get() - reads
+}
+
+#[test]
+fn an_unchanged_journal_is_decoded_once_and_every_record_file_change_is_seen() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let directory = directory(root);
+    pending(root, "first", "source");
+    for index in 0..4 {
+        pending(root, &format!("other-{index}"), &format!("other-{index}"));
+    }
+    assert_eq!(
+        decoded_by(|| assert!(retry_required(root, "source", "first"))),
+        5
+    );
+    for _ in 0..3 {
+        assert_eq!(
+            decoded_by(|| assert!(retry_required(root, "source", "first"))),
+            0,
+            "an unchanged journal must not be read and decoded again"
+        );
+    }
+
+    pending(root, "second", "second-source");
+    assert_eq!(
+        decoded_by(|| assert!(retry_required(root, "second-source", "second"))),
+        6,
+        "a new record file is decoded with the rest of the journal"
+    );
+    assert_eq!(
+        decoded_by(|| assert!(retry_required(root, "second-source", "second"))),
+        0
+    );
+
+    let first = record_path(&directory, "first");
+    let record = read_record(&first).unwrap();
+    write_record(&directory, &first, &record).unwrap();
+    assert_eq!(
+        decoded_by(|| assert!(retry_required(root, "source", "first"))),
+        6,
+        "a republished record is decoded again even with identical bytes"
+    );
+
+    let writer = acquire_admission_lock(&directory).unwrap();
+    fs::remove_file(&first).unwrap();
+    drop(writer);
+    assert_eq!(
+        decoded_by(|| assert!(matches!(
+            resolve_managed_rehost_current(root, "workspace", "source").unwrap(),
+            ManagedRehostResolutionLookup::NotFound
+        ))),
+        5,
+        "a removed record disappears for the next reader"
+    );
+}
+
+#[test]
+fn decoded_records_are_not_reused_past_their_age_bound() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let directory = directory(root);
+    pending(root, "first", "source");
+    assert_eq!(
+        decoded_by(|| assert!(retry_required(root, "source", "first"))),
+        1
+    );
+    {
+        let mut readers = readers().unwrap();
+        let entry = readers.get_mut(&directory).unwrap();
+        let mut decoded = Arc::into_inner(entry.decoded.take().unwrap()).unwrap();
+        decoded.observed_at = std::time::Instant::now()
+            .checked_sub(DECODED_RECORDS_MAX_AGE)
+            .unwrap();
+        entry.decoded = Some(Arc::new(decoded));
+    }
+    assert_eq!(
+        decoded_by(|| assert!(retry_required(root, "source", "first"))),
+        1,
+        "records older than the age bound are decoded again"
+    );
+    assert_eq!(
+        decoded_by(|| assert!(retry_required(root, "source", "first"))),
+        0
+    );
+}
