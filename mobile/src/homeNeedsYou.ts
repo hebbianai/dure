@@ -14,10 +14,10 @@ import {
 } from "@/lib/agents/approvalRequest";
 import type { UnifiedSource } from "./allSessions";
 import type { ApprovalAnswer } from "./chat";
-import { element, groupHeading } from "./dom";
+import { element } from "./dom";
+import { homeCardHead, homeCardSection } from "./homeCard";
 import type { NeedsYouCard } from "./homeProjection";
 import { t } from "./i18n";
-import { providerGlyph } from "./providerGlyph";
 import "./homeNeedsYou.css";
 
 /** The card's answers, least committal first: Deny, then Allow once. */
@@ -56,14 +56,11 @@ export function renderNeedsYou(
 ): HTMLElement | undefined {
 	const shown = shownNeedsYou(cards, answers);
 	if (shown.length === 0) return undefined;
-	const section = element("section", "needs-you");
-	const label = t("home.needsYou.title");
-	section.setAttribute("aria-label", label);
-	section.append(groupHeading(label, shown.length));
-	const list = element("ul", "needs-you__list");
-	for (const card of shown) list.append(renderCard(card, answers, actions));
-	section.append(list);
-	return section;
+	return homeCardSection(
+		"needs-you",
+		t("home.needsYou.title"),
+		shown.map((card) => renderCard(card, answers, actions)),
+	);
 }
 
 function renderCard(
@@ -80,14 +77,7 @@ function renderCard(
 	// tests find by it.
 	item.dataset.needsYou = row.sessionId;
 
-	const head = element("div", "needs-you__head");
-	head.append(providerGlyph(view.provider ?? row.source.session.provider_id));
-	const names = element("span", "needs-you__names");
-	names.append(element("span", "needs-you__agent", row.title));
-	const project = view.projectName ?? row.project;
-	if (project) names.append(element("span", "needs-you__project", project));
-	head.append(names);
-	item.append(head);
+	item.append(homeCardHead(view));
 
 	const ask = element("p", "needs-you__ask");
 	ask.textContent = approval

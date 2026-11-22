@@ -1,0 +1,53 @@
+/* The sections above home's list (`homeCard.ts`): Needs you and Recently
+ * finished, on the list's own 12px gutter, each card headed by the agent's and
+ * its project's names. */
+
+.home-cards {
+  flex: none;
+  padding: 0 12px;
+}
+
+.home-cards .group-heading {
+  margin: 12px 8px 8px;
+}
+
+.home-cards__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.home-card__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.home-card__names {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.home-card__agent,
+.home-card__project {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-card__agent {
+  color: var(--foreground);
+  font: 500 14px/16px var(--font-ui);
+}
+
+.home-card__project {
+  flex-shrink: 1;
+  color: var(--muted-foreground);
+  font: 400 11px/15px var(--font-mono);
+}

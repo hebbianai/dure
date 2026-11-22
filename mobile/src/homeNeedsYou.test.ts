@@ -185,8 +185,8 @@ describe("the Needs you section on home", () => {
 			`${t("home.needsYou.title")}2`,
 		);
 		const [first, second] = document.querySelectorAll(".needs-you__card");
-		expect(first.querySelector(".needs-you__agent")?.textContent).toBe("Agent approve-me");
-		expect(first.querySelector(".needs-you__project")?.textContent).toBe("Dure");
+		expect(first.querySelector(".home-card__agent")?.textContent).toBe("Agent approve-me");
+		expect(first.querySelector(".home-card__project")?.textContent).toBe("Dure");
 		expect(first.querySelector(".needs-you__ask")?.textContent).toBe(
 			t("chat.approval.title", { tool: "Bash" }),
 		);

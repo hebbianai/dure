@@ -1,24 +1,7 @@
 /* Home's Needs you section (`homeNeedsYou.ts`): the agents waiting for the
- * person, above the list, on the list's own 12px gutter. Each card wears the
- * chat's approval colours, so a wait reads the same in both places. */
-
-.needs-you {
-  flex: none;
-  padding: 0 12px;
-}
-
-.needs-you .group-heading {
-  margin: 12px 8px 8px;
-}
-
-.needs-you__list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
+ * person, above the list, in the shared section and card head (`homeCard.css`).
+ * Each card wears the chat's approval colours, so a wait reads the same in
+ * both places. */
 
 .needs-you__card {
   padding: 10px 12px;
@@ -26,38 +9,6 @@
   background: var(--warn-surface);
   color: var(--warn-ink);
   font: 400 13px/18px var(--font-ui);
-}
-
-.needs-you__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.needs-you__names {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-}
-
-.needs-you__agent,
-.needs-you__project {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.needs-you__agent {
-  color: var(--foreground);
-  font: 500 14px/16px var(--font-ui);
-}
-
-.needs-you__project {
-  flex-shrink: 1;
-  color: var(--muted-foreground);
-  font: 400 11px/15px var(--font-mono);
 }
 
 .needs-you__ask {
