@@ -165,7 +165,10 @@ function transcriptEntry(row, epoch) {
         );
       }
       return { ...base, kind: "history_boundary", text: body.reason };
+    // State markers carry no conversation text. A queued input's own text
+    // reaches the timeline as a user message when its turn is dispatched.
     case "lifecycle":
+    case "queued_input":
     case "provider_evidence":
       return null;
     default:
