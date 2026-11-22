@@ -18,6 +18,11 @@ import {
 	parseRemoteGitCheckoutHelperPath,
 	type RemoteGitCheckoutHelperPath,
 } from "@/lib/scm/worktrees/remoteGitCheckoutHelper";
+import {
+	parseVolumeSpaces,
+	parseWorktreeReclaimOutcomes,
+	parseWorktreeReclaimScan,
+} from "@/lib/scm/worktrees/worktreeReclaim";
 import type {
 	BranchInfo as WorktreeBranchInfo,
 	WorktreeAction as WorktreeProvisionAction,
@@ -148,6 +153,29 @@ export const removeGitCheckoutInstance = (
 		.catch((error) => {
 			throw gitCheckoutBackendError(error, "worktree_remove_failed");
 		});
+
+/** The linked worktrees Dure created for one local project, each with whether
+ *  it may be removed. Read-only; the backend's checkout authority decides. */
+export const scanReclaimableWorktrees = (repo: string) =>
+	invoke<unknown>("scan_reclaimable_worktrees", { repo }).then(
+		parseWorktreeReclaimScan,
+	);
+
+/** Remove offered worktrees with plain `git worktree remove`, each re-checked
+ *  first. One outcome per instance, in order; branches are kept. */
+export const reclaimWorktrees = (
+	repo: string,
+	instances: readonly GitCheckoutInstanceV1[],
+) =>
+	invoke<unknown>("reclaim_worktrees", { repo, instances }).then((outcomes) =>
+		parseWorktreeReclaimOutcomes(outcomes, instances.length),
+	);
+
+/** Free space of the volume holding each local path, in order. */
+export const volumeSpace = (paths: readonly string[]) =>
+	invoke<unknown>("volume_space", { paths }).then((spaces) =>
+		parseVolumeSpaces(spaces, paths.length),
+	);
 
 /** Installs and returns one exact content-addressed checkout helper on an SSH Host. */
 export async function prepareRemoteGitCheckoutHelper(

@@ -44,6 +44,7 @@ mod removal;
 mod state;
 use git_ref::*;
 use reducer::*;
+pub(crate) use registration::{ReclaimMembership, reclaim_membership};
 pub use registration::{
     capture_git_checkout_registration, claim_git_checkout_registration, read_git_checkout_claims,
     release_git_checkout_registration,

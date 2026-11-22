@@ -6,6 +6,10 @@ import {
   useRestoreAllState,
 } from "@/components/common/RestoreAllAgentsNotice";
 import { TelemetryNotice } from "@/components/common/TelemetryNotice";
+import {
+  LowDiskSpaceNotice,
+  useLowDiskOffer,
+} from "@/components/scm/LowDiskSpaceNotice";
 import { useOnboardingPending } from "@/components/panels/useOnboardingPanelState";
 import { Alert } from "@/components/ui/alert";
 import { t } from "@/lib/i18n";
@@ -121,6 +125,10 @@ export function Toaster({ brief = true }: { brief?: boolean } = {}) {
   // Agents to restore outrank the telemetry question; an update outranks both.
   const restoreAllPhase = useRestoreAllState().phase;
   const restoreAll = mainWindow && restoreAllPhase !== "idle";
+  // Finished worktrees to remove on a filling disk outrank the telemetry
+  // question; an update and agents to restore outrank both.
+  const lowDiskOffer = useLowDiskOffer();
+  const lowDisk = mainWindow && lowDiskOffer !== null;
   return (
     <>
       <RestartPreparationNotice />
@@ -138,12 +146,21 @@ export function Toaster({ brief = true }: { brief?: boolean } = {}) {
         />
       ) : null}
       {mainWindow ? (
+        <LowDiskSpaceNotice
+          hidden={modalOpen || visibleNotice !== undefined || restoreAll}
+        />
+      ) : null}
+      {mainWindow ? (
         // The same corner and the same hold-while-modal rule as the update
         // card; an update outranks the question, which waits its turn. Kept
         // mounted so the window asks the native side once, not per toggle.
         <TelemetryNotice
           hidden={
-            modalOpen || visibleNotice !== undefined || onboarding || restoreAll
+            modalOpen ||
+            visibleNotice !== undefined ||
+            onboarding ||
+            restoreAll ||
+            lowDisk
           }
         />
       ) : null}

@@ -26,12 +26,41 @@ pub struct SystemResources {
     pub disk_total_bytes: Option<u64>,
 }
 
+/// Free and total bytes of the volume holding one path.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VolumeSpace {
+    pub free_bytes: u64,
+    pub total_bytes: u64,
+}
+
 static SYSTEM: Mutex<Option<System>> = Mutex::new(None);
+
+fn volume_for(path: &str) -> Option<(u64, u64)> {
+    volume_in(&Disks::new_with_refreshed_list().ok()?, path)
+}
+
+/// The volume holding each path, in order, from one disk listing. Unlike
+/// `sample` this reads no CPU counters, so a periodic check cannot skew the
+/// status-bar widget's next CPU delta.
+pub fn volume_spaces(paths: &[String]) -> Vec<Option<VolumeSpace>> {
+    let Ok(disks) = Disks::new_with_refreshed_list() else {
+        return vec![None; paths.len()];
+    };
+    paths
+        .iter()
+        .map(|path| {
+            volume_in(&disks, path).map(|(free_bytes, total_bytes)| VolumeSpace {
+                free_bytes,
+                total_bytes,
+            })
+        })
+        .collect()
+}
 
 /// 경로를 담고 있는 마운트 중 가장 긴(=가장 구체적인) 것을 고른다.
 /// `/Users/me/x`는 `/`와 `/Users` 양쪽에 매치될 수 있고, 답은 후자다.
-fn volume_for(path: &str) -> Option<(u64, u64)> {
-    let disks = Disks::new_with_refreshed_list().ok()?;
+fn volume_in(disks: &Disks, path: &str) -> Option<(u64, u64)> {
     let mut best: Option<(usize, u64, u64)> = None;
     for disk in disks.iter() {
         let mount = disk.mount_point().to_string_lossy().into_owned();
@@ -96,6 +125,16 @@ mod tests {
         assert!(first.memory_used_bytes <= first.memory_total_bytes);
         // 첫 표본은 비교 대상이 없어 0일 수 있지만 범위는 지켜야 한다.
         assert!((0.0..=100.0 * num_cpus_upper_bound()).contains(&first.cpu_percent));
+    }
+
+    #[test]
+    fn volume_spaces_answer_each_path_in_order() {
+        let root = std::env::temp_dir().to_string_lossy().into_owned();
+        let spaces = volume_spaces(&[root, "\u{0}not-a-path".to_owned()]);
+        assert_eq!(spaces.len(), 2);
+        // A sandbox may list no disks at all; a listed one must be coherent.
+        assert!(spaces[0].is_none_or(|space| space.free_bytes <= space.total_bytes));
+        assert!(spaces[1].is_none());
     }
 
     #[test]

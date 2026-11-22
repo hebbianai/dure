@@ -1,8 +1,12 @@
 use dure_git_checkout::{GitCheckoutCaptureRequestV1, GitCheckoutRemovalRequestV1};
 pub use dure_git_checkout::{
     GitCheckoutInstanceError, GitCheckoutInstanceV1, GitCheckoutPathObservationV1,
-    GitCheckoutRemovalPolicyV1, GitCheckoutRemovalReceiptV1,
+    GitCheckoutReclaimOutcome, GitCheckoutReclaimScan, GitCheckoutRemovalPolicyV1,
+    GitCheckoutRemovalReceiptV1,
 };
+
+/// One confirmation removes at most this many checkouts.
+const MAX_RECLAIM_BATCH: usize = 1024;
 
 #[tauri::command(async)]
 pub fn locate_git_checkout_paths(
@@ -56,6 +60,35 @@ pub async fn remove_git_checkout_instance<R: tauri::Runtime>(
         code: "worktree_remove_failed",
         message: error.to_string(),
     })?
+}
+
+/// The linked worktrees the product created for one local project, each with
+/// whether it may be removed and why not. Read-only.
+#[tauri::command(async)]
+pub fn scan_reclaimable_worktrees(
+    repo: String,
+) -> Result<GitCheckoutReclaimScan, GitCheckoutInstanceError> {
+    dure_git_checkout::scan_reclaimable_checkouts(std::path::Path::new(&repo))
+}
+
+/// Remove the offered checkouts one by one, each re-checked first. Outcomes
+/// come back in request order; one refusal never stops the rest.
+#[tauri::command(async)]
+pub fn reclaim_worktrees(
+    repo: String,
+    instances: Vec<GitCheckoutInstanceV1>,
+) -> Result<Vec<GitCheckoutReclaimOutcome>, GitCheckoutInstanceError> {
+    if instances.len() > MAX_RECLAIM_BATCH {
+        return Err(GitCheckoutInstanceError {
+            code: "worktree_request_invalid",
+            message: "too many checkouts in one reclaim request".to_owned(),
+        });
+    }
+    let repository = std::path::Path::new(&repo);
+    Ok(instances
+        .iter()
+        .map(|instance| dure_git_checkout::reclaim_checkout(repository, instance))
+        .collect())
 }
 
 #[cfg(test)]

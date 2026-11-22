@@ -5,6 +5,7 @@ import { LoadingStatus } from "@/components/common/PanelStatus";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Folder } from "lucide-react";
 import { useEffect, useState } from "react";
+import { FinishedWorktreesSection } from "@/components/settings/FinishedWorktreesSection";
 import { PageTitle } from "@/components/settings/PageTitle";
 import { Button } from "@/components/ui/button";
 import { ErrorText } from "@/components/ui/error-text";
@@ -106,11 +107,12 @@ export function StoragePage() {
 							path={info.discoveryRoot ?? undefined}
 						/>
 					</div>
-					<p className="text-xs text-muted-foreground">
+					<p className="pb-8 text-xs text-muted-foreground">
 						{t("settings.storage.changeHint")}
 					</p>
 				</>
 			)}
+			<FinishedWorktreesSection />
 		</div>
 	);
 }

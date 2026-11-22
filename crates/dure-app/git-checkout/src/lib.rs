@@ -28,6 +28,7 @@ use std::process::Command;
 mod disposable;
 mod git_process;
 mod local_exclude;
+mod reclaim;
 pub use disposable::git_checkout_is_disposable;
 #[cfg(test)]
 use git_process::scrub_git_environment;
@@ -35,6 +36,10 @@ use git_process::{checkout_is_clean_for_plain_remove, git_output};
 #[cfg(all(test, unix))]
 use git_process::{checkout_is_clean_with_timeout, git_output_with_timeout};
 pub use local_exclude::exclude_worktree_directory;
+pub use reclaim::{
+    GitCheckoutReclaimCandidate, GitCheckoutReclaimHold, GitCheckoutReclaimOutcome,
+    GitCheckoutReclaimScan, reclaim_checkout, scan_reclaimable_checkouts,
+};
 
 mod authority;
 #[cfg(unix)]
