@@ -69,7 +69,9 @@ impl CheckoutSessionRuntime {
             {
                 // Older registrations have no committed claim acknowledgement.
                 // Confirm their source once, before admitting any new root.
-                if runtime
+                // The claim may re-register a replaced checkout, so continue
+                // with the binding it recorded.
+                let binding = if runtime
                     .store
                     .agent_checkout_for_root(&origin)
                     .await?
@@ -79,9 +81,10 @@ impl CheckoutSessionRuntime {
                         .store
                         .admit_agent_checkout(&binding, &origin)
                         .await?;
-                    crate::create::claim_admission(admission, source_request.provider_cwd())
-                        .await?;
-                }
+                    crate::create::claim_admission(admission, source_request.provider_cwd()).await?
+                } else {
+                    binding
+                };
                 observe("checkout.registration.ready");
                 let target_identity = managed_identity(
                     &runtime.namespace,

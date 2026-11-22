@@ -34,6 +34,8 @@ mod hmux_exact_termination;
 #[cfg(windows)]
 mod hmux_input_contract;
 #[cfg(windows)]
+mod launch_environment;
+#[cfg(windows)]
 mod login_shell;
 #[cfg(windows)]
 mod managed_create_resolution;

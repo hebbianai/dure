@@ -782,6 +782,11 @@ or inconsistent observations, run `dure diagnostics --json` and include the
 cursor checkpoints; do not reset them or create another Run to bypass a refusal.
 Actual generation mismatches retain `stale_generation` (or `terminal` for an
 exact-session operation) and require resolving the current session again.
+`session_agent_binding_missing` means the Session is live but no Agent binds it
+as its current Session, so it cannot report yet: a restart that has not
+published its binding (`dure runs resume <agent>` shows it and how to finish
+it), or a provider started outside a Dure Agent. Resending the same lookup
+cannot help.
 
 ## Delegated workflows are not orchestration Dispatches
 

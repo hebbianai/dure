@@ -310,7 +310,7 @@ pub use provider_credential_profile::{
     PROVIDER_CREDENTIAL_PROFILE_SCHEMA_VERSION_V1, ProviderCredentialEnvironmentPolicyV1,
     ProviderCredentialProfileDirectoryNameV1, ProviderCredentialProfileRegistrationV1,
     ProviderCredentialProfileStore, ProviderCredentialProfileV1,
-    provider_credential_environment_policy_v1,
+    provider_credential_environment_policy_v1, provider_credential_state_roots_v1,
 };
 pub use provider_execution::ProviderPermissionModeV1;
 pub use provider_launch_defaults::{

@@ -8713,6 +8713,103 @@ async fn a_wake_refused_by_a_busy_worker_is_delivered_once_the_worker_can_take_i
     assert_eq!(prompt_deliverer.requests().len(), 3);
 }
 
+/// Claude can continue a conversation under a new id, or start a new one with
+/// /clear, without leaving its exact Session generation. The Host then admits
+/// prompts only for that current conversation, so a wake aimed at the id the
+/// Agent was bound with would be refused on every retry while the worker sits
+/// idle.
+#[tokio::test]
+async fn a_wake_targets_the_conversation_its_session_runs_now() {
+    let (_root, state, _launcher, prompt_deliverer) = fixture_with_delivery(
+        Vec::new(),
+        vec![
+            DeliveryOutcome::Fail("hmux_agent_prompt_runtime_changed", false),
+            DeliveryOutcome::Succeed,
+        ],
+    )
+    .await;
+    let (_context, mut body) = prepare_exact_session_message(&state).await;
+    let opened_at = crate::now_ms().unwrap();
+    body["openedAtMs"] = json!(opened_at);
+    let opened = invoke_orchestration(
+        &state,
+        "open-before-continuation",
+        "interaction.message.open.exact-session",
+        body.clone(),
+    )
+    .await;
+    assert_eq!(
+        opened["receipt"]["deliveries"][0]["wake"]["state"],
+        "queued_until_next_turn"
+    );
+    let conversation = |request: &WorkflowPromptDeliveryRequestV1| match &request.intent {
+        WorkflowPromptDeliveryIntentV1::ExistingConversation {
+            provider_conversation_id,
+        } => provider_conversation_id.clone(),
+        WorkflowPromptDeliveryIntentV1::FreshAgent => panic!("a wake addresses its conversation"),
+    };
+    assert_eq!(
+        conversation(&prompt_deliverer.requests()[0]),
+        "coordinator-conversation",
+        "without a Host identity the wake keeps the bound conversation"
+    );
+
+    let session = &body["session"];
+    let fence = |extra: Value| {
+        let mut value = json!({
+            "session_id": session["sessionId"],
+            "workspace_id": session["workspaceId"],
+            "runner_principal": session["runnerPrincipal"],
+            "runner_instance": session["runnerInstance"],
+            "channel_epoch": session["channelEpoch"],
+            "host_instance_id": session["hostInstanceId"],
+            "terminal_epoch": session["terminalEpoch"],
+            "provider_id": session["providerId"],
+        });
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        value
+    };
+    fs::write(
+        state.hmux_identity.discovery_root.join(format!(
+            "session-{}.json",
+            session["sessionId"].as_str().unwrap()
+        )),
+        serde_json::to_vec(&fence(json!({
+            "schema_version": 1,
+            "session_class": "managed",
+            "lifecycle": "ready",
+            "health": "healthy",
+            "providerConversationIdentity": fence(json!({
+                "conversation_id": "coordinator-continued",
+            })),
+        })))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut attempted = std::collections::HashMap::new();
+    crate::interaction_wake::retry_queued_wakes(&state, opened_at + 60 * 60_000, &mut attempted)
+        .await;
+    let requests = prompt_deliverer.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(conversation(&requests[1]), "coordinator-continued");
+    assert_eq!(requests[1].handoff, requests[0].handoff);
+    let replay = invoke_orchestration(
+        &state,
+        "replay-after-continuation",
+        "interaction.message.open.exact-session",
+        body,
+    )
+    .await;
+    assert_eq!(
+        replay["receipt"]["deliveries"][0]["wake"]["state"],
+        "triggered"
+    );
+}
+
 #[tokio::test]
 async fn completed_exact_session_receives_updates_without_reopening_its_dispatch() {
     let (root, state, launcher, prompt_deliverer) = fixture_with_delivery(

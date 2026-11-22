@@ -1,9 +1,13 @@
+import { existsSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { runBoundedCommand } from "./bounded-command.mjs";
+import { resolveLocalBackendExecutable } from "./local-backend.mjs";
 import { MANAGED_REHOST_SOURCE_GUIDANCE, managedRehostIdentity, matchesManagedRehostSource } from "./managed-rehost-identity.mjs";
 import { collectManagedRehostStatus } from "./managed-rehost-status.mjs";
 
 const NATIVE_TIMEOUT_MS = 45_000;
+const PREFLIGHT_TIMEOUT_MS = 10_000;
 /** How long one command keeps reading the journal of an operation that is still executing. */
 export const MANAGED_REHOST_SETTLE_MS = 60_000;
 const SETTLE_POLL_MS = 2_000;
@@ -32,6 +36,37 @@ function nativeRefusal(response) {
   try {
     const refusal = JSON.parse(response.stdout);
     return refusal?.state === "refused" && typeof refusal.error?.code === "string" ? refusal.error : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** This CLI's control plane, which owns Dure's launch shape. */
+function installedControlPlane() {
+  try {
+    return resolveLocalBackendExecutable(fileURLToPath(new URL("../dure.mjs", import.meta.url)));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Hmux replays the session's recorded recipe after it retires the source, and
+ * cannot see which argument is the provider behind Dure's launch wrapper. Ask
+ * the control plane first whether that recorded provider program still exists.
+ * Only a definite refusal stops the start: a control plane that is absent,
+ * older than the check, or unable to read the recipe leaves it to Hmux.
+ */
+async function providerProgramRefusal(source, { controlPlane, run }) {
+  if (!controlPlane || !existsSync(controlPlane)) return undefined;
+  const response = await run(
+    [controlPlane, "managed-rehost-preflight", "--session", source.sessionId, "--workspace", source.workspaceId],
+    { timeoutMs: PREFLIGHT_TIMEOUT_MS, maxCaptureBytes: 64 * 1024 },
+  );
+  if (response.kind !== "success") return undefined;
+  try {
+    const report = JSON.parse(response.stdout);
+    return report?.state === "refused" && typeof report.error?.code === "string" ? report.error : undefined;
   } catch {
     return undefined;
   }
@@ -69,6 +104,7 @@ export async function collectManagedRehostCommand({
   requireHostAbsent = false,
   command,
   runtime = process.env.DURE_HMUX_RUNTIME_BIN?.trim(),
+  controlPlane = installedControlPlane(),
   run = runBoundedCommand,
   settle: { now = Date.now, sleep = delay, budgetMs = MANAGED_REHOST_SETTLE_MS } = {},
 }) {
@@ -83,6 +119,10 @@ export async function collectManagedRehostCommand({
     !identity || (action === "start" && !identity.source)
   ) {
     return failure(`rehost_${action}_request_invalid`, help(action));
+  }
+  if (action === "start") {
+    const refusal = await providerProgramRefusal(identity.source, { controlPlane, run });
+    if (refusal) return failure(refusal.code, refusal.message);
   }
   const execute = (subcommand) => run(
     [

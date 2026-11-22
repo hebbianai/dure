@@ -2,12 +2,12 @@ use std::future::Future;
 use std::path::Path;
 
 use dure_app::{
-    SessionCheckoutAdmissionV1, SessionCheckoutBindingV1, SessionCheckoutIdentityV1,
-    SessionCheckoutRecordV1,
+    GitCheckoutRegistrationV1, SessionCheckoutAdmissionV1, SessionCheckoutBindingV1,
+    SessionCheckoutIdentityV1, SessionCheckoutRecordV1,
 };
 use dure_git_checkout::{
     GitCheckoutInstanceError, capture_git_checkout_registration, claim_git_checkout_registration,
-    retain_working_directory,
+    read_git_checkout_claims, retain_working_directory,
 };
 use hmux_client::recovery_journal::managed_create_ledger::{
     ManagedCreateAdmissionError, ManagedCreateLedgerState, ManagedCreateLineageAdmission,
@@ -277,19 +277,61 @@ pub(super) async fn claim_admission(
     let cwd = cwd.to_path_buf();
     // The blocking task owns admission. Cancelling its observer cannot let
     // close pass a Git claim whose blocking task is still running.
-    let admission = tokio::task::spawn_blocking(move || {
+    let (mut admission, replaced) = tokio::task::spawn_blocking(move || {
         let binding = admission.binding();
-        if let Some(registration) = &binding.registration {
-            claim_git_checkout_registration(&cwd, &binding.claim_id, Some(registration))?;
+        let replaced = if let Some(registration) = &binding.registration {
+            claim_registration(&cwd, binding, registration)?
         } else {
             retain_working_directory(&cwd, &binding.claim_id)?;
-        }
-        Ok::<_, SessionCheckoutError>(admission)
+            None
+        };
+        Ok::<_, SessionCheckoutError>((admission, replaced))
     })
     .await??;
+    if let Some(registration) = replaced {
+        admission.replace_registration(registration).await?;
+    }
     let binding = admission.binding().clone();
     admission.finish().await?;
     Ok(binding)
+}
+
+/// A binding keeps the checkout registration captured at its first launch. A
+/// worktree removed and re-added at the same path can never match it again,
+/// so every later launch, including Refresh, would be refused. Claim the
+/// checkout now at that path under the same claim instead, and return it for
+/// the caller to record. While another owner still holds the replaced
+/// checkout, this binding's own active claim on it keeps the path from
+/// removal, so the launch proceeds under that claim.
+fn claim_registration(
+    cwd: &Path,
+    binding: &SessionCheckoutBindingV1,
+    registration: &GitCheckoutRegistrationV1,
+) -> Result<Option<GitCheckoutRegistrationV1>, GitCheckoutInstanceError> {
+    let error = match claim_git_checkout_registration(cwd, &binding.claim_id, Some(registration)) {
+        Ok(_) => return Ok(None),
+        Err(error) if error.code == "worktree_identity_changed" => error,
+        Err(error) => return Err(error),
+    };
+    if let Some(live) = capture_git_checkout_registration(cwd)
+        .ok()
+        .flatten()
+        .filter(|live| {
+            live != registration
+                && live.instance.canonical_path == registration.instance.canonical_path
+        })
+        && claim_git_checkout_registration(cwd, &binding.claim_id, Some(&live)).is_ok()
+    {
+        return Ok(Some(live));
+    }
+    if read_git_checkout_claims(registration).is_ok_and(|claims| {
+        claims
+            .iter()
+            .any(|claim| claim.claim_id == binding.claim_id)
+    }) {
+        return Ok(None);
+    }
+    Err(error)
 }
 
 pub(super) async fn selected_checkout(

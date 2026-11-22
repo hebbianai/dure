@@ -68,20 +68,50 @@ impl ProviderCredentialEnvironmentPolicyV1 {
     }
 }
 
+/// The one provider-owned key registry; per-provider lookups and the
+/// all-provider state-root view both read it.
+const PROVIDER_CREDENTIAL_ENVIRONMENT_POLICIES: &[(&str, ProviderCredentialEnvironmentPolicyV1)] =
+    &[
+        (
+            "codex",
+            ProviderCredentialEnvironmentPolicyV1 {
+                state_roots: CODEX_STATE_ROOTS,
+                selected_environment_removals: CODEX_SELECTED_ENVIRONMENT_REMOVALS,
+            },
+        ),
+        (
+            "claude",
+            ProviderCredentialEnvironmentPolicyV1 {
+                state_roots: CLAUDE_STATE_ROOTS,
+                selected_environment_removals: CLAUDE_SELECTED_ENVIRONMENT_REMOVALS,
+            },
+        ),
+        (
+            "kimi",
+            ProviderCredentialEnvironmentPolicyV1 {
+                state_roots: KIMI_STATE_ROOTS,
+                selected_environment_removals: KIMI_SELECTED_ENVIRONMENT_REMOVALS,
+            },
+        ),
+    ];
+
 #[must_use]
 pub fn provider_credential_environment_policy_v1(
     provider_id: &str,
 ) -> Option<ProviderCredentialEnvironmentPolicyV1> {
-    let (state_roots, selected_environment_removals) = match provider_id {
-        "codex" => (CODEX_STATE_ROOTS, CODEX_SELECTED_ENVIRONMENT_REMOVALS),
-        "claude" => (CLAUDE_STATE_ROOTS, CLAUDE_SELECTED_ENVIRONMENT_REMOVALS),
-        "kimi" => (KIMI_STATE_ROOTS, KIMI_SELECTED_ENVIRONMENT_REMOVALS),
-        _ => return None,
-    };
-    Some(ProviderCredentialEnvironmentPolicyV1 {
-        state_roots,
-        selected_environment_removals,
-    })
+    PROVIDER_CREDENTIAL_ENVIRONMENT_POLICIES
+        .iter()
+        .find(|(id, _)| *id == provider_id)
+        .map(|(_, policy)| *policy)
+}
+
+/// Every variable a credential profile may set to select a provider's state
+/// root. A process started from a provider terminal inherits that terminal's
+/// account selection through these keys.
+pub fn provider_credential_state_roots_v1() -> impl Iterator<Item = &'static str> {
+    PROVIDER_CREDENTIAL_ENVIRONMENT_POLICIES
+        .iter()
+        .flat_map(|(_, policy)| policy.state_roots.iter().copied())
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -332,5 +362,19 @@ mod tests {
             ]
         );
         assert!(provider_credential_environment_policy_v1("unknown").is_none());
+    }
+
+    #[test]
+    fn state_root_view_covers_every_provider_policy() {
+        assert_eq!(
+            provider_credential_state_roots_v1().collect::<Vec<_>>(),
+            [
+                "CODEX_HOME",
+                "CODEX_SQLITE_HOME",
+                "CLAUDE_CONFIG_DIR",
+                "ANTHROPIC_CONFIG_DIR",
+                "KIMI_CODE_HOME",
+            ]
+        );
     }
 }

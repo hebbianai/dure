@@ -51,6 +51,7 @@ pub mod hub;
 mod hmux_diagnostics;
 mod pane_recovery_diagnostics;
 mod webview_diagnostics;
+mod launch_environment;
 mod login_shell;
 mod login_identity;
 #[cfg(target_os = "macos")]
@@ -2149,6 +2150,9 @@ fn migrate_legacy_app_identity_data() {
 }
 
 pub fn run() {
+    // First, while this is the only thread: everything the app starts inherits
+    // this environment, including the updater's relaunch.
+    launch_environment::remove_terminal_scoped_variables();
     // A retained backup copy must not claim the channel or republish shared
     // integration files from its own bundle; the installed app owns them.
     #[cfg(target_os = "macos")]
