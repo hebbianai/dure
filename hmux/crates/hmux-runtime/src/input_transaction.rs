@@ -171,8 +171,9 @@ impl InputAdmission {
     }
 
     /// The bounded Host wait for an unsubmitted draft, when this write is
-    /// draft-guarded.
-    #[cfg(feature = "terminal-state-stream")]
+    /// draft-guarded. Only the Unix Host waits; the Windows Host refuses at
+    /// once and the client retries within its own budget.
+    #[cfg(all(unix, feature = "terminal-state-stream"))]
     pub(crate) fn draft_guard_wait(&self) -> Option<Duration> {
         match self {
             Self::DraftGuarded { wait } => Some(*wait),

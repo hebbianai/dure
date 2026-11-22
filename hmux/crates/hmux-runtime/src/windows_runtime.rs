@@ -152,7 +152,9 @@ const CLIENT_QUEUE_CAPACITY: usize = 2_048;
 const PROVIDER_WAIT_POLL: Duration = Duration::from_millis(20);
 const AGENT_RUNTIME_EXPIRY_POLL: Duration = Duration::from_millis(750);
 const PROVIDER_JOB_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(debug_assertions)]
 const TEST_GUARDIAN_CUT_PHASE_ENV: &str = "HMUX_RUNTIME_TEST_GUARDIAN_CUT_PHASE";
+#[cfg(debug_assertions)]
 const TEST_GUARDIAN_CUT_MARKER_ENV: &str = "HMUX_RUNTIME_TEST_GUARDIAN_CUT_MARKER";
 #[cfg(all(feature = "terminal-state-stream", debug_assertions))]
 const TEST_AGENT_PROMPT_POST_WAIT_MARKER_ENV: &str =
@@ -1259,6 +1261,7 @@ enum TestGuardianCutPhase {
     ProviderSpawnedBeforeCheckpoint,
 }
 
+#[cfg(debug_assertions)]
 impl TestGuardianCutPhase {
     const fn as_str(self) -> &'static str {
         match self {

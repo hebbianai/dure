@@ -79,8 +79,10 @@ impl ControllerInputEffect {
     }
 
     /// Whether a person waits for this write's echo, so the next output is
-    /// published without the projection throttle.
-    #[cfg(feature = "terminal-state-stream")]
+    /// published without the projection throttle. Only the Unix Host
+    /// throttles its viewport projection; the Windows Host publishes every
+    /// output as it arrives.
+    #[cfg(all(unix, feature = "terminal-state-stream"))]
     #[must_use]
     pub(crate) fn awaits_echo(self) -> bool {
         match self {
@@ -357,6 +359,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn every_keypress_awaits_its_echo_but_control_traffic_does_not() {
         for effect in [
