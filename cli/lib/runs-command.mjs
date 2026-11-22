@@ -84,6 +84,9 @@ Switch-account previews by default; --confirm-restart executes the same backend
 transition as the UI account selector. It preserves the exact conversation and
 Chat/Terminal mode for Claude and Codex, on local and SSH backends, without an app.
 A closed, stopped Agent restarts with the selected account and its retained conversation.
+The preview's source is running or stopped. A running Agent's provider process
+restarts: background work it started (shells, subagents or workflows) ends with it
+and is not resumed, so let that work finish before you apply.
 If a local Terminal provider exits as it starts on the new account, --confirm-restart
 restarts that conversation once through the same recovery as resume --confirm-restart.
 dure recovery get claude or codex on the same --backend lists registered account
