@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { retentionAppFamily, retentionFootprints, retentionProfile, validateRetentionEvidence } from "./workspace-retention-evidence.mjs";
+import { retentionAppFamily, retentionCpuSeconds, retentionFootprints, retentionProfile, validateRetentionEvidence } from "./workspace-retention-evidence.mjs";
 
 describe("native retention evidence", () => {
   it("attributes only the isolated app family and rejects ambiguous labels", () => {
@@ -36,7 +36,7 @@ describe("native retention evidence", () => {
       samples,
       released: { terminalSurfaces: 0, hmuxObservers: 0, webglContexts: 0 } } },
     points: samples.map(({ ordinal, atMs }) => ({ ordinal, atMs: atMs + 1, bytes: 1000 + ordinal * 100,
-      members: [{ role: "webcontent", pid: 42, processIdentity: "generation-a" }] })),
+      members: [{ role: "webcontent", pid: 42, processIdentity: "generation-a", cpuSeconds: atMs / 1000 / 50 }] })),
   }; };
   it("reports growth without falsely declaring memory stable", () => {
     expect(validateRetentionEvidence(evidence())).toMatchObject({ deltaBytes: 800, firstBytes: 1000, lastBytes: 1800, idle: null });
@@ -56,6 +56,22 @@ describe("native retention evidence", () => {
     const value = evidence("extended");
     mutate(value);
     expect(() => validateRetentionEvidence(value)).toThrow();
+  });
+  it("reports idle CPU per process from cumulative CPU time over the idle wall time", () => {
+    const value = evidence("idle");
+    for (const sample of value.status.retention.samples) sample.documentVisibility = "visible";
+    value.status.retention.samples.at(-1).idleActivity = { invokesByCommand: { hmux_inspect_sessions_exact: 36 }, storeNotifications: 40 };
+    expect(validateRetentionEvidence(value).idle).toMatchObject({ elapsedMs: 180_000,
+      cpuPercentByRole: { webcontent: 2 }, documentVisibility: ["visible"],
+      activity: { invokesByCommand: { hmux_inspect_sessions_exact: 36 }, storeNotifications: 40 } });
+    value.points[2].members[0].cpuSeconds = undefined;
+    expect(() => validateRetentionEvidence(value)).not.toThrow();
+    value.points.at(-1).members[0].cpuSeconds = undefined;
+    expect(() => validateRetentionEvidence(value)).toThrow("missing CPU time");
+  });
+  it("parses ps cumulative CPU time in every elapsed form", () => {
+    const parsed = retentionCpuSeconds(" 10 0:01.50\n11 12:03.25\n12 1:02:03.00\n13 2-01:00:00.00\n14 junk");
+    expect(Object.fromEntries(parsed)).toEqual({ 10: 1.5, 11: 723.25, 12: 3723, 13: 176_400 });
   });
   it("rejects unknown profiles instead of silently running the short workload", () => {
     expect(() => retentionProfile("typo")).toThrow("unknown retention profile");

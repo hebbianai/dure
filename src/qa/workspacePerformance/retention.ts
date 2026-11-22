@@ -7,6 +7,11 @@ import { getWorkspacePerformanceSnapshot } from "@/lib/workspace/performance/wor
 import type { WorkspacePerformanceSnapshot } from "@/lib/workspace/performance/workspacePerformanceTypes";
 import { useStore } from "@/store";
 import type { WorkspacePerformanceFixture } from "./fixture";
+import {
+	currentTauriInvokeHost,
+	type IdleActivityCounters,
+	installIdleActivityCounters,
+} from "./idleActivity";
 import retentionProfiles from "./retentionProfiles.json";
 import type { WorkspacePerformanceScenario } from "./scenario";
 import { createWorkspacePerformanceSessions } from "./sessionRuntime";
@@ -20,10 +25,13 @@ interface RetentionSample {
 	ordinal: number;
 	phase: "cycling" | "idle";
 	atMs: number;
+	documentVisibility: DocumentVisibilityState;
 	activeSpaceId: string;
 	contentHashes: Record<string, string>;
 	totals: WorkspacePerformanceSnapshot["totals"];
 	workspaceCache: WorkspacePerformanceSnapshot["workspaceCache"];
+	/** Cumulative from the first idle sample; absent while cycling. */
+	idleActivity?: IdleActivityCounters;
 }
 
 export interface WorkspaceRetentionEvidence {
@@ -68,6 +76,10 @@ export function createWorkspaceRetentionSessions(
 		stop: runtime.stopManaged,
 	});
 }
+
+const RETENTION_PROFILE_NAMES = Object.keys(retentionProfiles) as Array<
+	keyof typeof retentionProfiles
+>;
 
 const pause = (ms: number) =>
 	new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -141,10 +153,13 @@ export async function runWorkspaceRetention(fixture: RetentionFixture) {
 		throw new Error("retention requires multiple Spaces");
 	const status = window.__DURE_WORKSPACE_PERFORMANCE_QA__;
 	if (!status) throw new Error("retention QA status missing");
-	const profileName =
+	const requestedProfile =
 		new URLSearchParams(window.location.search).get("retention") ?? "short";
-	if (profileName !== "short" && profileName !== "extended") {
-		throw new Error(`unknown retention profile: ${profileName}`);
+	const profileName = RETENTION_PROFILE_NAMES.find(
+		(name) => name === requestedProfile,
+	);
+	if (!profileName) {
+		throw new Error(`unknown retention profile: ${requestedProfile}`);
 	}
 	const profile = retentionProfiles[profileName];
 	const evidence: WorkspaceRetentionEvidence = {
@@ -161,39 +176,52 @@ export async function runWorkspaceRetention(fixture: RetentionFixture) {
 	status.phase = "retention_warmup";
 	await tour();
 	await tour();
-	for (let ordinal = 0; ordinal < evidence.expectedSamples; ordinal++) {
-		const phase = ordinal < profile.returnSamples ? "cycling" : "idle";
-		if (phase === "cycling" && ordinal > 0) {
-			status.phase = `retention_tour:${ordinal}`;
-			await tour();
-		} else if (ordinal > profile.returnSamples) {
-			status.phase = "retention_idle_wait";
-			await pause(profile.idleIntervalMs - profile.sampleWindowMs);
+	let idleActivity: ReturnType<typeof installIdleActivityCounters> | undefined;
+	try {
+		for (let ordinal = 0; ordinal < evidence.expectedSamples; ordinal++) {
+			const phase = ordinal < profile.returnSamples ? "cycling" : "idle";
+			if (phase === "idle" && !idleActivity) {
+				idleActivity = installIdleActivityCounters(
+					currentTauriInvokeHost(),
+					(listener) => useStore.subscribe(listener),
+				);
+			}
+			if (phase === "cycling" && ordinal > 0) {
+				status.phase = `retention_tour:${ordinal}`;
+				await tour();
+			} else if (ordinal > profile.returnSamples) {
+				status.phase = "retention_idle_wait";
+				await pause(profile.idleIntervalMs - profile.sampleWindowMs);
+			}
+			if (useStore.getState().activeSpaceId !== fixture.activeSpaceId) {
+				throw new Error("retention: return Space changed during observation");
+			}
+			const hashes = await contentHashes(fixture);
+			if (
+				evidence.samples[0] &&
+				JSON.stringify(hashes) !==
+					JSON.stringify(evidence.samples[0].contentHashes)
+			) {
+				throw new Error("retention: fixed-content precondition changed");
+			}
+			const { totals, workspaceCache } = getWorkspacePerformanceSnapshot();
+			evidence.samples.push({
+				ordinal,
+				phase,
+				atMs: Date.now(),
+				documentVisibility: document.visibilityState,
+				activeSpaceId: fixture.activeSpaceId,
+				contentHashes: hashes,
+				totals,
+				workspaceCache,
+				...(idleActivity ? { idleActivity: idleActivity.read() } : {}),
+			});
+			status.phase = `retention_sample:${ordinal}`;
+			// The native client bookends a footprint point with this exact phase.
+			await pause(profile.sampleWindowMs);
 		}
-		if (useStore.getState().activeSpaceId !== fixture.activeSpaceId) {
-			throw new Error("retention: return Space changed during observation");
-		}
-		const hashes = await contentHashes(fixture);
-		if (
-			evidence.samples[0] &&
-			JSON.stringify(hashes) !==
-				JSON.stringify(evidence.samples[0].contentHashes)
-		) {
-			throw new Error("retention: fixed-content precondition changed");
-		}
-		const { totals, workspaceCache } = getWorkspacePerformanceSnapshot();
-		evidence.samples.push({
-			ordinal,
-			phase,
-			atMs: Date.now(),
-			activeSpaceId: fixture.activeSpaceId,
-			contentHashes: hashes,
-			totals,
-			workspaceCache,
-		});
-		status.phase = `retention_sample:${ordinal}`;
-		// The native client bookends a footprint point with this exact phase.
-		await pause(profile.sampleWindowMs);
+	} finally {
+		idleActivity?.dispose();
 	}
 }
 

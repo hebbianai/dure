@@ -46,6 +46,16 @@ export function retentionFootprints(source) {
   }));
 }
 
+/** Cumulative CPU seconds from `ps -o pid=,time=` ([[dd-]hh:]mm:ss.cc). */
+export function retentionCpuSeconds(source) {
+  return new Map(source.split("\n").flatMap((line) => {
+    const match = line.trim().match(/^(\d+)\s+(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/u);
+    if (!match) return [];
+    const [, pid, days = "0", hours = "0", minutes, seconds] = match;
+    return [[Number(pid), ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds)]];
+  }));
+}
+
 export async function captureRetentionFootprint(appPid, originalFamily) {
   const run = async (command, args) => (await execute(command, args, {
     encoding: "utf8", timeout: 5_000, maxBuffer: 4 * 1024 * 1024,
@@ -57,6 +67,7 @@ export async function captureRetentionFootprint(appPid, originalFamily) {
   const atMs = Date.now();
   const sizes = retentionFootprints(await run("/usr/bin/footprint",
     ["--noCategories", "--swapped", "-f", "bytes", ...pids.flatMap((pid) => ["-p", String(pid)])]));
+  const cpu = retentionCpuSeconds(await run("/bin/ps", ["-o", "pid=,time=", "-p", pids.join(",")]));
   const after = await observeProcessMembers({ kind: "point", pids });
   assert.equal(after.status, "complete");
   assert.deepEqual(retentionAppFamily(await run("/usr/bin/lsappinfo", ["list"]), appPid, family), family);
@@ -72,7 +83,9 @@ export async function captureRetentionFootprint(appPid, originalFamily) {
         "original QA process generation changed");
     }
     assert.ok(sizes.has(entry.pid), `missing footprint for ${entry.role}`);
-    return { ...entry, processIdentity: last.member.processIdentity, bytes: sizes.get(entry.pid) };
+    assert.ok(cpu.has(entry.pid), `missing CPU time for ${entry.role}`);
+    return { ...entry, processIdentity: last.member.processIdentity, bytes: sizes.get(entry.pid),
+      cpuSeconds: cpu.get(entry.pid) };
   });
   return { atMs, members, bytes: members.reduce((total, member) => total + member.bytes, 0) };
 }
@@ -110,12 +123,25 @@ export function validateRetentionEvidence({ status, points, terminalCount, profi
   assert.equal(released?.hmuxObservers, 0, "terminal observers survived removal");
   assert.equal(released?.webglContexts, 0, "terminal graphics survived removal");
   const bytes = points.map((point) => point.bytes);
+  const cpuPercentByRole = (first, last) => {
+    const elapsedSeconds = (last.atMs - first.atMs) / 1000;
+    if (!(elapsedSeconds > 0)) return null;
+    return Object.fromEntries(first.members.map(({ role, pid, cpuSeconds }) => {
+      const end = last.members.find((member) => member.pid === pid)?.cpuSeconds;
+      assert.ok(Number.isFinite(cpuSeconds) && Number.isFinite(end) && end >= cpuSeconds,
+        `missing CPU time for ${role}`);
+      return [role, Math.round(((end - cpuSeconds) / elapsedSeconds) * 1000) / 10];
+    }));
+  };
   const summarize = (phasePoints) => ({ firstBytes: phasePoints[0].bytes, lastBytes: phasePoints.at(-1).bytes,
     deltaBytes: phasePoints.at(-1).bytes - phasePoints[0].bytes,
-    elapsedMs: phasePoints.at(-1).atMs - phasePoints[0].atMs });
+    elapsedMs: phasePoints.at(-1).atMs - phasePoints[0].atMs,
+    cpuPercentByRole: cpuPercentByRole(phasePoints[0], phasePoints.at(-1)) });
   return { firstBytes: bytes[0], lastBytes: bytes.at(-1), minimumBytes: Math.min(...bytes),
     maximumBytes: Math.max(...bytes), deltaBytes: bytes.at(-1) - bytes[0],
     cycling: summarize(points.slice(0, plan.returnSamples)),
-    idle: plan.idleSamples ? summarize(points.slice(plan.returnSamples)) : null,
-    caveat: "Managed-shell synthetic TUI renderer observation, not native provider-driver coverage, a heap-leak verdict or long-term stability proof. Footprint includes compression; model bytes are admission estimates." };
+    idle: plan.idleSamples ? { ...summarize(points.slice(plan.returnSamples)),
+      documentVisibility: [...new Set(samples.slice(plan.returnSamples).map((sample) => sample.documentVisibility ?? "unknown"))],
+      activity: samples.at(-1).idleActivity ?? null } : null,
+    caveat: "Managed-shell synthetic TUI renderer observation, not native provider-driver coverage, a heap-leak verdict or long-term stability proof. Footprint includes compression; model bytes are admission estimates. CPU percent is cumulative process CPU time over the phase's wall time (100 = one core)." };
 }

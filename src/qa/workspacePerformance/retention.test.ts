@@ -14,7 +14,9 @@ const fixture = vi.hoisted(() => ({
 	totals: { terminalSurfaces: 2, hmuxObservers: 2, webglContexts: 0 },
 	panels: new Map<string, { group: { element: HTMLElement } }>(),
 }));
-vi.mock("@/store", () => ({ useStore: { getState: () => fixture } }));
+vi.mock("@/store", () => ({
+	useStore: { getState: () => fixture, subscribe: () => () => {} },
+}));
 vi.mock("@/lib/workspace/dock/dockRegistry", () => ({
 	waitForDesktopDockview: async () => undefined,
 	getDockview: () => ({ getPanel: (id: string) => fixture.panels.get(id) }),
@@ -170,6 +172,50 @@ it("keeps the same panes idle for five minutes after extended cycling", async ()
 	expect(
 		new Set(samples.map((sample) => JSON.stringify(sample.contentHashes))).size,
 	).toBe(1);
+});
+
+it("counts idle IPC only inside the idle window and restores invoke", async () => {
+	window.history.replaceState(null, "", "?retention=idle");
+	const invoke = vi.fn(async (_command: string) => undefined);
+	const internals = { invoke };
+	(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = internals;
+	let done = false;
+	const run = runWorkspaceRetention(topology).finally(() => {
+		done = true;
+	});
+	let idleCalls = 0;
+	while (!done) {
+		await vi.advanceTimersByTimeAsync(10_000);
+		// A periodic poll seen only while the idle counters wrap invoke.
+		if (internals.invoke !== invoke) {
+			idleCalls += 1;
+			void internals.invoke("hmux_inspect_sessions_exact");
+		}
+	}
+	await run;
+	const samples = window.__DURE_WORKSPACE_PERFORMANCE_QA__!.retention!.samples;
+	expect(samples.map((sample) => sample.phase)).toEqual([
+		"cycling",
+		"idle",
+		"idle",
+		"idle",
+		"idle",
+	]);
+	expect(samples[0].idleActivity).toBeUndefined();
+	expect(samples[1].idleActivity).toEqual({
+		invokesByCommand: {},
+		storeNotifications: 0,
+	});
+	expect(
+		samples[samples.length - 1].idleActivity?.invokesByCommand
+			.hmux_inspect_sessions_exact,
+	).toBeGreaterThan(0);
+	expect(idleCalls).toBeGreaterThan(0);
+	expect(
+		samples.every((sample) => sample.documentVisibility === "visible"),
+	).toBe(true);
+	expect(internals.invoke).toBe(invoke);
+	delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
 });
 
 it("rejects a changed workload instead of comparing unlike return samples", async () => {
