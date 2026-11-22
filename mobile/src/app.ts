@@ -4824,7 +4824,11 @@ export function startApp(root: HTMLElement): () => void {
     if (disposed) return;
     // After the first read, so a tap that launched the app finds its row.
     // A shell that cannot listen leaves alerts opening the app as before.
-    void ipc.pushActivations((activation) => void openActivatedAgent(activation)).catch(() => undefined);
+    try {
+      await ipc.pushActivations((activation) => void openActivatedAgent(activation));
+    } catch {
+      return;
+    }
   })();
   const dispose = () => {
     if (disposed) return;
