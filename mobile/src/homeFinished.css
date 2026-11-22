@@ -1,0 +1,39 @@
+/* Home's Recently finished section (`homeFinished.ts`), in the shared section
+ * and card head (`homeCard.css`). A finished agent needs nothing, so its card
+ * spends no colour: a slightly brighter surface, the answer in muted text. */
+
+.finished__card {
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.finished__open {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-height: var(--tap-min);
+  padding: 10px 12px;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: inherit;
+  font: 400 13px/18px var(--font-ui);
+  text-align: start;
+}
+
+.finished__when {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font: 400 11px/15px var(--font-ui);
+  white-space: nowrap;
+}
+
+.finished__answer {
+  display: block;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -744,6 +744,7 @@ export const en: Record<string, string> = {
   "home.needsYou.deny": "Deny",
   "home.needsYou.reply": "Reply",
   "home.needsYou.open": "Open",
+  "home.finished.title": "Recently finished",
   "chat.composer.label": "Prompt for the agent",
   "chat.composer.placeholder": "Message the agent",
   "chat.composer.placeholderQueued": "Message the agent. It sends when the agent is idle.",

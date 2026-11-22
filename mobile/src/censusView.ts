@@ -11,10 +11,11 @@ import { dureWordmark } from "./logo";
 import type { SpacesViewOptions } from "@/lib/spaces/spacesViewOptions";
 import iconList from "./assets/icon-list.svg";
 import { loadHomeViewOptions } from "./homeViewPreferences";
-import { projectHome, type HomeRow, type NeedsYouCard } from "./homeProjection";
+import { projectHome, type FinishedCard, type HomeRow, type NeedsYouCard } from "./homeProjection";
 import { isUnattachable, renderHomeSessionRow } from "./homeSessionRow";
 import { renderHomeViewMenu, type HomeMenuSection } from "./homeViewMenu";
 import { renderNeedsYou } from "./homeNeedsYou";
+import { renderRecentlyFinished } from "./homeFinished";
 import type { ApprovalAnswer } from "./chat";
 import type { AgentApprovalChoice } from "@/lib/agents/approvalRequest";
 import type { MenuAnchor } from "./sessionRowMenuPlacement";
@@ -55,6 +56,11 @@ export interface CensusModel {
   readonly viewMenu?: HomeMenuSection;
   /** This phone's answers to the Needs you cards' approvals, by attention id. */
   readonly approvalAnswers?: Readonly<Record<string, ApprovalAnswer>>;
+  /**
+   * The first line of each recently finished agent's last answer, by its
+   * card's key (`FinishedCard.key`), as far as its computer has said.
+   */
+  readonly finishedAnswers?: Readonly<Record<string, string>>;
 }
 
 export interface CensusActions {
@@ -83,6 +89,12 @@ export interface CensusActions {
   readonly hold: (row: UnifiedRow, anchor: MenuAnchor) => void;
   /** Answer a Needs you card's approval on its computer, past the approval sheet. */
   readonly answerApproval?: (card: NeedsYouCard, choice: AgentApprovalChoice) => void;
+  /**
+   * Home lists these recently finished agents: read the answers it has not
+   * got, which come back as `finishedAnswers`. Told on every draw; the reader
+   * asks again only when an agent moved.
+   */
+  readonly readFinished?: (cards: readonly FinishedCard[]) => void;
 }
 
 function header(actions: CensusActions): HTMLElement {
@@ -218,6 +230,10 @@ export function renderHomeScreen(model: CensusModel, actions: CensusActions): HT
   // filter, still waits, so the section reads every row (`needsYou`).
   const waiting = renderNeedsYou(projected.needsYou, model.approvalAnswers ?? {}, actions);
   if (waiting) body.append(waiting);
+  // Below what waits, read the same way: the results the person came for.
+  actions.readFinished?.(projected.finished);
+  const finished = renderRecentlyFinished(projected.finished, model.finishedAnswers ?? {}, now, actions);
+  if (finished) body.append(finished);
   const list = element("ul", "list home__list");
   const rows = selected?.rows.filter(row => row.pinned !== true) ?? [];
   const draw = (row: HomeRow): void => {

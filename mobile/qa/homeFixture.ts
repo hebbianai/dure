@@ -1,5 +1,6 @@
 import type { CensusModel } from "../src/censusView";
 import type { HubProbeSession } from "../src/ipc";
+import { queueKey } from "../src/chatQueue";
 import { loadHomeViewOptions } from "../src/homeViewPreferences";
 
 const names = [
@@ -72,6 +73,16 @@ sessions[8] = {
 	...sessions[8],
 	presentation: { ...sessions[8].presentation, displayState: "input" },
 };
+// Recently finished: the three idle agents serve their conversation; two have
+// an answer, so two cards stand and the third stays in the list only.
+for (const index of [0, 1, 2])
+	sessions[index] = { ...sessions[index], conversation: true };
+const finishedAnswers = {
+	[queueKey("qa", "this-laptop", "qa", "qa-0")]:
+		"Shipped the Recently finished section; 1195 mobile tests pass.",
+	[queueKey("qa", "this-laptop", "qa", "qa-1")]:
+		"The flaky test was a timing race in the census loop, now fixed and covered by a regression test that waits for the second catalog read.",
+};
 export function createHomeFixture(): CensusModel {
 	return {
 		census: [],
@@ -94,5 +105,6 @@ export function createHomeFixture(): CensusModel {
 			),
 		},
 		viewOptions: loadHomeViewOptions(),
+		finishedAnswers,
 	};
 }

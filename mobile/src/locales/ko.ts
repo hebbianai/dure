@@ -180,6 +180,7 @@ export const ko: Record<string, string> = {
   "home.needsYou.deny": "거부",
   "home.needsYou.reply": "답하기",
   "home.needsYou.open": "열기",
+  "home.finished.title": "최근 완료",
   "chat.composer.label": "에이전트에게 보낼 프롬프트",
   "chat.composer.placeholder": "에이전트에게 메시지 보내기",
   "chat.composer.placeholderQueued": "에이전트에게 메시지 보내기. 에이전트가 쉬면 전송됩니다.",

@@ -21,8 +21,10 @@ import {
 	buildUnifiedListing,
 	flattenRows,
 	type UnifiedRow,
+	type UnifiedSource,
 } from "./allSessions";
 import type { CensusModel } from "./censusView";
+import { queueKey } from "./chatQueue";
 import { facetLabel } from "./homeViewLabels";
 import { t } from "./i18n";
 
@@ -50,6 +52,30 @@ export interface NeedsYouCard {
 	 * card opens the agent, where the person answers.
 	 */
 	readonly approval?: PendingApproval;
+}
+
+/** One agent that finished a turn recently, in home's Recently finished section. */
+export interface FinishedCard {
+	readonly view: HomeRow;
+	/** The computer that serves the agent's conversation: its answer is read there. */
+	readonly source: Extract<UnifiedSource, { kind: "hub" }>;
+	/** That conversation, as the chat names it: its answer is kept under this. */
+	readonly key: string;
+}
+
+/** The most finished agents home shows. More would push the list away. */
+export const RECENTLY_FINISHED_LIMIT = 3;
+
+/** How long after its last activity a finished agent still counts as recent. */
+export const RECENTLY_FINISHED_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Newest activity first, then by title and id so equal times keep one order. */
+function newestFirst(left: HomeRow, right: HomeRow): number {
+	return (
+		(right.activityAt ?? 0) - (left.activityAt ?? 0) ||
+		left.row.title.localeCompare(right.row.title) ||
+		left.row.sessionId.localeCompare(right.row.sessionId)
+	);
 }
 
 /** The display states that wait for a person, and for what. */
@@ -93,12 +119,46 @@ export function needsYou(rows: readonly HomeRow[]): NeedsYouCard[] {
 		const approval = wait === "approval" ? answerableApproval(view) : undefined;
 		cards.push({ view, wait, ...(approval ? { approval } : {}) });
 	}
-	return cards.sort(
-		(left, right) =>
-			(right.view.activityAt ?? 0) - (left.view.activityAt ?? 0) ||
-			left.view.row.title.localeCompare(right.view.row.title) ||
-			left.view.row.sessionId.localeCompare(right.view.row.sessionId),
-	);
+	return cards.sort((left, right) => newestFirst(left.view, right.view));
+}
+
+/**
+ * The agents that finished a turn recently and now wait idle, newest first.
+ *
+ * Read across every group and filter, as Needs you is: a result in another
+ * Space is still the result the person came for. "Finished" is the desktop's
+ * own display state for an idle agent with nothing raised (`waiting`); whether
+ * a turn actually ended is the computer's to say, and an agent with no answer
+ * yet shows no card. Only agents whose conversation the computer serves
+ * (`conversation`) are listed: the answer is read from there.
+ */
+export function recentlyFinished(
+	rows: readonly HomeRow[],
+	now: number,
+): FinishedCard[] {
+	const cards: FinishedCard[] = [];
+	for (const view of rows) {
+		const source = view.row.source;
+		if (
+			view.displayState !== "waiting" ||
+			source.kind !== "hub" ||
+			!source.reachable ||
+			!source.session.ready ||
+			source.session.conversation !== true ||
+			view.activityAt === undefined ||
+			now - view.activityAt > RECENTLY_FINISHED_WINDOW_MS
+		)
+			continue;
+		const session = source.session;
+		cards.push({
+			view,
+			source,
+			key: queueKey(source.hubId, session.box_id, session.workspace_id, session.session_id),
+		});
+	}
+	return cards
+		.sort((left, right) => newestFirst(left.view, right.view))
+		.slice(0, RECENTLY_FINISHED_LIMIT);
 }
 
 export function homeRows(
@@ -206,5 +266,6 @@ export function projectHome(
 		choices: spacesFilterChoices(universe.rows, options.filters),
 		hidden: universe.hidden,
 		needsYou: needsYou(universe.rows),
+		finished: recentlyFinished(universe.rows, now),
 	};
 }

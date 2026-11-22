@@ -133,6 +133,7 @@ import { type KeyPress, pressKey } from "./terminalKeys";
 import * as keyTray from "./keyTray";
 import { renderKeyStripScreen } from "./keyStripView";
 import { type NeedsYouCard, projectHome } from "./homeProjection";
+import { createFinalResponseReader } from "./finalResponses";
 import type { AgentApprovalChoice } from "@/lib/agents/approvalRequest";
 import type { RowFilter } from "./sessionRows";
 import * as recents from "./recents";
@@ -1052,30 +1053,49 @@ export function startApp(root: HTMLElement): () => void {
     Boolean(view.querySelector(".workspace__list")?.getClientRects().length)) && !state.addSheet &&
     !state.rowMenu && !state.rowInfo && !state.accountSheet && !state.homeMenu && !state.opening &&
     document.visibilityState !== "hidden";
+  /**
+   * Put what home lists into the state and redraw the list where it shows. A
+   * background update redraws the list only, keeping its scroll.
+   */
+  function publishHome(patch: Partial<State>, background: boolean, visible: boolean): void {
+    if (!background && (state.screen.kind === "home" || state.screen.kind === "sessions")) {
+      setState(patch);
+      return;
+    }
+    writeState(patch);
+    if (!visible) return;
+    // A wide-window census updates only the list. Rebuilding the detail
+    // would blur its keyboard field (including an in-progress composition).
+    const sidebar = view.querySelector<HTMLElement>(".workspace__list");
+    if (sidebar) {
+      preserveHomeScroll(sidebar, () => sidebar.replaceChildren(renderCensus(), ...launchFab()));
+      bindHomeRefresh();
+    } else preserveHomeScroll(view, render);
+  }
   const sessionCensus = createSessionCensus({
     root,
     current: () => state,
     epoch: () => connectionEpoch,
     home: homeVisible,
     detached: () => dispose(),
-    publish: (patch, background, visible) => {
-      if (!background && (state.screen.kind === "home" || state.screen.kind === "sessions")) {
-        setState(patch);
-        return;
-      }
-      writeState(patch);
-      if (!visible) return;
-      // A wide-window census updates only the list. Rebuilding the detail
-      // would blur its keyboard field (including an in-progress composition).
-      const sidebar = view.querySelector<HTMLElement>(".workspace__list");
-      if (sidebar) {
-        preserveHomeScroll(sidebar, () => sidebar.replaceChildren(renderCensus(), ...launchFab()));
-        bindHomeRefresh();
-      } else preserveHomeScroll(view, render);
-    },
+    publish: publishHome,
     reconcile: async (publish) => { await Promise.all([refreshHubs(publish), refresh(publish)]); },
   });
   const census = sessionCensus.refresh;
+  /** The last answers of home's recently finished agents, read from their computers. */
+  const finalResponses = createFinalResponseReader({
+    read: (card, after) => {
+      const session = card.source.session;
+      return ipc.hubConversationTranscript(
+        card.source.hubId,
+        { boxId: session.box_id, workspaceId: session.workspace_id, sessionId: session.session_id },
+        after,
+        0,
+      );
+    },
+    // The answers live in the reader; a landed one redraws the list in place.
+    changed: () => publishHome({}, true, homeVisible()),
+  });
 
   /** 화면을 떠날 때 반드시 붙잡고 있던 SSH 세션을 놓는다. */
   async function leaveTerminal(attachmentId?: string): Promise<void> {
@@ -2561,6 +2581,7 @@ export function startApp(root: HTMLElement): () => void {
         viewOptions: state.homeOptions ?? loadHomeViewOptions(),
         viewMenu: state.homeMenu,
         approvalAnswers: state.homeApprovals,
+        finishedAnswers: finalResponses.lines(),
         opening: state.opening,
         selectedSessionId: selectedTerminal(state.screen)?.session.session_id,
         // Not having asked and having asked and found nothing are different
@@ -2587,6 +2608,7 @@ export function startApp(root: HTMLElement): () => void {
         refresh: () => void census(),
         hold: (row, anchor) => setState({ rowMenu: { sessionId: row.sessionId, anchor } }),
         answerApproval: (card, choice) => void answerHomeApproval(card, choice),
+        readFinished: (cards) => finalResponses.observe(cards),
       },
     );
   }
@@ -4790,6 +4812,7 @@ export function startApp(root: HTMLElement): () => void {
     window.removeEventListener("online", reconnectLostTerminal);
     connectionEpoch += 1;
     sessionCensus.dispose();
+    finalResponses.dispose();
     window.removeEventListener("resize", refit);
     window.visualViewport?.removeEventListener("resize", refit);
     window.visualViewport?.removeEventListener("scroll", refit);
