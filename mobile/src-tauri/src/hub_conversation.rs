@@ -543,12 +543,12 @@ pub async fn hub_agent_chat_action(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalAnswerInput {
-    box_id: String,
-    workspace_id: String,
-    session_id: String,
-    expected_terminal_epoch: String,
-    attention_id: String,
-    choice: String,
+    pub(crate) box_id: String,
+    pub(crate) workspace_id: String,
+    pub(crate) session_id: String,
+    pub(crate) expected_terminal_epoch: String,
+    pub(crate) attention_id: String,
+    pub(crate) choice: String,
 }
 
 fn approval_answer_request(input: ApprovalAnswerInput) -> HubRequest {
@@ -571,8 +571,19 @@ pub async fn hub_agent_approval_answer(
     id: String,
     input: ApprovalAnswerInput,
 ) -> Result<HubAgentPromptResult, CommandError> {
+    answer_approval(&app, &id, input).await
+}
+
+/// The one way this phone answers an approval on a paired computer: the
+/// screen's cards through the command above, and an alert's Allow once and
+/// Deny (`push::answer_from_alert`).
+pub(crate) async fn answer_approval(
+    app: &tauri::AppHandle,
+    id: &str,
+    input: ApprovalAnswerInput,
+) -> Result<HubAgentPromptResult, CommandError> {
     let request = approval_answer_request(input);
-    exchange(&app, &id, move |stream, token| {
+    exchange(app, id, move |stream, token| {
         prompt_on_stream(stream, token, request)
     })
     .await

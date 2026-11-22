@@ -708,8 +708,9 @@ const handlers: Record<string, Handler> = {
   resolve_session_successor: (args) => ({ state: "resolved", session: remoteSession(args.session) }),
   resolve_hub_session_successor: (args) => ({ state: "resolved", session: remoteSession(args.session) }),
   sync_push_notifications: () => ({ supported: false, outcomes: [] }),
-  // No push in a demo, so no alert is ever tapped.
+  // No push in a demo, so no alert is ever tapped or answered.
   push_activations: () => undefined,
+  push_approval_actions: () => undefined,
   hub_stage_session_file: (args): string[] => [`/tmp/dure-demo/${str(record(args, "file"), "fileName")}`],
 };
 

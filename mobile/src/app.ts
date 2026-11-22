@@ -1,6 +1,6 @@
 import { notificationPermission, sendLocalNotification } from "./notificationDelivery";
 import { createPushSync, pushSyncNote, type PushSyncState } from "./pushNotifications";
-import { activatedRow, type PushActivation } from "./pushActivation";
+import { activatedApproval, activatedRow, type PushActivation } from "./pushActivation";
 import type { SpacesViewOptions } from "@/lib/spaces/spacesViewOptions";
 import type { HomeMenuSection } from "./homeViewMenu";
 import { loadHomeViewOptions, saveHomeViewOptions } from "./homeViewPreferences";
@@ -2621,6 +2621,7 @@ export function startApp(root: HTMLElement): () => void {
    * computer lists leaves the phone where it is, with the reason.
    */
   async function openActivatedAgent(activation: PushActivation): Promise<void> {
+    if (activation.answer) return answerActivatedApproval(activation);
     const screen = state.screen;
     if (disposed || (screen.kind === "terminal" && screen.session.session_id === activation.sessionId)) return;
     let row = activatedRow(listedRows(), activation);
@@ -2631,6 +2632,43 @@ export function startApp(root: HTMLElement): () => void {
     }
     if (row) actionsOpenSession(row.source);
     else setState({ banner: t("notifications.push.open.unavailable") });
+  }
+
+  /**
+   * Allow once or Deny pressed on an alert while approvals need Face ID: the
+   * app opened, and the answer goes through that approval's Needs you card,
+   * past the same sheet. One that was answered or replaced meanwhile is not
+   * answered, and the phone says so.
+   */
+  async function answerActivatedApproval(activation: PushActivation): Promise<void> {
+    const answer = activation.answer;
+    if (disposed || !answer) return;
+    let card = activatedApproval(projectedHome().needsYou, activation);
+    if (!card) {
+      const screen = state.screen;
+      await census();
+      if (disposed || state.screen !== screen) return;
+      card = activatedApproval(projectedHome().needsYou, activation);
+    }
+    if (card) await answerHomeApproval(card, answer.choice);
+    else setState({ banner: t("notifications.push.answer.gone") });
+  }
+
+  /**
+   * The alert actions follow the approval sheet's preference and the app's
+   * language. A shell without them leaves alerts without actions.
+   */
+  async function syncApprovalActions(): Promise<void> {
+    try {
+      await ipc.pushApprovalActions({
+        ownerCheck: state.settings.approvalBiometric,
+        approve: t("home.needsYou.approve"),
+        deny: t("home.needsYou.deny"),
+        failed: t("notifications.push.answer.failed"),
+      });
+    } catch {
+      return;
+    }
   }
 
   /** Attaching from the list, wherever the press came from. */
@@ -3305,9 +3343,11 @@ export function startApp(root: HTMLElement): () => void {
 
   function updateSettings(next: SettingsPreferences, refocus?: SettingsRefocus): void {
     const changedLanguage = next.language !== state.settings.language;
+    const changedApproval = next.approvalBiometric !== state.settings.approvalBiometric;
     saveSettingsPreferences(next);
     setState({ settings: next });
     if (changedLanguage) syncPush();
+    if (changedLanguage || changedApproval) void syncApprovalActions();
     refocusSettings(refocus);
   }
 
@@ -4532,14 +4572,18 @@ export function startApp(root: HTMLElement): () => void {
    * where you are reads as one that lost it.
    */
   function siblingSessions(currentId: string) {
-    const projected = projectHome({
+    return projectedHome().groups.map(group => ({...group, rows: group.rows.filter(
+      ({row}) => row.sessionId === currentId || sourceOpenable(row.source),
+    )})).filter(group => group.rows.length > 0);
+  }
+
+  /** Home as it is drawn now, for the surfaces that act on what it shows. */
+  function projectedHome() {
+    return projectHome({
       census: state.reports ? mergeSessions(state.reports, state.serverListings) : [],
       hubs: Object.values(state.hubSessions),
       layout: mergeLayouts(state.hubLayouts),
     }, state.homeOptions ?? loadHomeViewOptions(), Date.now());
-    return projected.groups.map(group => ({...group, rows: group.rows.filter(
-      ({row}) => row.sessionId === currentId || sourceOpenable(row.source),
-    )})).filter(group => group.rows.length > 0);
   }
 
   /** The approval sheet, as every surface that answers an approval asks it. */
@@ -4822,6 +4866,7 @@ export function startApp(root: HTMLElement): () => void {
     if (disposed) return;
     if (state.servers.length > 0 || state.hubs.length > 0) await census();
     if (disposed) return;
+    void syncApprovalActions();
     // After the first read, so a tap that launched the app finds its row.
     // A shell that cannot listen leaves alerts opening the app as before.
     try {

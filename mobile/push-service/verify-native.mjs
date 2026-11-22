@@ -26,9 +26,12 @@ apns.on("stream", (stream, headers) => {
     assert.equal(headers["apns-push-type"], "alert");
     const payload = JSON.parse(body);
     assert.equal(payload.aps.alert.body, ko["notifications.push.approvalBody"]);
-    // The Rust Hub's agent identifier reaches the phone, and nothing else beside `aps`.
+    // The Rust Hub's identifiers reach the phone, and nothing else beside `aps`:
+    // the agent, its approval and this computer as the phone's paired entry names it.
     assert.deepEqual(Object.keys(payload).sort(), ["aps", "dure"]);
-    assert.deepEqual(payload.dure, { session: event.sessionId });
+    assert.equal(payload.aps.category, "dure.approval");
+    assert.deepEqual(payload.dure, { session: event.sessionId, hub: fingerprint.replace(/=+$/, ""), approval: event.approval });
+    assert.equal(payload.dure.hub.length, "SHA256:".length + 43);
     deliveries++;
     stream.respond({ ":status": 200 });
     stream.end();

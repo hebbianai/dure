@@ -10,6 +10,8 @@ const native = vi.hoisted(() => ({
 	hubOpen: vi.fn(),
 	hubAgentApprovalAnswer: vi.fn(),
 	attachHubSession: vi.fn(),
+	pushActivations: vi.fn(),
+	pushApprovalActions: vi.fn(),
 }));
 const biometric = vi.hoisted(() => ({ authenticate: vi.fn() }));
 vi.mock("./ipc", () => ({ ipc: native }));
@@ -22,6 +24,7 @@ import { startApp } from "./app";
 import { renderHomeScreen, type CensusModel } from "./censusView";
 import { homeRows, needsYou, type NeedsYouCard } from "./homeProjection";
 import { t } from "./i18n";
+import type { PushActivation } from "./pushActivation";
 import {
 	DEFAULT_SETTINGS_PREFERENCES,
 	saveSettingsPreferences,
@@ -269,6 +272,8 @@ describe("answering from home", () => {
 	}
 	let root: HTMLElement;
 	let dispose: (() => void) | undefined;
+	/** The native side's channel for alert taps and actions. */
+	let activate: ((activation: PushActivation) => void) | undefined;
 	const waiting = session("approve-me", "blocked", { presentation: { approval } });
 	const card = () => root.querySelector('[data-needs-you="approve-me"]');
 	const press = (label: string) => {
@@ -292,6 +297,11 @@ describe("answering from home", () => {
 		native.hubOpen.mockResolvedValue(probe([waiting]));
 		native.hubAgentApprovalAnswer.mockResolvedValue({ state: "written_to_pty", record_id: "r" });
 		biometric.authenticate.mockResolvedValue(undefined);
+		native.pushApprovalActions.mockResolvedValue(undefined);
+		native.pushActivations.mockImplementation(async (listener: (activation: PushActivation) => void) => {
+			activate = listener;
+		});
+		activate = undefined;
 		root = document.createElement("div");
 		document.body.replaceChildren(root);
 	});
@@ -337,6 +347,57 @@ describe("answering from home", () => {
 			t("approval.biometricCancelled"),
 		);
 		// Still waiting, and answerable again.
+		expect(card()).not.toBeNull();
+	});
+
+	/** #625: the alert's actions mirror the sheet's preference and the app's copy. */
+	it("registers the alert's Allow once and Deny with the approval preference and its copy", async () => {
+		dispose = startApp(root);
+		await settle();
+		expect(native.pushApprovalActions).toHaveBeenCalledWith({
+			ownerCheck: true,
+			approve: t("home.needsYou.approve"),
+			deny: t("home.needsYou.deny"),
+			failed: t("notifications.push.answer.failed"),
+		});
+	});
+
+	/** #625: with Face ID on, an alert's action opens the app and answers past the sheet. */
+	it("answers an alert's Allow once through the card's path, past Face ID", async () => {
+		dispose = startApp(root);
+		await settle();
+		activate?.({
+			sessionId: "approve-me",
+			answer: { choice: "approve", attentionId: "attention-7", terminalEpoch: "epoch-approve-me" },
+		});
+		await settle();
+		expect(biometric.authenticate).toHaveBeenCalledTimes(1);
+		expect(native.hubAgentApprovalAnswer).toHaveBeenCalledWith(
+			"qa-hub",
+			{ boxId: "this-laptop", workspaceId: "qa", sessionId: "approve-me" },
+			"epoch-approve-me",
+			"attention-7",
+			"approve",
+		);
+		expect(card()).toBeNull();
+	});
+
+	it("answers nothing for an alert whose approval was replaced, and says so", async () => {
+		dispose = startApp(root);
+		await settle();
+		const reads = native.hubOpen.mock.calls.length;
+		for (const answer of [
+			{ choice: "deny", attentionId: "attention-6", terminalEpoch: "epoch-approve-me" },
+			{ choice: "deny", attentionId: "attention-7", terminalEpoch: "epoch-earlier" },
+		] as const) {
+			activate?.({ sessionId: "approve-me", answer });
+			await settle();
+		}
+		// Each press read the list once more before giving up.
+		expect(native.hubOpen.mock.calls.length).toBe(reads + 2);
+		expect(biometric.authenticate).not.toHaveBeenCalled();
+		expect(native.hubAgentApprovalAnswer).not.toHaveBeenCalled();
+		expect(root.textContent).toContain(t("notifications.push.answer.gone"));
 		expect(card()).not.toBeNull();
 	});
 

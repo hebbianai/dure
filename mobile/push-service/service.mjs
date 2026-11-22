@@ -4,6 +4,9 @@ import { createServer } from "node:http";
 const MAX_REQUEST = 16 * 1024;
 const SIGNING_CONTEXT = Buffer.from("dure-push-request-v1\0");
 
+/** `PushId` in dure-hub-protocol: the alphabet Hmux mints opaque ids from. */
+const opaque = (value) => typeof value === "string" && /^[A-Za-z0-9._:+-]{1,256}$/.test(value);
+
 function parseEnvelope(envelope, allowedHubs, now, operation) {
   if (!envelope || typeof envelope !== "object") throw new Error("Invalid request");
   const decode = (value, limit) => {
@@ -22,8 +25,9 @@ function parseEnvelope(envelope, allowedHubs, now, operation) {
   if (message.version !== 1 || message.operation !== operation || !Number.isSafeInteger(message.issuedAt) || Math.abs(now / 1000 - message.issuedAt) > 120) throw new Error("Expired request or wrong operation");
   const { event, subscription } = message;
   if (operation === "send" && (!event || !["approval", "done"].includes(event.kind) || typeof event.eventId !== "string" || !event.eventId || event.eventId.length > 512)) throw new Error("Invalid event");
-  // The agent a tap opens travels to APNs, so only an opaque identifier may: never a path or a title.
-  if (operation === "send" && event.sessionId !== undefined && (typeof event.sessionId !== "string" || !/^[A-Za-z0-9._:+-]{1,256}$/.test(event.sessionId))) throw new Error("Invalid event");
+  // What travels to APNs beside the text is opaque identifiers only: never a path or a title.
+  if (operation === "send" && event.sessionId !== undefined && !opaque(event.sessionId)) throw new Error("Invalid event");
+  if (operation === "send" && event.approval !== undefined && (event.kind !== "approval" || event.sessionId === undefined || !event.approval || typeof event.approval !== "object" || Object.keys(event.approval).sort().join() !== "attentionId,terminalEpoch" || !opaque(event.approval.attentionId) || !opaque(event.approval.terminalEpoch))) throw new Error("Invalid event");
   if (!subscription || typeof subscription.token !== "string" || subscription.token.length > 512 || !/^(?:[a-f0-9]{2})+$/.test(subscription.token)) throw new Error("Invalid device token");
   if (!["sandbox", "production"].includes(subscription.environment) || !["all", "approvals"].includes(subscription.preference) || !["en", "ko"].includes(subscription.language)) throw new Error("Invalid subscription");
   return { message, sender };

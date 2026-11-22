@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
     >,
     layouts: {},
     projects: [{ id: "project-a", name: "Workspace" }],
+    sessionAgentRuntimeState: {} as Record<string, unknown>,
   },
 }));
 
@@ -68,6 +69,7 @@ beforeEach(() => {
   mocks.getDockview.mockReturnValue(api);
   mocks.mountedDockviewEntries.mockReturnValue([["desktop-a", api]]);
   mocks.storeState.layouts = {};
+  mocks.storeState.sessionAgentRuntimeState = {};
   mocks.storeState.agents = [{ id: "agent-a", name: "Codex", projectId: "project-a" }];
   mocks.notifyPrefs.mockReturnValue({
     enabled: true,
@@ -129,6 +131,38 @@ describe("phone push delivery", () => {
       [{ kind: "approval", eventId: "event-a", sessionId: "managed_0123abcd" }],
       [{ kind: "approval", eventId: "event-b", sessionId: "agent-chat" }],
     ]);
+  });
+
+  it("names the pending approval only where the alert's two answers are both offered", () => {
+    const runtime = (choices: string[]) => ({
+      terminalEpoch: "7",
+      lifecycle: "running",
+      attention: "approval_required",
+      attentionId: "attention-3",
+      approvalRequest: { toolName: "Bash", summary: "git push", choices },
+    });
+    mocks.storeState.agents = [{
+      id: "agent-a",
+      name: "Codex",
+      projectId: "project-a",
+      sessionId: "pane-session-a",
+      runtimeBinding: { runtime: "hmux_managed_v1", sessionId: "managed_0123abcd" },
+    }];
+    for (const [choices, kind] of [
+      [["approve", "approve_always", "deny"], "approval"],
+      [["approve"], "approval"],
+      [["approve", "deny"], "done"],
+    ] as const) {
+      mocks.storeState.sessionAgentRuntimeState = { "pane-session-a": runtime([...choices]) };
+      notifyAgentEvent("agent-a", kind, "Body", { eventId: `event-${kind}-${choices.length}` });
+    }
+    expect(mocks.pushAgentNotification.mock.calls.map(([event]) => event.approval)).toEqual([
+      { attentionId: "attention-3", terminalEpoch: "7" },
+      undefined,
+      undefined,
+    ]);
+    // Identity only: what the agent asked stays on this computer.
+    expect(JSON.stringify(mocks.pushAgentNotification.mock.calls)).not.toContain("git push");
   });
 
   it("leaves phone delivery to the main window and an exact event identity", () => {

@@ -85,6 +85,26 @@ test("the relay refuses an agent reference that is not an opaque identifier", as
   assert.equal(sends, 0);
 });
 
+test("the relay refuses an approval reference that is not two opaque identifiers on an approval alert", async () => {
+  let sends = 0;
+  const post = await serving({ async send() { sends++; return { status: "accepted" }; } });
+  const valid = { attentionId: "attention-3", terminalEpoch: "7" };
+  for (const [change, label] of [
+    [(event) => { event.approval = { ...valid, attentionId: "Run rm -rf /" }; }, "a sentence"],
+    [(event) => { event.approval = { ...valid, terminalEpoch: "/dev/ttys001" }; }, "a path"],
+    [(event) => { event.approval = { ...valid, summary: "git push" }; }, "an extra field"],
+    [(event) => { event.approval = valid; delete event.sessionId; }, "no agent"],
+    [(event) => { event.approval = valid; event.kind = "done"; }, "a completion"],
+    [(event) => { event.approval = "attention-3"; }, "not an object"],
+  ]) {
+    const message = baseMessage();
+    message.event.sessionId = "managed_1";
+    change(message.event);
+    assert.equal((await post(envelope(message))).status, 403, label);
+  }
+  assert.equal(sends, 0);
+});
+
 test("approvals-only filters completion and a provider failure remains retryable", async () => {
   let sends = 0;
   const post = await serving({ async send() { return { status: ++sends === 1 ? "unavailable" : "accepted" }; } });
@@ -147,6 +167,21 @@ test("HTTP/2 APNs alert has a valid ES256 provider token and carries the agent's
     // An older desktop names no agent; its alert opens the app as before.
     assert.deepEqual(await sender.send(baseMessage(), fingerprint), { status: "accepted" });
     assert.deepEqual(bodies[1], { aps: { alert: { title: "Dure", body: en["notifications.push.approvalBody"] }, sound: "default" } });
+    // An answerable approval adds its actions, its identity and this computer,
+    // as the phone's paired entry names it (unpadded): still no request text.
+    const answerable = baseMessage();
+    answerable.event.sessionId = "managed_0123456789abcdef";
+    answerable.event.approval = { attentionId: "attention-3", terminalEpoch: "7" };
+    assert.deepEqual(await sender.send(answerable, fingerprint), { status: "accepted" });
+    assert.deepEqual(bodies[2], {
+      aps: { alert: { title: "Dure", body: en["notifications.push.approvalBody"] }, sound: "default", category: "dure.approval" },
+      dure: {
+        session: "managed_0123456789abcdef",
+        hub: fingerprint.replace(/=+$/, ""),
+        approval: { attentionId: "attention-3", terminalEpoch: "7" },
+      },
+    });
+    assert.equal(bodies[2].dure.hub.length, "SHA256:".length + 43);
   } finally {
     sender.close();
     for (const stream of streams) stream.destroy();

@@ -3,7 +3,7 @@ import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { demoInvoke } from "./demo/demoInvoke";
 import type { AgentApprovalChoice } from "@/lib/agents/approvalRequest";
 import type { BackgroundWorkAnswer } from "./backgroundWork";
-import type { PushActivation } from "./pushActivation";
+import type { ApprovalActions, PushActivation } from "./pushActivation";
 import type { ServerReport } from "./census";
 import type { ServerEntry } from "./servers";
 import type { RemoteSession } from "./sessions";
@@ -756,6 +756,12 @@ export const ipc = {
    * launched the app is delivered as soon as this listens; a later call
    * replaces the earlier listener. Rejects where the shell cannot listen.
    */
+  /**
+   * Mirrors the approval preference and the alert actions' copy to the
+   * native side, which registers Allow once and Deny to match and reads the
+   * preference when an action runs with no screen.
+   */
+  pushApprovalActions: (actions: ApprovalActions) => invoke<void>("push_approval_actions", { actions }),
   pushActivations: async (onActivation: (activation: PushActivation) => void): Promise<void> => {
     const channel = new Channel<PushActivation>();
     channel.onmessage = onActivation;

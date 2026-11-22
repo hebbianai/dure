@@ -21,6 +21,8 @@ export const ko: Record<string, string> = {
   "notifications.push.noComputer": "푸시 알림을 받으려면 컴퓨터를 연결하세요.",
   "notifications.push.off": "푸시 알림이 꺼져 있습니다.",
   "notifications.push.open.unavailable": "그 알림의 에이전트를 지금 연결한 컴퓨터에서 찾을 수 없습니다.",
+  "notifications.push.answer.failed": "Dure가 그 승인에 답하지 못했습니다. 열어서 답하세요.",
+  "notifications.push.answer.gone": "그 승인은 더 이상 기다리고 있지 않습니다.",
   "notifications.local.description": "앱이 열려 있는 동안만 알립니다.",
   "notifications.permission.denied": "알림 권한이 없습니다. 시스템 설정에서 허용하세요.",
   "notifications.permission.prompt": "항목을 고르면 알림 권한을 요청합니다.",

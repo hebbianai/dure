@@ -13,6 +13,8 @@ export const pushAgentNotification = (event: {
 	eventId: string;
 	/** The phone's key for the agent, so a tap on the alert opens it. */
 	sessionId?: string;
+	/** The pending approval the alert's Allow once and Deny answer. */
+	approval?: { attentionId: string; terminalEpoch: string };
 }) => invoke<void>("hub_push_agent_notification", { event });
 
 export type NotificationAuthorization =
