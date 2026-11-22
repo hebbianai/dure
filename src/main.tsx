@@ -1,8 +1,9 @@
 import "@/lib/platform/installNativeWebviewDiagnostics";
-import React from "react";
+import React, { type ComponentProps, type ReactNode } from "react";
 import ReactDOM from "@/lib/platform/reactDomClient";
 import App from "./App";
 import { AppErrorBoundary, RenderFailure } from "./components/AppErrorBoundary";
+import { WindowContentPainted } from "./components/workspace/WindowContentPainted";
 import "dockview-react/dist/styles/dockview.css";
 import "./index.css";
 import { startCliServer } from "@/lib/cli/cliServer";
@@ -70,9 +71,27 @@ const renderEntryFailure = (
 ) => {
 	console.error("[main] entry import failed", error);
 	root.render(
-		<RenderFailure boundary="entry" error={error} surface={surface} />,
+		<>
+			<RenderFailure boundary="entry" error={error} surface={surface} />
+			<WindowContentPainted />
+		</>,
 	);
 };
+type AuxiliaryWindowRoot = NonNullable<
+	ComponentProps<typeof AppErrorBoundary>["label"]
+>;
+// The focused roots main.tsx mounts instead of the workspace App. Their own
+// first paint ends the window's boot; the App's workspace announces its own.
+const renderAuxiliaryWindowRoot = (
+	label: Exclude<AuxiliaryWindowRoot, "app">,
+	content: ReactNode,
+) =>
+	root.render(
+		<React.StrictMode>
+			<AppErrorBoundary label={label}>{content}</AppErrorBoundary>
+			<WindowContentPainted />
+		</React.StrictMode>,
+	);
 const qaParams = new URLSearchParams(location.search);
 const windowFocusQa =
 	import.meta.env.DEV &&
@@ -286,52 +305,40 @@ if (import.meta.env.DEV && qaParams.has("qaProjectRepository")) {
 } else if (bareRootPanel === "source-control") {
 	import("./components/scm/SourceControlWindow")
 		.then(({ SourceControlWindowRoot }) => {
-			root.render(
-				<React.StrictMode>
-					<AppErrorBoundary label="source-control-window">
-						<SourceControlWindowRoot />
-					</AppErrorBoundary>
-				</React.StrictMode>,
+			renderAuxiliaryWindowRoot(
+				"source-control-window",
+				<SourceControlWindowRoot />,
 			);
 		})
 		.catch((error) => renderEntryFailure(error, "source-control-window"));
 } else if (popoutDesktopId) {
 	import("./components/workspace/PopoutWindow")
 		.then(({ PopoutWindowRoot }) => {
-			root.render(
-				<React.StrictMode>
-					<AppErrorBoundary label="popout-window">
-						<PopoutWindowRoot desktopId={popoutDesktopId} />
-					</AppErrorBoundary>
-				</React.StrictMode>,
+			renderAuxiliaryWindowRoot(
+				"popout-window",
+				<PopoutWindowRoot desktopId={popoutDesktopId} />,
 			);
 		})
 		.catch((error) => renderEntryFailure(error, "popout-window"));
 } else if (sessionWindowAgentId) {
 	import("./components/workspace/AgentSessionWindow")
 		.then(({ AgentSessionWindowRoot }) => {
-			root.render(
-				<React.StrictMode>
-					<AppErrorBoundary label="session-window">
-						<AgentSessionWindowRoot
-							agentId={sessionWindowAgentId}
-							sourceWindowLabel={sessionWindowSource.windowLabel}
-							sourcePaneOwnerId={sessionWindowSource.paneOwnerId}
-						/>
-					</AppErrorBoundary>
-				</React.StrictMode>,
+			renderAuxiliaryWindowRoot(
+				"session-window",
+				<AgentSessionWindowRoot
+					agentId={sessionWindowAgentId}
+					sourceWindowLabel={sessionWindowSource.windowLabel}
+					sourcePaneOwnerId={sessionWindowSource.paneOwnerId}
+				/>,
 			);
 		})
 		.catch((error) => renderEntryFailure(error, "session-window"));
 } else if (diffAgentId) {
 	import("./components/scm/DiffWindow")
 		.then(({ DiffWindowRoot }) => {
-			root.render(
-				<React.StrictMode>
-					<AppErrorBoundary label="diff-window">
-						<DiffWindowRoot agentId={diffAgentId} />
-					</AppErrorBoundary>
-				</React.StrictMode>,
+			renderAuxiliaryWindowRoot(
+				"diff-window",
+				<DiffWindowRoot agentId={diffAgentId} />,
 			);
 		})
 		.catch((error) => renderEntryFailure(error, "diff-window"));

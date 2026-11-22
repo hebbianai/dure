@@ -27,7 +27,7 @@ export DURE_QA_HOME_SETUP="$repo_root/scripts/qa/workspace-performance-home-setu
 export SHELL=/bin/zsh
 if [ "$DURE_QA_PERFORMANCE_PHASE" = "retention" ]; then
   : "${DURE_QA_RETENTION_PROFILE:=short}"
-  case "$DURE_QA_RETENTION_PROFILE" in short|extended) ;; *) echo "unknown retention profile" >&2; exit 1 ;; esac
+  case "$DURE_QA_RETENTION_PROFILE" in short|extended|idle) ;; *) echo "unknown retention profile" >&2; exit 1 ;; esac
   export DURE_QA_RETENTION_PROFILE
   export DURE_QA_WINDOW_URL="$DURE_QA_WINDOW_URL&retention=$DURE_QA_RETENTION_PROFILE"
   export DURE_QA_CLIENT="scripts/qa/workspace-retention-client.mjs"

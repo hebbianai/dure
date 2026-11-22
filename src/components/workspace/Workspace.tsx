@@ -101,7 +101,7 @@ import { dockPanelReference } from "@/lib/workspace/dock/dockPanelParameters";
 import { workspacePerformance } from "@/lib/workspace/performance/workspacePerformance";
 import { WorkspacePaneFocusIntent } from "@/lib/workspace/performance/workspacePaneFocusIntent";
 import { schedulePostPaint } from "@/lib/scheduling/postPaint";
-import { markWorkspacePainted } from "@/lib/workspace/boot/workspaceBootState";
+import { markWindowContentPainted } from "@/lib/workspace/boot/windowBootState";
 import { browserMessageTasks } from "@/lib/scheduling/messageTask";
 import { LatestScheduledValue } from "@/lib/scheduling/latestScheduledValue";
 import { focusContextForPane, type FocusContext } from "@/lib/workspace/focusContext";
@@ -782,7 +782,7 @@ export const Workspace = memo(function Workspace({
     const cancelPaint = schedulePostPaint(window, () => {
       workspacePerformance.markWorkspacePaint(desktopId);
       // The same post-paint moment tells the boot splash it can leave.
-      markWorkspacePainted();
+      markWindowContentPainted();
       readinessFrame = requestAnimationFrame(sealWhenPanelsRegistered);
     });
     return () => {

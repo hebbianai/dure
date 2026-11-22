@@ -12,5 +12,12 @@
 		"idleIntervalMs": 60000,
 		"sampleWindowMs": 5000,
 		"clientTimeoutMs": 1200000
+	},
+	"idle": {
+		"returnSamples": 1,
+		"idleSamples": 4,
+		"idleIntervalMs": 60000,
+		"sampleWindowMs": 5000,
+		"clientTimeoutMs": 480000
 	}
 }
