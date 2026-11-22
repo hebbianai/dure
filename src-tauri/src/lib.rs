@@ -1229,6 +1229,12 @@ fn system_resources(path: Option<String>) -> resources::SystemResources {
     resources::sample(path.as_deref())
 }
 
+/// Free space of the volume holding each path, for the low-disk notice.
+#[tauri::command(async)]
+fn volume_space(paths: Vec<String>) -> Vec<Option<resources::VolumeSpace>> {
+    resources::volume_spaces(&paths)
+}
+
 /// Image bytes read straight from the OS clipboard, base64 for the webview.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2454,12 +2460,15 @@ pub fn run() {
             git_checkout_instance::capture_git_checkout_instance,
             git_checkout_instance::locate_git_checkout_paths,
             git_checkout_instance::remove_git_checkout_instance,
+            git_checkout_instance::scan_reclaimable_worktrees,
+            git_checkout_instance::reclaim_worktrees,
             remote_git_checkout_helper::prepare_remote_git_checkout_helper,
             worktree_command,
             local_directories::list_dir,
             files::inspect_local_directory,
             local_directories::search_local_directories,
             system_resources,
+            volume_space,
             scan_worktrees,
             scan_worktrees_command,
             parse_worktree_scan,

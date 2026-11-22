@@ -154,7 +154,9 @@ pub(super) fn checkout_is_clean_with_timeout(
 ) -> Result<bool, GitCheckoutInstanceError> {
     let args = ["status", "--porcelain=v1", "--untracked-files=all", "-z"];
     let mut command = git_command(path);
-    command.args(args);
+    // Only a question: refreshing the index would take index.lock and could
+    // fail a session's own Git command in that checkout.
+    command.arg("--no-optional-locks").args(args);
     // No status payload is needed: the first byte proves the checkout is dirty.
     // The shared runner retains at most limit + 1 bytes and owns all child cleanup.
     match run(&command, timeout, 0) {

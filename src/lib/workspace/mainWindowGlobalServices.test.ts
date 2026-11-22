@@ -10,6 +10,7 @@ const serviceNames = [
 	"provider-conversation-metadata",
 	"notification-activation",
 	"discovery-state-gc",
+	"low-disk-worktrees",
 	"registry",
 ] as const;
 
@@ -53,6 +54,7 @@ function lifecycleFixture(failedStart?: ServiceName) {
 				install("provider-conversation-metadata"),
 			installNotificationActivation: () => install("notification-activation"),
 			installDiscoveryStateGc: () => install("discovery-state-gc"),
+			installLowDiskWorktrees: () => install("low-disk-worktrees"),
 			reconcileCanonicalStops: vi.fn(async () => undefined),
 			reconcileProjects: vi.fn(async () => undefined),
 			startRegistry: () => install("registry"),
@@ -176,6 +178,7 @@ test("starts and retires main-window services as one lifecycle unit", () => {
 		installProviderConversationMetadata: start("provider-conversation-metadata"),
 		installNotificationActivation: start("notification-activation"),
 		installDiscoveryStateGc: start("discovery-state-gc"),
+		installLowDiskWorktrees: start("low-disk-worktrees"),
 		reconcileCanonicalStops,
 		reconcileProjects,
 		startRegistry: start("registry"),
@@ -188,6 +191,7 @@ test("starts and retires main-window services as one lifecycle unit", () => {
 		"start:provider-conversation-metadata",
 		"start:notification-activation",
 		"start:discovery-state-gc",
+		"start:low-disk-worktrees",
 		"start:project-reconciliation",
 		"start:registry",
 		"start:canonical-stop-reconciliation",
@@ -199,8 +203,9 @@ test("starts and retires main-window services as one lifecycle unit", () => {
 	);
 
 	stop();
-	expect(calls.slice(9)).toEqual([
+	expect(calls.slice(10)).toEqual([
 		"stop:registry",
+		"stop:low-disk-worktrees",
 		"stop:discovery-state-gc",
 		"stop:notification-activation",
 		"stop:provider-conversation-metadata",

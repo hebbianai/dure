@@ -9,7 +9,7 @@ import {
 	type ManagedAgentRuntimeProjectionRefresh,
 } from "@/lib/agents/managedAgentSemanticObserverRuntime";
 import { installProviderConversationMetadataRuntime } from "@/lib/agents/providerConversationMetadataRuntime";
-import { hmux } from "@/lib/ipc";
+import { hmux, volumeSpace } from "@/lib/ipc";
 import {
 	type DiscoveryStateGcReport,
 	installDiscoveryStateGcService,
@@ -20,8 +20,16 @@ import {
 	snapshotAppStateOnQuit,
 } from "@/lib/persistence/appStateSnapshot";
 import { qaLog } from "@/lib/qa/qaLog";
+import { installLowDiskWorktreeService } from "@/lib/scm/worktrees/lowDiskWorktreeService";
+import { localRepositoryProjects } from "@/lib/scm/worktrees/worktreeReclaim";
+import {
+	getWorktreeReclaimState,
+	scanProjectWorktrees,
+	setLowDiskSpace,
+} from "@/lib/scm/worktrees/worktreeReclaimStore";
 import { installNotificationActivationHandler } from "@/lib/settings/notificationActivation";
 import { reconcilePersistedLocalProjects } from "@/lib/spaces/localProjectReconciliation";
+import { useStore } from "@/store";
 
 interface MainWindowGlobalServices {
 	installAttentionNotifier(): () => void;
@@ -32,6 +40,7 @@ interface MainWindowGlobalServices {
 	installProviderConversationMetadata(): () => void;
 	installNotificationActivation(): () => void;
 	installDiscoveryStateGc(): () => void;
+	installLowDiskWorktrees(): () => void;
 	reconcileCanonicalStops(): Promise<unknown>;
 	reconcileProjects(): Promise<void>;
 	startRegistry(): () => void;
@@ -52,6 +61,17 @@ const defaultServices: MainWindowGlobalServices = {
 		installDiscoveryStateGcService({
 			runGc: (mode) => hmux.localStateGc<DiscoveryStateGcReport>(mode),
 			log: (event) => qaLog("stateGc", event),
+		}),
+	installLowDiskWorktrees: () =>
+		installLowDiskWorktreeService({
+			localProjectPaths: () =>
+				localRepositoryProjects(useStore.getState().projects).map(
+					(project) => project.path,
+				),
+			volumeSpace: (paths) => volumeSpace(paths),
+			scanProject: scanProjectWorktrees,
+			setLowDisk: setLowDiskSpace,
+			state: getWorktreeReclaimState,
 		}),
 	reconcileCanonicalStops: reconcileCanonicalAgentStopsOnceV1,
 	reconcileProjects: reconcilePersistedLocalProjects,
@@ -91,6 +111,7 @@ export function startMainWindowGlobalServices(
 		cleanups.push(services.installProviderConversationMetadata());
 		cleanups.push(services.installNotificationActivation());
 		cleanups.push(services.installDiscoveryStateGc());
+		cleanups.push(services.installLowDiskWorktrees());
 		void services.reconcileProjects();
 		cleanups.push(services.startRegistry());
 		void services.reconcileCanonicalStops();

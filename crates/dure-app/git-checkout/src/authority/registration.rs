@@ -192,6 +192,48 @@ pub fn read_git_checkout_claims(
     active_claims(&loaded.state).map_err(use_error_as_instance)
 }
 
+/// What this authority knows about one exact checkout generation when a
+/// finished checkout is offered back to the disk.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReclaimMembership {
+    /// This authority did not create the generation: it was adopted, made
+    /// outside the product, or replaced since.
+    NotCreated,
+    /// Created here, and a claim, a retained working directory or an
+    /// unfinished removal still holds it.
+    Held,
+    /// Created here, and nothing holds it.
+    Idle,
+}
+
+/// Observe without reserving removal: a removal still needs its own admission,
+/// which fences the same claims again.
+pub(crate) fn reclaim_membership(
+    registration: &GitCheckoutRegistrationV1,
+) -> Result<ReclaimMembership, GitCheckoutInstanceError> {
+    let Some((_, loaded)) = current_registration_state(registration)? else {
+        return Ok(ReclaimMembership::NotCreated);
+    };
+    let created = match &loaded.state.lifecycle {
+        Lifecycle::Active { creation, .. } | Lifecycle::Removing { creation, .. } => {
+            creation.is_some()
+        }
+        Lifecycle::Creating(_) | Lifecycle::Removed(_) => false,
+    };
+    if !created {
+        return Ok(ReclaimMembership::NotCreated);
+    }
+    if loaded.state.phase() != Phase::Active || loaded.state.claims.values().any(Claim::is_active) {
+        return Ok(ReclaimMembership::Held);
+    }
+    let checkout = Path::new(&registration.instance.canonical_path);
+    Ok(if read_working_directory_claims(checkout)?.is_empty() {
+        ReclaimMembership::Idle
+    } else {
+        ReclaimMembership::Held
+    })
+}
+
 /// Retire only this registration. Legacy registrations and an already retired
 /// claim require no write; a same-path successor belongs to its own registration.
 pub fn release_git_checkout_registration(

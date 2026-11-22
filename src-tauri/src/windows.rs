@@ -136,6 +136,11 @@ fn system_resources(path: Option<String>) -> crate::resources::SystemResources {
 }
 
 #[tauri::command(async)]
+fn volume_space(paths: Vec<String>) -> Vec<Option<crate::resources::VolumeSpace>> {
+    crate::resources::volume_spaces(&paths)
+}
+
+#[tauri::command(async)]
 fn run_shell(command: String) -> crate::gitx::ExecOut {
     let output = crate::login_shell::run(&command);
     match output {
@@ -374,6 +379,8 @@ pub fn run() {
             crate::git_checkout_instance::capture_git_checkout_instance,
             crate::git_checkout_instance::locate_git_checkout_paths,
             crate::git_checkout_instance::remove_git_checkout_instance,
+            crate::git_checkout_instance::scan_reclaimable_worktrees,
+            crate::git_checkout_instance::reclaim_worktrees,
             crate::remote_git_checkout_helper::prepare_remote_git_checkout_helper,
             list_branches,
             list_branches_command,
@@ -381,6 +388,7 @@ pub fn run() {
             list_dir,
             crate::files::inspect_local_directory,
             system_resources,
+            volume_space,
             run_shell,
             write_text_file,
             read_file,
