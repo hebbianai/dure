@@ -14,6 +14,7 @@ import {
 } from "@/lib/ipc/dureAgentRuntime";
 import { resolveSelectedDureBackendRouteAuthority } from "@/lib/ipc/dureBackend";
 import { sameDureBackendRouteTarget } from "@/lib/ipc/dureBackendRoute";
+import type { PreparedAgentProjectMove } from "./agentProjectMoveTypes";
 import { convergeManagedAgentRehost } from "@/lib/sessions/managed/managedAgentRehostConvergence";
 import { useStore } from "@/store";
 
@@ -26,7 +27,9 @@ class AgentProjectMovePreparationError extends Error {
 }
 
 /** The backend journal owns recovery. A dialog keeps only its reviewed request. */
-export async function prepareAgentProjectMove(agentId: string) {
+export async function prepareAgentProjectMove(
+	agentId: string,
+): Promise<PreparedAgentProjectMove> {
 	const rehost = convergeManagedAgentRehost(agentId, `agent:${agentId}`);
 	await rehost.catch(() => null);
 	let conversation: string | null | undefined;

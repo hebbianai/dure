@@ -59,6 +59,7 @@ function completeRuntime(surface: AgentToolbarSurface): NativeAgentToolbarRuntim
 			applyChatNow: vi.fn(async () => {}),
 			cancelChat: vi.fn(async () => {}),
 		},
+		projectMove: { prepare: vi.fn() },
 		launchSelection: launchSelection(),
 		history: {
 			actionLease: {
@@ -182,6 +183,11 @@ describe("NativeAgentToolbar surfaces", () => {
 			'[data-agent-toolbar-control="view-switch"] button',
 		) as HTMLButtonElement | null;
 		expect(view?.disabled).toBe(true);
+		const projectMove = container.querySelector(
+			'[data-agent-toolbar-control="project-move"] button',
+		) as HTMLButtonElement | null;
+		expect(projectMove?.disabled).toBe(true);
+		expect(projectMove?.title).toBe("source pane missing");
 		// The account menu still opens for account management; only the
 		// switch itself, which runs in the source pane, is unavailable.
 		const account = container.querySelector(

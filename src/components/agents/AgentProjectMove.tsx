@@ -11,24 +11,29 @@ import {
 } from "@/components/ui/dialog";
 import { ErrorText } from "@/components/ui/error-text";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
-import { prepareAgentProjectMove } from "@/lib/agents/agentProjectMove";
+import type {
+	AgentProjectMovePort,
+	PreparedAgentProjectMove,
+} from "@/lib/agents/agentProjectMoveTypes";
 import { t } from "@/lib/i18n";
 import type { AgentProjectMovePlan } from "@/lib/ipc/dureAgentProjectMove";
 
-type PreparedMove = Awaited<ReturnType<typeof prepareAgentProjectMove>>;
-
+/** The move dialog. Its surface decides where the move runs through `port`. */
 export function AgentProjectMove({
-	agentId,
+	port,
 	disabled,
+	disabledTitle,
 	onBusyChange,
 }: {
-	agentId: string;
+	port: AgentProjectMovePort;
 	disabled?: boolean;
+	/** Shown instead of the title while `disabled`, when the caller says why. */
+	disabledTitle?: string;
 	onBusyChange?(busy: boolean): void;
 }) {
 	const [open, setOpen] = useState(false);
 	const [busy, setBusy] = useState(false);
-	const [prepared, setPrepared] = useState<PreparedMove>();
+	const [prepared, setPrepared] = useState<PreparedAgentProjectMove>();
 	const [projectId, setProjectId] = useState("");
 	const [plan, setPlan] = useState<AgentProjectMovePlan>();
 	const [error, setError] = useState<string>();
@@ -44,7 +49,7 @@ export function AgentProjectMove({
 		setError(undefined);
 	};
 	const prepare = async () => {
-		const next = await prepareAgentProjectMove(agentId);
+		const next = await port.prepare();
 		setPrepared(next);
 		if (next.recoveredPlan) {
 			setPlan(next.recoveredPlan);
@@ -94,7 +99,11 @@ export function AgentProjectMove({
 			<Button
 				variant="ghost"
 				size="icon-xs"
-				title={t("agents.projectMove.title")}
+				title={
+					disabled && disabledTitle
+						? disabledTitle
+						: t("agents.projectMove.title")
+				}
 				aria-label={t("agents.projectMove.title")}
 				disabled={disabled || busy}
 				onClick={() => {

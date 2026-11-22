@@ -17,6 +17,7 @@ import { AgentPanelToolbarFrame } from "@/components/panels/AgentPanelToolbarFra
 import { AgentPanelWindowActions } from "@/components/panels/AgentPanelWindowActions";
 import { useNativeAgentToolbarState } from "@/components/panels/useAgentPanelState";
 import { agentCredentialReferenceId } from "@/lib/agents/agentLaunchCredential";
+import type { AgentProjectMovePort } from "@/lib/agents/agentProjectMoveTypes";
 import { evaluateAgentProviderMutation } from "@/lib/agents/agentProviderMutationPolicy";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
 import { agentRuntimePresentationOwnerKey } from "@/lib/agents/agentRuntimePresentationOwner";
@@ -81,6 +82,7 @@ export interface NativeAgentToolbarRuntime {
 	readonly presentFork: AgentForkPresenter;
 	readonly account: NativeAgentToolbarAccountRuntime;
 	readonly view: NativeAgentViewPort;
+	readonly projectMove: AgentProjectMovePort;
 	/** Pane-only until AGENT_TOOLBAR_CONTROLS offers them on the large window. */
 	readonly launchSelection?: AgentRuntimeLaunchSelectionView;
 	readonly history?: Omit<
@@ -355,12 +357,14 @@ function NativeAgentToolbarControls({
 						"project-move",
 						<AgentProjectMove
 							key={`project-move:${runtimeOwnerKey}`}
-							agentId={agent.id}
+							port={runtime.projectMove}
 							disabled={
 								transitioning ||
+								sourceUnavailable ||
 								!!agent.pendingCredentialSwitch ||
 								!!agent.pendingCmd
 							}
+							disabledTitle={sourceUnavailableTitle}
 							onBusyChange={setTransitioning}
 						/>,
 					)}

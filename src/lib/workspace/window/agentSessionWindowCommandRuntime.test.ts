@@ -8,6 +8,25 @@ const handover = vi.hoisted(() => ({
 	cancelChatHandover: vi.fn(() => true),
 }));
 vi.mock("@/lib/agents/chatHandoverRuntime", () => handover);
+const projectMove = vi.hoisted(() => {
+	const prepared = () => ({
+		projects: [{ id: "project-new", displayName: "New" }],
+		complete: true,
+		preview: vi.fn(async (projectId: string) => ({
+			operationId: `operation-${projectId}`,
+		})),
+		status: vi.fn(async () => "unconfirmed" as const),
+		repair: vi.fn(async () => {}),
+		apply: vi.fn(async () => {}),
+	});
+	return {
+		prepared,
+		prepareAgentProjectMove: vi.fn(async (_agentId: string) => prepared()),
+	};
+});
+vi.mock("@/lib/agents/agentProjectMove", () => ({
+	prepareAgentProjectMove: projectMove.prepareAgentProjectMove,
+}));
 import { agentFixture } from "@/test/agentFixtures";
 import {
 	type AgentSessionWindowCommandRuntime,
@@ -175,5 +194,115 @@ describe("Agent session window command runtime", () => {
 			),
 		).rejects.toThrow("view command source Agent mismatch");
 		expect(handover.requestChatHandover).not.toHaveBeenCalled();
+	});
+
+	describe("a large window's project move", () => {
+		const source = {
+			action: "project_move" as const,
+			agentId: "agent-source",
+			desktopId: "desktop-source",
+			panelId: "agent:agent-source",
+		};
+		async function prepare() {
+			const { runtime } = presentationRuntime();
+			const prepared = projectMove.prepared();
+			projectMove.prepareAgentProjectMove.mockResolvedValueOnce(prepared);
+			const receipt = await executeAgentSessionWindowCommand(
+				{ ...source, step: "prepare" },
+				runtime,
+			);
+			if (receipt.kind !== "project_move_prepared")
+				throw new Error("expected a prepared move");
+			return { runtime, prepared, moveId: receipt.moveId };
+		}
+
+		it("prepares the move where the source pane runs and acts only on the plan it previewed", async () => {
+			const { runtime, prepared, moveId } = await prepare();
+			expect(projectMove.prepareAgentProjectMove).toHaveBeenLastCalledWith(
+				"agent-source",
+			);
+
+			await expect(
+				executeAgentSessionWindowCommand(
+					{ ...source, step: "preview", moveId, projectId: "project-new" },
+					runtime,
+				),
+			).resolves.toEqual({
+				kind: "project_move_previewed",
+				plan: { operationId: "operation-project-new" },
+			});
+			await expect(
+				executeAgentSessionWindowCommand(
+					{ ...source, step: "apply", moveId, operationId: "operation-other" },
+					runtime,
+				),
+			).rejects.toMatchObject({
+				code: "client_project_move_preview_stale",
+				submitted: false,
+			});
+			expect(prepared.apply).not.toHaveBeenCalled();
+
+			await expect(
+				executeAgentSessionWindowCommand(
+					{
+						...source,
+						step: "apply",
+						moveId,
+						operationId: "operation-project-new",
+					},
+					runtime,
+				),
+			).resolves.toEqual({ kind: "project_move_done" });
+			expect(prepared.apply).toHaveBeenCalledWith({
+				operationId: "operation-project-new",
+			});
+			// A finished move is released; its id names nothing any more.
+			await expect(
+				executeAgentSessionWindowCommand(
+					{
+						...source,
+						step: "status",
+						moveId,
+						operationId: "operation-project-new",
+					},
+					runtime,
+				),
+			).rejects.toMatchObject({ submitted: false });
+		});
+
+		it("refuses a step on a move a newer preparation replaced", async () => {
+			const first = await prepare();
+			const second = await prepare();
+
+			await expect(
+				executeAgentSessionWindowCommand(
+					{
+						...source,
+						step: "preview",
+						moveId: first.moveId,
+						projectId: "project-new",
+					},
+					second.runtime,
+				),
+			).rejects.toMatchObject({
+				code: "client_project_move_preview_stale",
+				submitted: false,
+			});
+			expect(first.prepared.preview).not.toHaveBeenCalled();
+			expect(second.prepared.preview).not.toHaveBeenCalled();
+		});
+
+		it("refuses a project move when the source pane now holds another Agent", async () => {
+			const { runtime } = presentationRuntime();
+			projectMove.prepareAgentProjectMove.mockClear();
+
+			await expect(
+				executeAgentSessionWindowCommand(
+					{ ...source, agentId: "agent-moved-away", step: "prepare" },
+					runtime,
+				),
+			).rejects.toThrow("project move command source Agent mismatch");
+			expect(projectMove.prepareAgentProjectMove).not.toHaveBeenCalled();
+		});
 	});
 });

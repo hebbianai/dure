@@ -69,6 +69,22 @@ function forkPresentationFailure(): Error {
 	return new Error(t("workspace.agentWindow.forkPresentationFailed"));
 }
 
+function sourceAgentMismatch(
+	action: AgentSessionWindowCommandExecution["action"],
+): string {
+	switch (action) {
+		case "present_fork":
+			return "fork presentation source Agent mismatch";
+		case "set_native_view":
+		case "chat_handover":
+			return "view command source Agent mismatch";
+		case "project_move":
+			return "project move command source Agent mismatch";
+		default:
+			return "credential command source Agent mismatch";
+	}
+}
+
 function requireSourceAgent(
 	command: Pick<
 		AgentSessionWindowCommandExecution,
@@ -80,14 +96,7 @@ function requireSourceAgent(
 		presentationRuntime.readPaneAgentId(command.desktopId, command.panelId) !==
 		command.agentId
 	) {
-		throw new Error(
-			command.action === "present_fork"
-				? "fork presentation source Agent mismatch"
-				: command.action === "set_native_view" ||
-						command.action === "chat_handover"
-					? "view command source Agent mismatch"
-					: "credential command source Agent mismatch",
-		);
+		throw new Error(sourceAgentMismatch(command.action));
 	}
 }
 
@@ -215,6 +224,14 @@ export async function executeAgentSessionWindowCommand(
 		}
 		handover.cancelChatHandover(command.agentId);
 		return { kind: "chat_handover", outcome: "cancelled" };
+	}
+
+	if (command.action === "project_move") {
+		// The same prepare, preview and commit steps the source pane's own move
+		// dialog runs, on the move this window prepared for the large window.
+		const projectMove = await import("./agentSessionWindowProjectMoveRuntime");
+		requireSourceAgent(command, presentationRuntime);
+		return projectMove.executeHeldAgentProjectMoveStep(command);
 	}
 
 	if (command.action === "switch") {
