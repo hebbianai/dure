@@ -35,7 +35,7 @@ function notMountedPayload(paneId: string, mutation = false) {
 					message: `pane ${paneId} is not mounted in any window`,
 					retryable: false,
 					nextAction:
-						"open the pane in a window, or inspect sessions with `dure ls`",
+						"open the pane in a window, or read its session liveness with `dure spaces show <space-id>`",
 				},
 	};
 }

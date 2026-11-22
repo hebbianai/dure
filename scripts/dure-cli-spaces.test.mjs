@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  hmuxSession as numberedFixtureSession,
   installHmuxStub as installCanonicalHmuxStub,
   runSessionCli as runCli,
 } from "./lib/dure-session-test-fixture.mjs";
@@ -397,6 +398,87 @@ describe("dure spaces list/show", () => {
       },
     });
     expect(shown.stdout).not.toContain("/private/runtime.sock");
+  });
+
+  it("shows which panes' sessions exited and how long live ones have been idle, mounted or not (#629)", () => {
+    const root = temporaryRoot();
+    const sessionBinding = (index) => ({
+      ...binding("local", "local"),
+      workspaceId: `workspace-${index}`,
+      sessionId: `session-${index}`,
+    });
+    writeRegistry(
+      root,
+      clientPresentation([
+        {
+          id: "desk-tidy",
+          name: "Tidy",
+          kind: "desktop",
+          panes: [
+            pane("term:live", sessionBinding(1)),
+            pane("term:gone", sessionBinding(2)),
+            { id: "browser:docs", type: "browser", component: "browser", agentId: null, binding: null },
+          ],
+        },
+      ]),
+      "local",
+      { includeAgent: false },
+    );
+    const hmux = installCanonicalHmuxStub(root, [
+      numberedFixtureSession(1, {
+        agentRuntimeState: {
+          terminal_epoch: "terminal-1",
+          revision: "3",
+          observed_through_output_seq: "11",
+          lifecycle: "running",
+          activity: "waiting",
+          attention: "none",
+          attention_id: null,
+          source: "provider_event",
+          turn_completed_count: "1",
+        },
+        semanticIdleMs: "125000",
+      }),
+      numberedFixtureSession(2, {
+        lifecycle: "exited",
+        health: "exited",
+        manifestLifecycle: "exited",
+        effectiveLifecycle: "exited",
+        exit: { kind: "normal", exit_code: 0 },
+      }),
+    ], {
+      capabilities: [
+        "bounded_session_catalog_query_v1",
+        "exact_session_probe_runtime_state_v1",
+        "exact_session_probe_semantic_idle_v1",
+      ],
+    });
+
+    const json = runCli(root, hmux, ["spaces", "show", "desk-tidy", "--json"]);
+    expect(json.status, `${json.stdout}\n${json.stderr}`).toBe(0);
+    const [live, gone, browser] = JSON.parse(json.stdout).space.panes;
+    expect(live.runtime.session.liveness.state).toBe("alive");
+    expect(live.runtime.session.idleSinceMs).toBe(
+      live.runtime.session.liveness.observedAtMs - 125_000,
+    );
+    expect(gone.runtime.session.liveness.state).toBe("exited");
+    expect(gone.runtime.session.idleSinceMs).toBeNull();
+    expect(browser.runtime.session).toBeNull();
+
+    const table = runCli(root, hmux, ["spaces", "show", "desk-tidy"]);
+    expect(table.status, `${table.stdout}\n${table.stderr}`).toBe(0);
+    const [header, ...rows] = table.stdout.trim().split("\n");
+    const columns = header.split("\t");
+    expect(columns).toEqual(["PANE", "TYPE", "TITLE", "STATE", "LIVE", "IDLE", "SESSION"]);
+    const cells = Object.fromEntries(
+      rows.map((row) => {
+        const values = row.split("\t");
+        return [values[0], Object.fromEntries(columns.map((column, index) => [column, values[index]]))];
+      }),
+    );
+    expect(cells["term:live"]).toMatchObject({ LIVE: "alive", IDLE: "2m 5s", SESSION: "workspace-1/session-1" });
+    expect(cells["term:gone"]).toMatchObject({ LIVE: "exited", IDLE: "-", SESSION: "workspace-2/session-2" });
+    expect(cells["browser:docs"]).toMatchObject({ STATE: "unavailable", LIVE: "-", IDLE: "-", SESSION: "-" });
   });
 
   it("keeps a bound pane current when unrelated session history is truncated", () => {

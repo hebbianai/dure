@@ -145,6 +145,7 @@ describe("dispatchCliPaneActionRequest", () => {
 		expect(payload.ok).toBe(false);
 		expect(payload.error.code).toBe("pane_not_found");
 		expect(payload.error.retryable).toBe(false);
+		expect(payload.error.nextAction).toContain("dure spaces show <space-id>");
 	});
 
 	it("invokes the registered handler for pane.act and reports status", async () => {

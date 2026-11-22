@@ -20,6 +20,6 @@ export async function observeApp({ directory, descriptor, fetchImpl, now = Date.
       ageMs: registry.updatedAtMs === null ? null : Math.max(0, now() - registry.updatedAtMs),
       ...(presentation ?? { spaces: [] }),
     },
-    nextAction: "Use an exact pane ID with app_pane_state to discover current actions, parameters and availability.",
+    nextAction: "Use an exact pane ID with app_pane_state to discover current actions, parameters and availability. Pane state reads only panes a window has mounted; for each saved pane's session liveness and idle time, including unmounted panes, use `dure spaces show <space-id>`.",
   };
 }

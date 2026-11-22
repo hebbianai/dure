@@ -28,7 +28,7 @@ driving and waiting on a session. Parse `--json` — `dure.sessions/v1`,
 
 ```sh
 dure ls   # SESSION WORKSPACE PROVIDER PID LIVE CWD AGENTS ACCOUNT FAILURE
-dure spaces show desk-Jd7tlL   # pane id, type, title, state, workspace/session
+dure spaces show desk-Jd7tlL   # PANE TYPE TITLE STATE LIVE IDLE SESSION
 dure projects list             # project ids; dure spaces list gives desk ids
 ```
 
