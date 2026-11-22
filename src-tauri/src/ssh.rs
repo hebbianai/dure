@@ -710,7 +710,6 @@ pub fn exec_once_with_stdin(
     with_session(opts, |sess| exec_attempt(sess, cmd, stdin, EXEC_TIMEOUT))
 }
 
-#[cfg(not(windows))]
 pub(crate) fn exec_on_with_stdin_timeout(
     sess: &Session,
     cmd: &str,
