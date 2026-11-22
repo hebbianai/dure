@@ -42,7 +42,7 @@ export function episodeNotificationBody(kind: AttentionEpisodeKind): string {
  * pending request, by its identity, when it offers both answers. Anything
  * else is answered where the person can read it.
  */
-export function alertApproval(
+function alertApproval(
   runtime: HmuxAgentRuntimeState | undefined,
 ): { attentionId: string; terminalEpoch: string } | undefined {
   const approval = pendingApproval(runtime);
