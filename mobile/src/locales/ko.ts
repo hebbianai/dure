@@ -132,6 +132,7 @@ export const ko: Record<string, string> = {
   "terminal.chrome.scrollToBottom": "맨 아래로 스크롤",
   "pairing.error.notCode": "hmux 페어링 코드가 아닙니다",
   "settings.security.approvalBiometric": "승인 시 생체 인증",
+  "settings.security.alertDetails": "알림에 에이전트 내용 표시",
   "settings.security.enableApprovalBiometricReason": "승인 시 생체 인증을 켜려면 확인하세요",
   "settings.security.disableApprovalBiometricReason": "승인 시 생체 인증을 끄려면 확인하세요",
   "settings.security.biometricFailed": "생체 인증에 실패했습니다",

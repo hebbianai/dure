@@ -12,6 +12,9 @@
 //! call to `spawn_blocking`, so a phone on a bad network gets a spinner rather
 //! than a frozen UI.
 
+/// Run by the iOS notification service extension; tested everywhere.
+#[cfg(any(target_os = "ios", test))]
+mod alert_content;
 pub mod attach;
 pub mod catalog;
 pub mod census;
@@ -37,6 +40,7 @@ mod push_ios;
 pub mod relay;
 pub mod server_conversation;
 pub mod server_store;
+pub mod shared_config;
 pub mod source_control;
 pub mod standalone;
 mod terminal_attach;
@@ -187,11 +191,14 @@ pub struct ServerRow {
     pub has_list_key: bool,
 }
 
+/// The device configuration directory. On iOS it is shared with the
+/// notification service extension ([`shared_config`]).
 fn config_root(app: &AppHandle) -> Result<PathBuf, CommandError> {
-    app.path().app_config_dir().map_err(|error| CommandError {
+    let own = app.path().app_config_dir().map_err(|error| CommandError {
         code: "app_config_dir_unavailable".to_string(),
         message: error.to_string(),
-    })
+    })?;
+    Ok(shared_config::config_root(own))
 }
 
 fn store_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
@@ -219,7 +226,7 @@ fn key_root(app: &AppHandle) -> Result<PathBuf, CommandError> {
 /// 페어링한 허브 목록. SSH 서버 목록(`servers.json`)과 다른 파일이다 — 담는
 /// 것도 전송도 다르고, 한쪽 형식이 바뀔 때 다른 쪽을 끌고 가지 않는다.
 fn hub_store_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
-    Ok(config_root(app)?.join("hubs.json"))
+    Ok(config_root(app)?.join(hub_store::HUB_STORE_FILE))
 }
 
 /// 노트북 사이드바의 묶음을 기억하는 파일. 허브 목록(`hubs.json`)과 다른 파일인

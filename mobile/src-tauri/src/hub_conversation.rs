@@ -159,7 +159,7 @@ fn write_on_stream<S: Read + Write, T>(
 }
 
 /// One transcript question on an open stream.
-fn transcript_on_stream<S: Read + Write>(
+pub(crate) fn transcript_on_stream<S: Read + Write>(
     stream: &mut S,
     token: &str,
     request: HubRequest,

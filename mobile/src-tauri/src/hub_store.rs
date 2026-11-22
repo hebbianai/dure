@@ -28,6 +28,10 @@ use std::path::Path;
 /// 이 문서의 판. 모르는 판은 거부한다.
 pub const HUB_STORE_VERSION: u32 = 1;
 
+/// The store's file in the device configuration directory, where the app
+/// and the notification service extension both read it.
+pub const HUB_STORE_FILE: &str = "hubs.json";
+
 /// 저장할 수 있는 허브 수의 상한.
 ///
 /// 상한이 있는 이유는 QR 하나가 항목 하나를 만들고, 스캔은 실수로 반복되기

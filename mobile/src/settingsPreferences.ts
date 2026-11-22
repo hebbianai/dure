@@ -13,6 +13,12 @@ export interface SettingsPreferences {
 	readonly haptics: boolean;
 	/** Face ID before the first input sent while the attached agent waits for an approval. */
 	readonly approvalBiometric: boolean;
+	/**
+	 * Phone alerts name the agent, its project and what it asks or said, read
+	 * from the paired computer when the alert arrives. Off, they keep the
+	 * generic text, on the lock screen too.
+	 */
+	readonly alertDetails: boolean;
 }
 
 const STORAGE_KEY = "hebbian.settings.v1";
@@ -24,6 +30,7 @@ export const DEFAULT_SETTINGS_PREFERENCES = {
 	scrollSpeed: "normal",
 	haptics: true,
 	approvalBiometric: false,
+	alertDetails: true,
 } as const satisfies SettingsPreferences;
 
 const SCROLL_SENSITIVITIES = {
@@ -100,7 +107,12 @@ function parseSettingsPreferences(value: unknown): SettingsPreferences | null {
 		"approvalBiometric",
 		DEFAULT_SETTINGS_PREFERENCES.approvalBiometric,
 	);
-	if (haptics === null || approvalBiometric === null) return null;
+	const alertDetails = optionalBoolean(
+		value,
+		"alertDetails",
+		DEFAULT_SETTINGS_PREFERENCES.alertDetails,
+	);
+	if (haptics === null || approvalBiometric === null || alertDetails === null) return null;
 
 	return {
 		language: value.language,
@@ -109,6 +121,7 @@ function parseSettingsPreferences(value: unknown): SettingsPreferences | null {
 		scrollSpeed: value.scrollSpeed,
 		haptics,
 		approvalBiometric,
+		alertDetails,
 	};
 }
 

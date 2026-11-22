@@ -66,6 +66,7 @@ export interface SettingsActions {
   readonly sendFeedback: () => void;
   readonly toggleHaptics: () => void;
   readonly toggleApprovalBiometric: () => void;
+  readonly toggleAlertDetails: () => void;
 }
 
 interface RowOptions {
@@ -273,6 +274,13 @@ export function renderSettingsScreen(model: SettingsModel, actions: SettingsActi
               onToggle: actions.toggleApprovalBiometric,
             },
           }),
+      row("settings.security.alertDetails", glyph(iconBell, 16, "settings__icon"), {
+        id: "alert-details",
+        switch: {
+          checked: model.preferences.alertDetails,
+          onToggle: actions.toggleAlertDetails,
+        },
+      }),
     ),
   );
 
