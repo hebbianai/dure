@@ -126,6 +126,7 @@ describe("release CI job evidence", () => {
     "Hmux checks",
     "App core checks",
     "Desktop checks",
+    "Relay checks",
     "Public repository checks",
   ];
   const codeJobs = names.filter((name) => /^(?:Frontend|Script) checks/.test(name));
@@ -148,6 +149,7 @@ describe("release CI job evidence", () => {
           "Hmux checks": "skipped",
           "App core checks": "skipped",
           "Desktop checks": "skipped",
+          "Relay checks": "skipped",
         }),
       ),
     ).toEqual([]);

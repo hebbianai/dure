@@ -160,7 +160,7 @@ fn hub_identity() -> HubIdentity {
     let fingerprint = fingerprint::of_der(&certificate);
     HubIdentity {
         certificate,
-        key_pkcs8: certified.key_pair.serialize_der(),
+        key_pkcs8: certified.signing_key.serialize_der(),
         fingerprint,
     }
 }

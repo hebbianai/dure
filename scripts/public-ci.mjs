@@ -2,9 +2,9 @@
 // Public CI has a documentation-only fast path. Every push, including a
 // maintainer's push to main, and every pull request is planned from its
 // complete change; any code scope retains all existing public suites, and the
-// Rust workspace jobs (Hmux, app core and the desktop app) run when a scope
-// their gate verifies changes. This adapter does not invent a second path
-// classifier.
+// Rust workspace jobs (Hmux, app core, the desktop app and the relay) run when
+// a scope their gate verifies changes. This adapter does not invent a second
+// path classifier.
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { withoutLocalGitOverrides } from "./lib/git-environment.mjs";
@@ -15,13 +15,18 @@ import {
 } from "./lib/push-gate-scope.mjs";
 
 const COMMIT_SHA = /^[0-9a-f]{40}$/i;
-// Classifier scopes whose change selects each Rust workspace job.
+// Classifier scopes whose change selects each Rust workspace job. Each key is
+// also that job's plan output (runHmuxChecks -> run_hmux_checks).
 export const RUST_JOB_SCOPES = Object.freeze({
   runHmuxChecks: Object.freeze(["hmux-core", "hmux-mobile-compat", "terminal-state-protocol"]),
   runAppChecks: Object.freeze(["app-core"]),
   // src-tauri, and every crate it links or tests against.
   runDesktopChecks: Object.freeze(["desktop"]),
+  // The separately deployed relay and the shared protocol it routes.
+  runRelayChecks: Object.freeze(["relay"]),
 });
+const PLAN_KEYS = Object.freeze(["runCodeChecks", ...Object.keys(RUST_JOB_SCOPES)]);
+const planOutputName = (key) => key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 // Each code job must succeed when its plan output selects it and be skipped
 // otherwise.
 const CODE_RESULTS = Object.freeze({
@@ -36,6 +41,7 @@ const CODE_RESULTS = Object.freeze({
   HMUX_RESULT: "RUN_HMUX_CHECKS",
   APP_RESULT: "RUN_APP_CHECKS",
   DESKTOP_RESULT: "RUN_DESKTOP_CHECKS",
+  RELAY_RESULT: "RUN_RELAY_CHECKS",
 });
 
 export function planPublicCi({
@@ -46,10 +52,7 @@ export function planPublicCi({
   environment = process.env,
 }) {
   const full = (reason) => ({
-    runCodeChecks: true,
-    runHmuxChecks: true,
-    runAppChecks: true,
-    runDesktopChecks: true,
+    ...Object.fromEntries(PLAN_KEYS.map((key) => [key, true])),
     reason,
   });
   if (eventName !== "push" && eventName !== "pull_request") {
@@ -83,9 +86,7 @@ export function planPublicCi({
     const selects = (job) => RUST_JOB_SCOPES[job].some((scope) => scopes.includes(scope));
     return {
       runCodeChecks: scopes.length > 0,
-      runHmuxChecks: selects("runHmuxChecks"),
-      runAppChecks: selects("runAppChecks"),
-      runDesktopChecks: selects("runDesktopChecks"),
+      ...Object.fromEntries(Object.keys(RUST_JOB_SCOPES).map((job) => [job, selects(job)])),
       reason: scopes.length > 0 ? "code-or-shared-inputs" : "documentation-only",
       changedPathCount: paths.length,
       scopes,
@@ -126,10 +127,7 @@ function main() {
     if (!process.env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");
     appendFileSync(
       process.env.GITHUB_OUTPUT,
-      `run_code_checks=${plan.runCodeChecks}\n` +
-        `run_hmux_checks=${plan.runHmuxChecks}\n` +
-        `run_app_checks=${plan.runAppChecks}\n` +
-        `run_desktop_checks=${plan.runDesktopChecks}\n`,
+      PLAN_KEYS.map((key) => `${planOutputName(key)}=${plan[key]}\n`).join(""),
     );
     console.log(JSON.stringify(plan));
   } else if (command === "check") {

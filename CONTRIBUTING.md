@@ -383,19 +383,20 @@ Documentation-only changes run change classification and documentation checks;
 code suites are skipped. Code, dependency and CI changes, uncertain comparisons,
 and manual dispatches run the complete public checks, except that the Hmux job
 runs only when Hmux or the terminal-state protocol is affected, the app core job
-only when the app core is affected, and the desktop job only when `src-tauri` or
-a crate it links or tests against is affected. Shared inputs, CI changes,
-uncertain comparisons and manual dispatches select all three. The existing
+only when the app core is affected, the desktop job only when `src-tauri` or
+a crate it links or tests against is affected, and the relay job only when the
+relay or the shared protocol it routes is affected. Shared inputs, CI changes,
+uncertain comparisons and manual dispatches select all four. The existing
 [scope classifier](scripts/lib/push-gate-scope.mjs) owns path classification.
 
 The required `Public repository checks` result runs for every pull request, push
 and manual dispatch. It requires successful classification and documentation
 checks, plus every selected frontend, script, mobile web, shared-protocol, Hmux,
-app core and desktop check. A failed classification or an unexpectedly skipped, failed or
+app core, desktop and relay check. A failed classification or an unexpectedly skipped, failed or
 cancelled required job cannot pass this result. A newer update to the same pull
 request cancels its older run, and that cancelled run fails this result. Pushes
 to `main` and manual dispatches are never cancelled, because each push is checked
-only over its own pushed range. Mobile web and app core
+only over its own pushed range. Mobile web, app core and relay
 checks run on Linux, and the shared desktop/mobile protocol is formatted, tested
 and linted on Linux, Windows and macOS. Hmux and desktop checks run on macOS
 ARM64, the only host on which the pinned Ghostty build inputs can prepare the
