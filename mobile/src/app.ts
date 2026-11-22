@@ -1,5 +1,6 @@
 import { notificationPermission, sendLocalNotification } from "./notificationDelivery";
 import { createPushSync, pushSyncNote, type PushSyncState } from "./pushNotifications";
+import { activatedRow, type PushActivation } from "./pushActivation";
 import type { SpacesViewOptions } from "@/lib/spaces/spacesViewOptions";
 import type { HomeMenuSection } from "./homeViewMenu";
 import { loadHomeViewOptions, saveHomeViewOptions } from "./homeViewPreferences";
@@ -2613,6 +2614,25 @@ export function startApp(root: HTMLElement): () => void {
     );
   }
 
+  /**
+   * A tap on a phone alert: its agent opens as a tap on its row would. An
+   * agent the list does not hold yet is looked for in one fresh read, and
+   * opened only if the person has not moved on meanwhile; one no paired
+   * computer lists leaves the phone where it is, with the reason.
+   */
+  async function openActivatedAgent(activation: PushActivation): Promise<void> {
+    const screen = state.screen;
+    if (disposed || (screen.kind === "terminal" && screen.session.session_id === activation.sessionId)) return;
+    let row = activatedRow(listedRows(), activation);
+    if (!row) {
+      await census();
+      if (disposed || state.screen !== screen) return;
+      row = activatedRow(listedRows(), activation);
+    }
+    if (row) actionsOpenSession(row.source);
+    else setState({ banner: t("notifications.push.open.unavailable") });
+  }
+
   /** Attaching from the list, wherever the press came from. */
   function actionsOpenSession(source: UnifiedSource, intent: "open" | "reconnect" = "open"): void {
     const origin: SessionSource =
@@ -4801,6 +4821,14 @@ export function startApp(root: HTMLElement): () => void {
     await refresh();
     if (disposed) return;
     if (state.servers.length > 0 || state.hubs.length > 0) await census();
+    if (disposed) return;
+    // After the first read, so a tap that launched the app finds its row.
+    // A shell that cannot listen leaves alerts opening the app as before.
+    try {
+      await ipc.pushActivations((activation) => void openActivatedAgent(activation));
+    } catch {
+      return;
+    }
   })();
   const dispose = () => {
     if (disposed) return;

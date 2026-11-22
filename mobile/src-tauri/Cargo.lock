@@ -1261,6 +1261,7 @@ name = "dure-mobile"
 version = "0.1.8"
 dependencies = [
  "base64 0.23.1",
+ "block2",
  "dure-hub-protocol",
  "hmux-client",
  "hmux-host",
@@ -1268,6 +1269,7 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "objc2-ui-kit",
+ "objc2-user-notifications",
  "rand",
  "rand_core",
  "rcgen",
@@ -3249,6 +3251,8 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9df9128cbbfef73cda168416ccf7f837b62737d748333bfe9ab71c245d76613e"
 dependencies = [
+ "bitflags 2.13.1",
+ "block2",
  "objc2",
  "objc2-foundation",
 ]

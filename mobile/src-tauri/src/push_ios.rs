@@ -1,15 +1,33 @@
 //! Adds only the two public UIApplicationDelegate APNs callbacks that Tao
-//! does not implement. Existing delegate methods and notification delegates
-//! are never replaced. A future owner of these callbacks must be integrated
-//! explicitly instead of being silently overridden.
+//! does not implement. Existing delegate methods are never replaced. A
+//! future owner of these callbacks must be integrated explicitly instead of
+//! being silently overridden.
+//!
+//! Taps on remote alerts are the one notification-center callback this module
+//! owns. The notification plugin's delegate drops every push-triggered
+//! response, so [`install_response_delegate`] stands in front of it: a tap on
+//! a remote alert goes to [`PushActivations`], and every other callback is
+//! forwarded to the plugin unchanged.
+use crate::push::{PushActivation, PushActivations};
+use block2::DynBlock;
 use dure_hub_protocol::push::{ApnsEnvironment, ApnsToken};
 use objc2::{
-    runtime::{AnyClass, AnyObject, Sel},
-    sel, MainThreadMarker,
+    define_class, msg_send,
+    rc::Retained,
+    runtime::{AnyClass, AnyObject, NSObject, NSObjectProtocol, ProtocolObject, Sel},
+    sel, AnyThread, ClassType, DefinedClass, MainThreadMarker,
 };
-use objc2_foundation::{NSBundle, NSData, NSError, NSString};
+use objc2_foundation::{
+    NSBundle, NSData, NSError, NSJSONSerialization, NSJSONWritingOptions, NSString,
+};
 use objc2_ui_kit::UIApplication;
+use objc2_user_notifications::{
+    UNNotification, UNNotificationContent, UNNotificationDefaultActionIdentifier,
+    UNNotificationPresentationOptions, UNNotificationResponse, UNPushNotificationTrigger,
+    UNUserNotificationCenter, UNUserNotificationCenterDelegate,
+};
 use std::sync::{mpsc, Mutex, OnceLock};
+use tauri::Manager;
 
 type Registration = Result<ApnsToken, String>;
 static PENDING: Mutex<Option<mpsc::SyncSender<Registration>>> = Mutex::new(None);
@@ -144,4 +162,134 @@ pub fn unregister(app: &tauri::AppHandle) -> Result<(), String> {
         }
     })
     .map_err(|_| "Could not disable APNs registration".into())
+}
+
+struct Responses {
+    app: tauri::AppHandle,
+    /// The delegate that was installed first: the notification plugin's.
+    previous: Option<Retained<ProtocolObject<dyn UNUserNotificationCenterDelegate>>>,
+}
+
+define_class!(
+    // SAFETY: NSObject has no subclassing requirements, and this class does
+    // not implement `Drop`.
+    #[unsafe(super(NSObject))]
+    #[name = "DurePushResponses"]
+    #[ivars = Responses]
+    struct PushResponses;
+
+    unsafe impl NSObjectProtocol for PushResponses {}
+
+    unsafe impl UNUserNotificationCenterDelegate for PushResponses {
+        #[unsafe(method(userNotificationCenter:willPresentNotification:withCompletionHandler:))]
+        fn will_present(
+            &self,
+            center: &UNUserNotificationCenter,
+            notification: &UNNotification,
+            completion: &DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
+        ) {
+            match self.previous(
+                sel!(userNotificationCenter:willPresentNotification:withCompletionHandler:),
+            ) {
+                Some(previous) => previous
+                    .userNotificationCenter_willPresentNotification_withCompletionHandler(
+                        center,
+                        notification,
+                        completion,
+                    ),
+                None => completion.call((UNNotificationPresentationOptions::empty(),)),
+            }
+        }
+
+        #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
+        fn did_receive(
+            &self,
+            center: &UNUserNotificationCenter,
+            response: &UNNotificationResponse,
+            completion: &DynBlock<dyn Fn()>,
+        ) {
+            let request = response.notification().request();
+            let remote = request
+                .trigger()
+                .is_some_and(|trigger| trigger.isKindOfClass(UNPushNotificationTrigger::class()));
+            if !remote {
+                match self.previous(sel!(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:)) {
+                    Some(previous) => previous
+                        .userNotificationCenter_didReceiveNotificationResponse_withCompletionHandler(
+                            center,
+                            response,
+                            completion,
+                        ),
+                    None => completion.call(()),
+                }
+                return;
+            }
+            // SAFETY: a framework constant, valid for the process lifetime.
+            let tapped = response
+                .actionIdentifier()
+                .isEqualToString(unsafe { UNNotificationDefaultActionIdentifier });
+            if let Some(activation) = tapped
+                .then(|| payload(&request.content()))
+                .flatten()
+                .and_then(|payload| PushActivation::from_payload(&payload))
+            {
+                self.ivars()
+                    .app
+                    .state::<PushActivations>()
+                    .offer(activation);
+            }
+            completion.call(());
+        }
+    }
+);
+
+impl PushResponses {
+    fn previous(
+        &self,
+        selector: Sel,
+    ) -> Option<&ProtocolObject<dyn UNUserNotificationCenterDelegate>> {
+        self.ivars()
+            .previous
+            .as_deref()
+            .filter(|previous| previous.respondsToSelector(selector))
+    }
+}
+
+/// The alert's payload as the relay sent it: APNs hands it over as `userInfo`.
+fn payload(content: &UNNotificationContent) -> Option<Vec<u8>> {
+    let info = content.userInfo();
+    let object: &AnyObject = &info;
+    // SAFETY: `isValidJSONObject` is asked first, so serializing cannot raise.
+    unsafe {
+        if !NSJSONSerialization::isValidJSONObject(object) {
+            return None;
+        }
+        NSJSONSerialization::dataWithJSONObject_options_error(object, NSJSONWritingOptions::empty())
+            .ok()
+            .map(|data| data.to_vec())
+    }
+}
+
+static RESPONSES: OnceLock<Result<(), String>> = OnceLock::new();
+
+/// Puts [`PushResponses`] in front of the notification plugin's delegate.
+/// Runs in app setup, inside launch, so the tap that launched the app is not
+/// missed; the plugin set its delegate when it was registered, before that.
+pub fn install_response_delegate(app: &tauri::AppHandle) -> Result<(), String> {
+    RESPONSES
+        .get_or_init(|| {
+            MainThreadMarker::new().ok_or("Notification responses require the main thread")?;
+            let center = UNUserNotificationCenter::currentNotificationCenter();
+            let this = PushResponses::alloc().set_ivars(Responses {
+                app: app.clone(),
+                previous: center.delegate(),
+            });
+            // SAFETY: NSObject's designated initializer.
+            let responses: Retained<PushResponses> = unsafe { msg_send![super(this), init] };
+            center.setDelegate(Some(ProtocolObject::from_ref(&*responses)));
+            // The center holds its delegate weakly; this one lives as long as the app.
+            let _ = Retained::into_raw(responses);
+            Ok(())
+        })
+        .clone()
 }

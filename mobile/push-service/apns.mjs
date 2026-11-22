@@ -50,10 +50,15 @@ export function createApnsSender({ key, keyId, teamId, openConnection = connect,
     send(message, sender) {
       const { subscription, event } = message;
       const catalog = subscription.language === "ko" ? ko : en;
-      const body = JSON.stringify({ aps: {
-        alert: { title: "Dure", body: catalog[event.kind === "approval" ? "notifications.push.approvalBody" : "notifications.push.doneBody"] },
-        sound: "default",
-      } });
+      // Beside the generic text, only the identifier of the agent a tap opens
+      // (`PushAlertContext` in dure-hub-protocol): never what it asked or said.
+      const body = JSON.stringify({
+        aps: {
+          alert: { title: "Dure", body: catalog[event.kind === "approval" ? "notifications.push.approvalBody" : "notifications.push.doneBody"] },
+          sound: "default",
+        },
+        ...(event.sessionId ? { dure: { session: event.sessionId } } : {}),
+      });
       return new Promise((resolve) => {
         let request;
         let settled = false;

@@ -89,6 +89,71 @@ pub enum PushSubscriptionResult {
     Refused { detail: String },
 }
 
+/// The agent an alert is about, under the key the phone's catalog lists it
+/// by: a chat-owned agent's id, else its Hmux session id.
+///
+/// It crosses the push relay and APNs, so it must stay an identifier. The
+/// alphabet is the one Hmux mints opaque ids from: no space a title needs and
+/// no separator a path needs, so neither can pass for one.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(try_from = "String", into = "String")]
+pub struct PushSessionId(String);
+
+impl TryFrom<String> for PushSessionId {
+    type Error = &'static str;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value.is_empty()
+            || value.len() > 256
+            || !value.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'+' | b'-')
+            })
+        {
+            return Err("Invalid push session identity");
+        }
+        Ok(Self(value))
+    }
+}
+
+impl From<PushSessionId> for String {
+    fn from(value: PushSessionId) -> Self {
+        value.0
+    }
+}
+
+impl PushSessionId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The key beside `aps` under which the push relay puts [`PushAlertContext`].
+pub const PUSH_ALERT_CONTEXT_KEY: &str = "dure";
+
+/// What an APNs alert carries for the app beyond its text. Only identifiers:
+/// what the agent asked or said is read from the paired computer.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PushAlertContext {
+    /// The agent a tap on the alert opens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<PushSessionId>,
+}
+
+impl PushAlertContext {
+    /// Reads the context from a delivered alert's whole JSON payload. An
+    /// alert from an older relay has none, and a malformed one is treated
+    /// the same way: the tap opens the app without a target.
+    pub fn from_payload(payload: &[u8]) -> Self {
+        let Ok(serde_json::Value::Object(mut payload)) = serde_json::from_slice(payload) else {
+            return Self::default();
+        };
+        payload
+            .remove(PUSH_ALERT_CONTEXT_KEY)
+            .and_then(|context| serde_json::from_value(context).ok())
+            .unwrap_or_default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,5 +185,51 @@ mod tests {
         assert!(!subscription.accepts(PushKind::Done));
         subscription.preference = PushPreference::All;
         assert!(subscription.accepts(PushKind::Done));
+    }
+
+    #[test]
+    fn a_push_session_id_is_an_identifier_never_a_path_or_a_title() {
+        for valid in [
+            "managed_0123456789abcdef01234567",
+            "session-7a1d1b2f352c9cc587a6b8bfd7b6d2f7",
+            "3f2c1a9e-58b4-4c4e-9a4f-1d2e3f4a5b6c",
+        ] {
+            assert_eq!(
+                PushSessionId::try_from(valid.to_string()).unwrap().as_str(),
+                valid
+            );
+        }
+        for invalid in [
+            String::new(),
+            "/Users/me/project".to_string(),
+            "C:\\work\\repo".to_string(),
+            "Fix the build".to_string(),
+            "a".repeat(257),
+        ] {
+            assert!(PushSessionId::try_from(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn an_alert_context_is_read_from_the_relay_payload_and_absent_otherwise() {
+        let delivered =
+            br#"{"aps":{"alert":{"title":"Dure","body":"x"}},"dure":{"session":"agent-1"}}"#;
+        assert_eq!(
+            PushAlertContext::from_payload(delivered)
+                .session
+                .map(String::from),
+            Some("agent-1".to_string())
+        );
+        for unusable in [
+            br#"{"aps":{"alert":{"title":"Dure","body":"x"}}}"#.as_slice(),
+            br#"{"aps":{},"dure":{"session":"/Users/me/project"}}"#,
+            br#"{"aps":{},"dure":"agent-1"}"#,
+            b"not json",
+        ] {
+            assert_eq!(
+                PushAlertContext::from_payload(unusable),
+                PushAlertContext::default()
+            );
+        }
     }
 }

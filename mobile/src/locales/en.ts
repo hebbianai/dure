@@ -20,6 +20,7 @@ export const en: Record<string, string> = {
   "notifications.push.failed": "Push notifications are not ready. {detail}",
   "notifications.push.noComputer": "Connect a computer to receive push notifications.",
   "notifications.push.off": "Push notifications are off.",
+  "notifications.push.open.unavailable": "The agent from that notification is not available on your paired computers right now.",
   "notifications.local.description": "Only while the app is open.",
   "notifications.permission.denied": "Notifications are not allowed. Enable them in system settings.",
   "notifications.permission.prompt": "Choose an option to request notification permission.",

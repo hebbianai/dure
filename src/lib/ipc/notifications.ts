@@ -11,6 +11,8 @@ import { isMacPlatform } from "@/lib/workspace/desktop/desktopPlatform";
 export const pushAgentNotification = (event: {
 	kind: "approval" | "done";
 	eventId: string;
+	/** The phone's key for the agent, so a tap on the alert opens it. */
+	sessionId?: string;
 }) => invoke<void>("hub_push_agent_notification", { event });
 
 export type NotificationAuthorization =

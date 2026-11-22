@@ -12,6 +12,7 @@ for await (const chunk of process.stdin) chunks.push(chunk);
 const [registration, notification] = JSON.parse(Buffer.concat(chunks).toString("utf8"));
 const certificate = new X509Certificate(Buffer.from(registration.certificate, "base64"));
 const fingerprint = `SHA256:${createHash("sha256").update(certificate.raw).digest("base64")}`;
+const { event } = JSON.parse(Buffer.from(notification.message, "base64").toString("utf8"));
 const { privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
 const apns = createHttp2Server();
 const sessions = [];
@@ -23,7 +24,11 @@ apns.on("stream", (stream, headers) => {
   stream.on("data", (chunk) => { body += chunk; });
   stream.on("end", () => {
     assert.equal(headers["apns-push-type"], "alert");
-    assert.equal(JSON.parse(body).aps.alert.body, ko["notifications.push.approvalBody"]);
+    const payload = JSON.parse(body);
+    assert.equal(payload.aps.alert.body, ko["notifications.push.approvalBody"]);
+    // The Rust Hub's agent identifier reaches the phone, and nothing else beside `aps`.
+    assert.deepEqual(Object.keys(payload).sort(), ["aps", "dure"]);
+    assert.deepEqual(payload.dure, { session: event.sessionId });
     deliveries++;
     stream.respond({ ":status": 200 });
     stream.end();

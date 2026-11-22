@@ -2,18 +2,35 @@
 //! and deduplication; the existing registry owns consent and token replacement.
 use super::{commands::HubState, identity};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use dure_hub_protocol::push::{PushKind, PushSubscription};
-use serde::{Deserialize, Serialize};
+use dure_hub_protocol::push::{PushKind, PushSessionId, PushSubscription};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const SIGNING_CONTEXT: &[u8] = b"dure-push-request-v1\0";
 static SEND_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
 
+/// The signed event is identifiers only: what the agent asked or said stays
+/// on this computer, which the phone asks over its paired channel.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PushEvent {
     kind: PushKind,
     event_id: String,
+    /// The agent a tap on the alert opens on the phone.
+    #[serde(
+        default,
+        deserialize_with = "opaque_session_id",
+        skip_serializing_if = "Option::is_none"
+    )]
+    session_id: Option<PushSessionId>,
+}
+
+/// A session id outside the opaque alphabet is dropped at this boundary: the
+/// alert still goes, and its tap opens the app without a target.
+fn opaque_session_id<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<PushSessionId>, D::Error> {
+    Ok(Option::<String>::deserialize(deserializer)?.and_then(|id| id.try_into().ok()))
 }
 
 #[derive(Serialize)]
@@ -226,6 +243,7 @@ mod tests {
         let event = PushEvent {
             kind: PushKind::Approval,
             event_id: "host:session:approval:1".into(),
+            session_id: Some("managed_0123456789abcdef".to_string().try_into().unwrap()),
         };
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -257,6 +275,47 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(String::from_utf8_lossy(&output.stdout).contains("APNs alert: passed"));
+    }
+
+    #[test]
+    fn the_signed_relay_event_names_the_agent_by_identifier_only() {
+        let event = |session: &str| -> PushEvent {
+            serde_json::from_value(serde_json::json!({
+                "kind": "approval",
+                "eventId": "hmux:pane-1:7:attention:3",
+                "sessionId": session,
+            }))
+            .unwrap()
+        };
+        // A path or a title is no identifier: dropped, and the alert still goes.
+        for unusable in ["/Users/me/project", "Fix the build", ""] {
+            assert!(event(unusable).session_id.is_none());
+        }
+        let root = tempfile::tempdir().unwrap();
+        let certificate = identity::load_or_create_certificate(root.path()).unwrap();
+        let signed = sign_request(
+            &certificate,
+            &subscription(&"ab".repeat(32)),
+            Some(&event("managed_0123456789abcdef")),
+            1,
+        )
+        .unwrap();
+        let message: serde_json::Value =
+            serde_json::from_slice(&STANDARD.decode(signed.message).unwrap()).unwrap();
+        assert_eq!(
+            message["event"],
+            serde_json::json!({
+                "kind": "approval",
+                "eventId": "hmux:pane-1:7:attention:3",
+                "sessionId": "managed_0123456789abcdef",
+            })
+        );
+        let mut fields: Vec<_> = message.as_object().unwrap().keys().cloned().collect();
+        fields.sort();
+        assert_eq!(
+            fields,
+            ["event", "issuedAt", "operation", "subscription", "version"]
+        );
     }
 
     #[test]
