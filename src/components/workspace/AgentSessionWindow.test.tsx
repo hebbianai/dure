@@ -71,10 +71,12 @@ const mocks = vi.hoisted(() => ({
 	publishAgentSessionRuntimeState: vi.fn(async () => {}),
 	settleDurableAppState: vi.fn(async () => {}),
 	rehydrateDurableStore: vi.fn(async () => {}),
-	requestAgentSessionCredentialCommand: vi.fn(async () => ({
-		kind: "completed" as const,
-		conversationId: "conversation-1",
-	})),
+	requestAgentSessionCredentialCommand: vi.fn(
+		async (_request: Record<string, unknown>) => ({
+			kind: "completed" as const,
+			conversationId: "conversation-1",
+		}),
+	),
 	requestAgentSessionForkPresentation: vi.fn(async () => ({
 		kind: "presented" as const,
 	})),

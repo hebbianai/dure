@@ -3,6 +3,7 @@ import { agentCredentialReferenceId } from "@/lib/agents/agentLaunchCredential";
 import {
 	createPendingChatHandover,
 	evaluatePendingChatHandover,
+	type NativeAgentViewPort,
 	type NativeAgentViewV1,
 	type PendingChatHandoverV1,
 	rebaselinePendingChatHandover,
@@ -25,17 +26,7 @@ export type ChatHandoverRequestResult =
 	| { kind: "completed" }
 	| { kind: "scheduled" };
 
-/** The View control's moves for one Agent: show its terminal or its
- * Conversation, or move it into Chat. A pane runs them in its own window
- * (`localNativeAgentViewPort`); the large window sends the same moves to the
- * window that owns the source pane, so both surfaces change one runtime. */
-export interface NativeAgentViewPort {
-	setView(view: NativeAgentViewV1): Promise<void>;
-	requestChat(): Promise<unknown>;
-	applyChatNow(): Promise<void>;
-	cancelChat(): Promise<void>;
-}
-
+/** The pane's View port: every move runs in this window. */
 export function localNativeAgentViewPort(
 	agentId: string,
 	switchRuntime: ChatHandoverSwitch,

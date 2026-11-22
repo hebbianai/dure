@@ -9,6 +9,17 @@ import type {
 
 export type { NativeAgentViewV1, PendingChatHandoverV1 } from "@/types";
 
+/** The View control's moves for one Agent: show its terminal or its
+ * Conversation, or move it into Chat. A pane runs them in its own window
+ * (`localNativeAgentViewPort`); the large window sends the same moves to the
+ * window that owns the source pane, so both surfaces change one runtime. */
+export interface NativeAgentViewPort {
+	setView(view: NativeAgentViewV1): Promise<void>;
+	requestChat(): Promise<unknown>;
+	applyChatNow(): Promise<void>;
+	cancelChat(): Promise<void>;
+}
+
 export function normalizeNativeAgentView(
 	value: unknown,
 ): NativeAgentViewV1 | undefined {

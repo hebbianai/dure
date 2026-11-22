@@ -38,7 +38,7 @@ export type AgentToolbarControlId =
 export type AgentToolbarSurface = "pane" | "large_window";
 
 /** How the large window offers a control, or why it does not. */
-export type AgentToolbarLargeWindowRule =
+type AgentToolbarLargeWindowRule =
 	| {
 			readonly offered: true;
 			/** `source_pane`: runs in the source pane's window over the bridge.

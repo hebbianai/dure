@@ -24,8 +24,10 @@ import {
 	MAX_EXTERNAL_DROP_BYTES,
 	MAX_EXTERNAL_DROP_FILES,
 } from "@/lib/files/externalFileDrop";
-import type { NativeAgentViewV1 } from "@/lib/agents/chatHandover";
-import type { NativeAgentViewPort } from "@/lib/agents/chatHandoverRuntime";
+import type {
+	NativeAgentViewPort,
+	NativeAgentViewV1,
+} from "@/lib/agents/chatHandover";
 import { t } from "@/lib/i18n";
 import { isRecord } from "@/lib/payloadGuards";
 import { listenWhenReady } from "@/lib/platform/tauriBridge";
@@ -104,7 +106,7 @@ export type AgentSessionCredentialCommandResult =
 
 export type AgentSessionForkPresentationResult = { kind: "presented" };
 
-export type AgentSessionViewCommandResult =
+type AgentSessionViewCommandResult =
 	| { kind: "view_set" }
 	| {
 			kind: "chat_handover";
@@ -133,7 +135,7 @@ export type AgentSessionForkPresentationRequest = {
 	sourcePaneOwnerId: string;
 };
 
-export type AgentSessionViewCommandRequest = AgentSessionViewCommand & {
+type AgentSessionViewCommandRequest = AgentSessionViewCommand & {
 	agentId: string;
 	sourceWindowLabel: string;
 	sourcePaneOwnerId: string;
@@ -447,7 +449,7 @@ export function requestAgentSessionForkPresentation(
 	).then((result) => result as AgentSessionForkPresentationResult);
 }
 
-export async function requestAgentSessionViewCommand(
+async function requestAgentSessionViewCommand(
 	request: AgentSessionViewCommandRequest,
 	transport: AgentSessionWindowCommandBackend = backend,
 	now: () => number = Date.now,

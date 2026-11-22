@@ -20,7 +20,7 @@ import { agentCredentialReferenceId } from "@/lib/agents/agentLaunchCredential";
 import { evaluateAgentProviderMutation } from "@/lib/agents/agentProviderMutationPolicy";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
 import { agentRuntimePresentationOwnerKey } from "@/lib/agents/agentRuntimePresentationOwner";
-import type { NativeAgentViewPort } from "@/lib/agents/chatHandoverRuntime";
+import type { NativeAgentViewPort } from "@/lib/agents/chatHandover";
 import {
 	type CredentialProfileRecovery,
 	runCredentialSwitchWithFeedback,
@@ -49,7 +49,7 @@ const WINDOW_ACTION_CONTROL_IDS = [
 ] as const;
 
 /** Where this surface runs an Agent's credential moves. */
-export interface NativeAgentToolbarAccountRuntime {
+interface NativeAgentToolbarAccountRuntime {
 	switch(accountId: string | null): Promise<unknown>;
 	applyPending(): Promise<unknown>;
 	cancelPending(): Promise<unknown>;

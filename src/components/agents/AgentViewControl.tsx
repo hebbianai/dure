@@ -29,13 +29,11 @@ import { DureLoader } from "@/components/ui/dure-loader";
 import { ErrorText } from "@/components/ui/error-text";
 import { ToolbarControl } from "@/components/ui/toolbar-control";
 import type {
+	NativeAgentViewPort,
 	NativeAgentViewV1,
 	PendingChatHandoverV1,
 } from "@/lib/agents/chatHandover";
-import {
-	type NativeAgentViewPort,
-	useChatHandoverInFlight,
-} from "@/lib/agents/chatHandoverRuntime";
+import { useChatHandoverInFlight } from "@/lib/agents/chatHandoverRuntime";
 import { t } from "@/lib/i18n";
 import {
 	agentRuntimeTransitionFailure,

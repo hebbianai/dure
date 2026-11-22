@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
 import { agentRuntimePresentationOwnerKey } from "@/lib/agents/agentRuntimePresentationOwner";
 import { nativeAgentChatIdle } from "@/lib/agents/chat/nativeAgentChat";
-import type { NativeAgentViewPort } from "@/lib/agents/chatHandoverRuntime";
+import type { NativeAgentViewPort } from "@/lib/agents/chatHandover";
 import { nativeConversationViewAvailability } from "@/lib/agents/nativeConversationView";
 import { nativeFinalResponse } from "@/lib/agents/nativeFinalResponse";
 import { t } from "@/lib/i18n";
