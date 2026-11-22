@@ -356,7 +356,9 @@ shards. `test:scripts` parses every script module and runs the script and CLI
 fixture suites with the repository's existing project boundaries; CI runs the
 same projects as separate jobs, one job per file where a project requires its
 own invocation. `verify:push:hmux-core` formats, tests and lints the Hmux workspace,
-including the exact-pin Ghostty terminal core, and `app:verify` checks the
+including the exact-pin Ghostty terminal core. It also lints the Windows Hmux
+runtime for `x86_64-pc-windows-msvc`, without the Ghostty core, whose C shim
+needs the Windows SDK. `app:verify` checks the
 generated extension contracts and formats, tests and lints the `crates/dure-app`
 workspace and its provider driver. `verify:push:desktop` stages the Hmux runtime
 sidecar, then tests and lints the desktop crate in `src-tauri`. None of these commands proves a native app or

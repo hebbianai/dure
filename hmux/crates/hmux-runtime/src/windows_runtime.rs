@@ -109,7 +109,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::fs::{self, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -1271,6 +1271,8 @@ impl TestGuardianCutPhase {
 
 #[cfg(debug_assertions)]
 fn cut_host_at_guardian_boundary_for_test(phase: TestGuardianCutPhase) -> Result<()> {
+    use std::io::Write;
+
     if env::var_os(TEST_GUARDIAN_CUT_PHASE_ENV).as_deref()
         != Some(std::ffi::OsStr::new(phase.as_str()))
     {
@@ -1303,6 +1305,8 @@ fn cut_host_at_guardian_boundary_for_test(_phase: TestGuardianCutPhase) -> Resul
 fn pause_after_agent_prompt_wait_for_test(
     wait: Option<crate::agent_prompt_admission::AgentPromptWaitOutcome>,
 ) -> Result<()> {
+    use std::io::Write;
+
     let Some(wait) = wait else {
         return Ok(());
     };
@@ -1654,7 +1658,6 @@ struct WindowsTerminalSurfaceState {
     geometry: Option<TerminalSurfaceGeometry>,
     preferred_width: bool,
     geometry_generation: u64,
-    default_colors: Option<TerminalDefaultColors>,
 }
 
 #[cfg(feature = "terminal-state-stream")]
@@ -1854,7 +1857,7 @@ impl WindowsServerState {
                 }
             }
             StructuredUpstream::ViewportIntent { record } => {
-                let receipt = self.apply_structured_viewport(client_id, &surface, &record)?;
+                let receipt = self.apply_structured_viewport(&surface, &record)?;
                 if let Some(receipt) = receipt {
                     self.enqueue_terminal_record(client_id, receipt)?;
                 }
@@ -2200,7 +2203,6 @@ impl WindowsServerState {
     #[cfg(feature = "terminal-state-stream")]
     fn apply_structured_viewport(
         &self,
-        client_id: u64,
         surface: &Arc<Mutex<WindowsTerminalSurface>>,
         record: &terminal_state_protocol::DecodedRecord,
     ) -> Result<Option<terminal_state_protocol::TerminalStateRecord>> {
@@ -2218,30 +2220,6 @@ impl WindowsServerState {
             )));
         }
         let application = lock(surface)?.apply_viewport(&mut host, &self.fence, record)?;
-        if let Some(colors) = windows_terminal::terminal_default_colors(record)? {
-            let selected = {
-                let surfaces = lock(&self.terminal_surfaces)?;
-                surfaces
-                    .iter()
-                    .filter_map(|(candidate_id, state)| {
-                        if *candidate_id == client_id {
-                            Some((*candidate_id, colors))
-                        } else {
-                            state
-                                .default_colors
-                                .map(|colors| (*candidate_id, colors))
-                        }
-                    })
-                    .max_by_key(|(candidate_id, _)| *candidate_id)
-                    .map(|(_, colors)| colors)
-                    .unwrap_or(colors)
-            };
-            host.set_terminal_default_colors(&self.fence, selected)?;
-            lock(&self.terminal_surfaces)?
-                .get_mut(&client_id)
-                .ok_or("structured terminal surface is no longer attached")?
-                .default_colors = Some(colors);
-        }
         let Some(intent_seq) = windows_terminal::wheel_intent_seq(record) else {
             return Ok(None);
         };
@@ -2369,32 +2347,15 @@ impl WindowsServerState {
             .terminal_surfaces
             .lock()
             .ok()
-            .and_then(|mut surfaces| surfaces.remove(&client_id));
+            .and_then(|mut surfaces| surfaces.remove(&client_id))
+            .is_some();
         if let Ok(mut host) = self.host.lock() {
             if let Ok(mut surface) = surface.lock() {
                 let _ = surface.detach(&mut host, &self.fence);
             }
         }
-        let Some(removed) = removed else {
+        if !removed {
             return;
-        };
-        if removed.default_colors.is_some() {
-            let selected = self.terminal_surfaces.lock().ok().and_then(|surfaces| {
-                surfaces
-                    .iter()
-                    .filter_map(|(candidate_id, state)| {
-                        state
-                            .default_colors
-                            .map(|colors| (*candidate_id, colors))
-                    })
-                    .max_by_key(|(candidate_id, _)| *candidate_id)
-                    .map(|(_, colors)| colors)
-            });
-            if let Some(colors) = selected {
-                if let Ok(mut host) = self.host.lock() {
-                    let _ = host.set_terminal_default_colors(&self.fence, colors);
-                }
-            }
         }
         let selected_geometry = self.terminal_surfaces.lock().ok().and_then(|surfaces| {
             select_terminal_surface_geometry(surfaces.values().filter_map(|surface| {
@@ -2815,7 +2776,6 @@ fn serve_client(
                     geometry: None,
                     preferred_width,
                     geometry_generation: 0,
-                    default_colors: None,
                 },
             );
         }
@@ -3052,21 +3012,33 @@ fn apply_input(
             detail: None,
         };
     }
-    let result = (|| -> std::result::Result<_, crate::input_transaction::InputTransactionOutcome> {
+    // The detail is the bounded failure class behind a `ResourceLimit`
+    // refusal, as in the Unix classic receipt.
+    type Refusal = (crate::input_transaction::InputTransactionOutcome, Option<String>);
+    let result = (|| -> std::result::Result<_, Refusal> {
         let mut host = lock(&state.host).map_err(|_| {
-            crate::input_transaction::InputTransactionOutcome::NotWritten(
-                OperationReceiptReason::ResourceLimit,
+            (
+                crate::input_transaction::InputTransactionOutcome::NotWritten(
+                    OperationReceiptReason::ResourceLimit,
+                ),
+                None,
             )
         })?;
         if state.stopping.load(Ordering::Acquire) {
-            return Err(crate::input_transaction::InputTransactionOutcome::NotWritten(
-                OperationReceiptReason::HostExiting,
+            return Err((
+                crate::input_transaction::InputTransactionOutcome::NotWritten(
+                    OperationReceiptReason::HostExiting,
+                ),
+                None,
             ));
         }
         host.admit_mutation(&state.fence, input.controller_generation)
             .map_err(|error| {
-                crate::input_transaction::InputTransactionOutcome::NotWritten(
-                    crate::input_transaction::input_operation_reason(&error),
+                (
+                    crate::input_transaction::InputTransactionOutcome::NotWritten(
+                        crate::input_transaction::input_operation_reason(&error),
+                    ),
+                    crate::input_transaction::input_operation_detail(&error),
                 )
             })?;
         state
@@ -3077,15 +3049,18 @@ fn apply_input(
                 crate::input_transaction::InputAdmission::Ordinary,
             )
             .map_err(|_| {
-                crate::input_transaction::InputTransactionOutcome::NotWritten(
-                    OperationReceiptReason::ResourceLimit,
+                (
+                    crate::input_transaction::InputTransactionOutcome::NotWritten(
+                        OperationReceiptReason::ResourceLimit,
+                    ),
+                    None,
                 )
             })?
-            .map_err(|failure| failure.outcome())
+            .map_err(|failure| (failure.outcome(), failure.detail()))
     })();
-    let outcome = match &result {
-        Ok(transaction) => transaction.outcome,
-        Err(outcome) => *outcome,
+    let (outcome, detail) = match &result {
+        Ok(transaction) => (transaction.outcome, None),
+        Err((outcome, detail)) => (*outcome, detail.clone()),
     };
     let (receipt_state, reason) = crate::input_receipt::classic_outcome(outcome);
     if let Ok(transaction) = result {
@@ -3098,7 +3073,7 @@ fn apply_input(
         controller_generation: input.controller_generation,
         state: receipt_state,
         reason,
-        detail: None,
+        detail,
     }
 }
 

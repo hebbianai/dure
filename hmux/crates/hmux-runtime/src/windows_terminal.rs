@@ -1,6 +1,6 @@
 use hmux_host::local_protocol::{
     PROCESS_OBSERVED_AGENT_PROMPT_CAPABILITY, AgentPromptCapabilitySelection,
-    OperationReceiptReason, SessionFence, TerminalDefaultColors,
+    OperationReceiptReason, SessionFence,
 };
 use hmux_host::session_host::SessionHost;
 use hmux_host::terminal_replay::{ViewProjection, WheelIntentRoute, WheelPtySink};
@@ -329,23 +329,6 @@ pub(crate) fn wheel_refused(record_id: u64) -> terminal_state_record::Body {
             reason: WheelRefusalReason::HostExiting as i32,
         })),
     })
-}
-
-pub(crate) fn terminal_default_colors(
-    record: &terminal_state_protocol::DecodedRecord,
-) -> Result<Option<TerminalDefaultColors>> {
-    let Some(terminal_state_record::Body::ViewportIntent(intent)) = record.record.body.as_ref()
-    else {
-        return Ok(None);
-    };
-    let Some(viewport_intent::Intent::TerminalDefaultColors(colors)) = intent.intent.as_ref()
-    else {
-        return Ok(None);
-    };
-    Ok(Some(TerminalDefaultColors::new(
-        colors.foreground_rgb,
-        colors.background_rgb,
-    )?))
 }
 
 pub(crate) fn wheel_intent_seq(
