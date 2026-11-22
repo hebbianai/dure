@@ -3,6 +3,7 @@ import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { demoInvoke } from "./demo/demoInvoke";
 import type { AgentApprovalChoice } from "@/lib/agents/approvalRequest";
 import type { BackgroundWorkAnswer } from "./backgroundWork";
+import type { PushActivation } from "./pushActivation";
 import type { ServerReport } from "./census";
 import type { ServerEntry } from "./servers";
 import type { RemoteSession } from "./sessions";
@@ -750,6 +751,16 @@ export const ipc = {
     invoke<boolean | null>("plugin:notification|is_permission_granted"),
   syncPushNotifications: (preference: "all" | "approvals" | null, language: "en" | "ko") =>
     invoke<import("./pushNotifications").PushSyncResult>("sync_push_notifications", { preference, language }),
+  /**
+   * Be told when a tap on a phone alert asks for an agent. A tap that
+   * launched the app is delivered as soon as this listens; a later call
+   * replaces the earlier listener. Rejects where the shell cannot listen.
+   */
+  pushActivations: async (onActivation: (activation: PushActivation) => void): Promise<void> => {
+    const channel = new Channel<PushActivation>();
+    channel.onmessage = onActivation;
+    await invoke<void>("push_activations", { channel });
+  },
   resetDevice: () => invoke<void>("reset_device"),
   saveServer: (entry: ServerEntry) => invoke<ServerListing>("save_server", { entry }),
   /**

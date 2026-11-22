@@ -125,10 +125,14 @@ tauri-plugin-barcode-scanner = "2"
 tauri-plugin-biometric = "2"
 
 # UIKit clipboard reads are explicit user actions on the main thread.
+# UserNotifications: taps on remote alerts (`push_ios.rs`), whose completion
+# handlers are blocks.
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSData", "NSString", "NSError", "NSBundle"] }
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSData", "NSString", "NSError", "NSBundle", "NSDictionary", "NSJSONSerialization"] }
 objc2-ui-kit = { version = "0.3", default-features = false, features = ["UIPasteboard", "UIImage", "UIApplication"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 
 [dev-dependencies]
 tempfile = "3"

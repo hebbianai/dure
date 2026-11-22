@@ -31,6 +31,10 @@
  */
 
 import type { SessionPresentation } from "./sessionPresentation";
+import {
+	type HmuxIdentityAgent,
+	paneHmuxSessionId,
+} from "@/lib/spaces/hmuxSessionIdentity";
 import { groupSpacesByRepository } from "@/lib/spaces/spaceRepositoryGroups";
 import { sshHostSecretId } from "@/lib/ssh/sshCredentialClaim";
 import type { SshHostConfig } from "@/types";
@@ -191,6 +195,20 @@ function seatKey(row: {
 	readonly chatAgent?: LayoutChatAgent;
 }): string | undefined {
 	return row.chatAgent?.agentId ?? row.hmuxSessionId;
+}
+
+/**
+ * The key the phone finds this agent's row by, as its seat in the table is
+ * keyed. A phone notification names the agent by it, so a tap opens the same
+ * row the list shows. None when the phone cannot list the agent.
+ */
+export function agentSeatKey(
+	agent: HmuxIdentityAgent & Parameters<typeof chatOwnedAgent>[0],
+): string | undefined {
+	return seatKey({
+		hmuxSessionId: paneHmuxSessionId({ kind: "agent" }, agent),
+		chatAgent: chatOwnedAgent(agent),
+	});
 }
 
 export function buildSidebarLayout(

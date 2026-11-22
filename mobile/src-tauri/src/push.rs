@@ -4,10 +4,81 @@ use crate::{hub_client, CommandError};
 use dure_hub_protocol::{
     frame,
     hello::HubRequest,
-    push::{PushLanguage, PushPreference, PushSubscription, PushSubscriptionResult},
+    push::{
+        PushAlertContext, PushLanguage, PushPreference, PushSubscription, PushSubscriptionResult,
+    },
 };
 use serde::Serialize;
 use std::io::{Read, Write};
+use std::sync::Mutex;
+use tauri::ipc::Channel;
+
+/// A tapped alert, for the screen to open its agent as a tap on its row would.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushActivation {
+    /// The phone's catalog key for the agent (`PushSessionId`).
+    session_id: String,
+}
+
+impl PushActivation {
+    /// The activation a tap on this delivered alert asks for, read from the
+    /// alert's whole JSON payload. None for an alert that names no agent.
+    pub fn from_payload(payload: &[u8]) -> Option<Self> {
+        PushAlertContext::from_payload(payload)
+            .session
+            .map(|session| Self {
+                session_id: session.into(),
+            })
+    }
+}
+
+type ActivationReceiver = Box<dyn Fn(PushActivation) -> bool + Send>;
+
+/// Taps on alerts, between the system and the screen. A tap that launches
+/// the app arrives before the WebView listens, so the latest one waits here;
+/// an earlier unread tap is superseded, as only one agent can be opened.
+#[derive(Default)]
+pub struct PushActivations {
+    inner: Mutex<(Option<PushActivation>, Option<ActivationReceiver>)>,
+}
+
+impl PushActivations {
+    /// The system reported a tap.
+    pub fn offer(&self, activation: PushActivation) {
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(receiver) = &inner.1 {
+            if receiver(activation.clone()) {
+                return;
+            }
+            // The screen that listened is gone; the next one reads this tap.
+            inner.1 = None;
+        }
+        inner.0 = Some(activation);
+    }
+
+    /// The screen listens. A waiting tap is delivered first; a newer screen
+    /// replaces an older one.
+    fn listen(&self, receiver: ActivationReceiver) {
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(waiting) = inner.0.take() {
+            if !receiver(waiting.clone()) {
+                inner.0 = Some(waiting);
+                return;
+            }
+        }
+        inner.1 = Some(receiver);
+    }
+}
+
+/// The screen's channel for alert taps (`PushActivations`).
+#[tauri::command]
+pub fn push_activations(
+    activations: tauri::State<'_, PushActivations>,
+    channel: Channel<PushActivation>,
+) {
+    activations.listen(Box::new(move |activation| channel.send(activation).is_ok()));
+}
 
 #[derive(Serialize)]
 pub struct PushSyncResult {
@@ -167,6 +238,39 @@ mod tests {
                 HubRequest::UpdatePushSubscriptionV1 { subscription }
             );
         }
+    }
+
+    #[test]
+    fn a_tap_that_launched_the_app_waits_for_the_screen_and_the_latest_wins() {
+        use std::sync::{Arc, Mutex};
+        let tap = |session: &str| {
+            PushActivation::from_payload(
+                format!(r#"{{"aps":{{}},"dure":{{"session":"{session}"}}}}"#).as_bytes(),
+            )
+            .unwrap()
+        };
+        assert_eq!(PushActivation::from_payload(br#"{"aps":{}}"#), None);
+        let activations = PushActivations::default();
+        activations.offer(tap("agent-1"));
+        activations.offer(tap("agent-2"));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let screen = |seen: &Arc<Mutex<Vec<String>>>, open: bool| -> ActivationReceiver {
+            let seen = seen.clone();
+            Box::new(move |activation: PushActivation| {
+                if open {
+                    seen.lock().unwrap().push(activation.session_id);
+                }
+                open
+            })
+        };
+        activations.listen(screen(&seen, true));
+        activations.offer(tap("agent-3"));
+        assert_eq!(*seen.lock().unwrap(), ["agent-2", "agent-3"]);
+        // A screen that stopped listening loses no tap: the next one reads it.
+        activations.listen(screen(&seen, false));
+        activations.offer(tap("agent-4"));
+        activations.listen(screen(&seen, true));
+        assert_eq!(*seen.lock().unwrap(), ["agent-2", "agent-3", "agent-4"]);
     }
 
     #[test]

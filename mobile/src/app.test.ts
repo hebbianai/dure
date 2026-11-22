@@ -171,10 +171,19 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
   },
 }));
 
+/** The channel the app listens for alert taps on (`push_activations`). */
+let pushActivationChannel: { onmessage?: (activation: { sessionId: string }) => void } | undefined;
+
 vi.mock("@tauri-apps/api/core", () => ({
+  Channel: class {
+    onmessage?: (message: unknown) => void;
+  },
   invoke: (command: string, args: Record<string, unknown> = {}) => {
     invocations.push({ command, args });
     switch (command) {
+      case "push_activations":
+        pushActivationChannel = args.channel as typeof pushActivationChannel;
+        return Promise.resolve();
       case "list_servers":
         if (holdServerList) {
           holdServerList = false;
@@ -974,6 +983,7 @@ async function openAllSessions(): Promise<HTMLElement> {
 // 나타난다.
 beforeEach(() => {
   hubRows = [];
+  pushActivationChannel = undefined;
   rejectNextHubStart = false;
   rejectNextAccountSwitch = false;
   hubLaunchOffer = undefined;
@@ -4871,6 +4881,48 @@ describe("페어링한 컴퓨터", () => {
     await settle();
     expect(root.querySelectorAll(".chat__row")).toHaveLength(2);
     expect(invocations.filter((entry) => entry.command === "attach_hub_session")).toHaveLength(1);
+  });
+
+  /** #625: a tap on a phone alert opens the agent it names, as a tap on its row would. */
+  it("opens the agent a tapped phone alert names, after the first read of the list", async () => {
+    hubRows = [hubRow()];
+    const root = await launch();
+    expect(pushActivationChannel).toBeDefined();
+    expect(invocations.map((entry) => entry.command)).not.toContain("attach_hub_session");
+
+    pushActivationChannel?.onmessage?.({ sessionId: "hub-live" });
+    await settle();
+
+    const opened = invocations.find((entry) => entry.command === "attach_hub_session");
+    expect(opened?.args).toMatchObject({
+      hubId: HUB_ID,
+      boxId: "this-laptop",
+      session: { session_id: "hub-live" },
+    });
+    expect(root.querySelector(".terminal")).not.toBeNull();
+
+    // A second tap on the agent already on screen does not attach it again.
+    pushActivationChannel?.onmessage?.({ sessionId: "hub-live" });
+    await settle();
+    expect(invocations.filter((entry) => entry.command === "attach_hub_session")).toHaveLength(1);
+  });
+
+  it("stays home with the reason when no paired computer lists the tapped alert's agent", async () => {
+    hubRows = [hubRow()];
+    const root = await launch();
+    const reads = invocations.filter((entry) => entry.command === "hub_open").length;
+
+    // An exited session is listed but cannot be opened; an unknown one is not listed.
+    for (const sessionId of ["hub-done", "gone"]) {
+      pushActivationChannel?.onmessage?.({ sessionId });
+      await settle();
+    }
+
+    // Each tap read the list once more before giving up.
+    expect(invocations.filter((entry) => entry.command === "hub_open").length).toBe(reads + 2);
+    expect(invocations.map((entry) => entry.command)).not.toContain("attach_hub_session");
+    expect(root.querySelector(".terminal")).toBeNull();
+    expect(root.textContent).toContain(t("notifications.push.open.unavailable"));
   });
 
   /** #562: a chat-owned agent has no terminal; its row opens its chat only. */

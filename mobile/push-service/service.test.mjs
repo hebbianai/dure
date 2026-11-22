@@ -9,6 +9,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { createApnsSender } from "./apns.mjs";
 import { createPushServer } from "./service.mjs";
+import { en } from "../src/locales/en.ts";
 import { ko } from "../src/locales/ko.ts";
 
 const fixtureRoot = mkdtempSync(path.join(tmpdir(), "dure-push-845-test-"));
@@ -73,6 +74,17 @@ test("an unauthorized Hub, changed recipient, expired request and oversized body
   assert.equal(sends, 0);
 });
 
+test("the relay refuses an agent reference that is not an opaque identifier", async () => {
+  let sends = 0;
+  const post = await serving({ async send() { sends++; return { status: "accepted" }; } });
+  for (const sessionId of ["/Users/me/project", "C:\\work\\repo", "Fix the build", "", "a".repeat(257), 7]) {
+    const message = baseMessage();
+    message.event.sessionId = sessionId;
+    assert.equal((await post(envelope(message))).status, 403, String(sessionId));
+  }
+  assert.equal(sends, 0);
+});
+
 test("approvals-only filters completion and a provider failure remains retryable", async () => {
   let sends = 0;
   const post = await serving({ async send() { return { status: ++sends === 1 ? "unavailable" : "accepted" }; } });
@@ -87,16 +99,22 @@ test("approvals-only filters completion and a provider failure remains retryable
   assert.equal(sends, 2);
 });
 
-test("HTTP/2 APNs alert has a valid ES256 provider token and no transcript or event identity", async () => {
+test("HTTP/2 APNs alert has a valid ES256 provider token and carries the agent's identifier, no transcript or event identity", async () => {
   const apns = createHttp2Server();
   const streams = [];
   apns.on("session", (session) => streams.push(session));
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
-  const observed = new Promise((resolve) => apns.once("stream", (stream, headers) => {
+  const bodies = [];
+  const observed = new Promise((resolve) => apns.on("stream", (stream, headers) => {
     let body = "";
     stream.setEncoding("utf8");
     stream.on("data", (chunk) => { body += chunk; });
-    stream.on("end", () => { stream.respond({ ":status": 200 }); stream.end(); resolve({ headers, body: JSON.parse(body) }); });
+    stream.on("end", () => {
+      stream.respond({ ":status": 200 });
+      stream.end();
+      bodies.push(JSON.parse(body));
+      if (bodies.length === 1) resolve({ headers, body: bodies[0] });
+    });
   }));
   apns.listen(0, "127.0.0.1");
   await once(apns, "listening");
@@ -110,6 +128,7 @@ test("HTTP/2 APNs alert has a valid ES256 provider token and no transcript or ev
   try {
     const message = baseMessage();
     message.subscription.language = "ko";
+    message.event.sessionId = "managed_0123456789abcdef";
     assert.deepEqual(await sender.send(message, fingerprint), { status: "accepted" });
     const { headers, body } = await observed;
     assert.equal(headers["apns-topic"], "dev.hebbian.ide.mobile");
@@ -120,7 +139,14 @@ test("HTTP/2 APNs alert has a valid ES256 provider token and no transcript or ev
     assert.equal(JSON.parse(Buffer.from(jwt[0], "base64url")).alg, "ES256");
     assert.equal(JSON.parse(Buffer.from(jwt[1], "base64url")).iss, "TESTTEAM12");
     assert(verify("sha256", Buffer.from(`${jwt[0]}.${jwt[1]}`), { key: publicKey, dsaEncoding: "ieee-p1363" }, Buffer.from(jwt[2], "base64url")));
-    assert.deepEqual(body, { aps: { alert: { title: "Dure", body: ko["notifications.push.approvalBody"] }, sound: "default" } });
+    // The whole payload: generic text and the opaque id of the agent a tap opens.
+    assert.deepEqual(body, {
+      aps: { alert: { title: "Dure", body: ko["notifications.push.approvalBody"] }, sound: "default" },
+      dure: { session: "managed_0123456789abcdef" },
+    });
+    // An older desktop names no agent; its alert opens the app as before.
+    assert.deepEqual(await sender.send(baseMessage(), fingerprint), { status: "accepted" });
+    assert.deepEqual(bodies[1], { aps: { alert: { title: "Dure", body: en["notifications.push.approvalBody"] }, sound: "default" } });
   } finally {
     sender.close();
     for (const stream of streams) stream.destroy();

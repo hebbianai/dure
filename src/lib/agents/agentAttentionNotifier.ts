@@ -12,6 +12,7 @@ import {
 } from "@/lib/agents/agentAttentionStore";
 import { isDispatchedAgent } from "@/lib/agents/agentDispatchOrigin";
 import { agentDisplayName } from "@/lib/agents/agentDisplayName";
+import { agentSeatKey } from "@/lib/hub/sidebarLayout";
 import { t } from "@/lib/i18n";
 import { pushAgentNotification } from "@/lib/ipc/notifications";
 import { selectNotificationPaneTarget } from "@/lib/settings/notificationPaneTarget";
@@ -65,7 +66,12 @@ export function notifyAgentEvent(
   // The phone's preference and recipient authority belong to the paired Hub.
   // Desktop visibility and notification preferences apply only to this screen.
   if (kind !== "exited" && options?.eventId) {
-    void pushAgentNotification({ kind, eventId: options.eventId }).catch(() => {
+    const sessionId = agentSeatKey(agent);
+    void pushAgentNotification({
+      kind,
+      eventId: options.eventId,
+      ...(sessionId ? { sessionId } : {}),
+    }).catch(() => {
       console.warn("Could not deliver the agent event to paired phone notifications");
     });
   }

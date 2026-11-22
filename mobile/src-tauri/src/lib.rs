@@ -3047,7 +3047,8 @@ fn client_runtime_info() -> RuntimeInfo {
 pub fn run() {
     let builder = tauri::Builder::default()
         .manage(LiveAttach::production())
-        .manage(hub_chat_watch::ChatWatches::default());
+        .manage(hub_chat_watch::ChatWatches::default())
+        .manage(push::PushActivations::default());
 
     // The camera plugin exists on Android and iOS only — its crate is literally
     // `#![cfg(mobile)]`, so `init()` does not exist on a desktop build. The
@@ -3077,6 +3078,16 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_biometric::init());
 
     builder
+        // Runs inside launch, after the notification plugin set its delegate:
+        // a tap that launched the app reaches `push_activations`.
+        .setup(|app| {
+            #[cfg(target_os = "ios")]
+            if let Err(error) = push_ios::install_response_delegate(app.handle()) {
+                eprintln!("Alert taps will open the app without their agent: {error}");
+            }
+            let _ = app;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             list_servers,
             save_server,
@@ -3115,6 +3126,7 @@ pub fn run() {
             hub_chat_watch::hub_agent_chat_unwatch,
             hub_conversation::hub_agent_approval_answer,
             push::sync_push_notifications,
+            push::push_activations,
             ssh_file_diff,
             hub_scm_write,
             hub_commit_detail,

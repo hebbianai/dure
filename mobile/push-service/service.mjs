@@ -22,6 +22,8 @@ function parseEnvelope(envelope, allowedHubs, now, operation) {
   if (message.version !== 1 || message.operation !== operation || !Number.isSafeInteger(message.issuedAt) || Math.abs(now / 1000 - message.issuedAt) > 120) throw new Error("Expired request or wrong operation");
   const { event, subscription } = message;
   if (operation === "send" && (!event || !["approval", "done"].includes(event.kind) || typeof event.eventId !== "string" || !event.eventId || event.eventId.length > 512)) throw new Error("Invalid event");
+  // The agent a tap opens travels to APNs, so only an opaque identifier may: never a path or a title.
+  if (operation === "send" && event.sessionId !== undefined && (typeof event.sessionId !== "string" || !/^[A-Za-z0-9._:+-]{1,256}$/.test(event.sessionId))) throw new Error("Invalid event");
   if (!subscription || typeof subscription.token !== "string" || subscription.token.length > 512 || !/^(?:[a-f0-9]{2})+$/.test(subscription.token)) throw new Error("Invalid device token");
   if (!["sandbox", "production"].includes(subscription.environment) || !["all", "approvals"].includes(subscription.preference) || !["en", "ko"].includes(subscription.language)) throw new Error("Invalid subscription");
   return { message, sender };

@@ -11,7 +11,9 @@ const mocks = vi.hoisted(() => ({
   systemNotify: vi.fn(),
   storeState: {
     activeSpaceId: "desktop-a",
-    agents: [{ id: "agent-a", name: "Codex", projectId: "project-a" }],
+    agents: [{ id: "agent-a", name: "Codex", projectId: "project-a" }] as Array<
+      { id: string; name: string; projectId: string } & Record<string, unknown>
+    >,
     layouts: {},
     projects: [{ id: "project-a", name: "Workspace" }],
   },
@@ -101,6 +103,32 @@ describe("phone push delivery", () => {
       eventId: "hmux:session-a:terminal-a:turn:4",
     });
     expect(mocks.systemNotify).not.toHaveBeenCalled();
+  });
+
+  it("names the agent by the key the phone lists it under, so a tap opens it", () => {
+    mocks.storeState.agents = [
+      {
+        id: "agent-a",
+        name: "Codex",
+        projectId: "project-a",
+        sessionId: "pane-session-a",
+        runtimeBinding: { runtime: "hmux_managed_v1", sessionId: "managed_0123abcd" },
+      },
+      {
+        id: "agent-chat",
+        name: "Claude",
+        projectId: "project-a",
+        provider: "claude",
+        sessionId: "pane-session-b",
+        interactionProfile: { kind: "structured_protocol", backendProfileId: "local" },
+      },
+    ];
+    notifyAgentEvent("agent-a", "approval", "Approval", { eventId: "event-a" });
+    notifyAgentEvent("agent-chat", "approval", "Approval", { eventId: "event-b" });
+    expect(mocks.pushAgentNotification.mock.calls).toEqual([
+      [{ kind: "approval", eventId: "event-a", sessionId: "managed_0123abcd" }],
+      [{ kind: "approval", eventId: "event-b", sessionId: "agent-chat" }],
+    ]);
   });
 
   it("leaves phone delivery to the main window and an exact event identity", () => {
