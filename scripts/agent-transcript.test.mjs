@@ -247,6 +247,43 @@ describe("agent transcript policy", () => {
     expect(markdown).not.toContain("never-export");
   });
 
+  it("reads a conversation whose timeline records queued input state", async () => {
+    const queued = (sequence, state) =>
+      row(sequence, { type: "queued_input", state }, `input-${state}-${sequence}`);
+    const readPage = async () =>
+      page([
+        row(1, { type: "message", role: "user", markdown: "first" }),
+        row(2, { type: "message", role: "assistant", markdown: "done" }),
+        queued(3, "queued"),
+        queued(4, "queued"),
+        queued(5, "dispatched"),
+        row(6, { type: "message", role: "user", markdown: "second" }),
+        queued(7, "canceled"),
+      ]);
+    const all = await collectAgentTranscript({
+      agentId: "agent-1",
+      providerId: "codex",
+      interactionSessionId: "interaction-1",
+      entryLimit: null,
+      readPage,
+    });
+    const last = await collectAgentTranscript({
+      agentId: "agent-1",
+      providerId: "codex",
+      interactionSessionId: "interaction-1",
+      entryLimit: 2,
+      readPage,
+    });
+
+    expect(all.entries.map(({ kind, text }) => [kind, text])).toEqual([
+      ["message", "first"],
+      ["message", "done"],
+      ["message", "second"],
+    ]);
+    expect(last.entries.map(({ text }) => text)).toEqual(["done", "second"]);
+    expect(formatAgentTranscript(last)).not.toContain("queued");
+  });
+
   it("normalizes raw backend tool fields at the shared transcript boundary", async () => {
     const transcript = await collectAgentTranscript({
       agentId: "agent-1",
