@@ -70,6 +70,16 @@ pub(super) fn policy_for(
     }
 }
 
+/// The longest response deadline `policy_for` can assign. A relay that
+/// forwards requests without reading their operation must allow this long, or
+/// it reports a failure for work the backend is still allowed to finish.
+pub(super) fn longest_response_deadline(
+    request_deadline: Duration,
+    workflow_deadline: Duration,
+) -> Duration {
+    request_deadline.max(workflow_deadline)
+}
+
 pub(super) async fn execute<F, T>(
     policy: RequestExecutionPolicy,
     permit: OwnedSemaphorePermit,
@@ -110,6 +120,27 @@ mod tests {
     use tokio::sync::{Semaphore, oneshot};
 
     use super::*;
+
+    #[test]
+    fn the_longest_response_deadline_bounds_every_policy() {
+        let longest = longest_response_deadline(Duration::from_secs(20), Duration::from_secs(180));
+        assert_eq!(longest, Duration::from_secs(180));
+        for operation in [
+            "backend.ping",
+            "agent_spawn.preview",
+            "agent_spawn.apply",
+            "dispatch.stop.preview",
+            agent_conversation_api::READ_OPERATION,
+            agent_conversation_api::INTERRUPT_TURN_OPERATION,
+        ] {
+            assert!(
+                policy_for(operation, Duration::from_secs(20), Duration::from_secs(180))
+                    .response_deadline
+                    <= longest,
+                "{operation}",
+            );
+        }
+    }
 
     #[test]
     fn conversation_mutations_use_the_workflow_response_deadline() {

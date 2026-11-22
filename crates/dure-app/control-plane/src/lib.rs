@@ -1569,10 +1569,15 @@ where
     };
     tokio::pin!(upload);
     tokio::pin!(download);
+    // The gateway relays bytes without reading the operation, so after the
+    // request is sent it waits as long as any operation's response may take.
+    let response_deadline =
+        request_execution::longest_response_deadline(REQUEST_DEADLINE, WORKFLOW_REQUEST_DEADLINE)
+            + REQUEST_IO_TIMEOUT;
     tokio::select! {
         uploaded = &mut upload => {
             uploaded?;
-            timeout(REQUEST_DEADLINE + REQUEST_IO_TIMEOUT, &mut download)
+            timeout(response_deadline, &mut download)
                 .await
                 .map_err(|_| ControlPlaneError::Invalid("gateway response timed out"))??;
         }

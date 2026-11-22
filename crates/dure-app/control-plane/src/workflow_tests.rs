@@ -62,6 +62,7 @@ mod claude_goal_smoke;
 mod conversation_resume_tests;
 mod dispatch_stop_tests;
 mod event_canary_tests;
+mod gateway_relay_tests;
 pub(crate) mod goal_provider_smoke;
 mod graph_runtime_tests;
 mod managed_create_reconcile_tests;
