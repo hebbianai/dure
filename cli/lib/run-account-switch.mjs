@@ -67,7 +67,7 @@ export async function collectRunAccountSwitch({
   // command remains valid once the session is idle.
   if (isSourceBusyRefusal(report.error)) {
     return { ...prepared, ok: false, state: "refused", execution: "refused",
-      error: withSourceBusyGuidance(report.error, run.providerId) };
+      error: withSourceBusyGuidance(report.error, run.providerId, mode) };
   }
   if (!report.ok) return { ...prepared, ok: false, state: "unconfirmed", execution: "unconfirmed", error: report.error };
   const receipt = report.result.receipt;

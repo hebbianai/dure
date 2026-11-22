@@ -163,8 +163,9 @@ changed, and `error.reasonCode` says why (`agent_working`, `agent_background_wor
 workflows its records show still running (kind, id and description; at most
 16, with complete counts). Wait for that work,
 then run the same retry command; never force-stop a source to change accounts.
-In Claude Code, exiting stops background tasks, and "Move to background and
-exit" keeps the conversation running without a pane on the old account.
+In a Terminal session, exiting Claude Code stops background tasks, and "Move to
+background and exit" keeps the conversation running without a pane on the old
+account.
 The preview's `source` is `running` or `stopped`. Applying to a `running` Agent
 restarts its provider process, so background work it started (shells, subagents,
 workflows) ends with it and is not resumed. Not every session reports that work

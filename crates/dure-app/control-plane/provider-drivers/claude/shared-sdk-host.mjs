@@ -8,6 +8,7 @@ const MAX_EVENT_BYTES = 64 * 1024;
 const MAX_INPUT_BYTES = 256 * 1024;
 const MAX_INTERACTION_SNAPSHOT_BYTES = 224 * 1024;
 const MAX_PENDING_INTERACTIONS_PER_QUERY = 12;
+const MAX_BACKGROUND_TASKS_PER_QUERY = 1_024;
 const MAX_QUERY_RECORDS = 128;
 const MAX_RETIRED_IDENTITIES = 128;
 const MAX_UNCOMMITTED_TURN_RECEIPTS = 128;
@@ -486,6 +487,31 @@ function controllerPendingInteractionCount(controller) {
 		throw hostContractError("pending_interactions_invalid");
 	}
 	return count;
+}
+
+/** Background tasks (shells, subagents, workflows, monitors) the provider
+ * reports live after its turn. They end with the provider process, so a Query
+ * running them is not idle even while it waits for input. */
+function controllerBackgroundTaskCount(controller) {
+	if (!controller) return 0;
+	let count;
+	try {
+		count = controller.backgroundTaskCount();
+	} catch {
+		throw hostContractError("background_tasks_invalid");
+	}
+	if (!Number.isSafeInteger(count) || count < 0 || count > MAX_BACKGROUND_TASKS_PER_QUERY) {
+		throw hostContractError("background_tasks_invalid");
+	}
+	return count;
+}
+
+/** The one idle decision for every idle-only effect: no running or retiring
+ * turn, and no background work the provider process would take with it. */
+function idleRefusal(record) {
+	if (record.retiring || record.state !== "waiting_for_input") return "query_busy";
+	if (controllerBackgroundTaskCount(record.controller) > 0) return "query_background_work";
+	return null;
 }
 
 function interruptMessageIds(value) {
@@ -1095,6 +1121,7 @@ class SharedClaudeSdkHost {
 			if (
 				!controller ||
 				typeof controller.answerInteraction !== "function" ||
+				typeof controller.backgroundTaskCount !== "function" ||
 				typeof controller.startTurn !== "function" ||
 				typeof controller.interruptTurn !== "function" ||
 				typeof controller.pendingInteractionCount !== "function" ||
@@ -1409,6 +1436,7 @@ class SharedClaudeSdkHost {
 				const afterSequence = cursors[record.binding.identity.runtimeGeneration] ?? 0;
 				const pendingInteractionCount = controllerPendingInteractionCount(record.controller);
 				return Object.freeze({
+					backgroundTaskCount: controllerBackgroundTaskCount(record.controller),
 					identity: record.binding.identity,
 					pendingInteractionCount,
 					providerSessionId: record.binding.providerSessionId,
@@ -1468,9 +1496,8 @@ class SharedClaudeSdkHost {
 
 	async closeQueryIfIdle(identity) {
 		const record = this.#record(identity);
-		if (record.retiring || record.state !== "waiting_for_input") {
-			throw hostContractError("query_busy");
-		}
+		const refusal = idleRefusal(record);
+		if (refusal) throw hostContractError(refusal);
 		record.retiring = true;
 		try {
 			return await this.closeQuery(identity);
@@ -1521,9 +1548,8 @@ class SharedClaudeSdkHost {
 		if (!record.active) {
 			return this.#retirementReceipt("already_retired", target.identity, false, authority);
 		}
-		if (record.retiring || (requireIdle && record.state !== "waiting_for_input")) {
-			throw hostContractError("query_busy");
-		}
+		const refusal = requireIdle ? idleRefusal(record) : record.retiring ? "query_busy" : null;
+		if (refusal) throw hostContractError(refusal);
 		record.retiring = true;
 		try {
 			await this.closeQuery(target.identity);

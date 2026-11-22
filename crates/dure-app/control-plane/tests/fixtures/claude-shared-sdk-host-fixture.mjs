@@ -103,6 +103,9 @@ function relayQueryFactory() {
 					stillQueuedMessageIds: [],
 				};
 			},
+			backgroundTaskCount() {
+				return 0;
+			},
 			pendingInteractionCount() {
 				return 0;
 			},

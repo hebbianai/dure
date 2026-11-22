@@ -13,6 +13,7 @@ use dure_app::{
 use crate::claude_structured_runtime::{
     ClaudeStructuredOpenRequestV1, ClaudeStructuredRuntimeErrorV1, ClaudeStructuredRuntimeManager,
 };
+use crate::hmux_session_inspection::AgentActivityEvidence;
 use dure_app_sqlite::SqliteDomainStore;
 use hmux_client::ProviderStateEnvironment;
 
@@ -249,6 +250,17 @@ pub(crate) trait StructuredProviderRuntime: Send + Sync {
         transition: &'a AgentRuntimeTransitionRecordV1,
     ) -> StructuredProviderRuntimeFuture<'a, ()>;
 
+    /// What the provider's host reports this live source doing, so an
+    /// idle-only transition refuses before admission with the reason a
+    /// Terminal source gives. `None` when the host cannot say; the idle-only
+    /// stop still refuses a busy source after admission.
+    fn source_activity<'a>(
+        &'a self,
+        _binding: &'a AgentInteractionBindingV1,
+    ) -> StructuredProviderRuntimeFuture<'a, Option<AgentActivityEvidence>> {
+        Box::pin(async { Ok(None) })
+    }
+
     /// Retires the exact failed structured target moved into a corrected
     /// successor before that successor starts a non-structured target.
     fn retire_replacement_source<'a>(
@@ -439,6 +451,17 @@ impl StructuredProviderRuntime for ClaudeStructuredRuntimeManager<SqliteDomainSt
     ) -> StructuredProviderRuntimeFuture<'a, ()> {
         Box::pin(async move {
             ClaudeStructuredRuntimeManager::stop_replacement_source(self, transition)
+                .await
+                .map_err(claude_error)
+        })
+    }
+
+    fn source_activity<'a>(
+        &'a self,
+        binding: &'a AgentInteractionBindingV1,
+    ) -> StructuredProviderRuntimeFuture<'a, Option<AgentActivityEvidence>> {
+        Box::pin(async move {
+            ClaudeStructuredRuntimeManager::source_activity(self, binding)
                 .await
                 .map_err(claude_error)
         })

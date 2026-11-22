@@ -797,6 +797,24 @@ describe("Run account switching", () => {
     expect(text).toContain("Retry: dure 'runtime' 'switch'");
   });
 
+  it("refuses a Chat-mode switch while background work runs, without the terminal-only hint", async () => {
+    const f = accountFixture("claude", "local", "structured_protocol");
+    const request = f.requestBackend.getMockImplementation();
+    f.requestBackend.mockImplementation(async (backend, r) => {
+      if (r.operation !== "agent_runtime.transition") return request(backend, r);
+      throw new BackendTransportError("backend_transport_remote_error", { details: {
+        code: "agent_runtime_source_busy", disposition: "retry_same", reasonCode: "agent_background_work" } });
+    });
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report.accountSwitch).toMatchObject({ state: "refused", execution: "refused",
+      error: { remoteCode: "agent_runtime_source_busy", reasonCode: "agent_background_work" } });
+    expect(report.accountSwitch.continuation.start).toContain("chat");
+    const { message } = report.accountSwitch.error;
+    expect(message).toContain("turn ended, but background work it started");
+    expect(message).toContain("Nothing was stopped or switched.");
+    expect(message).not.toContain("Move to background and exit");
+  });
+
   it.each([
     ["claude", "agent_working", "a running turn, or background shells, subagents or scheduled wakeups", true],
     ["claude", "agent_background_work", "turn ended, but background work it started", true],

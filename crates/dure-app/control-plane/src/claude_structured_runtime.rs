@@ -36,6 +36,7 @@ use crate::claude_conversation_host::{
     ClaudeConversationProcessBindingV1,
 };
 use crate::claude_sdk_host_client::{ClaudeDch1HostIdentity, ClaudeDch1QueryIdentity};
+use crate::hmux_session_inspection::AgentActivityEvidence;
 use crate::provider_credential_profile::{
     ProviderCredentialProfileErrorV1, ProviderCredentialProfileRegistry,
 };
@@ -1671,6 +1672,19 @@ where
         )
         .await?;
         Ok(())
+    }
+
+    /// What the connected SDK host reports this exact source's Query doing.
+    /// Advisory before admission: the idle-only retirement rechecks it.
+    pub(crate) async fn source_activity(
+        &self,
+        binding: &AgentInteractionBindingV1,
+    ) -> Result<Option<AgentActivityEvidence>, ClaudeStructuredRuntimeErrorV1> {
+        let identity = runtime_query_identity(&self.configuration, binding)?;
+        self.host
+            .query_activity(&identity)
+            .await
+            .map_err(|_| ClaudeStructuredRuntimeErrorV1::RuntimeUnavailable)
     }
 
     pub(crate) async fn retire_replacement_source(

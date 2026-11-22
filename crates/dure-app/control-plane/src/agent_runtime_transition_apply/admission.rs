@@ -215,6 +215,12 @@ pub(super) async fn load_or_admit_with_activation(
             )
         }
         authority => {
+            if let AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding } = &authority
+                && !source_already_stopped
+                && body.source_stop_policy.requires_idle()
+            {
+                refuse_busy_structured_source(state, &source, binding).await?;
+            }
             let provider_conversation_ref = AgentProviderConversationPlanV1::from_option(
                 authority.provider_conversation_ref().map(str::to_owned),
             )

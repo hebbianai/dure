@@ -574,6 +574,20 @@ function interactiveQuery(observed) {
 					await new Promise((resolve) => {
 						interruptRelease = resolve;
 					});
+				} else if (turnInput.startsWith("background ")) {
+					// The CLI's level signal: every live background task after a change.
+					const count = Number(turnInput.slice("background ".length));
+					output.push({
+						session_id: SESSION_ID,
+						subtype: "background_tasks_changed",
+						tasks: Array.from({ length: count }, (_, index) => ({
+							description: `Background task ${index}`,
+							task_id: `task-${index}`,
+							task_type: "local_bash",
+						})),
+						type: "system",
+						uuid: "dddddddd-eeee-4fff-8000-111111111111",
+					});
 				}
 				output.push(successResult(message.uuid));
 				activeMessage = undefined;
@@ -942,6 +956,24 @@ test("an approved plan reports the permission mode Claude continues in", async (
 	assert.deepEqual(
 		observed.events.filter(({ kind }) => kind === "provider_permission_mode").map(({ payload }) => payload),
 		[{ permissionMode: "default", providerPermissionMode: "default" }],
+	);
+	await controller.close();
+});
+
+test("the provider's background task level outlives the turn and replaces itself", async () => {
+	const prepared = binding();
+	const observed = observations(prepared);
+	const controller = await createController(prepared, observed, interactiveQuery(observed));
+	assert.equal(controller.backgroundTaskCount(), 0);
+
+	await controller.startTurn({ clientMessageId: "background-message-1", input: "background 2" });
+	assert.equal(controller.backgroundTaskCount(), 2, "the turn ended; its tasks still run");
+	await controller.startTurn({ clientMessageId: "background-message-2", input: "background 0" });
+	assert.equal(controller.backgroundTaskCount(), 0, "an empty level clears every task");
+	assert.equal(
+		observed.events.some(({ payload }) => payload?.subtype === "background_tasks_changed"),
+		false,
+		"the level is Query state, not a timeline event",
 	);
 	await controller.close();
 });

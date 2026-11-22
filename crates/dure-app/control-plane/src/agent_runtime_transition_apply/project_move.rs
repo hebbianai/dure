@@ -170,6 +170,7 @@ async fn plan(
                 .ok_or("agent_project_move_structured_unsupported")?
                 .workspace_move_availability()
                 .map_err(|error| error.code)?;
+            refuse_busy_structured_source(state, &source.selection, binding).await?;
             // The exact source binding and idle drain are rechecked under the
             // journal's stop boundary; admission prevents new source input.
             (

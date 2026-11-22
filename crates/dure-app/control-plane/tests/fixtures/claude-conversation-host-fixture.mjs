@@ -63,6 +63,9 @@ function queryFactory() {
 					stillQueuedMessageIds: [],
 				};
 			},
+			backgroundTaskCount() {
+				return 0;
+			},
 			pendingInteractionCount() {
 				return 0;
 			},

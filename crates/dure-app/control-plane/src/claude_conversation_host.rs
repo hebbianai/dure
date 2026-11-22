@@ -26,6 +26,7 @@ use crate::claude_sdk_host_supervisor::{
     ClaudeSdkHostSupervisor, ClaudeSdkHostSupervisorConfiguration,
 };
 use crate::claude_timeline_bridge::{ClaudeTimelineBridge, ClaudeTimelineBridgeError};
+use crate::hmux_session_inspection::AgentActivityEvidence;
 
 #[derive(Clone)]
 pub struct ClaudeConversationProcessBindingV1 {
@@ -388,6 +389,32 @@ where
             return Ok(false);
         }
         Ok(self.routes.read().await.contains_key(identity))
+    }
+
+    /// What the connected host reports one live Query doing, read without
+    /// starting a host. `None` when no live host is connected, it does not
+    /// list the Query, or the Query is neither running nor waiting for input.
+    pub(crate) async fn query_activity(
+        &self,
+        identity: &ClaudeDch1QueryIdentity,
+    ) -> Result<Option<AgentActivityEvidence>, ClaudeConversationHostErrorV1> {
+        let client = {
+            let client = self.client.lock().await;
+            let Some(connected) = client.as_ref() else {
+                return Ok(None);
+            };
+            if !self.connected_host_is_live(connected)? {
+                return Ok(None);
+            }
+            connected.client.clone()
+        };
+        let snapshot = client
+            .request("snapshot", json!({}))
+            .await
+            .map_err(|error| {
+                ClaudeConversationHostErrorV1::new(format!("snapshot_{}", error.reason()))
+            })?;
+        query_activity_from_snapshot(snapshot, identity)
     }
 
     pub async fn attach(
@@ -1331,6 +1358,48 @@ fn host_identity_from_snapshot(
     Ok(identity)
 }
 
+fn query_activity_from_snapshot(
+    snapshot: Value,
+    identity: &ClaudeDch1QueryIdentity,
+) -> Result<Option<AgentActivityEvidence>, ClaudeConversationHostErrorV1> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct QuerySnapshot {
+        identity: ClaudeDch1QueryIdentity,
+        state: String,
+        pending_interaction_count: u64,
+        /// A host from before background-work tracking reports none.
+        #[serde(default)]
+        background_task_count: u64,
+    }
+    #[derive(Deserialize)]
+    struct HostSnapshot {
+        queries: Vec<QuerySnapshot>,
+    }
+
+    let snapshot: HostSnapshot = serde_json::from_value(snapshot)
+        .map_err(|_| ClaudeConversationHostErrorV1::new("snapshot_invalid"))?;
+    let Some(query) = snapshot
+        .queries
+        .into_iter()
+        .find(|query| query.identity == *identity)
+    else {
+        return Ok(None);
+    };
+    let working = match query.state.as_str() {
+        "running" => true,
+        "waiting_for_input" => false,
+        // Starting, exited or failed: the exact stop owns that outcome.
+        _ => return Ok(None),
+    };
+    Ok(Some(AgentActivityEvidence {
+        attention_required: query.pending_interaction_count > 0,
+        background_work: !working && query.background_task_count > 0,
+        working,
+        input_pending: false,
+    }))
+}
+
 async fn retirement_status(
     client: &ClaudeDch1Client,
     identity: &ClaudeDch1QueryIdentity,
@@ -1478,5 +1547,55 @@ mod tests {
             &authority(ClaudeDch1ProviderRetirementPhase::TargetBound),
             &wrong_lineage,
         ));
+    }
+
+    #[test]
+    fn a_host_snapshot_names_background_work_only_after_the_turn_ended() {
+        let identity = ClaudeDch1QueryIdentity {
+            runtime_generation: "runtime-1".into(),
+            query_epoch: "query-1".into(),
+            relay_id: "relay-1".into(),
+        };
+        let activity = |state: &str, pending: u64, background: Option<u64>| {
+            let mut query = json!({"identity": identity, "state": state,
+                "pendingInteractionCount": pending, "providerSessionId": null,
+                "replay": {"latestSequence": 3}});
+            if let Some(count) = background {
+                query["backgroundTaskCount"] = json!(count);
+            }
+            let other = json!({"identity": {"runtimeGeneration": "runtime-2",
+                "queryEpoch": "query-2", "relayId": "relay-2"}, "state": "running",
+                "pendingInteractionCount": 0, "backgroundTaskCount": 4});
+            query_activity_from_snapshot(
+                json!({"hostGeneration": "host", "hostInstanceId": "instance",
+                    "state": "ready", "queries": [other, query]}),
+                &identity,
+            )
+            .unwrap()
+            .and_then(AgentActivityEvidence::busy_reason)
+        };
+        use crate::hmux_session_inspection::AgentBusyReason as Reason;
+
+        assert_eq!(
+            activity("waiting_for_input", 0, Some(2)),
+            Some(Reason::BackgroundWork)
+        );
+        assert_eq!(activity("waiting_for_input", 0, Some(0)), None);
+        assert_eq!(activity("running", 0, Some(2)), Some(Reason::Working));
+        assert_eq!(
+            activity("running", 1, Some(2)),
+            Some(Reason::AttentionRequired)
+        );
+        assert_eq!(
+            activity("waiting_for_input", 0, None),
+            None,
+            "a host without the fact reports no background work"
+        );
+        assert_eq!(activity("exited", 0, Some(2)), None);
+        assert_eq!(
+            query_activity_from_snapshot(json!({"queries": []}), &identity).unwrap(),
+            None
+        );
+        assert!(query_activity_from_snapshot(json!({}), &identity).is_err());
     }
 }

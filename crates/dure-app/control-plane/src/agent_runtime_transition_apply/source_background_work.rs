@@ -1,16 +1,17 @@
 //! What a busy refusal protects, named for the person deciding whether to wait.
 //!
-//! The Host's own fact refuses an idle-only transition. When that fact is
-//! running work, the refusal also lists the background work the provider's
-//! records show running in the session, through the reader the chat view uses
-//! (`dure_provider_profile::background_work`), so the person can see what
-//! stopping the session would interrupt. The list is advisory and never
-//! persisted: an unreadable or unfamiliar record lists nothing, and only the
-//! model-written descriptions are named, never commands or tool input.
+//! The Host's own fact refuses an idle-only transition: the Hmux session
+//! state for a Terminal source, the SDK host's Query state for a Chat source.
+//! When that fact is running work, the refusal also lists the background work
+//! the provider's records show running in the session, through the reader the
+//! chat view uses (`dure_provider_profile::background_work`), so the person
+//! can see what stopping the session would interrupt. The list is advisory and
+//! never persisted: an unreadable or unfamiliar record lists nothing, and only
+//! the model-written descriptions are named, never commands or tool input.
 
 use std::path::Path;
 
-use dure_app::AgentRuntimeSelectionV1;
+use dure_app::{AgentInteractionBindingV1, AgentRuntimeSelectionV1};
 use dure_provider_profile::background_work::{BackgroundWorkList, read_claude_background_work};
 use dure_provider_profile::transcript::{find_claude_conversation, safe_id};
 
@@ -30,10 +31,66 @@ pub(super) async fn source_busy_refusal(
     inspection: &HmuxSessionInspection,
     bound_conversation: Option<&str>,
 ) -> crate::BackendDispatchError {
-    let reason = inspection.busy_reason();
-    let work = match reason {
-        AgentBusyReason::BackgroundWork | AgentBusyReason::Working => {
-            running_background_work(state, source, inspection, bound_conversation).await
+    let conversation = (inspection.provider_id == "claude")
+        .then(|| {
+            inspection
+                .provider_conversation_identity
+                .as_ref()
+                .map(|identity| identity.conversation_id.as_str())
+                .or(bound_conversation)
+        })
+        .flatten();
+    // Work that an earlier process started cannot still run in this session.
+    busy_refusal(
+        state,
+        source,
+        inspection.busy_reason(),
+        conversation,
+        inspection.created_unix_ms(),
+    )
+    .await
+}
+
+/// Refuses an idle-only transition of a live Chat source its provider's host
+/// reports busy, with the reason a Terminal source gives. A host that cannot
+/// say admits the transition, and its idle-only stop still refuses busy work.
+pub(super) async fn refuse_busy_structured_source(
+    state: &ServiceState,
+    source: &AgentRuntimeSelectionV1,
+    binding: &AgentInteractionBindingV1,
+) -> Result<(), crate::BackendDispatchError> {
+    let Some(runtime) = state.structured_runtimes.resolve(&source.provider_id) else {
+        return Ok(());
+    };
+    let Ok(Some(reason)) = runtime
+        .source_activity(binding)
+        .await
+        .map(|activity| activity.and_then(|activity| activity.busy_reason()))
+    else {
+        return Ok(());
+    };
+    // The binding last changed when its current provider process attached.
+    let since = u64::try_from(binding.updated_at_ms).ok();
+    Err(busy_refusal(
+        state,
+        source,
+        reason,
+        binding.provider_conversation_ref.as_deref(),
+        since,
+    )
+    .await)
+}
+
+async fn busy_refusal(
+    state: &ServiceState,
+    source: &AgentRuntimeSelectionV1,
+    reason: AgentBusyReason,
+    conversation: Option<&str>,
+    since_unix_ms: Option<u64>,
+) -> crate::BackendDispatchError {
+    let work = match (reason, conversation) {
+        (AgentBusyReason::BackgroundWork | AgentBusyReason::Working, Some(conversation)) => {
+            running_background_work(state, source, conversation, since_unix_ms).await
         }
         _ => None,
     };
@@ -43,18 +100,13 @@ pub(super) async fn source_busy_refusal(
 async fn running_background_work(
     state: &ServiceState,
     source: &AgentRuntimeSelectionV1,
-    inspection: &HmuxSessionInspection,
-    bound_conversation: Option<&str>,
+    conversation: &str,
+    since_unix_ms: Option<u64>,
 ) -> Option<BackgroundWorkList> {
-    if source.provider_id.as_str() != "claude" || inspection.provider_id != "claude" {
+    if source.provider_id.as_str() != "claude" {
         return None;
     }
-    let conversation = inspection
-        .provider_conversation_identity
-        .as_ref()
-        .map(|identity| identity.conversation_id.as_str())
-        .or(bound_conversation)?
-        .to_owned();
+    let conversation = conversation.to_owned();
     // The records of the account this session runs on; another account's
     // copy of the conversation is not this process's work.
     let resolved = state
@@ -63,10 +115,8 @@ async fn running_background_work(
         .await
         .ok()?;
     let home = provider_state_directory(&source.provider_id, resolved.as_ref())?;
-    // Work that an earlier process started cannot still run in this session.
-    let since = inspection.created_unix_ms();
     tokio::task::spawn_blocking(move || {
-        running_in_projects(&home.join("projects"), &conversation, since)
+        running_in_projects(&home.join("projects"), &conversation, since_unix_ms)
     })
     .await
     .ok()

@@ -17,6 +17,8 @@ const MAX_LAUNCH_ARGUMENT_BYTES = 32 * 1024;
 const MAX_LAUNCH_ARGUMENT_TOTAL_BYTES = 256 * 1024;
 const MAX_METADATA_STRING_BYTES = 4 * 1024;
 const MAX_ACTIVE_TOOL_CALLS = 256;
+// The shared host's bound on one Query's live background tasks.
+const MAX_BACKGROUND_TASKS = 1_024;
 const MAX_CANONICAL_STREAM_TEXT_BYTES = 256 * 1024;
 const MAX_STREAM_DELTA_BYTES = 2 * 1024 * 1024;
 const MAX_TRACE_CONTEXT_BYTES = 4 * 1024;
@@ -729,6 +731,10 @@ export function createClaudeAgentSdkQueryFactory({
 			}
 		};
 		let terminalSlashCommands = [];
+		// The provider's live background tasks, as its last level signal
+		// listed them. The level is per process: this query's process starts
+		// with none, and every membership change replaces the whole set.
+		let backgroundTaskCount = 0;
 		const emitCommandCatalog = (commands) => {
 			if (terminalDelivered) return;
 			const catalog = providerCommandCatalog(commands, terminalSlashCommands);
@@ -829,6 +835,14 @@ export function createClaudeAgentSdkQueryFactory({
 								: undefined,
 						)
 						.catch(() => {});
+				}
+				return;
+			}
+			if (message.type === "system" && message.subtype === "background_tasks_changed") {
+				// Replace, never pair task_started/task_notification edges: a
+				// missed edge must not leave work that ended counted as running.
+				if (Array.isArray(message.tasks)) {
+					backgroundTaskCount = Math.min(message.tasks.length, MAX_BACKGROUND_TASKS);
 				}
 				return;
 			}
@@ -1171,6 +1185,7 @@ export function createClaudeAgentSdkQueryFactory({
 				}
 				return turn.interruptPromise;
 			},
+			backgroundTaskCount: () => backgroundTaskCount,
 			invalidate: stop,
 			pendingInteractionCount: interactions.pendingInteractionCount,
 			pendingInteractions: interactions.pendingInteractions,
