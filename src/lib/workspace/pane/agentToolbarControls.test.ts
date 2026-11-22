@@ -109,11 +109,13 @@ describe("agent toolbar surfaces", () => {
 		const offered = AGENT_TOOLBAR_CONTROLS.filter((control) =>
 			agentToolbarControlOffered(control.id, "large_window"),
 		).map((control) => control.id);
-		// The View control (#624) and the account run in the source pane over
-		// the bridge; the diff and source-control windows need no pane at all.
+		// The View control, project move (#624) and the account run in the
+		// source pane over the bridge; the diff and source-control windows need
+		// no pane at all.
 		expect(offered.sort()).toEqual([
 			"account",
 			"diff-window",
+			"project-move",
 			"source-control-window",
 			"view-switch",
 		]);

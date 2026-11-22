@@ -24,6 +24,7 @@ import {
 	MAX_EXTERNAL_DROP_BYTES,
 	MAX_EXTERNAL_DROP_FILES,
 } from "@/lib/files/externalFileDrop";
+import type { AgentProjectMovePort } from "@/lib/agents/agentProjectMoveTypes";
 import type {
 	NativeAgentViewPort,
 	NativeAgentViewV1,
@@ -31,6 +32,13 @@ import type {
 import { t } from "@/lib/i18n";
 import { isRecord } from "@/lib/payloadGuards";
 import { listenWhenReady } from "@/lib/platform/tauriBridge";
+import {
+	type AgentSessionProjectMoveCommand,
+	type AgentSessionProjectMoveResult,
+	agentSessionProjectMovePort,
+	agentSessionProjectMoveStep,
+	agentSessionProjectMoveStepValid,
+} from "./agentSessionWindowProjectMoveCommand";
 import { parseLargeViewSourcePaneOwnerId } from "./largeViewReturnSourceCoordinator";
 import {
 	type MountedPaneWindow,
@@ -94,6 +102,7 @@ type AgentSessionWindowCommand =
 	| AgentSessionCredentialCommand
 	| AgentSessionForkPresentationCommand
 	| AgentSessionViewCommand
+	| AgentSessionProjectMoveCommand
 	| AgentSessionDraftAppendCommand;
 
 export type AgentSessionCredentialCommandResult =
@@ -117,6 +126,7 @@ export type AgentSessionWindowCommandResult =
 	| AgentSessionCredentialCommandResult
 	| AgentSessionForkPresentationResult
 	| AgentSessionViewCommandResult
+	| AgentSessionProjectMoveResult
 	| { kind: "drafted" }
 	| AgentChatDraftMoveReceipt
 	| AgentChatPaneMoveResult;
@@ -141,6 +151,12 @@ type AgentSessionViewCommandRequest = AgentSessionViewCommand & {
 	sourcePaneOwnerId: string;
 };
 
+type AgentSessionProjectMoveCommandRequest = AgentSessionProjectMoveCommand & {
+	agentId: string;
+	sourceWindowLabel: string;
+	sourcePaneOwnerId: string;
+};
+
 type CommandPayload = AgentSessionWindowCommand & {
 	generation: string;
 	agentId: string;
@@ -149,13 +165,42 @@ type CommandPayload = AgentSessionWindowCommand & {
 	expiresAtMs: number;
 };
 
+/** The typed part of a source-window refusal. A refusal keeps its code across
+ * the bridge, so the requesting surface decides from it exactly as the source
+ * pane's own surface does. `submitted: false` says the refused step started
+ * nothing. */
+interface AgentSessionWindowCommandRefusal {
+	code?: string;
+	submitted?: false;
+}
+
 type ResultPayload =
 	| {
 			generation: string;
 			ok: true;
 			result: AgentSessionWindowCommandResult;
 	  }
-	| { generation: string; ok: false; error: string };
+	| ({ generation: string; ok: false; error: string } &
+			AgentSessionWindowCommandRefusal);
+
+class AgentSessionWindowCommandError extends Error {
+	readonly code?: string;
+	readonly submitted?: false;
+	constructor(message: string, refusal: AgentSessionWindowCommandRefusal) {
+		super(message);
+		if (refusal.code !== undefined) this.code = refusal.code;
+		if (refusal.submitted === false) this.submitted = false;
+	}
+}
+
+function commandRefusal(value: unknown): AgentSessionWindowCommandRefusal {
+	if (!value || typeof value !== "object") return {};
+	const { code, submitted } = value as Record<string, unknown>;
+	return {
+		...(nonEmptyString(code, 256) ? { code } : {}),
+		...(submitted === false ? { submitted } : {}),
+	};
+}
 
 export interface AgentSessionWindowCommandBackend {
 	currentWindowLabel(): string;
@@ -279,6 +324,11 @@ function parseCommand(value: unknown): CommandPayload | undefined {
 			? (payload as unknown as CommandPayload)
 			: undefined;
 	}
+	if (payload.action === "project_move") {
+		return agentSessionProjectMoveStepValid(payload)
+			? (payload as unknown as CommandPayload)
+			: undefined;
+	}
 	if (payload.action === "switch") {
 		if (
 			payload.targetCredentialId !== null &&
@@ -352,6 +402,7 @@ function parseResult(value: unknown): ResultPayload | undefined {
 		error: nonEmptyString(payload.error, 4_096)
 			? payload.error
 			: "source window command failed",
+		...commandRefusal(payload),
 	};
 }
 
@@ -362,6 +413,7 @@ function requestAgentSessionWindowCommand(
 				action: "present_fork";
 		  })
 		| AgentSessionViewCommandRequest
+		| AgentSessionProjectMoveCommandRequest
 		| ((
 				| AgentSessionDraftAppendCommand
 				| AgentSessionDraftMoveCommand
@@ -404,7 +456,9 @@ function requestAgentSessionWindowCommand(
 				const result = parseResult(candidate);
 				if (!result || result.generation !== generation) return;
 				if (!result.ok) {
-					finish(() => reject(new Error(result.error)));
+					finish(() =>
+						reject(new AgentSessionWindowCommandError(result.error, result)),
+					);
 					return;
 				}
 				finish(() => resolve(result.result));
@@ -523,6 +577,20 @@ export function agentSessionWindowViewPort(
 			await send({ action: "chat_handover", step: "cancel" });
 		},
 	};
+}
+
+/** A large window's project move. Every step runs in the window that owns the
+ * source pane, on the move that window prepared. */
+export function agentSessionWindowProjectMovePort(
+	route: AgentSessionWindowRoute,
+	transport: AgentSessionWindowCommandBackend = backend,
+): AgentProjectMovePort {
+	return agentSessionProjectMovePort(route.agentId, (command) =>
+		requestAgentSessionWindowCommand(
+			{ ...command, ...sourcePaneRoute(route) },
+			transport,
+		),
+	);
 }
 
 export async function requestAgentSessionDraftAppend(
@@ -695,6 +763,11 @@ export type AgentSessionWindowCommandExecution =
 			desktopId: string;
 			panelId: string;
 	  })
+	| (AgentSessionProjectMoveCommand & {
+			agentId: string;
+			desktopId: string;
+			panelId: string;
+	  })
 	| (AgentSessionDraftAppendCommand & {
 			agentId: string;
 			desktopId: string;
@@ -737,6 +810,8 @@ function commandExecution(
 			return { action: "set_native_view", ...target, view: payload.view };
 		case "chat_handover":
 			return { action: "chat_handover", ...target, step: payload.step };
+		case "project_move":
+			return { ...target, ...agentSessionProjectMoveStep(payload) };
 		case "switch":
 			return {
 				action: "switch",
@@ -779,6 +854,7 @@ export function subscribeAgentSessionWindowCommands(
 							generation: payload.generation,
 							ok: false,
 							error: String(error),
+							...commandRefusal(error),
 						}),
 				)
 				.catch(() => {});

@@ -29,6 +29,7 @@ import {
 } from "@/lib/workspace/pane/agentToolbarControls";
 import { useStore } from "@/store";
 import { agentFixture } from "@/test/agentFixtures";
+import { chooseSelectValue } from "@/test/select";
 import type { Agent } from "@/types";
 
 const mocks = vi.hoisted(() => ({
@@ -85,6 +86,9 @@ const mocks = vi.hoisted(() => ({
 			kind: "view_set" as const,
 		}),
 	),
+	requestAgentSessionProjectMove: vi.fn(
+		async (_request: Record<string, unknown>): Promise<unknown> => undefined,
+	),
 	forkAgent: vi.fn(),
 	messageDialog: vi.fn(async () => {}),
 	requestManagedCredentialSwitch: vi.fn(async () => ({
@@ -119,6 +123,14 @@ vi.mock("@tauri-apps/api/window", () => ({
 		onCloseRequested: mocks.onCloseRequested,
 	}),
 }));
+const movePlan = vi.hoisted(() => ({
+	operationId: "operation-1",
+	workspaceMove: {
+		sourceWorkspace: { rootPath: "/repo/.worktrees/agent-1" },
+		targetProject: { projectId: "project-new" },
+		targetWorkspace: { rootPath: "/new/.worktrees/agent-1" },
+	},
+}));
 vi.mock("@/lib/workspace/window/agentSessionWindowCommand", () => {
 	// The ports' own command mapping is covered by the bridge's tests; here
 	// they record which source route each toolbar action was sent to.
@@ -152,6 +164,32 @@ vi.mock("@/lib/workspace/window/agentSessionWindowCommand", () => {
 					...route(source),
 				}),
 		}),
+		agentSessionWindowProjectMovePort: (source: Route) => {
+			const send = (command: Record<string, unknown>) =>
+				mocks.requestAgentSessionProjectMove({
+					action: "project_move",
+					...command,
+					...route(source),
+				});
+			return {
+				prepare: async () => {
+					await send({ step: "prepare" });
+					return {
+						projects: [{ id: "project-new", displayName: "New" }],
+						complete: true,
+						preview: async (projectId: string) => {
+							await send({ step: "preview", projectId });
+							return movePlan;
+						},
+						status: async () => "unconfirmed" as const,
+						repair: async () => {},
+						apply: async (plan: typeof movePlan) => {
+							await send({ step: "apply", plan });
+						},
+					};
+				},
+			};
+		},
 		agentSessionWindowViewPort: (source: Route) => ({
 			setView: async (view: string) => {
 				await mocks.requestAgentSessionViewCommand({
@@ -346,6 +384,7 @@ beforeEach(() => {
 	mocks.requestAgentSessionViewCommand.mockReset().mockResolvedValue({
 		kind: "view_set",
 	});
+	mocks.requestAgentSessionProjectMove.mockReset().mockResolvedValue(undefined);
 	mocks.forkAgent.mockReset().mockResolvedValue({
 		...target,
 		id: "agent-fork",
@@ -776,6 +815,51 @@ describe("AgentSessionWindowRoot", () => {
 				sourcePaneOwnerId: "desktop-2:agent:agent-1",
 			}),
 		);
+	});
+
+	it("moves the Agent to another project from the large window through its source pane", async () => {
+		const rendered = render(
+			<AgentSessionWindowRoot
+				agentId="agent-1"
+				sourceWindowLabel="win-workspace-2"
+				sourcePaneOwnerId="desktop-2:agent:agent-1"
+			/>,
+		);
+
+		fireEvent.click(
+			screen.getByRole("button", { name: t("agents.projectMove.title") }),
+		);
+		const destination = await screen.findByRole("combobox", {
+			name: t("agents.projectMove.destination"),
+		});
+		await waitFor(() =>
+			expect((destination as HTMLButtonElement).disabled).toBe(false),
+		);
+		chooseSelectValue(destination, "project-new");
+		fireEvent.click(
+			screen.getByRole("button", { name: t("agents.projectMove.preview") }),
+		);
+		await screen.findByText("/new/.worktrees/agent-1");
+		fireEvent.click(
+			screen.getByRole("button", { name: t("agents.projectMove.confirm") }),
+		);
+
+		const route = {
+			action: "project_move",
+			agentId: "agent-1",
+			sourceWindowLabel: "win-workspace-2",
+			sourcePaneOwnerId: "desktop-2:agent:agent-1",
+		};
+		await waitFor(() =>
+			expect(
+				mocks.requestAgentSessionProjectMove.mock.calls.map(([call]) => call),
+			).toEqual([
+				{ ...route, step: "prepare" },
+				{ ...route, step: "preview", projectId: "project-new" },
+				{ ...route, step: "apply", plan: movePlan },
+			]),
+		);
+		await waitFor(() => expect(rendered.queryByRole("dialog")).toBeNull());
 	});
 
 	it("cancels a scheduled Chat move in the source pane before showing the terminal", async () => {

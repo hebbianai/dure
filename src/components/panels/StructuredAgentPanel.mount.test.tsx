@@ -344,8 +344,9 @@ describe("StructuredAgentPanel mount", () => {
 				/>,
 			);
 			expect(screen.getByTestId("project-move")).toBeTruthy();
+			// The Chat pane prepares its move in its own window.
 			expect(mocks.moveProps).toMatchObject({
-				agentId: agent.id,
+				port: { prepare: expect.any(Function) },
 				disabled: false,
 			});
 			act(() => busyCallback(mocks.moveProps, "onBusyChange")(true));

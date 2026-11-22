@@ -42,6 +42,7 @@ import {
 import type { AgentCredentialTransitionResult } from "@/lib/agents/agentCredentialTransition";
 import { agentCredentialReferenceId } from "@/lib/agents/agentLaunchCredential";
 import { agentProviderCatalogSource } from "@/lib/agents/providerModelCatalogSource";
+import { localAgentProjectMovePort } from "@/lib/agents/agentProjectMovePort";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
 import {
 	agentRuntimePaneActionOwnerKey,
@@ -512,7 +513,7 @@ export function StructuredAgentPanel({
 						"project-move",
 						<AgentProjectMove
 							key={`project-move:${runtimeOwnerKey}`}
-							agentId={agent.id}
+							port={localAgentProjectMovePort(agent.id)}
 							disabled={
 								accountMovesLocked || !!agent.pendingCmd || !!agent.pendingCredentialSwitch
 							}

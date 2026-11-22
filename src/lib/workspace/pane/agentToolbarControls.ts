@@ -79,11 +79,7 @@ export const AGENT_TOOLBAR_CONTROLS: readonly AgentToolbarControlDescriptorV1[] 
 			id: "project-move",
 			tier: "pro",
 			labelKey: "agents.projectMove.title",
-			largeWindow: {
-				offered: false,
-				reason:
-					"The move's prepare, preview and commit steps run in this window today and have no bridge commands yet.",
-			},
+			largeWindow: { offered: true, runs: "source_pane" },
 		},
 		{
 			id: "diff-window",

@@ -69,6 +69,7 @@ import { AgentPluginClaimStatus } from "@/components/plugins/AgentPluginClaimSta
 import { DelegateTaskControl } from "@/components/agents/DelegateTaskControl";
 import type { DureAgentRuntimeSourceStopPolicyV1 } from "@/lib/ipc/dureAgentRuntime";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
+import { localAgentProjectMovePort } from "@/lib/agents/agentProjectMovePort";
 import { agentRuntimePaneActionOwnerKey, runAgentRuntimePaneAction } from "@/lib/agents/agentRuntimePaneAction";
 import type { AgentCredentialTransitionResult } from "@/lib/agents/agentCredentialTransition";
 
@@ -466,6 +467,7 @@ export function NativeAgentPanel({
             },
           },
           view: viewPort,
+          projectMove: localAgentProjectMovePort(agent.id),
           ...(backendManaged ? { launchSelection } : {}),
           history: {
             actionLease: historyActionLease,

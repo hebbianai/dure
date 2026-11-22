@@ -6,6 +6,7 @@ import { t } from "@/lib/i18n";
 import { rehydrateDurableStore } from "@/lib/persistence/durableStoreRehydration";
 import {
 	agentSessionWindowCredentialPort,
+	agentSessionWindowProjectMovePort,
 	agentSessionWindowViewPort,
 	requestAgentSessionForkPresentation,
 } from "@/lib/workspace/window/agentSessionWindowCommand";
@@ -33,6 +34,7 @@ export function useAgentSessionWindowToolbarRuntime(
 		return {
 			account: agentSessionWindowCredentialPort(route),
 			view: agentSessionWindowViewPort(route),
+			projectMove: agentSessionWindowProjectMovePort(route),
 		};
 	}, [agentId, windowLabel, paneOwnerId]);
 	return {
@@ -57,5 +59,6 @@ export function useAgentSessionWindowToolbarRuntime(
 		},
 		account: ports.account,
 		view: ports.view,
+		projectMove: ports.projectMove,
 	};
 }

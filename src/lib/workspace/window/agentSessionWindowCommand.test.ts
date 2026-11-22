@@ -3,6 +3,7 @@ import { t } from "@/lib/i18n";
 import {
 	type AgentSessionWindowCommandBackend,
 	agentSessionWindowCredentialPort,
+	agentSessionWindowProjectMovePort,
 	agentSessionWindowViewPort,
 	requestAgentSessionCredentialCommand,
 	requestAgentSessionForkPresentation,
@@ -30,6 +31,38 @@ function transport() {
 		}),
 	};
 	return backend;
+}
+
+const sourceRoute = {
+	agentId: "agent-1",
+	sourceWindowLabel: "win-workspace-2",
+	sourcePaneOwnerId: "desktop-2:agent:agent-1",
+};
+
+/** A plan the project move contract accepts for `agent-1` into `project-new`. */
+function movePlan(operationId = "operation-1") {
+	return {
+		schemaVersion: 1,
+		operationId,
+		idempotencyKey: `idempotency-${operationId}`,
+		source: { agentId: "agent-1", revision: 3, providerId: "codex" },
+		targetInteractionProfile: "native_cli",
+		providerConversationRef: "conversation-1",
+		workspaceMove: {
+			sourceAgent: { agentId: "agent-1" },
+			sourceWorkspace: {
+				workspaceId: "workspace-old",
+				projectId: "project-old",
+				rootPath: "/old",
+			},
+			targetProject: { projectId: "project-new" },
+			targetWorkspace: {
+				workspaceId: "workspace-new",
+				projectId: "project-new",
+				rootPath: "/new",
+			},
+		},
+	};
 }
 
 describe("large-view source command routing", () => {
@@ -176,6 +209,126 @@ describe("large-view source command routing", () => {
 		stop();
 	});
 
+	it("runs the large window's project move steps in the exact source pane", async () => {
+		const backend = transport();
+		const plan = movePlan();
+		const execute = vi.fn(async (command: { action: string; step?: string }) => {
+			switch (command.step) {
+				case "prepare":
+					return {
+						kind: "project_move_prepared" as const,
+						moveId: "move-1",
+						projects: [{ id: "project-new", displayName: "New" }],
+						complete: true,
+					};
+				case "preview":
+					return { kind: "project_move_previewed" as const, plan };
+				case "status":
+					return {
+						kind: "project_move_status" as const,
+						status: "repair_required" as const,
+					};
+				default:
+					return { kind: "project_move_done" as const };
+			}
+		});
+		const stop = subscribeAgentSessionWindowCommands(execute as never, backend);
+		await vi.waitFor(() =>
+			expect(backend.listenCommand).toHaveBeenCalledOnce(),
+		);
+
+		const prepared = await agentSessionWindowProjectMovePort(
+			sourceRoute,
+			backend,
+		).prepare();
+		expect(prepared).toMatchObject({
+			projects: [{ id: "project-new", displayName: "New" }],
+			complete: true,
+		});
+		await expect(prepared.preview("project-new")).resolves.toEqual(plan);
+		await expect(prepared.status(plan as never)).resolves.toBe(
+			"repair_required",
+		);
+		await prepared.repair(plan as never);
+		await prepared.apply(plan as never);
+
+		const source = {
+			action: "project_move",
+			agentId: "agent-1",
+			desktopId: "desktop-2",
+			panelId: "agent:agent-1",
+		};
+		// Later steps name the held move and the reviewed plan's operation;
+		// the plan itself is never sent back to the source.
+		expect(execute.mock.calls.map(([command]) => command)).toEqual([
+			{ ...source, step: "prepare" },
+			{ ...source, step: "preview", moveId: "move-1", projectId: "project-new" },
+			...(["status", "repair", "apply"] as const).map((step) => ({
+				...source,
+				step,
+				moveId: "move-1",
+				operationId: "operation-1",
+			})),
+		]);
+		expect(backend.emitCommand).toHaveBeenCalledWith(
+			"win-workspace-2",
+			expect.objectContaining({ replyWindowLabel: "win-large-view" }),
+		);
+		stop();
+	});
+
+	it("keeps a source refusal's code and not-submitted mark across the bridge", async () => {
+		const backend = transport();
+		const stop = subscribeAgentSessionWindowCommands(async () => {
+			throw Object.assign(new Error("client_project_move_preview_stale"), {
+				code: "client_project_move_preview_stale",
+				submitted: false,
+			});
+		}, backend);
+		await vi.waitFor(() =>
+			expect(backend.listenCommand).toHaveBeenCalledOnce(),
+		);
+
+		await expect(
+			agentSessionWindowProjectMovePort(sourceRoute, backend).prepare(),
+		).rejects.toMatchObject({
+			code: "client_project_move_preview_stale",
+			submitted: false,
+		});
+		stop();
+	});
+
+	it("rejects a project move receipt whose plan the contract refuses as uncertain", async () => {
+		const backend = transport();
+		const stop = subscribeAgentSessionWindowCommands(
+			async (command) =>
+				command.action === "project_move" && command.step === "prepare"
+					? {
+							kind: "project_move_prepared" as const,
+							moveId: "move-1",
+							projects: [],
+							complete: true,
+						}
+					: {
+							kind: "project_move_previewed" as const,
+							plan: { ...movePlan(), source: { agentId: "agent-2" } } as never,
+						},
+			backend,
+		);
+		await vi.waitFor(() =>
+			expect(backend.listenCommand).toHaveBeenCalledOnce(),
+		);
+
+		const prepared = await agentSessionWindowProjectMovePort(
+			sourceRoute,
+			backend,
+		).prepare();
+		await expect(prepared.preview("project-new")).rejects.toThrow(
+			"outcome is uncertain",
+		);
+		stop();
+	});
+
 	it("sends nothing from a large window that lost its source pane", async () => {
 		const backend = transport();
 		const route = { agentId: "agent-1", sourceWindowLabel: "main" };
@@ -185,6 +338,9 @@ describe("large-view source command routing", () => {
 		).rejects.toThrow(t("workspace.agentWindow.sourcePaneMissing"));
 		await expect(
 			agentSessionWindowCredentialPort(route, backend).switch("account-2"),
+		).rejects.toThrow(t("workspace.agentWindow.sourcePaneMissing"));
+		await expect(
+			agentSessionWindowProjectMovePort(route, backend).prepare(),
 		).rejects.toThrow(t("workspace.agentWindow.sourcePaneMissing"));
 		expect(backend.emitCommand).not.toHaveBeenCalled();
 	});
@@ -327,6 +483,21 @@ describe("large-view source command routing", () => {
 			step: "discard",
 			expiresAtMs: 30,
 		});
+		for (const [generation, step] of [
+			["generation-5", { step: "commit", moveId: "move-1" }],
+			["generation-6", { step: "apply", moveId: "move-1" }],
+			["generation-7", { step: "preview", projectId: "project-new" }],
+		] as const) {
+			commandListener?.({
+				action: "project_move",
+				agentId: "agent-1",
+				generation,
+				sourcePaneOwnerId: "desktop-1:agent:agent-1",
+				replyWindowLabel: "win-large-view",
+				expiresAtMs: 30,
+				...step,
+			});
+		}
 
 		expect(execute).not.toHaveBeenCalled();
 		stop();

@@ -17,9 +17,9 @@ const f = vi.hoisted(() => ({
 	status: vi.fn(),
 	repair: vi.fn(),
 }));
-vi.mock("@/lib/agents/agentProjectMove", () => ({
-	prepareAgentProjectMove: f.prepare,
-}));
+// The dialog runs every step through the port its surface passes; the pane's
+// local port and the large window's bridge port are covered by their own tests.
+const port = { prepare: f.prepare };
 vi.mock("@/components/ui/select-field", () => ({
 	SelectField: ({
 		value,
@@ -75,7 +75,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 async function preview() {
-	render(<AgentProjectMove agentId="agent-1" />);
+	render(<AgentProjectMove port={port} />);
 	fireEvent.click(
 		screen.getByRole("button", { name: t("agents.projectMove.title") }),
 	);
@@ -132,7 +132,7 @@ it("recovers durable repair controls after the pane remounts without another pre
 		status: f.status,
 		repair: f.repair,
 	});
-	render(<AgentProjectMove agentId="agent-1" />);
+	render(<AgentProjectMove port={port} />);
 	fireEvent.click(
 		screen.getByRole("button", { name: t("agents.projectMove.title") }),
 	);
@@ -146,7 +146,7 @@ it("says a working conversation must finish before it can move", async () => {
 	f.preview.mockRejectedValueOnce(
 		Object.assign(new Error("busy"), { code: "agent_runtime_source_busy" }),
 	);
-	render(<AgentProjectMove agentId="agent-1" />);
+	render(<AgentProjectMove port={port} />);
 	fireEvent.click(
 		screen.getByRole("button", { name: t("agents.projectMove.title") }),
 	);
@@ -170,7 +170,7 @@ it("refreshes a locally stale preparation without closing the dialog", async () 
 			submitted: false,
 		}),
 	);
-	render(<AgentProjectMove agentId="agent-1" />);
+	render(<AgentProjectMove port={port} />);
 	fireEvent.click(
 		screen.getByRole("button", { name: t("agents.projectMove.title") }),
 	);
@@ -207,7 +207,7 @@ it("keeps Retry usable after a local repair refusal", async () => {
 			submitted: false,
 		}),
 	);
-	render(<AgentProjectMove agentId="agent-1" />);
+	render(<AgentProjectMove port={port} />);
 	fireEvent.click(
 		screen.getByRole("button", { name: t("agents.projectMove.title") }),
 	);
