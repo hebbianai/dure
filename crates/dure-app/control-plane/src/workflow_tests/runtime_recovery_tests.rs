@@ -1,6 +1,30 @@
 use super::*;
 
+mod backoff_tests;
 mod panic_tests;
+
+// Keep virtual time still while the real SQLite executor completes a query.
+// A wall-clock deadline bounds a broken fixture without auto-advancing retry timers.
+async fn wait_for_attempt(predicate: impl Fn() -> bool) -> Result<(), &'static str> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !predicate() {
+        if std::time::Instant::now() >= deadline {
+            return Err("recovery did not reach the expected observation");
+        }
+        tokio::task::yield_now().await;
+    }
+    Ok(())
+}
+
+/// Yield with virtual time held still for a wall-clock window, so the real
+/// SQLite reads an attempt or a wake starts can finish without firing any
+/// retry timer. An attempt is counted only after those reads.
+async fn settle_without_advancing_time(window_ms: u64) {
+    let until = std::time::Instant::now() + std::time::Duration::from_millis(window_ms);
+    while std::time::Instant::now() < until {
+        tokio::task::yield_now().await;
+    }
+}
 
 struct LostWakeBarrierRuntime {
     startup_agent_id: AgentIdV1,
