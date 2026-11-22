@@ -165,6 +165,10 @@ workflows its records show still running (kind, id and description; at most
 then run the same retry command; never force-stop a source to change accounts.
 In Claude Code, exiting stops background tasks, and "Move to background and
 exit" keeps the conversation running without a pane on the old account.
+The preview's `source` is `running` or `stopped`. Applying to a `running` Agent
+restarts its provider process, so background work it started (shells, subagents,
+workflows) ends with it and is not resumed. Not every session reports that work
+before a switch, so let it finish before you apply.
 
 The lower-level equivalent is `dure runtime get AGENT_ID --json`, then:
 

@@ -42,7 +42,9 @@ survives policy changes; enabling can admit an already-idle source after fresh c
 Legacy backend-observed intervals restart when the policy revision changes.
 DURE_SESSION_IDLE_AFTER_MS seeds only a missing policy; saved settings take precedence.
 Switch preserves the conversation and selected credential. A busy source is
-retained; this command never discards active work. Failed stopped targets are
+retained; a running turn or unsent input is never discarded. Background work a
+session started (shells, subagents, workflows) ends with its restarted provider
+process and is not resumed; let it finish first. Failed stopped targets are
 replaced through the same backend transition as the app.
 Switch and wake retain the original project and working folder. --project,
 --path and --cwd are refused before backend access. Use dure runs move AGENT

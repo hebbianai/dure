@@ -19,9 +19,12 @@ export async function collectRunAccountSwitch({
   const source = closed ? undefined : observation.receipt;
   const mode = closed?.interactionProfile ?? source?.authority?.interactionProfile;
   const sourceRevision = closed?.selectionRevision ?? source?.selectionRevision;
+  // What Apply restarts: a stable source's provider process, which takes the
+  // background work it started with it, or a stopped close's retained source.
+  const sourceState = closed ? "stopped" : observation.state === "stable" ? "running" : undefined;
   const base = { agentId: run.agentId, providerId: run.providerId, account,
     conversationId: closed ? null : source?.providerConversationRef, execution: "not_requested",
-    ...(closed ? { source: "stopped" } : {}) };
+    ...(sourceState ? { source: sourceState } : {}) };
   const failure = (code, message) => ({ ...base, ok: false, error: { code, message } });
   if (closed ? observation.projectionContext?.agent?.providerId !== run.providerId
     : observation.state !== "stable" || source.providerId !== run.providerId ||
@@ -112,11 +115,18 @@ function restartLines(report) {
       `Resume: ${rehostCommandLine(report.continuation.resume)}`];
 }
 
+/** What a preview's Apply does to its source, by `report.source`. */
+const SOURCE_PREVIEW = {
+  stopped: "This Agent is stopped. Apply restarts it with this account and its retained conversation.",
+  running: "Apply restarts this Agent's provider process with this account and the same conversation. " +
+    "Background work the session started (shells, subagents or workflows) ends with the old process " +
+    "and is not resumed, so let it finish before you apply.",
+};
+
 export function formatRunAccountSwitch(report) {
   return [
     `${report.agentId}: account ${report.account} (${report.state ?? "unavailable"})`,
-    ...(report.source === "stopped" && report.state === "preview"
-      ? ["This Agent is stopped. Apply restarts it with this account and its retained conversation."] : []),
+    ...(report.state === "preview" && SOURCE_PREVIEW[report.source] ? [SOURCE_PREVIEW[report.source]] : []),
     ...(report.state === "completed" && report.conversationId ? [`Conversation: ${report.conversationId}`] : []),
     ...(report.error ? [`${refusalLabel(report.error)}: ${report.error.message ?? "Account switch failed"}`] : []),
     ...(report.restart ? restartLines(report) : []),

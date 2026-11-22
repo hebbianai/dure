@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { BackendTransportError } from "../cli/lib/backend-transport.mjs";
 import { MANAGED_REHOST_RUNNING_EXIT_CODE } from "../cli/lib/managed-rehost-named.mjs";
 import { collectRunsCommand, formatRunsCommand, parseRunsOptions, runsCommandExitCode } from "../cli/lib/runs-command.mjs";
+import { collectRunAccountSwitch, formatRunAccountSwitch } from "../cli/lib/run-account-switch.mjs";
 import { AGENT_RUNTIME_PRESENTATION_CAPABILITY, agentRuntimePresentationRequest, currentRunPresentationPlan,
   presentAgentRuntime } from "../cli/lib/run-presentation.mjs";
 import { canonicalNativeReceipt, request as spawnRequest, succeededNativeReceipt } from "./fixtures/agent-spawn-receipts.mjs";
@@ -555,7 +556,7 @@ describe("Run account switching", () => {
     const f = accountFixture(provider);
     const report = await collectRunsCommand(f);
     expect(report).toMatchObject({ ok: true, accountSwitch: { state: "preview", account: "work",
-      providerId: provider, conversationId: "conversation-1", execution: "not_requested" } });
+      providerId: provider, conversationId: "conversation-1", execution: "not_requested", source: "running" } });
     const c = report.accountSwitch.continuation;
     expect(c.start).toEqual(["runtime", "switch", f.entry.agentId, "terminal", "--account", "work",
       "--credential-generation", "generation-2", "--expected-revision", "1", "--idempotency-key", c.requestId,
@@ -564,7 +565,24 @@ describe("Run account switching", () => {
     expect(c.status).toEqual(["runtime", "get", f.entry.agentId, "--backend", "local", "--json"]);
     expect(f.requestBackend.mock.calls.map((c) => c[1].operation)).toEqual([
       "agent_spawn.list", "agent_runtime.projection.inspect", "provider_recovery.get"]);
-    expect(formatRunsCommand(report)).toContain("Apply:");
+    const text = formatRunsCommand(report);
+    expect(text).toContain("Apply:");
+    // The restart takes the session's background work with it; say so before Apply.
+    expect(text).toContain("Apply restarts this Agent's provider process with this account and the same conversation.");
+    expect(text).toContain("Background work the session started (shells, subagents or workflows) ends with the old process");
+    expect(text).not.toContain("This Agent is stopped.");
+  });
+
+  it("names the lost background work only in the preview of a running Agent", async () => {
+    const f = accountFixture();
+    const applied = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(applied.accountSwitch).toMatchObject({ state: "completed", source: "running" });
+    expect(formatRunsCommand(applied)).not.toContain("Background work the session started");
+    const unconfirmed = await collectRunAccountSwitch({ run: f.entry, account: "work", backend: f.backend,
+      requestBackend: f.requestBackend, observation: { schemaVersion: 1, state: "transitioning", agentId: f.entry.agentId } });
+    expect(unconfirmed).toMatchObject({ ok: false, error: { code: "account_switch_source_unavailable" } });
+    expect(unconfirmed).not.toHaveProperty("source");
+    expect(formatRunAccountSwitch(unconfirmed)).not.toContain("Background work the session started");
   });
 
   it.each(["claude", "codex"].flatMap((provider) => ["local", "ssh"].flatMap((kind) =>
@@ -1210,7 +1228,10 @@ describe("Closed Agents", () => {
   it("restarts a stopped Agent with another account through the same transition", async () => {
     const f = closedFixture();
     const preview = await collectRunsCommand({ ...f, opts: { rest: ["switch-account", f.entry.name], account: "work" } });
-    expect(preview).toMatchObject({ ok: true, accountSwitch: { state: "preview", conversationId: null } });
+    expect(preview).toMatchObject({ ok: true, accountSwitch: { state: "preview", conversationId: null, source: "stopped" } });
+    const text = formatRunsCommand(preview);
+    expect(text).toContain("This Agent is stopped. Apply restarts it with this account and its retained conversation.");
+    expect(text).not.toContain("Background work the session started");
     expect(preview.accountSwitch.continuation.start).toEqual(["runtime", "switch", f.entry.agentId, "terminal",
       "--account", "work", "--credential-generation", "generation-2", "--expected-revision", "4",
       "--idempotency-key", preview.accountSwitch.continuation.requestId, "--backend", "local", "--json"]);
