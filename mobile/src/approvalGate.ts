@@ -6,7 +6,9 @@
  * typed character, pasted line and trackpad step passes through the same
  * decision. It holds no timer and no cache beyond the id of the approval it
  * last proved: that id is the identity of the approval being answered, which
- * is exactly what "once per approval" needs.
+ * is exactly what "once per approval" needs. Home's cards answer approvals
+ * they name rather than one a stream reports, so they pass that identity
+ * themselves (`answer`); the decision is the same one.
  *
  * One authority, for later: `device_identity.rs` plans an LAContext policy on
  * the Secure-Enclave signing key. When that ships, this UI-side gate must be
@@ -28,6 +30,11 @@ export interface ApprovalGate {
    * on it can stop waiting.
    */
   admit(send: () => void, dropped?: () => void): void;
+  /**
+   * `admit` for an answer to the approval `approvalId` names, from a surface
+   * that knows which approval it answers instead of observing the agent.
+   */
+  answer(approvalId: string, send: () => void, dropped?: () => void): void;
   /** A new attachment: forget the approval, the queue and any sheet still up. */
   reset(): void;
 }
@@ -46,7 +53,8 @@ export function createApprovalGate(options: ApprovalGateOptions): ApprovalGate {
   let pending: string | undefined;
   /** The one approval this phone has already proven its owner for. */
   let proven: string | undefined;
-  let queue: { send: () => void; dropped?: () => void }[] = [];
+  /** Each waiting send with the approval it would answer, or none. */
+  let queue: { id?: string; send: () => void; dropped?: () => void }[] = [];
   let prompting = false;
   /** Bumped by `reset` so a sheet answered after it releases nothing. */
   let generation = 0;
@@ -57,11 +65,37 @@ export function createApprovalGate(options: ApprovalGateOptions): ApprovalGate {
     queue = [];
     if (check === "passed") {
       proven = id;
-      for (const { send } of waiting) send();
+      // In order. A send for another approval asks again, and what follows
+      // it waits behind that sheet: one proof never answers two approvals.
+      for (const item of waiting) admitFor(item.id, item.send, item.dropped);
       return;
     }
     options.refused(check);
     for (const { dropped } of waiting) dropped?.();
+  };
+
+  const admitFor = (id: string | undefined, send: () => void, dropped?: () => void) => {
+    // A sheet is up: everything waits behind it, in order — even input the
+    // agent no longer needs proven, or it would overtake what came first.
+    if (prompting) {
+      queue.push({ id, send, dropped });
+      return;
+    }
+    if (!options.enabled() || id === undefined || id === proven) {
+      send();
+      return;
+    }
+    const opened = generation;
+    queue.push({ id, send, dropped });
+    prompting = true;
+    options.confirm().then(
+      (check) => {
+        if (opened === generation) settle(id, check);
+      },
+      () => {
+        if (opened === generation) settle(id, "failed");
+      },
+    );
   };
 
   return {
@@ -69,28 +103,10 @@ export function createApprovalGate(options: ApprovalGateOptions): ApprovalGate {
       pending = approvalIdentity(state);
     },
     admit(send, dropped) {
-      // A sheet is up: everything waits behind it, in order — even input the
-      // agent no longer needs proven, or it would overtake what came first.
-      if (prompting) {
-        queue.push({ send, dropped });
-        return;
-      }
-      if (!options.enabled() || pending === undefined || pending === proven) {
-        send();
-        return;
-      }
-      const id = pending;
-      const opened = generation;
-      queue.push({ send, dropped });
-      prompting = true;
-      options.confirm().then(
-        (check) => {
-          if (opened === generation) settle(id, check);
-        },
-        () => {
-          if (opened === generation) settle(id, "failed");
-        },
-      );
+      admitFor(pending, send, dropped);
+    },
+    answer(approvalId, send, dropped) {
+      admitFor(approvalId, send, dropped);
     },
     reset() {
       generation += 1;

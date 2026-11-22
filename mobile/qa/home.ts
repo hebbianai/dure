@@ -33,6 +33,19 @@ const actions: CensusActions = {
 	pair: () => {},
 	settings: () => {},
 	hold: () => {},
+	// The answer lands at once: the card leaves, as it does on a phone.
+	answerApproval: (card) => {
+		const attentionId = card.approval?.attentionId;
+		if (!attentionId) return;
+		model = {
+			...model,
+			approvalAnswers: {
+				...model.approvalAnswers,
+				[attentionId]: { attentionId, state: "sent" },
+			},
+		};
+		preserveHomeScroll(root, draw);
+	},
 	refresh: () => {
 		model = { ...model, busy: !model.busy };
 		preserveHomeScroll(root, draw);

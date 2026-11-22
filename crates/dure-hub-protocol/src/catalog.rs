@@ -124,6 +124,36 @@ pub struct SessionPresentation {
     /// when the account sheet opens (`session_account.rs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<SessionAccountSummary>,
+    /// The approval the agent waits on, while the Host carries what its
+    /// provider asks. It names the same wait as `display_state: "blocked"`;
+    /// the phone's home shows it there and answers it with
+    /// `AgentApprovalAnswerV1` where the entry carries `approval_answer`.
+    /// Absent from older desktops; an older phone ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<SessionApproval>,
+}
+
+/// A pending approval as the desktop's runtime state names it: the Host's
+/// attention id, which an answer must quote, and what the provider asks.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionApproval {
+    pub attention_id: String,
+    pub request: SessionApprovalRequest,
+}
+
+/// The tool, its bounded input summary and the answers the provider offers.
+///
+/// Choices stay strings: the phone reads them with the same validator as the
+/// Host's runtime record, so a newer choice leaves the approval to the
+/// terminal instead of failing the catalog.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionApprovalRequest {
+    pub tool_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    pub choices: Vec<String>,
 }
 
 /// The account line the desktop draws for one session.
@@ -347,6 +377,49 @@ mod tests {
         let older: SessionPresentation =
             serde_json::from_str(r#"{"activityAt":1700000000000}"#).unwrap();
         assert_eq!(older.account, None);
+    }
+
+    /// A pending approval travels in the shape the phone's shared reader
+    /// takes, and an older desktop's presentation reads as "none carried".
+    #[test]
+    fn the_pending_approval_is_optional_in_both_directions() {
+        let mut current = catalog();
+        current.sessions[0].presentation = Some(SessionPresentation {
+            display_state: Some("blocked".into()),
+            approval: Some(SessionApproval {
+                attention_id: "attention-7".into(),
+                request: SessionApprovalRequest {
+                    tool_name: "Bash".into(),
+                    summary: Some("cargo test".into()),
+                    choices: vec!["approve".into(), "deny".into()],
+                },
+            }),
+            ..Default::default()
+        });
+        let encoded = encode(&current).unwrap();
+        assert_eq!(read(&mut encoded.as_slice()).unwrap(), current);
+        let wire = serde_json::to_value(&current.sessions[0].presentation).unwrap();
+        assert_eq!(
+            wire["approval"],
+            serde_json::json!({
+                "attentionId": "attention-7",
+                "request": {
+                    "toolName": "Bash",
+                    "summary": "cargo test",
+                    "choices": ["approve", "deny"],
+                },
+            })
+        );
+
+        let older: SessionPresentation =
+            serde_json::from_str(r#"{"displayState":"blocked"}"#).unwrap();
+        assert_eq!(older.approval, None);
+        assert!(
+            serde_json::to_value(older)
+                .unwrap()
+                .get("approval")
+                .is_none()
+        );
     }
 
     /// The conversation capability is optional both ways: a catalog from an

@@ -51,6 +51,27 @@ const sessions: HubProbeSession[] = Array.from({ length: 40 }, (_, index) => ({
 // One session the computer answers for but cannot attach: it stands under the
 // "연결할 수 없음" heading at the end of the list, the way the phone shows it.
 sessions[6] = { ...sessions[6], ready: false, lifecycle: "exited" };
+// Needs you: an approval the computer carried and answers from the phone, and
+// an agent waiting for an answer. The other blocked rows wait without content.
+sessions[5] = {
+	...sessions[5],
+	approval_answer: true,
+	presentation: {
+		...sessions[5].presentation,
+		approval: {
+			attentionId: "qa-approval",
+			request: {
+				toolName: "Bash",
+				summary: "pnpm --dir mobile test -- src/homeNeedsYou.test.ts",
+				choices: ["approve", "approve_always", "deny"],
+			},
+		},
+	},
+};
+sessions[8] = {
+	...sessions[8],
+	presentation: { ...sessions[8].presentation, displayState: "input" },
+};
 export function createHomeFixture(): CensusModel {
 	return {
 		census: [],

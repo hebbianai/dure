@@ -68,6 +68,7 @@ describe("useHubSidebarLayout — mobile presentation", () => {
 			gitStatuses: {},
 			sessionTitle: {},
 			pinnedPanes: {},
+			sessionAgentRuntimeState: {},
 		});
 	});
 
@@ -133,6 +134,31 @@ describe("useHubSidebarLayout — mobile presentation", () => {
 		})));
 		expect(account()).toEqual({ label: "Work", pending: { label: "Spare" } });
 		expect(JSON.stringify(lastSent(send))).not.toContain("/profiles/");
+	});
+
+	/** #626: the phone's home answers the approval the row waits on, so the
+	 * row carries the Host's attention id and request while it is pending. */
+	it("publishes the Host's pending approval and drops it once answered", () => {
+		const waiting = {
+			terminalEpoch: "terminal-1", revision: "4", observedThroughOutputSeq: "9",
+			lifecycle: "running", activity: "waiting", attention: "approval_required",
+			attentionId: "attention-7", source: "provider_event",
+			approvalRequest: { toolName: "Bash", summary: "cargo test", choices: ["approve", "deny"] },
+		} as const;
+		useStore.setState({ sessionAgentRuntimeState: { [agent.sessionId]: waiting } });
+		const send = vi.fn();
+		renderHook(() => useHubSidebarLayout(send));
+		const approval = () => lastSent(send).placements["hmux-1"].presentation?.approval;
+		expect(approval()).toEqual({
+			attentionId: "attention-7",
+			request: { toolName: "Bash", summary: "cargo test", choices: ["approve", "deny"] },
+		});
+		act(() => useStore.setState({
+			sessionAgentRuntimeState: {
+				[agent.sessionId]: { ...waiting, revision: "5", activity: "working", attention: "none", attentionId: undefined, approvalRequest: undefined },
+			},
+		}));
+		expect(approval()).toBeUndefined();
 	});
 
 	/**

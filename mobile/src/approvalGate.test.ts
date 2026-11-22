@@ -147,6 +147,64 @@ describe("createApprovalGate", () => {
   });
 });
 
+describe("an answer to a named approval (home's cards)", () => {
+  it("asks once per approval it names, whatever the gate observed", async () => {
+    const { gate, confirm, sent, answer } = harness();
+    // Nothing observed: home has no stream, and names the approval itself.
+    gate.answer("card-1", () => sent.push("allow-1"));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    await answer("passed");
+    expect(sent).toEqual(["allow-1"]);
+
+    gate.answer("card-1", () => sent.push("again-1"));
+    expect(sent).toEqual(["allow-1", "again-1"]);
+    expect(confirm).toHaveBeenCalledTimes(1);
+
+    gate.answer("card-2", () => sent.push("deny-2"));
+    expect(confirm).toHaveBeenCalledTimes(2);
+    await answer("passed");
+    expect(sent).toEqual(["allow-1", "again-1", "deny-2"]);
+  });
+
+  it("never lets one proof release an answer to another approval", async () => {
+    const { gate, confirm, refused, sent, answer } = harness();
+    const dropped: string[] = [];
+    gate.answer("card-1", () => sent.push("allow-1"), () => dropped.push("allow-1"));
+    gate.answer("card-2", () => sent.push("allow-2"), () => dropped.push("allow-2"));
+    expect(confirm).toHaveBeenCalledTimes(1);
+
+    await answer("passed");
+    // The first is proven and sent; the second asks for its own approval.
+    expect(sent).toEqual(["allow-1"]);
+    expect(confirm).toHaveBeenCalledTimes(2);
+
+    await answer("cancelled");
+    expect(sent).toEqual(["allow-1"]);
+    expect(dropped).toEqual(["allow-2"]);
+    expect(refused).toHaveBeenCalledWith("cancelled");
+  });
+
+  it("asks again for a terminal approval that changed while the sheet was up", async () => {
+    const { gate, confirm, sent, admit, answer } = harness();
+    gate.observe(runtime({ attentionId: "appr-1" }));
+    admit("a");
+    gate.observe(runtime({ attentionId: "appr-2" }));
+    admit("b");
+    await answer("passed");
+    expect(sent).toEqual(["a"]);
+    expect(confirm).toHaveBeenCalledTimes(2);
+    await answer("passed");
+    expect(sent).toEqual(["a", "b"]);
+  });
+
+  it("sends without asking while the preference is off", () => {
+    const { gate, confirm, sent } = harness(false);
+    gate.answer("card-1", () => sent.push("allow"));
+    expect(sent).toEqual(["allow"]);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+});
+
 describe("a send that waits on its result", () => {
   it("is told it was dropped by a refused sheet or a reset, never after it was sent", async () => {
     const { gate, sent, answer } = harness();

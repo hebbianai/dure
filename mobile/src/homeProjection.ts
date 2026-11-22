@@ -1,3 +1,7 @@
+import {
+	type PendingApproval,
+	parseAgentApprovalRequest,
+} from "@/lib/agents/approvalRequest";
 import type { SessionPresentation } from "@/lib/hub/sessionPresentation";
 import type {
 	SpacesFacetSource,
@@ -33,6 +37,68 @@ export interface HomeGroup {
 	readonly key: string;
 	readonly label: string;
 	readonly rows: readonly HomeRow[];
+}
+
+/** One agent waiting for the person, in home's Needs you section. */
+export interface NeedsYouCard {
+	readonly view: HomeRow;
+	/** What it waits for, as the desktop's display state says. */
+	readonly wait: "approval" | "input";
+	/**
+	 * The approval the card answers in place: the computer carried what it
+	 * asks and answers it from the phone (`approval_answer`). Without it the
+	 * card opens the agent, where the person answers.
+	 */
+	readonly approval?: PendingApproval;
+}
+
+/** The display states that wait for a person, and for what. */
+const WAITS: Readonly<Record<string, NeedsYouCard["wait"]>> = {
+	blocked: "approval",
+	input: "input",
+};
+
+/**
+ * The approval a row's computer carried, read with the same validator as the
+ * Host's own record: anything malformed is absent and the agent is answered
+ * where it runs, as before.
+ */
+function answerableApproval(view: HomeRow): PendingApproval | undefined {
+	const source = view.row.source;
+	if (source.kind !== "hub" || source.session.approval_answer !== true)
+		return undefined;
+	const carried: unknown = source.session.presentation?.approval;
+	if (typeof carried !== "object" || carried === null) return undefined;
+	const { attentionId, request } = carried as Record<string, unknown>;
+	const parsed = parseAgentApprovalRequest(request);
+	return typeof attentionId === "string" && attentionId && parsed
+		? { attentionId, request: parsed }
+		: undefined;
+}
+
+/**
+ * Every agent waiting for an approval or an answer, newest wait first.
+ *
+ * Read from home's own rows and their desktop display state — the attention
+ * the list's rows already show, not a second model of it — and across every
+ * group and filter: a wait in another Space still waits. Rows that cannot be
+ * opened right now are left out, since the card could only fail.
+ */
+export function needsYou(rows: readonly HomeRow[]): NeedsYouCard[] {
+	const cards: NeedsYouCard[] = [];
+	for (const view of rows) {
+		const wait = view.displayState ? WAITS[view.displayState] : undefined;
+		if (!wait || !view.row.source.reachable || !view.row.source.session.ready)
+			continue;
+		const approval = wait === "approval" ? answerableApproval(view) : undefined;
+		cards.push({ view, wait, ...(approval ? { approval } : {}) });
+	}
+	return cards.sort(
+		(left, right) =>
+			(right.view.activityAt ?? 0) - (left.view.activityAt ?? 0) ||
+			left.view.row.title.localeCompare(right.view.row.title) ||
+			left.view.row.sessionId.localeCompare(right.view.row.sessionId),
+	);
 }
 
 export function homeRows(
@@ -139,5 +205,6 @@ export function projectHome(
 		})),
 		choices: spacesFilterChoices(universe.rows, options.filters),
 		hidden: universe.hidden,
+		needsYou: needsYou(universe.rows),
 	};
 }
