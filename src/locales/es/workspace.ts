@@ -216,7 +216,7 @@ export const workspace: Record<string, string> = {
 	"workspace.externalOpen.terminalGroup": "Terminal externo",
 	"workspace.paneDrop.splitLeft": "Dividir a la izquierda",
 	"workspace.paneMenu.worktreeRemovalAvailable": "Eliminación del worktree disponible",
-	"workspace.agentWindow.accountSwitchPaneMissing": "No se encuentra el panel original, por lo que no se puede cambiar de cuenta.",
+	"workspace.agentWindow.sourcePaneMissing": "No se encuentra el panel original, por lo que no se puede cambiar desde la ventana grande.",
 	"workspace.agentWindow.forkPresentationFailed": "Se creó la bifurcación, pero la ventana de origen no pudo abrir su panel de Agent",
 	"workspace.popout.returnAction": "Volver",
 	"workspace.popout.returnToOrigin": "Volver a la posición original",

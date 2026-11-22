@@ -33,10 +33,7 @@ import type {
 	PendingChatHandoverV1,
 } from "@/lib/agents/chatHandover";
 import {
-	applyChatHandoverNow,
-	cancelChatHandover,
-	type ChatHandoverSwitch,
-	requestChatHandover,
+	type NativeAgentViewPort,
 	useChatHandoverInFlight,
 } from "@/lib/agents/chatHandoverRuntime";
 import { t } from "@/lib/i18n";
@@ -57,10 +54,11 @@ function failureText(failure: DureAgentRuntimeTransitionFailureV1): string {
 		: t("agents.runtime.switchToChatFailed");
 }
 
-/** The one View control of a native Terminal pane: the terminal itself, the
+/** The one View control of a native Terminal Agent: the terminal itself, the
  * observer Conversation, or a move into Chat. Chat is the primary action; a
  * busy agent keeps working and switches at its next idle turn boundary.
- * Stopping the turn to switch now is an explicit secondary choice. */
+ * Stopping the turn to switch now is an explicit secondary choice. Every move
+ * runs through `port`, so the pane and its large window change one runtime. */
 export function AgentViewControl({
 	agentId,
 	view,
@@ -71,8 +69,7 @@ export function AgentViewControl({
 	disabled = false,
 	disabledTitle,
 	chatDisabledTitle,
-	onViewChange,
-	onSwitch,
+	port,
 	onSwitchingChange,
 }: {
 	agentId: string;
@@ -86,8 +83,7 @@ export function AgentViewControl({
 	disabledTitle?: string;
 	/** Why Chat cannot be chosen right now, when it cannot. */
 	chatDisabledTitle?: string;
-	onViewChange(view: NativeAgentViewV1): void;
-	onSwitch: ChatHandoverSwitch;
+	port: NativeAgentViewPort;
 	onSwitchingChange?(switching: boolean): void;
 }) {
 	const inFlight = useChatHandoverInFlight(agentId);
@@ -114,14 +110,15 @@ export function AgentViewControl({
 	const choose = (next: ViewChoice) => {
 		if (next === "chat") {
 			if (pending && pending.lastError === undefined) return;
-			run(() => requestChatHandover(agentId, onSwitch));
+			run(() => port.requestChat());
 			return;
 		}
 		// Choosing a terminal view again is the user changing their mind about
 		// a scheduled move; it must not leave a switch armed behind the menu.
-		if (pending) cancelChatHandover(agentId);
 		setFailure(null);
-		onViewChange(next);
+		void (pending ? port.cancelChat() : Promise.resolve())
+			.then(() => port.setView(next))
+			.catch((cause) => setFailure(agentRuntimeTransitionFailure(cause)));
 	};
 
 	const viewLabel = t("agents.runtime.viewLabel");
@@ -259,7 +256,13 @@ export function AgentViewControl({
 									</span>
 								</DropdownMenuItem>
 								<DropdownMenuItem
-									onSelect={() => cancelChatHandover(agentId)}
+									onSelect={() => {
+										void port
+											.cancelChat()
+											.catch((cause) =>
+												setFailure(agentRuntimeTransitionFailure(cause)),
+											);
+									}}
 								>
 									<X />
 									<span className="text-xs">
@@ -309,7 +312,7 @@ export function AgentViewControl({
 						variant="destructive"
 						onConfirm={() =>
 							run(
-								() => applyChatHandoverNow(agentId, onSwitch),
+								() => port.applyChatNow(),
 								() => setConfirmDiscard(false),
 							)
 						}

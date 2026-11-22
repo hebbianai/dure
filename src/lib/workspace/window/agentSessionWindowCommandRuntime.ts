@@ -83,7 +83,10 @@ function requireSourceAgent(
 		throw new Error(
 			command.action === "present_fork"
 				? "fork presentation source Agent mismatch"
-				: "credential command source Agent mismatch",
+				: command.action === "set_native_view" ||
+						command.action === "chat_handover"
+					? "view command source Agent mismatch"
+					: "credential command source Agent mismatch",
 		);
 	}
 }
@@ -187,6 +190,31 @@ export async function executeAgentSessionWindowCommand(
 			throw forkPresentationFailure();
 		}
 		return { kind: "presented" };
+	}
+
+	if (
+		command.action === "set_native_view" ||
+		command.action === "chat_handover"
+	) {
+		// The same handover runtime and shared Chat transition the source pane's
+		// own View control uses; its in-flight guard and the durable intent fence
+		// a move started from the pane and one started from its large window.
+		const handover = await import("@/lib/agents/chatHandoverRuntime");
+		requireSourceAgent(command, presentationRuntime);
+		if (command.action === "set_native_view") {
+			handover.setNativeAgentView(command.agentId, command.view);
+			return { kind: "view_set" };
+		}
+		if (command.step === "request") {
+			const result = await handover.requestChatHandover(command.agentId);
+			return { kind: "chat_handover", outcome: result.kind };
+		}
+		if (command.step === "apply_now") {
+			await handover.applyChatHandoverNow(command.agentId);
+			return { kind: "chat_handover", outcome: "applied" };
+		}
+		handover.cancelChatHandover(command.agentId);
+		return { kind: "chat_handover", outcome: "cancelled" };
 	}
 
 	if (command.action === "switch") {

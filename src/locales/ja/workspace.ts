@@ -216,7 +216,7 @@ export const workspace: Record<string, string> = {
 	"workspace.externalOpen.terminalGroup": "外部ターミナル",
 	"workspace.paneDrop.splitLeft": "左に分割",
 	"workspace.paneMenu.worktreeRemovalAvailable": "ワークツリーの削除を選択可能",
-	"workspace.agentWindow.accountSwitchPaneMissing": "元の pane が見つからないため、アカウントを切り替えられません",
+	"workspace.agentWindow.sourcePaneMissing": "元の pane が見つからないため、大きなウィンドウから変更できません",
 	"workspace.agentWindow.forkPresentationFailed": "フォークは作成されましたが、元のウィンドウで Agent pane を開けませんでした",
 	"workspace.popout.returnAction": "元の位置へ",
 	"workspace.popout.returnToOrigin": "元の位置に戻す",

@@ -125,7 +125,7 @@ export const workspace: Record<string, string> = {
 	"workspace.externalOpen.terminalGroup": "외부 터미널",
 	"workspace.paneDrop.splitLeft": "왼쪽으로 분할",
 	"workspace.paneMenu.worktreeRemovalAvailable": "워크트리 삭제 선택 가능",
-	"workspace.agentWindow.accountSwitchPaneMissing": "원래 pane을 찾을 수 없어 계정을 전환할 수 없습니다",
+	"workspace.agentWindow.sourcePaneMissing": "원래 pane을 찾을 수 없어 큰 창에서 바꿀 수 없습니다",
 	"workspace.agentWindow.forkPresentationFailed": "포크는 생성됐지만 원본 창에서 Agent pane을 열 수 없습니다",
 	"workspace.popout.returnAction": "원래 위치로",
 	"workspace.popout.returnToOrigin": "원래 위치로 되돌리기",

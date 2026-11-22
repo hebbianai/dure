@@ -25,6 +25,31 @@ export type ChatHandoverRequestResult =
 	| { kind: "completed" }
 	| { kind: "scheduled" };
 
+/** The View control's moves for one Agent: show its terminal or its
+ * Conversation, or move it into Chat. A pane runs them in its own window
+ * (`localNativeAgentViewPort`); the large window sends the same moves to the
+ * window that owns the source pane, so both surfaces change one runtime. */
+export interface NativeAgentViewPort {
+	setView(view: NativeAgentViewV1): Promise<void>;
+	requestChat(): Promise<unknown>;
+	applyChatNow(): Promise<void>;
+	cancelChat(): Promise<void>;
+}
+
+export function localNativeAgentViewPort(
+	agentId: string,
+	switchRuntime: ChatHandoverSwitch,
+): NativeAgentViewPort {
+	return {
+		setView: async (view) => setNativeAgentView(agentId, view),
+		requestChat: () => requestChatHandover(agentId, switchRuntime),
+		applyChatNow: () => applyChatHandoverNow(agentId, switchRuntime),
+		cancelChat: async () => {
+			cancelChatHandover(agentId);
+		},
+	};
+}
+
 function agentById(agentId: string): Agent | undefined {
 	return useStore.getState().agents.find((agent) => agent.id === agentId);
 }

@@ -216,7 +216,7 @@ export const workspace: Record<string, string> = {
 	"workspace.externalOpen.terminalGroup": "Terminal externo",
 	"workspace.paneDrop.splitLeft": "Dividir à esquerda",
 	"workspace.paneMenu.worktreeRemovalAvailable": "Remoção da worktree disponível",
-	"workspace.agentWindow.accountSwitchPaneMissing": "O painel de origem não foi encontrado, então não é possível trocar de conta.",
+	"workspace.agentWindow.sourcePaneMissing": "O painel de origem não foi encontrado, então não é possível alterar isto na janela grande.",
 	"workspace.agentWindow.forkPresentationFailed": "O fork foi criado, mas a janela de origem não conseguiu abrir o painel do Agent",
 	"workspace.popout.returnAction": "Retornar",
 	"workspace.popout.returnToOrigin": "Voltar à posição original",

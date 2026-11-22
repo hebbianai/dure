@@ -16,10 +16,13 @@ import { t } from "@/lib/i18n";
  * on the same right-click; the hide itself is deferred one task so the menu
  * finishes closing before the trigger unmounts. */
 export function AgentToolbarSlot({
+	controlId,
 	controlLabel,
 	onHide,
 	children,
 }: {
+	/** Catalog id, exposed so surfaces can be compared control by control. */
+	controlId: string;
 	/** Short neutral control name, already localized. */
 	controlLabel: string;
 	onHide: () => void;
@@ -31,7 +34,12 @@ export function AgentToolbarSlot({
 				asChild
 				onContextMenu={(event) => event.stopPropagation()}
 			>
-				<span className="flex min-w-0 shrink-0 items-center">{children}</span>
+				<span
+					className="flex min-w-0 shrink-0 items-center"
+					data-agent-toolbar-control={controlId}
+				>
+					{children}
+				</span>
 			</ContextMenuTrigger>
 			<ContextMenuContent>
 				<ContextMenuItem onSelect={() => setTimeout(onHide, 0)}>

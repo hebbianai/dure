@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { t } from "@/lib/i18n";
+
+const handover = vi.hoisted(() => ({
+	setNativeAgentView: vi.fn(),
+	requestChatHandover: vi.fn(async () => ({ kind: "scheduled" as const })),
+	applyChatHandoverNow: vi.fn(async () => {}),
+	cancelChatHandover: vi.fn(() => true),
+}));
+vi.mock("@/lib/agents/chatHandoverRuntime", () => handover);
 import { agentFixture } from "@/test/agentFixtures";
 import {
 	type AgentSessionWindowCommandRuntime,
@@ -104,5 +112,68 @@ describe("Agent session window command runtime", () => {
 		await expect(
 			executeAgentSessionWindowCommand(command, runtime),
 		).rejects.toThrow(t("workspace.agentWindow.forkPresentationFailed"));
+	});
+
+	it("runs View moves through the source window's own handover runtime", async () => {
+		const { runtime } = presentationRuntime();
+		const source = {
+			agentId: "agent-source",
+			desktopId: "desktop-source",
+			panelId: "agent:agent-source",
+		};
+
+		await expect(
+			executeAgentSessionWindowCommand(
+				{ ...source, action: "set_native_view", view: "conversation" },
+				runtime,
+			),
+		).resolves.toEqual({ kind: "view_set" });
+		await expect(
+			executeAgentSessionWindowCommand(
+				{ ...source, action: "chat_handover", step: "request" },
+				runtime,
+			),
+		).resolves.toEqual({ kind: "chat_handover", outcome: "scheduled" });
+		await expect(
+			executeAgentSessionWindowCommand(
+				{ ...source, action: "chat_handover", step: "apply_now" },
+				runtime,
+			),
+		).resolves.toEqual({ kind: "chat_handover", outcome: "applied" });
+		await expect(
+			executeAgentSessionWindowCommand(
+				{ ...source, action: "chat_handover", step: "cancel" },
+				runtime,
+			),
+		).resolves.toEqual({ kind: "chat_handover", outcome: "cancelled" });
+
+		expect(handover.setNativeAgentView).toHaveBeenCalledWith(
+			"agent-source",
+			"conversation",
+		);
+		// The shared Chat transition: no pane-specific switch is passed, so the
+		// source runs exactly what its own View control and idle watcher run.
+		expect(handover.requestChatHandover).toHaveBeenCalledWith("agent-source");
+		expect(handover.applyChatHandoverNow).toHaveBeenCalledWith("agent-source");
+		expect(handover.cancelChatHandover).toHaveBeenCalledWith("agent-source");
+	});
+
+	it("refuses a View move when the source pane now holds another Agent", async () => {
+		const { runtime } = presentationRuntime();
+		handover.requestChatHandover.mockClear();
+
+		await expect(
+			executeAgentSessionWindowCommand(
+				{
+					action: "chat_handover",
+					step: "request",
+					agentId: "agent-moved-away",
+					desktopId: "desktop-source",
+					panelId: "agent:agent-source",
+				},
+				runtime,
+			),
+		).rejects.toThrow("view command source Agent mismatch");
+		expect(handover.requestChatHandover).not.toHaveBeenCalled();
 	});
 });
