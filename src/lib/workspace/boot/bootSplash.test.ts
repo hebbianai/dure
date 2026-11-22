@@ -7,7 +7,7 @@ import {
 	savedThemePreference,
 } from "@/lib/workspace/boot/bootSplash";
 import { BOOT_SPLASH } from "@/lib/workspace/boot/logoDotField";
-import { WORKSPACE_PAINTED_EVENT } from "@/lib/workspace/boot/workspaceBootState";
+import { WINDOW_CONTENT_PAINTED_EVENT } from "@/lib/workspace/boot/windowBootState";
 
 let handle: BootSplashHandle | null = null;
 let clock = 0;
@@ -18,7 +18,7 @@ const tick = (ms: number) => {
 };
 const layer = () => document.getElementById(BOOT_SPLASH_ID);
 const painted = () =>
-	document.dispatchEvent(new Event(WORKSPACE_PAINTED_EVENT));
+	document.dispatchEvent(new Event(WINDOW_CONTENT_PAINTED_EVENT));
 const memoryStorage = (theme?: string) => ({
 	getItem: () =>
 		theme === undefined

@@ -1,6 +1,6 @@
 /**
  * The boot splash: the logo dot field over the window from the first moment
- * the document exists until the workspace has painted.
+ * the document exists until the window's content has painted.
  *
  * This runs from index.html ahead of the app bundle, because the wait it
  * covers *is* the app bundle — a cold start spends most of its blank time
@@ -14,9 +14,11 @@
  * painted covers it, so it is only ever seen where nothing exists yet, and it
  * shows faintly through the glass sidebar until it leaves. It only appears if
  * boot is actually slow (BOOT_SPLASH.showDelayMs), never blocks input, and
- * leaves on the workspace's own first paint, which Workspace.tsx announces
- * through WORKSPACE_PAINTED_EVENT (workspaceBootState). Under reduced motion
- * the field is drawn once, still, and the exit is a cut.
+ * leaves on the window content's first paint — the workspace's in a workspace
+ * window, the root's in any other — announced through
+ * WINDOW_CONTENT_PAINTED_EVENT (windowBootState). Until then it repaints every
+ * frame, even fully covered, so a window must not leave that unannounced.
+ * Under reduced motion the field is drawn once, still, and the exit is a cut.
  */
 import { DURABLE_APP_STORE_NAME } from "@/lib/persistence/durableAppStoreName";
 import { resolveDarkAppearance } from "@/lib/theme/themeAppearance";
@@ -33,7 +35,7 @@ import {
 	type LogoDot,
 	sampleDotField,
 } from "@/lib/workspace/boot/logoDotField";
-import { WORKSPACE_PAINTED_EVENT } from "@/lib/workspace/boot/workspaceBootState";
+import { WINDOW_CONTENT_PAINTED_EVENT } from "@/lib/workspace/boot/windowBootState";
 
 export const BOOT_SPLASH_ID = "dure-boot-splash";
 
@@ -45,7 +47,7 @@ export interface BootSplashOptions {
 }
 
 export interface BootSplashHandle {
-	/** The workspace has painted; leave the way the phase policy says. */
+	/** The window's content has painted; leave the way the phase policy says. */
 	dismiss(): void;
 	/** Tear everything down at once (tests, hot reload). */
 	dispose(): void;
@@ -124,7 +126,7 @@ export function installBootSplash(
 		layer?.remove();
 		layer = null;
 		doc.documentElement.style.removeProperty("color-scheme");
-		doc.removeEventListener(WORKSPACE_PAINTED_EVENT, onPainted);
+		doc.removeEventListener(WINDOW_CONTENT_PAINTED_EVENT, onPainted);
 	};
 
 	const show = () => {
@@ -226,7 +228,7 @@ export function installBootSplash(
 		dismiss();
 	}
 
-	doc.addEventListener(WORKSPACE_PAINTED_EVENT, onPainted, { once: true });
+	doc.addEventListener(WINDOW_CONTENT_PAINTED_EVENT, onPainted, { once: true });
 	showTimer = win.setTimeout(show, BOOT_SPLASH.showDelayMs + 1);
 
 	return { dismiss, dispose: teardown, phase };
