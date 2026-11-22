@@ -194,19 +194,6 @@ async fn startup_worker_panic_does_not_cancel_other_candidates_and_retries_once(
     assert_eq!(healthy_attach_attempts.load(Ordering::SeqCst), 1);
 }
 
-// Keep virtual time still while the real SQLite executor completes a query.
-// A wall-clock deadline bounds a broken fixture without auto-advancing retry timers.
-async fn wait_for_attempt(predicate: impl Fn() -> bool) -> Result<(), &'static str> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !predicate() {
-        if std::time::Instant::now() >= deadline {
-            return Err("recovery did not reach the expected observation");
-        }
-        tokio::task::yield_now().await;
-    }
-    Ok(())
-}
-
 #[tokio::test]
 async fn persistent_startup_worker_panic_uses_the_existing_exponential_backoff() {
     let (_root, mut state, _, _) = fixture(Vec::new()).await;
@@ -250,10 +237,10 @@ async fn persistent_startup_worker_panic_uses_the_existing_exponential_backoff()
 
     let observed = async {
         wait_for_attempt(|| panicking_attach_attempts.load(Ordering::SeqCst) == 1).await?;
-        let expected_delays_ms = [50, 100, 200, 400, 800, 1_000, 1_000];
+        let expected_delays_ms = [50, 100, 200, 400, 800, 1_600, 3_200];
         for (index, delay_ms) in expected_delays_ms.into_iter().enumerate() {
             tokio::time::advance(std::time::Duration::from_millis(delay_ms - 1)).await;
-            tokio::task::yield_now().await;
+            settle_without_advancing_time(150).await;
             if panicking_attach_attempts.load(Ordering::SeqCst) != index + 1 {
                 return Err("a persistent panic retried before its exponential delay");
             }
@@ -289,7 +276,7 @@ async fn persistent_startup_worker_panic_uses_the_existing_exponential_backoff()
     assert_eq!(attempts.len(), 8);
     for (pair, delay_ms) in attempts
         .windows(2)
-        .zip([50, 100, 200, 400, 800, 1_000, 1_000])
+        .zip([50, 100, 200, 400, 800, 1_600, 3_200])
     {
         let elapsed = pair[1].0 - pair[0].0;
         assert!(elapsed >= std::time::Duration::from_millis(delay_ms));
