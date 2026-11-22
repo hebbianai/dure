@@ -2,7 +2,7 @@ mod create_run;
 pub(crate) mod deadlines;
 pub(crate) mod wake_retries;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use agent_orchestration::contract::{
@@ -17,7 +17,7 @@ use agent_orchestration::domain::{
     MessagePurpose, Revision, RunId, RuntimeRef, SessionIdentityRef, TaskId, TenantRef,
     WorkerEndpoint, WorkerEndpointFence, WorkspaceId, validate_idempotency_key, validate_timestamp,
 };
-use agent_orchestration::ports::state::{DeliveryEntry, StoreState};
+use agent_orchestration::ports::state::{DeliveryEntry, IdempotencyEntry, RecordIndex, StoreState};
 use agent_orchestration::ports::{
     ReadEventsStoreRequest, ReadEventsStoreResult, Store, StoreError, StoreFuture, StoreHandle,
 };
@@ -433,10 +433,10 @@ impl WorkflowInteractionStore {
     ) -> Result<T, StoreError> {
         let mut connection = self.begin_write().await?;
         let outcome = async {
-            let mut state = load_state(&mut connection, authority).await?;
-            let (result, changed) = transition(&mut state)?;
+            let mut snapshot = load_state(&mut connection, authority).await?;
+            let (result, changed) = transition(&mut snapshot.state)?;
             if changed {
-                persist_state(&mut connection, authority, &state).await?;
+                persist_state(&mut connection, authority, &snapshot).await?;
             }
             Ok(result)
         }
@@ -455,8 +455,8 @@ impl WorkflowInteractionStore {
             .await
             .map_err(|_| unavailable())?;
         let outcome = async {
-            let mut state = load_state(&mut connection, authority).await?;
-            transition(&mut state)
+            let mut snapshot = load_state(&mut connection, authority).await?;
+            transition(&mut snapshot.state)
         }
         .await;
         let (result, changed) = finish_store_transaction(&mut connection, outcome).await?;
@@ -478,8 +478,8 @@ impl WorkflowInteractionStore {
             .await
             .map_err(|_| unavailable())?;
         let outcome = async {
-            let state = load_state(&mut connection, authority).await?;
-            query(&state)
+            let snapshot = load_state(&mut connection, authority).await?;
+            query(&snapshot.state)
         }
         .await;
         finish_store_transaction(&mut connection, outcome).await
@@ -2172,16 +2172,16 @@ async fn move_dispatch_session(
                 .map_err(|error| storage("corrupt_orchestration_context", error.to_string()))?,
             "orchestration worker endpoint",
         )?;
-        let mut state = load_state(connection, &source.target.authority)
+        let mut snapshot = load_state(connection, &source.target.authority)
             .await
             .map_err(|error| map_orchestration_store("load rebind state", error))?;
         rebind_worker_session_state(
-            &mut state,
+            &mut snapshot.state,
             &source.target,
             session_identity(&request.target)?,
         )
         .map_err(|error| map_orchestration_store("rebind worker Session", error))?;
-        persist_state(connection, &source.target.authority, &state)
+        persist_state(connection, &source.target.authority, &snapshot)
             .await
             .map_err(|error| map_orchestration_store("persist rebind state", error))?;
         let digest = negotiation_evidence(
@@ -2930,11 +2930,63 @@ fn context_from_row(
     Ok(receipt)
 }
 
+/// An authority's orchestration state as `load_state` read it, with the rows
+/// it was decoded from, so `persist_state` writes back only what changed.
+struct AuthoritySnapshot {
+    state: StoreState,
+    stored: StoredRows,
+}
+
+/// The rows `load_state` read for one authority, inside the transaction that
+/// persists it. `persist_state` writes only the rows an operation added or
+/// changed against them, so a call's writes follow its own change rather than
+/// the authority's whole history. Events, idempotency entries and
+/// acknowledgements are append-only: the state engine never rewrites one it
+/// holds, so only their keys are kept. Dispatch rows, interactions and
+/// deliveries change in place, so they are kept as stored.
+#[derive(Default)]
+struct StoredRows {
+    dispatches: BTreeMap<String, StoredDispatch>,
+    interactions: BTreeMap<String, String>,
+    deliveries: BTreeMap<String, String>,
+    events: BTreeSet<i64>,
+    idempotency: BTreeSet<String>,
+    acknowledgements: BTreeSet<String>,
+    next_cursor: Option<i64>,
+}
+
+/// The authority-row columns `persist_state` writes for a Dispatch, and the
+/// state the Dispatch is in.
+#[derive(PartialEq)]
+struct StoredDispatch {
+    revision: i64,
+    blocked_by: Option<String>,
+    worker_endpoint_json: String,
+    deadline_json: Option<String>,
+    state: DispatchState,
+}
+
+impl StoredDispatch {
+    fn of(dispatch: &DispatchRecord) -> Result<Self, StoreError> {
+        Ok(Self {
+            revision: i64::try_from(dispatch.revision.get()).map_err(|_| corrupt())?,
+            blocked_by: dispatch
+                .blocked_by
+                .as_ref()
+                .map(|interaction| interaction.as_str().to_owned()),
+            worker_endpoint_json: encode_store(&dispatch.worker_endpoint)?,
+            deadline_json: dispatch.deadline.as_ref().map(encode_store).transpose()?,
+            state: dispatch.state,
+        })
+    }
+}
+
 async fn load_state(
     connection: &mut SqliteConnection,
     authority: &AuthorityScope,
-) -> Result<StoreState, StoreError> {
+) -> Result<AuthoritySnapshot, StoreError> {
     let key = authority_key(authority)?;
+    let mut stored = StoredRows::default();
     let mut dispatches = Vec::new();
     let rows = sqlx::query(
         r#"
@@ -2977,9 +3029,9 @@ async fn load_state(
         {
             return Err(corrupt());
         }
-        let blocked_by = row
-            .try_get::<Option<String>, _>("blocked_by")
-            .map_err(|_| corrupt())?
+        let blocked_by_column: Option<String> = row.try_get("blocked_by").map_err(|_| corrupt())?;
+        let blocked_by = blocked_by_column
+            .clone()
             .map(InteractionId::new)
             .transpose()
             .map_err(|_| corrupt())?;
@@ -3004,19 +3056,18 @@ async fn load_state(
             });
         };
         let generation: i64 = row.try_get("generation").map_err(|_| corrupt())?;
-        let mut worker_endpoint: WorkerEndpoint =
-            decode_store(row.try_get("worker_endpoint_json").map_err(|_| corrupt())?)?;
+        let revision: i64 = row.try_get("revision").map_err(|_| corrupt())?;
+        let worker_endpoint_json: String =
+            row.try_get("worker_endpoint_json").map_err(|_| corrupt())?;
+        let mut worker_endpoint: WorkerEndpoint = decode_store(&worker_endpoint_json)?;
         restore_wake_capability(&mut worker_endpoint);
+        let deadline_json: Option<String> = row.try_get("deadline_json").map_err(|_| corrupt())?;
         let record = DispatchRecord {
             coordinator_grant: decode_store(
-                row.try_get("coordinator_grant_json")
+                &row.try_get::<String, _>("coordinator_grant_json")
                     .map_err(|_| corrupt())?,
             )?,
-            deadline: row
-                .try_get::<Option<String>, _>("deadline_json")
-                .map_err(|_| corrupt())?
-                .map(decode_store)
-                .transpose()?,
+            deadline: deadline_json.as_deref().map(decode_store).transpose()?,
             target: InteractionTarget {
                 authority: authority.clone(),
                 run_id: RunId::new(row.try_get::<String, _>("run_id").map_err(|_| corrupt())?)
@@ -3031,7 +3082,7 @@ async fn load_state(
                 generation: Generation::new(u64::try_from(generation).map_err(|_| corrupt())?)
                     .map_err(|_| corrupt())?,
             },
-            revision: positive_revision_store(row.try_get("revision").map_err(|_| corrupt())?)?,
+            revision: positive_revision_store(revision)?,
             state,
             blocked_by,
             interaction_capability: CapabilityRef::new(
@@ -3047,60 +3098,74 @@ async fn load_state(
             worker_endpoint,
         };
         record.validate().map_err(|_| corrupt())?;
+        stored.dispatches.insert(
+            record.target.dispatch_id.as_str().to_owned(),
+            StoredDispatch {
+                revision,
+                blocked_by: blocked_by_column,
+                worker_endpoint_json,
+                deadline_json,
+                state,
+            },
+        );
         dispatches.push(record);
     }
-    let interactions = decode_store_rows(
+    let mut interactions = Vec::new();
+    for (interaction_id, record_json, interaction) in decode_stored_rows::<String, InteractionRecord>(
         connection,
-        "SELECT record_json FROM workflow_interactions WHERE authority_key = ?1 ORDER BY interaction_id",
+        "SELECT interaction_id, record_json FROM workflow_interactions WHERE authority_key = ?1 ORDER BY interaction_id",
         &key,
-        "record_json",
     )
-    .await?;
-    let events: Vec<Event> = decode_store_rows(
+    .await?
+    {
+        stored.interactions.insert(interaction_id, record_json);
+        interactions.push(interaction);
+    }
+    let mut events = Vec::new();
+    for (cursor, _, event) in decode_stored_rows::<i64, Event>(
         connection,
-        "SELECT event_json FROM workflow_interaction_events WHERE authority_key = ?1 ORDER BY cursor",
+        "SELECT cursor, event_json FROM workflow_interaction_events WHERE authority_key = ?1 ORDER BY cursor",
         &key,
-        "event_json",
     )
-    .await?;
-    let mut deliveries: Vec<DeliveryEntry> = decode_store_rows(
+    .await?
+    {
+        stored.events.insert(cursor);
+        events.push(event);
+    }
+    let mut deliveries = Vec::new();
+    for (receipt_id, delivery_json, delivery) in decode_stored_rows::<String, DeliveryEntry>(
         connection,
-        "SELECT delivery_json FROM workflow_interaction_deliveries WHERE authority_key = ?1 ORDER BY event_cursor, receipt_id",
+        "SELECT receipt_id, delivery_json FROM workflow_interaction_deliveries WHERE authority_key = ?1 ORDER BY event_cursor, receipt_id",
         &key,
-        "delivery_json",
     )
-    .await?;
+    .await?
+    {
+        stored.deliveries.insert(receipt_id, delivery_json);
+        deliveries.push(delivery);
+    }
+    let index = RecordIndex::new(&dispatches, &events);
     for delivery in &mut deliveries {
         if delivery.receipt.endpoint.is_none() || delivery.wake_capability.is_some() {
             continue;
         }
-        let Some(event) = events
-            .iter()
-            .find(|event| event.cursor == delivery.receipt.event_cursor)
-        else {
-            continue;
-        };
-        let Some(dispatch) = dispatches
-            .iter()
-            .find(|dispatch| dispatch.target == event.target)
+        let Some(dispatch) = index
+            .event(delivery.receipt.event_cursor)
+            .and_then(|event| index.dispatch(&event.target))
         else {
             continue;
         };
         delivery.wake_capability = dispatch.worker_endpoint.wake_capability.clone();
     }
     let mut idempotency = BTreeMap::new();
-    for row in sqlx::query(
+    for (operation_key, _, entry) in decode_stored_rows::<String, IdempotencyEntry>(
+        connection,
         "SELECT operation_key, entry_json FROM workflow_interaction_idempotency WHERE authority_key = ?1 ORDER BY operation_key",
+        &key,
     )
-    .bind(&key)
-    .fetch_all(&mut *connection)
-    .await
-    .map_err(|_| unavailable())?
+    .await?
     {
-        idempotency.insert(
-            row.try_get("operation_key").map_err(|_| corrupt())?,
-            decode_store(row.try_get("entry_json").map_err(|_| corrupt())?)?,
-        );
+        stored.idempotency.insert(operation_key.clone());
+        idempotency.insert(operation_key, entry);
     }
     let mut acknowledgement_idempotency = BTreeMap::new();
     for row in sqlx::query(
@@ -3111,19 +3176,20 @@ async fn load_state(
     .await
     .map_err(|_| unavailable())?
     {
+        let operation_key: String = row.try_get("operation_key").map_err(|_| corrupt())?;
+        stored.acknowledgements.insert(operation_key.clone());
         acknowledgement_idempotency.insert(
-            row.try_get("operation_key").map_err(|_| corrupt())?,
+            operation_key,
             row.try_get("fingerprint").map_err(|_| corrupt())?,
         );
     }
-    let next_cursor = sqlx::query_scalar::<_, i64>(
+    stored.next_cursor = sqlx::query_scalar::<_, i64>(
         "SELECT next_cursor FROM workflow_interaction_cursors WHERE authority_key = ?1",
     )
     .bind(&key)
     .fetch_optional(&mut *connection)
     .await
-    .map_err(|_| unavailable())?
-    .unwrap_or(1);
+    .map_err(|_| unavailable())?;
     let state = StoreState {
         dispatches,
         interactions,
@@ -3131,10 +3197,10 @@ async fn load_state(
         deliveries,
         idempotency,
         acknowledgement_idempotency,
-        next_cursor: u64::try_from(next_cursor).map_err(|_| corrupt())?,
+        next_cursor: u64::try_from(stored.next_cursor.unwrap_or(1)).map_err(|_| corrupt())?,
     };
     state.validate()?;
-    Ok(state)
+    Ok(AuthoritySnapshot { state, stored })
 }
 
 fn restore_wake_capability(endpoint: &mut WorkerEndpoint) {
@@ -3150,11 +3216,15 @@ fn restore_wake_capability(endpoint: &mut WorkerEndpoint) {
     );
 }
 
+/// Writes the rows of `snapshot.state` that differ from the rows it was
+/// loaded from: new Events, idempotency entries and acknowledgements, and the
+/// Dispatch rows, interactions and deliveries whose content changed.
 async fn persist_state(
     connection: &mut SqliteConnection,
     authority: &AuthorityScope,
-    state: &StoreState,
+    snapshot: &AuthoritySnapshot,
 ) -> Result<(), StoreError> {
+    let AuthoritySnapshot { state, stored } = snapshot;
     state.validate()?;
     let key = authority_key(authority)?;
     let latest_event_at = state
@@ -3163,9 +3233,18 @@ async fn persist_state(
         .map(|event| event.recorded_at_ms)
         .max()
         .unwrap_or(0);
+    // Events are append-only, so a longer list means this call added one and
+    // every Dispatch row's `updated_at_ms` follows it, as before.
+    let events_added = state.events.len() != stored.events.len();
     for dispatch in &state.dispatches {
         if dispatch.target.authority != *authority {
             return Err(corrupt());
+        }
+        let row = StoredDispatch::of(dispatch)?;
+        if !events_added
+            && stored.dispatches.get(dispatch.target.dispatch_id.as_str()) == Some(&row)
+        {
+            continue;
         }
         let updated = sqlx::query(
             r#"
@@ -3178,13 +3257,13 @@ async fn persist_state(
             WHERE authority_key = ?5 AND dispatch_id = ?6
             "#,
         )
-        .bind(i64::try_from(dispatch.revision.get()).map_err(|_| corrupt())?)
-        .bind(dispatch.blocked_by.as_ref().map(InteractionId::as_str))
-        .bind(encode_store(&dispatch.worker_endpoint)?)
+        .bind(row.revision)
+        .bind(row.blocked_by.as_deref())
+        .bind(&row.worker_endpoint_json)
         .bind(latest_event_at)
         .bind(&key)
         .bind(dispatch.target.dispatch_id.as_str())
-        .bind(dispatch.deadline.as_ref().map(encode_store).transpose()?)
+        .bind(row.deadline_json.as_deref())
         .execute(&mut *connection)
         .await
         .map_err(|_| unavailable())?;
@@ -3199,6 +3278,10 @@ async fn persist_state(
         if interaction.common().target.authority != *authority {
             return Err(corrupt());
         }
+        let record_json = encode_store(interaction)?;
+        if stored.interactions.get(interaction.common().id.as_str()) == Some(&record_json) {
+            continue;
+        }
         sqlx::query(
             r#"
             INSERT INTO workflow_interactions (authority_key, interaction_id, dispatch_id, record_json)
@@ -3210,23 +3293,31 @@ async fn persist_state(
         .bind(&key)
         .bind(interaction.common().id.as_str())
         .bind(interaction.common().target.dispatch_id.as_str())
-        .bind(encode_store(interaction)?)
+        .bind(record_json)
         .execute(&mut *connection)
         .await
         .map_err(|_| unavailable())?;
     }
     for event in &state.events {
+        let cursor = i64::try_from(event.cursor.get()).map_err(|_| corrupt())?;
+        if stored.events.contains(&cursor) {
+            continue;
+        }
         insert_immutable(
             connection,
             "INSERT INTO workflow_interaction_events (authority_key, cursor, event_json) VALUES (?1, ?2, ?3) ON CONFLICT(authority_key, cursor) DO NOTHING",
             "SELECT event_json FROM workflow_interaction_events WHERE authority_key = ?1 AND cursor = ?2",
             &key,
-            i64::try_from(event.cursor.get()).map_err(|_| corrupt())?,
+            cursor,
             encode_store(event)?,
         )
         .await?;
     }
     for delivery in &state.deliveries {
+        let delivery_json = encode_store(delivery)?;
+        if stored.deliveries.get(delivery.receipt.receipt_id.as_str()) == Some(&delivery_json) {
+            continue;
+        }
         sqlx::query(
             r#"
             INSERT INTO workflow_interaction_deliveries (authority_key, receipt_id, event_cursor, delivery_json)
@@ -3238,12 +3329,15 @@ async fn persist_state(
         .bind(&key)
         .bind(delivery.receipt.receipt_id.as_str())
         .bind(i64::try_from(delivery.receipt.event_cursor.get()).map_err(|_| corrupt())?)
-        .bind(encode_store(delivery)?)
+        .bind(delivery_json)
         .execute(&mut *connection)
         .await
         .map_err(|_| unavailable())?;
     }
     for (operation_key, entry) in &state.idempotency {
+        if stored.idempotency.contains(operation_key) {
+            continue;
+        }
         insert_immutable_json_text_key(
             connection,
             "INSERT INTO workflow_interaction_idempotency (authority_key, operation_key, entry_json) VALUES (?1, ?2, ?3) ON CONFLICT(authority_key, operation_key) DO NOTHING",
@@ -3255,6 +3349,9 @@ async fn persist_state(
         .await?;
     }
     for (operation_key, fingerprint) in &state.acknowledgement_idempotency {
+        if stored.acknowledgements.contains(operation_key) {
+            continue;
+        }
         insert_immutable_text_key(
             connection,
             "INSERT INTO workflow_interaction_acknowledgements (authority_key, operation_key, fingerprint) VALUES (?1, ?2, ?3) ON CONFLICT(authority_key, operation_key) DO NOTHING",
@@ -3265,26 +3362,20 @@ async fn persist_state(
         )
         .await?;
     }
-    let current = sqlx::query_scalar::<_, i64>(
-        "SELECT next_cursor FROM workflow_interaction_cursors WHERE authority_key = ?1",
-    )
-    .bind(&key)
-    .fetch_optional(&mut *connection)
-    .await
-    .map_err(|_| unavailable())?
-    .unwrap_or(1);
     let next_cursor = i64::try_from(state.next_cursor).map_err(|_| corrupt())?;
-    if next_cursor < current {
+    if next_cursor < stored.next_cursor.unwrap_or(1) {
         return Err(corrupt());
     }
-    sqlx::query(
-        "INSERT INTO workflow_interaction_cursors (authority_key, next_cursor) VALUES (?1, ?2) ON CONFLICT(authority_key) DO UPDATE SET next_cursor = excluded.next_cursor",
-    )
-    .bind(key)
-    .bind(next_cursor)
-    .execute(&mut *connection)
-    .await
-    .map_err(|_| unavailable())?;
+    if stored.next_cursor != Some(next_cursor) {
+        sqlx::query(
+            "INSERT INTO workflow_interaction_cursors (authority_key, next_cursor) VALUES (?1, ?2) ON CONFLICT(authority_key) DO UPDATE SET next_cursor = excluded.next_cursor",
+        )
+        .bind(key)
+        .bind(next_cursor)
+        .execute(&mut *connection)
+        .await
+        .map_err(|_| unavailable())?;
+    }
     Ok(())
 }
 
@@ -3344,19 +3435,29 @@ async fn persist_canonical_completion(
     Ok(())
 }
 
-async fn decode_store_rows<T: serde::de::DeserializeOwned>(
+/// One collection's rows for an authority, in query order: each row's key
+/// (the first column), its stored JSON (the second) and the decoded record.
+async fn decode_stored_rows<K, T>(
     connection: &mut SqliteConnection,
     query: &'static str,
     authority_key: &str,
-    column: &str,
-) -> Result<Vec<T>, StoreError> {
+) -> Result<Vec<(K, String, T)>, StoreError>
+where
+    K: for<'r> sqlx::Decode<'r, Sqlite> + sqlx::Type<Sqlite>,
+    T: serde::de::DeserializeOwned,
+{
     sqlx::query(query)
         .bind(authority_key)
         .fetch_all(&mut *connection)
         .await
         .map_err(|_| unavailable())?
         .into_iter()
-        .map(|row| decode_store(row.try_get(column).map_err(|_| corrupt())?))
+        .map(|row| {
+            let key = row.try_get::<K, _>(0).map_err(|_| corrupt())?;
+            let json = row.try_get::<String, _>(1).map_err(|_| corrupt())?;
+            let record = decode_store(&json)?;
+            Ok((key, json, record))
+        })
         .collect()
 }
 
@@ -3444,7 +3545,7 @@ where
             .fetch_one(&mut *connection)
             .await
             .map_err(|_| unavailable())?;
-        let existing = decode_store::<T>(existing)?;
+        let existing = decode_store::<T>(&existing)?;
         let existing = serde_json::to_value(existing).map_err(|_| corrupt())?;
         let requested = serde_json::to_value(value).map_err(|_| corrupt())?;
         if existing != requested {
@@ -3579,8 +3680,8 @@ fn encode_store(value: &impl Serialize) -> Result<String, StoreError> {
     serde_json::to_string(value).map_err(|_| corrupt())
 }
 
-fn decode_store<T: serde::de::DeserializeOwned>(value: String) -> Result<T, StoreError> {
-    serde_json::from_str(&value).map_err(|_| corrupt())
+fn decode_store<T: serde::de::DeserializeOwned>(value: &str) -> Result<T, StoreError> {
+    serde_json::from_str(value).map_err(|_| corrupt())
 }
 
 fn invalid(field: &'static str, reason: impl Into<String>) -> DomainStoreErrorV1 {

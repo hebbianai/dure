@@ -61,6 +61,39 @@ pub enum StoredReceipt {
     Complete(CompleteDispatchReceipt),
 }
 
+/// Lookups by identity over one state's Dispatches and Events, built once so
+/// a pass over every record stays linear in an authority's history instead of
+/// rescanning the Dispatches or Events for each record. Where two records
+/// share a key, the first wins, as a scan with `find` would.
+pub struct RecordIndex<'a> {
+    dispatches: BTreeMap<&'a InteractionTarget, &'a DispatchRecord>,
+    events: BTreeMap<EventCursor, &'a Event>,
+}
+
+impl<'a> RecordIndex<'a> {
+    pub fn new(dispatches: &'a [DispatchRecord], events: &'a [Event]) -> Self {
+        let mut index = Self {
+            dispatches: BTreeMap::new(),
+            events: BTreeMap::new(),
+        };
+        for dispatch in dispatches {
+            index.dispatches.entry(&dispatch.target).or_insert(dispatch);
+        }
+        for event in events {
+            index.events.entry(event.cursor).or_insert(event);
+        }
+        index
+    }
+
+    pub fn dispatch(&self, target: &InteractionTarget) -> Option<&'a DispatchRecord> {
+        self.dispatches.get(target).copied()
+    }
+
+    pub fn event(&self, cursor: EventCursor) -> Option<&'a Event> {
+        self.events.get(&cursor).copied()
+    }
+}
+
 impl StoreState {
     pub fn seeded(dispatches: Vec<DispatchRecord>) -> Result<Self, ValidationError> {
         let mut keys = std::collections::BTreeSet::new();
@@ -98,16 +131,13 @@ impl StoreState {
                 });
             }
         }
+        let index = RecordIndex::new(&self.dispatches, &self.events);
         let mut interaction_keys = std::collections::BTreeSet::new();
         for interaction in &self.interactions {
             interaction.validate().map_err(|_| StoreError::Corrupt {
                 code: "interaction_invalid",
             })?;
-            if !self
-                .dispatches
-                .iter()
-                .any(|dispatch| dispatch.target == interaction.common().target)
-            {
+            if index.dispatch(&interaction.common().target).is_none() {
                 return Err(StoreError::Corrupt {
                     code: "interaction_dispatch_missing",
                 });
@@ -127,11 +157,7 @@ impl StoreState {
             event.validate().map_err(|_| StoreError::Corrupt {
                 code: "event_invalid",
             })?;
-            if !self
-                .dispatches
-                .iter()
-                .any(|dispatch| dispatch.target == event.target)
-            {
+            if index.dispatch(&event.target).is_none() {
                 return Err(StoreError::Corrupt {
                     code: "event_dispatch_missing",
                 });
@@ -149,10 +175,8 @@ impl StoreState {
                     code: "delivery_duplicate",
                 });
             }
-            let event = self
-                .events
-                .iter()
-                .find(|event| event.cursor == delivery.receipt.event_cursor)
+            let event = index
+                .event(delivery.receipt.event_cursor)
                 .ok_or(StoreError::Corrupt {
                     code: "delivery_event_missing",
                 })?;
@@ -177,10 +201,8 @@ impl StoreState {
                     })?;
             }
             if let Some(endpoint_receipt) = &delivery.receipt.endpoint {
-                let endpoint = self
-                    .dispatches
-                    .iter()
-                    .find(|dispatch| dispatch.target == event.target)
+                let endpoint = index
+                    .dispatch(&event.target)
                     .map(|dispatch| &dispatch.worker_endpoint)
                     .ok_or(StoreError::Corrupt {
                         code: "delivery_dispatch_missing",

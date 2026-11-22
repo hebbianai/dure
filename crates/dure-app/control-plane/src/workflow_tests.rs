@@ -5769,11 +5769,14 @@ async fn event_read_route_batch_preserves_order_and_isolates_authority_failures(
     let failed_dispatch = contexts[1]["target"]["dispatchId"].as_str().unwrap();
     sqlx::query(sqlx::AssertSqlSafe(format!(
         r#"
-        CREATE TRIGGER fail_middle_route_batch_authority
-        BEFORE UPDATE ON workflow_interaction_authorities
-        WHEN OLD.dispatch_id = '{failed_dispatch}'
+        CREATE TRIGGER fail_middle_route_batch_delivery
+        BEFORE UPDATE ON workflow_interaction_deliveries
+        WHEN OLD.authority_key = (
+            SELECT authority_key FROM workflow_interaction_authorities
+            WHERE dispatch_id = '{failed_dispatch}'
+        )
         BEGIN
-            SELECT RAISE(ABORT, 'fault-injected routed Event batch authority write');
+            SELECT RAISE(ABORT, 'fault-injected routed Event batch delivery write');
         END
         "#,
     )))
@@ -5867,7 +5870,7 @@ async fn event_read_route_batch_preserves_order_and_isolates_authority_failures(
         assert_eq!(delivery["receipt"]["state"], expected_state);
     }
 
-    sqlx::query("DROP TRIGGER fail_middle_route_batch_authority")
+    sqlx::query("DROP TRIGGER fail_middle_route_batch_delivery")
         .execute(&fault_pool)
         .await
         .unwrap();
@@ -8003,10 +8006,10 @@ async fn empty_event_read_does_not_persist_unchanged_orchestration_state() {
     .unwrap();
     sqlx::query(
         r#"
-        CREATE TRIGGER fail_event_read_authority_write
-        BEFORE UPDATE ON workflow_interaction_authorities
+        CREATE TRIGGER fail_event_read_delivery_write
+        BEFORE UPDATE ON workflow_interaction_deliveries
         BEGIN
-            SELECT RAISE(ABORT, 'fault-injected event read authority write');
+            SELECT RAISE(ABORT, 'fault-injected event read delivery write');
         END
         "#,
     )
@@ -8037,7 +8040,7 @@ async fn empty_event_read_does_not_persist_unchanged_orchestration_state() {
     assert!(repeated["receipt"]["events"].as_array().unwrap().is_empty());
     assert_eq!(repeated["receipt"]["nextCursor"], cursor);
 
-    sqlx::query("DROP TRIGGER fail_event_read_authority_write")
+    sqlx::query("DROP TRIGGER fail_event_read_delivery_write")
         .execute(&fault_pool)
         .await
         .unwrap();
@@ -8068,10 +8071,10 @@ async fn empty_event_read_does_not_persist_unchanged_orchestration_state() {
     .await;
     sqlx::query(
         r#"
-        CREATE TRIGGER fail_event_read_authority_write
-        BEFORE UPDATE ON workflow_interaction_authorities
+        CREATE TRIGGER fail_event_read_delivery_write
+        BEFORE UPDATE ON workflow_interaction_deliveries
         BEGIN
-            SELECT RAISE(ABORT, 'fault-injected event read authority write');
+            SELECT RAISE(ABORT, 'fault-injected event read delivery write');
         END
         "#,
     )
@@ -8101,7 +8104,7 @@ async fn empty_event_read_does_not_persist_unchanged_orchestration_state() {
         Some(&json!("adapter_unavailable"))
     );
 
-    sqlx::query("DROP TRIGGER fail_event_read_authority_write")
+    sqlx::query("DROP TRIGGER fail_event_read_delivery_write")
         .execute(&fault_pool)
         .await
         .unwrap();
@@ -8164,10 +8167,10 @@ async fn event_read_batch_persists_once_and_rolls_back_observation_and_acknowled
     .unwrap();
     sqlx::query(
         r#"
-        CREATE TRIGGER fail_event_read_batch_cursor_write
-        BEFORE UPDATE ON workflow_interaction_cursors
+        CREATE TRIGGER fail_event_read_batch_acknowledgement_write
+        BEFORE INSERT ON workflow_interaction_acknowledgements
         BEGIN
-            SELECT RAISE(ABORT, 'fault-injected Event batch cursor write');
+            SELECT RAISE(ABORT, 'fault-injected Event batch acknowledgement write');
         END
         "#,
     )
@@ -8215,7 +8218,7 @@ async fn event_read_batch_persists_once_and_rolls_back_observation_and_acknowled
     .unwrap();
     assert_eq!(acknowledgement_count, 0);
 
-    sqlx::query("DROP TRIGGER fail_event_read_batch_cursor_write")
+    sqlx::query("DROP TRIGGER fail_event_read_batch_acknowledgement_write")
         .execute(&fault_pool)
         .await
         .unwrap();
@@ -8229,8 +8232,8 @@ async fn event_read_batch_persists_once_and_rolls_back_observation_and_acknowled
         .unwrap();
     sqlx::query(
         r#"
-        CREATE TRIGGER count_event_read_batch_authority_write
-        AFTER UPDATE ON workflow_interaction_authorities
+        CREATE TRIGGER count_event_read_batch_delivery_write
+        AFTER UPDATE ON workflow_interaction_deliveries
         BEGIN
             UPDATE event_read_batch_write_count SET count = count + 1;
         END

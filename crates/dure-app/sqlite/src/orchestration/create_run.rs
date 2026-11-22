@@ -10,9 +10,11 @@ impl WorkflowInteractionStore {
         let mut connection = self.begin_write().await?;
         let outcome = async {
             let binding = exact_local_binding(&mut connection, &request).await?;
-            let mut state = load_state(&mut connection, &request.authority).await?;
+            let mut snapshot = load_state(&mut connection, &request.authority).await?;
             let receipt =
-                state.create_run(request.clone(), context.clone(), fingerprint.clone())?;
+                snapshot
+                    .state
+                    .create_run(request.clone(), context.clone(), fingerprint.clone())?;
             if !receipt.idempotent {
                 if !crate::agent_runtime_close::is_open_on(&mut connection, &binding.agent_id)
                     .await
@@ -33,7 +35,7 @@ impl WorkflowInteractionStore {
                 .await
                 .map_err(|_| unavailable())?;
             }
-            persist_state(&mut connection, &request.authority, &state).await?;
+            persist_state(&mut connection, &request.authority, &snapshot).await?;
             Ok(receipt)
         }
         .await;
