@@ -3012,21 +3012,33 @@ fn apply_input(
             detail: None,
         };
     }
-    let result = (|| -> std::result::Result<_, crate::input_transaction::InputTransactionOutcome> {
+    // The detail is the bounded failure class behind a `ResourceLimit`
+    // refusal, as in the Unix classic receipt.
+    type Refusal = (crate::input_transaction::InputTransactionOutcome, Option<String>);
+    let result = (|| -> std::result::Result<_, Refusal> {
         let mut host = lock(&state.host).map_err(|_| {
-            crate::input_transaction::InputTransactionOutcome::NotWritten(
-                OperationReceiptReason::ResourceLimit,
+            (
+                crate::input_transaction::InputTransactionOutcome::NotWritten(
+                    OperationReceiptReason::ResourceLimit,
+                ),
+                None,
             )
         })?;
         if state.stopping.load(Ordering::Acquire) {
-            return Err(crate::input_transaction::InputTransactionOutcome::NotWritten(
-                OperationReceiptReason::HostExiting,
+            return Err((
+                crate::input_transaction::InputTransactionOutcome::NotWritten(
+                    OperationReceiptReason::HostExiting,
+                ),
+                None,
             ));
         }
         host.admit_mutation(&state.fence, input.controller_generation)
             .map_err(|error| {
-                crate::input_transaction::InputTransactionOutcome::NotWritten(
-                    crate::input_transaction::input_operation_reason(&error),
+                (
+                    crate::input_transaction::InputTransactionOutcome::NotWritten(
+                        crate::input_transaction::input_operation_reason(&error),
+                    ),
+                    crate::input_transaction::input_operation_detail(&error),
                 )
             })?;
         state
@@ -3037,15 +3049,18 @@ fn apply_input(
                 crate::input_transaction::InputAdmission::Ordinary,
             )
             .map_err(|_| {
-                crate::input_transaction::InputTransactionOutcome::NotWritten(
-                    OperationReceiptReason::ResourceLimit,
+                (
+                    crate::input_transaction::InputTransactionOutcome::NotWritten(
+                        OperationReceiptReason::ResourceLimit,
+                    ),
+                    None,
                 )
             })?
-            .map_err(|failure| failure.outcome())
+            .map_err(|failure| (failure.outcome(), failure.detail()))
     })();
-    let outcome = match &result {
-        Ok(transaction) => transaction.outcome,
-        Err(outcome) => *outcome,
+    let (outcome, detail) = match &result {
+        Ok(transaction) => (transaction.outcome, None),
+        Err((outcome, detail)) => (*outcome, detail.clone()),
     };
     let (receipt_state, reason) = crate::input_receipt::classic_outcome(outcome);
     if let Ok(transaction) = result {
@@ -3058,7 +3073,7 @@ fn apply_input(
         controller_generation: input.controller_generation,
         state: receipt_state,
         reason,
-        detail: None,
+        detail,
     }
 }
 
