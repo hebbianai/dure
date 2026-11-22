@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use dure_app::{
     AGENT_CHECKPOINT_SCHEMA_VERSION_V1, AgentCheckpointBindingAuthorityV1,
@@ -348,6 +349,46 @@ async fn binding_and_exact_fence_rollback_together_after_injected_crash_boundary
             .await
             .unwrap(),
         Some(authority(1))
+    );
+}
+
+/// A spawn publishes this binding right after its provider started. A write
+/// lock held past the busy timeout delays the publication instead of leaving
+/// the running session without its Agent.
+#[tokio::test]
+async fn a_binding_published_under_a_held_write_lock_waits_for_its_release() {
+    // Short waits over a long window: a slow machine cannot exhaust the
+    // schedule before the release is visible. A publication that does not
+    // retry fails at its first busy start, well within `still_waiting`.
+    const RETRY_UNTIL_RELEASED: &[Duration] = &[Duration::from_millis(25); 400];
+    let still_waiting = Duration::from_millis(250);
+    let root = TempDir::new().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("domain.sqlite"))
+        .await
+        .unwrap();
+    seed(&store).await;
+    let other = store.contending_writer(RETRY_UNTIL_RELEASED).await;
+    let lock = store.pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    let published = authority(1);
+    let mut publication = Box::pin(other.upsert_agent_checkpoint_binding_authority(&published));
+
+    assert!(
+        tokio::time::timeout(still_waiting, publication.as_mut())
+            .await
+            .is_err(),
+        "a binding publication that finds the write lock held must wait, not fail"
+    );
+    lock.rollback().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), publication)
+        .await
+        .expect("the publication must resume after the writer releases")
+        .unwrap();
+    assert_eq!(
+        store
+            .agent_checkpoint_binding_authority(&AgentIdV1::new("agent-1").unwrap())
+            .await
+            .unwrap(),
+        Some(published)
     );
 }
 

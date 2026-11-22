@@ -670,7 +670,7 @@ async fn execute_prepared_stage(
                             )
                             .await
                         }
-                        Err(error_code) => {
+                        Err((error_code, cause)) => {
                             append(
                                 store,
                                 &receipt,
@@ -678,7 +678,7 @@ async fn execute_prepared_stage(
                                     stage: AgentSpawnStageV1::RuntimeLaunch,
                                     attempt,
                                     error_code,
-                                    error_detail: None,
+                                    error_detail: unbound_session_detail(&session, &cause),
                                     may_have_written: None,
                                 },
                             )
@@ -1008,13 +1008,32 @@ async fn execute_prepared_stage(
     }
 }
 
+/// The Host already runs this session, and a launch-argument prompt is already
+/// in the provider. A failure to record its Agent names the session and the
+/// cause, because the same request finishes the binding: its retry asks the
+/// Host for the same launch key, which reconciles to this session instead of
+/// starting another provider.
+fn unbound_session_detail(session: &WorkflowSessionGenerationV1, cause: &str) -> Option<String> {
+    crate::workspace_git::bounded_detail(&format!(
+        "provider session {} is running but its Agent was not recorded ({cause}); \
+         retry with the same idempotency key to bind it without starting another provider",
+        session.session_id
+    ))
+}
+
+/// Records the Agent of a session the Host started. A failure carries its
+/// machine code and the cause as evidence for the receipt.
 async fn persist_native_runtime_selection(
     store: &SqliteDomainStore,
     receipt: &AgentSpawnJournalReceiptV1,
     session: &WorkflowSessionGenerationV1,
-) -> Result<(), String> {
-    let (_, runtime) = native_launch(&receipt.plan)?;
-    let observed_at_ms = clock_ms()?.max(receipt.updated_at_ms);
+) -> Result<(), (String, String)> {
+    let binding_failed = |cause: String| ("agent_spawn_native_binding_failed".to_string(), cause);
+    let (_, runtime) = native_launch(&receipt.plan)
+        .map_err(|code| (code, "the plan has no native runtime".to_string()))?;
+    let observed_at_ms = clock_ms()
+        .map_err(|code| (code, "the system clock is unavailable".to_string()))?
+        .max(receipt.updated_at_ms);
     let credential_reference_id = match &receipt.plan.request.execution_profile {
         AgentExecutionProfileV1::ProviderDefault => None,
         AgentExecutionProfileV1::CredentialReference { reference_id, .. } => {
@@ -1024,7 +1043,7 @@ async fn persist_native_runtime_selection(
     let existing = store
         .agent_checkpoint_binding_authority(&receipt.plan.agent_id)
         .await
-        .map_err(|_| "agent_spawn_native_binding_failed".to_string())?;
+        .map_err(|error| binding_failed(error.to_string()))?;
     let exact = existing.as_ref().is_some_and(|authority| {
         authority.binding.runtime_kind_id == runtime.runtime_kind_id
             && authority.binding.session_id == session.session_id
@@ -1044,7 +1063,7 @@ async fn persist_native_runtime_selection(
                 .binding
                 .binding_generation
                 .checked_add(1)
-                .ok_or_else(|| "agent_spawn_native_binding_failed".to_string())
+                .ok_or_else(|| binding_failed("the binding generation overflowed".into()))
         })?;
         store
             .upsert_agent_checkpoint_binding_authority(&AgentCheckpointBindingAuthorityV1 {
@@ -1072,7 +1091,7 @@ async fn persist_native_runtime_selection(
                 updated_at_ms: observed_at_ms,
             })
             .await
-            .map_err(|_| "agent_spawn_native_binding_failed".to_string())?;
+            .map_err(|error| binding_failed(error.to_string()))?;
     }
     store
         .initialize_agent_runtime_selection(&AgentRuntimeSelectionV1 {
@@ -1089,7 +1108,12 @@ async fn persist_native_runtime_selection(
             updated_at_ms: receipt.created_at_ms,
         })
         .await
-        .map_err(|_| "agent_spawn_runtime_selection_failed".to_string())?;
+        .map_err(|error| {
+            (
+                "agent_spawn_runtime_selection_failed".to_string(),
+                error.to_string(),
+            )
+        })?;
     Ok(())
 }
 

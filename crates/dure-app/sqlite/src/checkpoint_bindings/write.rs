@@ -1,21 +1,19 @@
 use super::*;
+use crate::SqliteDomainStore;
+use crate::session_checkout::commit_or_rollback;
 
+/// A spawn publishes this binding after the Host has started its provider, so
+/// a write lock held past the busy timeout waits on the store's retry schedule
+/// rather than leaving the running session without its Agent.
 pub(crate) async fn upsert(
-    pool: &SqlitePool,
+    store: &SqliteDomainStore,
     authority: &AgentCheckpointBindingAuthorityV1,
 ) -> Result<(), DomainStoreErrorV1> {
-    let mut connection = pool
-        .acquire()
-        .await
-        .map_err(|error| map_sqlx("upsert_checkpoint_binding_authority", error))?;
-    begin_immediate(&mut connection, "upsert_checkpoint_binding_authority").await?;
-    let result = upsert_on(&mut connection, authority).await;
-    finish_transaction(
-        &mut connection,
-        "upsert_checkpoint_binding_authority",
-        result,
-    )
-    .await
+    let mut transaction = store
+        .begin_immediate_with_retry("upsert_checkpoint_binding_authority")
+        .await?;
+    let result = upsert_on(&mut transaction, authority).await;
+    commit_or_rollback(transaction, "upsert_checkpoint_binding_authority", result).await
 }
 
 pub(crate) async fn upsert_on(

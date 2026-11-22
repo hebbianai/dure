@@ -12,6 +12,7 @@ use dure_app::{
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
+use crate::SqliteDomainStore;
 use crate::agent_runtime_close::{
     effective_close_for_agent_on, ensure_runtime_successor_source_on, ensure_transition_source_on,
 };
@@ -30,18 +31,18 @@ pub(crate) use deferred::ensure_target_activation_on;
 mod store;
 pub(crate) use request_replay::resume;
 
+/// Launchers publish the initial selection after the provider started, beside
+/// its binding, so it waits out a held write lock on the same schedule.
 pub(crate) async fn initialize_selection(
-    pool: &SqlitePool,
+    store: &SqliteDomainStore,
     selection: &AgentRuntimeSelectionV1,
 ) -> Result<AgentRuntimeSelectionV1, DomainStoreErrorV1> {
-    let mut connection = pool
-        .acquire()
-        .await
-        .map_err(|error| map_sqlx("initialize_agent_runtime_selection", error))?;
-    begin_immediate(&mut connection, "initialize_agent_runtime_selection").await?;
-    let result = initialize_selection_on(&mut connection, selection).await;
-    finish_transaction(
-        &mut connection,
+    let mut transaction = store
+        .begin_immediate_with_retry("initialize_agent_runtime_selection")
+        .await?;
+    let result = initialize_selection_on(&mut transaction, selection).await;
+    crate::session_checkout::commit_or_rollback(
+        transaction,
         "initialize_agent_runtime_selection",
         result,
     )
