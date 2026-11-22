@@ -121,7 +121,11 @@ impl PreparedRequest {
                 "registration resolution requires a prepared claim",
             ));
         };
-        let Some(state) = state else {
+        // Only the generation of this exact instance can replay its creator's
+        // activation; a replaced instance's history is not this claim's.
+        let Some(state) =
+            state.filter(|state| state.instance_digest() == Some(instance_digest.as_str()))
+        else {
             return Ok(self);
         };
         let creation = match &state.lifecycle {

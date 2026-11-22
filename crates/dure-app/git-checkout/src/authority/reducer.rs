@@ -603,29 +603,64 @@ pub(super) fn instance_conflict() -> GitCheckoutUseError {
     )
 }
 
+/// A worktree removed and re-added at the same path outside Dure leaves the
+/// Active generation of its old instance behind. A claim on another instance
+/// starts a new generation only after admission proves that instance is the
+/// one now at the path, so the old one is gone and its generation protects
+/// nothing. Another owner's active claim is the only evidence that something
+/// still runs there, so it is never discarded.
+fn replaced_generation(
+    state: &State,
+    request: &PreparedRequest,
+) -> Result<bool, GitCheckoutUseError> {
+    let PreparedAction::Claim {
+        instance_digest, ..
+    } = &request.action
+    else {
+        return Ok(false);
+    };
+    if state.phase() != Phase::Active || state.instance_digest() == Some(instance_digest.as_str()) {
+        return Ok(false);
+    }
+    if state
+        .claims
+        .values()
+        .all(|claim| !claim.is_active() || claim.claim_id == request.operation_id.as_str())
+    {
+        Ok(true)
+    } else {
+        Err(instance_conflict())
+    }
+}
+
 pub(super) fn reduce_request(
     current: Option<&State>,
     request: &PreparedRequest,
 ) -> Result<Plan, GitCheckoutUseError> {
-    if let Some(state) = current {
-        if operation_conflict(state, request)? {
-            if matches!(&request.action, PreparedAction::StartCreation { .. }) {
-                return Err(GitCheckoutUseError::new(
-                    "checkout_use_creation_reconcile_required",
-                    "creation already started; inspect the frozen target before reconciling",
-                ));
-            }
-            return Ok(Plan {
-                state: None,
-                receipt: replay::replay_request(state, request)?,
-                validate_instance: match &request.action {
-                    PreparedAction::Claim { instance, .. }
-                    | PreparedAction::Activate { instance, .. } => Some(instance.clone()),
-                    _ => None,
-                },
-                validate_absent_target: false,
-            });
+    let replaced = match current {
+        Some(state) => replaced_generation(state, request)?,
+        None => false,
+    };
+    if let Some(state) = current
+        && !replaced
+        && operation_conflict(state, request)?
+    {
+        if matches!(&request.action, PreparedAction::StartCreation { .. }) {
+            return Err(GitCheckoutUseError::new(
+                "checkout_use_creation_reconcile_required",
+                "creation already started; inspect the frozen target before reconciling",
+            ));
         }
+        return Ok(Plan {
+            state: None,
+            receipt: replay::replay_request(state, request)?,
+            validate_instance: match &request.action {
+                PreparedAction::Claim { instance, .. }
+                | PreparedAction::Activate { instance, .. } => Some(instance.clone()),
+                _ => None,
+            },
+            validate_absent_target: false,
+        });
     }
     let base_revision = current.map_or(0, |state| state.revision);
     match &request.action {
@@ -804,6 +839,7 @@ pub(super) fn reduce_request(
             let start_new_generation = match current {
                 None => true,
                 Some(state) if state.phase() == Phase::Removed => true,
+                Some(_) if replaced => true,
                 Some(state) if state.phase() == Phase::Active => {
                     if state.instance_digest() == Some(instance_digest) {
                         false

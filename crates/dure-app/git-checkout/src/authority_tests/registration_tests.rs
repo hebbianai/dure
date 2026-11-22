@@ -33,6 +33,75 @@ fn registration_claim_reads_are_exact_active_and_do_not_write_git() {
     assert_eq!(read_state(&authority).unwrap().unwrap().oid, released);
 }
 
+/// A worktree removed and re-added at the same path outside Dure keeps the
+/// Active generation of its old instance. Its own registration can move to the
+/// live checkout once no other owner still claims the old one.
+#[test]
+fn a_replaced_worktree_moves_to_the_live_checkout_once_no_other_owner_claims_it() {
+    let fixture = fixture();
+    let replaced = capture_git_checkout_registration(&fixture.linked)
+        .unwrap()
+        .unwrap();
+    let (authority, replaced_digest) =
+        Authority::for_instance(&fixture.repository, &replaced.instance).unwrap();
+    let owner = operation("replaced-owner");
+    let other = operation("other-owner");
+    claim_git_checkout_registration(&fixture.linked, &owner, Some(&replaced)).unwrap();
+    claim_git_checkout_registration(&fixture.linked, &other, Some(&replaced)).unwrap();
+    let linked = fixture.linked.to_str().unwrap();
+    git(
+        &fixture.repository,
+        &["worktree", "remove", "--force", linked],
+    );
+    git(
+        &fixture.repository,
+        &["worktree", "add", "--detach", linked, "HEAD"],
+    );
+    let live = capture_git_checkout_registration(&fixture.linked)
+        .unwrap()
+        .unwrap();
+    assert_ne!(live.instance, replaced.instance);
+    assert_eq!(
+        live.instance.canonical_path,
+        replaced.instance.canonical_path
+    );
+
+    // The frozen registration names a checkout that no longer exists.
+    assert_eq!(
+        claim_git_checkout_registration(&fixture.linked, &owner, Some(&replaced))
+            .unwrap_err()
+            .code,
+        "worktree_identity_changed"
+    );
+    // Another owner's claim is the only evidence the path is still in use.
+    assert_eq!(
+        claim_git_checkout_registration(&fixture.linked, &owner, Some(&live))
+            .unwrap_err()
+            .code,
+        "worktree_identity_changed"
+    );
+    let stale = read_state(&authority).unwrap().unwrap().state;
+    assert_eq!(stale.instance_digest(), Some(replaced_digest.as_str()));
+
+    release_git_checkout_registration(&replaced, &other, &operation("other-release")).unwrap();
+    assert_eq!(
+        claim_git_checkout_registration(&fixture.linked, &owner, Some(&live)).unwrap(),
+        Some(live.clone())
+    );
+    let current = read_state(&authority).unwrap().unwrap().state;
+    assert_eq!(current.phase(), Phase::Active);
+    assert_eq!(current.revision, stale.revision + 2);
+    let claims = read_git_checkout_claims(&live).unwrap();
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].claim_id, owner);
+    // The old registration no longer names this generation; releasing it is a no-op.
+    assert!(read_git_checkout_claims(&replaced).unwrap().is_empty());
+    release_git_checkout_registration(&replaced, &owner, &operation("stale-release")).unwrap();
+    assert_eq!(read_git_checkout_claims(&live).unwrap().len(), 1);
+    release_git_checkout_registration(&live, &owner, &operation("live-release")).unwrap();
+    assert!(read_git_checkout_claims(&live).unwrap().is_empty());
+}
+
 #[test]
 fn capture_freezes_a_nested_checkout_without_creating_a_membership_claim() {
     let fixture = fixture();

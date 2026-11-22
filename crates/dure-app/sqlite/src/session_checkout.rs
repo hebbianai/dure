@@ -1,6 +1,6 @@
 use dure_app::{
-    DomainStoreErrorV1, OperationIdV1, SessionCheckoutAdmissionV1, SessionCheckoutBindingV1,
-    SessionCheckoutIdentityV1, SessionCheckoutRecordV1,
+    DomainStoreErrorV1, GitCheckoutRegistrationV1, OperationIdV1, SessionCheckoutAdmissionV1,
+    SessionCheckoutBindingV1, SessionCheckoutIdentityV1, SessionCheckoutRecordV1,
 };
 use sqlx::{Sqlite, Transaction};
 use std::future::Future;
@@ -68,6 +68,31 @@ impl SessionCheckoutAdmission {
     /// preparing an open binding does not establish resource retention.
     pub fn retained(&self) -> bool {
         self.retained
+    }
+
+    /// Record the checkout the caller just claimed under this binding's claim
+    /// after the registered worktree was replaced at the same path. Close then
+    /// releases the checkout the session actually uses.
+    pub async fn replace_registration(
+        &mut self,
+        registration: GitCheckoutRegistrationV1,
+    ) -> Result<(), DomainStoreErrorV1> {
+        let binding = SessionCheckoutBindingV1 {
+            registration: Some(registration),
+            ..self.binding.clone()
+        };
+        let serialized = serde_json::to_string(&binding)
+            .map_err(|error| serialization("session_checkout_binding", error))?;
+        sqlx::query(
+            "UPDATE session_checkout_bindings SET binding_json = ?2 WHERE registration_id = ?1",
+        )
+        .bind(binding.claim_id.as_str())
+        .bind(serialized)
+        .execute(&mut *self.transaction)
+        .await
+        .map_err(|error| map_sqlx("replace_session_checkout_registration", error))?;
+        self.binding = binding;
+        Ok(())
     }
 
     pub async fn finish(mut self) -> Result<(), DomainStoreErrorV1> {

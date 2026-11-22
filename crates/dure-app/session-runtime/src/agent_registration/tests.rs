@@ -14,6 +14,7 @@ use dure_git_checkout::{
 use hmux_client::{ManagedCreateAdvanceResolution, ManagedCreateRequest, PermissionMode};
 use std::process::Command;
 
+mod replaced_checkout;
 mod unavailable_git;
 
 #[tokio::test]
