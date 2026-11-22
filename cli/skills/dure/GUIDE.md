@@ -606,6 +606,12 @@ dure client host add ec2-106 --json
 dure client host add --hostname example.com --user ec2-user --identity-file ~/.ssh/key.pem --json
 ```
 
+To tidy a Space, `dure spaces show <space-id>` lists every saved pane with its
+session's `LIVE` state (`alive`, `exited`, `unknown`) and `IDLE` time, including
+panes no window has mounted; `client pane state` answers only mounted panes and
+returns `pane_not_found` for the rest. Close a pane whose session exited with
+`client pane close`.
+
 Open a local report or document with the same file viewer as the GUI:
 
 ```sh

@@ -1791,6 +1791,7 @@ inspect accepts a Session ID, not a pane ID. For a pane use:
   dure client pane state <pane-id> --json
   dure client observe --json
 Observe includes each pane's session/workspace binding; keep its backend for SSH.
+dure spaces show <space-id> joins every pane in a Space to its session liveness.
 inspect --json includes conversationId and runtime.conversationIdentity when the
 Host has observed them. It does not guess a provider's conversation log path.
 IDLE and idleSinceMs say how long, and since when (Unix ms), the Host has seen an

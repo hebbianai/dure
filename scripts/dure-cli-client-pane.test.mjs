@@ -676,6 +676,8 @@ describe("Dure connected-client pane CLI", () => {
     expect(report.presentation.spaces.flatMap((space) => space.panes.map((pane) => pane.id))).toEqual(["agent:main", "agent:popout-1"]);
     expect(report.presentation.source).toBe("saved_client_projection");
     expect(report.presentation.ageMs).toBeGreaterThan(0);
+    // Pane state answers only mounted panes; liveness for every listed pane lives in spaces show (#629).
+    expect(report.nextAction).toContain("dure spaces show <space-id>");
     expect(cli.stdout).not.toContain("private-fixture-value");
     expect(fixture.requests[0]).toMatchObject({ method: "GET", url: "/ping" });
   });

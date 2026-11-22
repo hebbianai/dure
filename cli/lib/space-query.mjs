@@ -6,6 +6,7 @@ import {
 } from "./session-query.mjs";
 
 import { selectSpace } from "./space-selection.mjs";
+import { formatDuration } from "./hub-run-records.mjs";
 
 export const SPACE_QUERY_SCHEMA_VERSION = 1;
 function sessionKey(workspaceId, sessionId) {
@@ -123,6 +124,7 @@ function projectPane(pane, sessionsByIdentity, expectedTarget, sessionsPartial) 
         generation: session.runtime.generation,
         provider: session.provider,
         liveness: session.liveness,
+        idleSinceMs: session.idleSinceMs ?? null,
         cwd: session.cwd,
       },
       agentProjection: agentProjection(pane, session),
@@ -339,10 +341,25 @@ export function formatSpaceQuery(report) {
   }
   return report.space.panes.length === 0
     ? `${report.space.id}\t${report.space.name}\t(no panes)`
-    : report.space.panes
-        .map(
-          (pane) =>
-            `${pane.id}\t${pane.type}\t${pane.title ?? ""}\t${pane.runtime.state}${pane.runtime.session ? `\t${pane.runtime.session.workspaceId}/${pane.runtime.session.sessionId}` : ""}`,
-        )
-        .join("\n");
+    : [SPACE_PANE_TABLE_HEADER, ...report.space.panes.map(spacePaneRow)].join("\n");
+}
+
+const SPACE_PANE_TABLE_HEADER = "PANE\tTYPE\tTITLE\tSTATE\tLIVE\tIDLE\tSESSION";
+
+// LIVE and IDLE read the bound session like dure ls, so a pane whose session
+// exited stands out even when no window has it mounted.
+function spacePaneRow(pane) {
+  const session = pane.runtime.session;
+  return [
+    pane.id,
+    pane.type,
+    pane.title ?? "-",
+    pane.runtime.state,
+    session?.liveness.state ?? "-",
+    // The age the Host measured, so the column does not grow while it is read.
+    session?.idleSinceMs == null
+      ? "-"
+      : formatDuration(session.liveness.observedAtMs - session.idleSinceMs),
+    session ? `${session.workspaceId}/${session.sessionId}` : "-",
+  ].join("\t");
 }

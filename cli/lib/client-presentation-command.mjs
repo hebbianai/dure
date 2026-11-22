@@ -87,6 +87,8 @@ Local creation reports native attachment; SSH creation reports durable pane moun
 An uncertain response is not permission to create again; inspect the app first.
 A failed local create sets error.retryable=true only after its pane and session were removed.
 Use pane state/act for the mounted pane's actions (including terminal.input).
+Pane state answers only panes a window has mounted. For every saved pane's session
+liveness and idle time in a Space, mounted or not, use dure spaces show <space-id>.
 When a managed Agent pane offers refresh, pane act uses the same conversation
 recovery as the UI Refresh and Resume session controls, including closed-source recovery.
 When a terminal offers reconnect, pane act retries the same session attachment without restarting its provider.
