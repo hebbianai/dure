@@ -68,7 +68,7 @@ const defaultServices: MainWindowGlobalServices = {
 				localRepositoryProjects(useStore.getState().projects).map(
 					(project) => project.path,
 				),
-			volumeSpace,
+			volumeSpace: (paths) => volumeSpace(paths),
 			scanProject: scanProjectWorktrees,
 			setLowDisk: setLowDiskSpace,
 			state: getWorktreeReclaimState,
