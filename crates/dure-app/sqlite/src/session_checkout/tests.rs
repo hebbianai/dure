@@ -3,7 +3,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use dure_app::{DomainStore, DomainStoreErrorV1, ProjectIdV1, ProjectRecordV1};
-use sqlx::sqlite::SqlitePoolOptions;
 
 use super::*;
 
@@ -46,36 +45,16 @@ const RETRY_UNTIL_RELEASED: &[Duration] = &[Duration::from_millis(20), Duration:
 const RETRY_BRIEFLY: &[Duration] = &[Duration::from_millis(10), Duration::from_millis(10)];
 
 async fn second_writer(store: &SqliteDomainStore) -> SqliteDomainStore {
-    // Zero busy timeout makes a held SQLite write lock observable as Busy,
-    // rather than inferring exclusion from a sleep or scheduling delay. The
-    // fixture asserts exclusion at the moment of the call, which a retry would
-    // only postpone; the retry tests inject their own schedule.
-    let options = store
-        .pool
-        .connect_options()
-        .as_ref()
-        .clone()
-        .busy_timeout(Duration::ZERO);
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
-        .await
-        .unwrap();
-    SqliteDomainStore {
-        pool,
-        busy_retry_delays: &[],
-        ..store.clone()
-    }
+    // The fixture asserts exclusion at the moment of the call, which a retry
+    // would only postpone; the retry tests inject their own schedule.
+    store.contending_writer(&[]).await
 }
 
 async fn retrying_writer(
     store: &SqliteDomainStore,
     busy_retry_delays: &'static [Duration],
 ) -> SqliteDomainStore {
-    SqliteDomainStore {
-        busy_retry_delays,
-        ..second_writer(store).await
-    }
+    store.contending_writer(busy_retry_delays).await
 }
 
 /// The zero-timeout writer's single pooled connection returns to idle only

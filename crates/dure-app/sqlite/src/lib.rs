@@ -1013,6 +1013,32 @@ impl WorkflowStore for SqliteDomainStore {
 }
 
 #[cfg(test)]
+impl SqliteDomainStore {
+    /// Another store on this database with one pooled connection and a zero
+    /// busy timeout, so a write lock held elsewhere is observable as `Busy` at
+    /// the moment of the call rather than inferred from a sleep. A busy write
+    /// start retries on `busy_retry_delays`.
+    pub(crate) async fn contending_writer(&self, busy_retry_delays: &'static [Duration]) -> Self {
+        let options = self
+            .pool
+            .connect_options()
+            .as_ref()
+            .clone()
+            .busy_timeout(Duration::ZERO);
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        Self {
+            pool,
+            busy_retry_delays,
+            ..self.clone()
+        }
+    }
+}
+
+#[cfg(test)]
 mod agent_dispatch_stop_tests;
 #[cfg(test)]
 mod agent_runtime_close_tests;
