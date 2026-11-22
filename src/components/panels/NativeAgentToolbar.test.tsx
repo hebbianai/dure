@@ -5,7 +5,7 @@ import {
 	NativeAgentToolbar,
 	type NativeAgentToolbarRuntime,
 } from "@/components/panels/NativeAgentToolbar";
-import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
+import type { AgentLaunchSelectionSurface } from "@/lib/agents/agentLaunchSelectionSurface";
 import { hmuxManagedBinding } from "@/lib/terminal/terminalBinding";
 import {
 	AGENT_TOOLBAR_CONTROLS,
@@ -23,20 +23,23 @@ vi.mock("@/components/scm/useGitAvailability", () => ({
 const agent = managedAgentFixture({ runtimeBinding: hmuxManagedBinding("session-1", "workspace-1") });
 const binding = hmuxManagedBinding("session-1", "workspace-1");
 
-function launchSelection(): AgentRuntimeLaunchSelectionView {
+function launchSelection(): AgentLaunchSelectionSurface {
 	return {
-		ownerKey: "fixture-runtime",
-		paneId: "agent:agent-1",
-		loaded: true,
-		hydrationError: false,
-		model: "gpt-fixture",
-		effort: "high",
-		permissionMode: "default",
-		switching: false,
-		error: null,
-		switchSelection: vi.fn(),
-		retryHydration: vi.fn(),
-		dismissError: vi.fn(),
+		presentation: {
+			loaded: true,
+			hydrationError: false,
+			model: "gpt-fixture",
+			effort: "high",
+			permissionMode: "default",
+			switching: false,
+			error: null,
+			observedModel: null,
+			catalog: { offered: true, status: "idle" },
+			modelOptions: [{ value: "gpt-fixture", label: "GPT Fixture" }],
+			effortOptions: [{ value: "high", label: "High" }],
+			permissionOptions: [{ value: "default", label: "Default" }],
+		},
+		run: vi.fn(async () => {}),
 	};
 }
 

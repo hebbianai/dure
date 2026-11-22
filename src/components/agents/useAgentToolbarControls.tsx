@@ -7,7 +7,7 @@ import {
 	useMemo,
 } from "react";
 import { AgentToolbarSlot } from "@/components/agents/AgentToolbarSlot";
-import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
+import type { AgentLaunchSelectionPresentationV1 } from "@/lib/agents/agentLaunchSelectionSurface";
 import { t } from "@/lib/i18n";
 import { resolveEffectiveInterfaceMode } from "@/lib/workspace/pane/interfaceMode";
 import {
@@ -130,7 +130,9 @@ const LAUNCH_CONTROL_IDS = [
  * Skip approvals remains an attention signal; the common resolver keeps
  * Permissions Pro-only without changing the selected runtime permissions. */
 export function useAgentLaunchControlsPresentation(
-	launch: AgentRuntimeLaunchSelectionView | undefined,
+	launch:
+		| Pick<AgentLaunchSelectionPresentationV1, "loaded" | "permissionMode">
+		| undefined,
 ): AgentLaunchControlsPresentation {
 	const permissionAttention =
 		launch?.loaded === true && launch.permissionMode === "skip_permissions";

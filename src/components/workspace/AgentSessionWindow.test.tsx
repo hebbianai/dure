@@ -89,6 +89,14 @@ const mocks = vi.hoisted(() => ({
 	requestAgentSessionProjectMove: vi.fn(
 		async (_request: Record<string, unknown>): Promise<unknown> => undefined,
 	),
+	requestAgentSessionLaunchSelection: vi.fn(
+		async (_request: Record<string, unknown>): Promise<unknown> => undefined,
+	),
+	/** The launch presentation the source pane publishes, and its follower. */
+	launchPresentation: undefined as unknown,
+	followLaunchPresentation: undefined as
+		| undefined
+		| ((presentation: unknown) => void),
 	forkAgent: vi.fn(),
 	messageDialog: vi.fn(async () => {}),
 	requestManagedCredentialSwitch: vi.fn(async () => ({
@@ -190,6 +198,26 @@ vi.mock("@/lib/workspace/window/agentSessionWindowCommand", () => {
 				},
 			};
 		},
+		agentSessionWindowLaunchSelection: (source: Route) =>
+			source.sourcePaneOwnerId
+				? {
+						watch: (onPresentation: (presentation: unknown) => void) => {
+							mocks.followLaunchPresentation = onPresentation;
+							onPresentation(mocks.launchPresentation);
+							return () => {
+								mocks.followLaunchPresentation = undefined;
+							};
+						},
+						run: async (command: unknown) => {
+							await mocks.requestAgentSessionLaunchSelection({
+								action: "launch_selection",
+								step: "run",
+								command,
+								...route(source),
+							});
+						},
+					}
+				: undefined,
 		agentSessionWindowViewPort: (source: Route) => ({
 			setView: async (view: string) => {
 				await mocks.requestAgentSessionViewCommand({
@@ -343,6 +371,27 @@ const target: Agent = agentFixture({
 	runtimeBinding: hmuxManagedBinding("session-1", "workspace-1"),
 });
 
+/** What the source pane publishes for its launch pills. */
+function launchPresentation(model = "gpt-5.5") {
+	return {
+		loaded: true,
+		hydrationError: false,
+		model,
+		effort: null,
+		permissionMode: "default",
+		switching: false,
+		error: null,
+		observedModel: null,
+		catalog: { offered: true, status: "idle" },
+		modelOptions: [
+			{ value: "gpt-5.5", label: "GPT-5.5" },
+			{ value: "gpt-5.5-mini", label: "GPT-5.5 mini" },
+		],
+		effortOptions: [{ value: "high", label: "High" }],
+		permissionOptions: [{ value: "default", label: "Default" }],
+	};
+}
+
 beforeEach(() => {
 	// The large-view fork flows are pro surfaces; basic folds the fork menu.
 	useStore.setState((state) => ({
@@ -385,6 +434,11 @@ beforeEach(() => {
 		kind: "view_set",
 	});
 	mocks.requestAgentSessionProjectMove.mockReset().mockResolvedValue(undefined);
+	mocks.requestAgentSessionLaunchSelection
+		.mockReset()
+		.mockResolvedValue(undefined);
+	mocks.launchPresentation = launchPresentation();
+	mocks.followLaunchPresentation = undefined;
 	mocks.forkAgent.mockReset().mockResolvedValue({
 		...target,
 		id: "agent-fork",
@@ -781,6 +835,76 @@ describe("AgentSessionWindowRoot", () => {
 				.filter((id) => agentToolbarControlOffered(id, "large_window"))
 				.sort(),
 		);
+	});
+
+	it("changes the model from the large window through its source pane", async () => {
+		render(
+			<AgentSessionWindowRoot
+				agentId="agent-1"
+				sourceWindowLabel="win-workspace-2"
+				sourcePaneOwnerId="desktop-2:agent:agent-1"
+			/>,
+		);
+
+		chooseSelectValue(
+			screen.getByRole("combobox", { name: t("agents.chat.modelLabel") }),
+			"gpt-5.5-mini",
+		);
+
+		await waitFor(() =>
+			expect(mocks.requestAgentSessionLaunchSelection).toHaveBeenCalledWith({
+				action: "launch_selection",
+				step: "run",
+				command: { kind: "select", field: "model", value: "gpt-5.5-mini" },
+				agentId: "agent-1",
+				sourceWindowLabel: "win-workspace-2",
+				sourcePaneOwnerId: "desktop-2:agent:agent-1",
+			}),
+		);
+	});
+
+	it("follows the launch selection the source pane commits", async () => {
+		render(
+			<AgentSessionWindowRoot
+				agentId="agent-1"
+				sourceWindowLabel="win-workspace-2"
+				sourcePaneOwnerId="desktop-2:agent:agent-1"
+			/>,
+		);
+		const model = screen.getByRole("combobox", {
+			name: t("agents.chat.modelLabel"),
+		});
+		expect(model.textContent).toContain("GPT-5.5");
+
+		act(() => {
+			mocks.followLaunchPresentation?.({
+				...launchPresentation("gpt-5.5-mini"),
+				switching: true,
+			});
+		});
+
+		expect(model.textContent).toContain("GPT-5.5 mini");
+		// A change running in the source pane locks this window's controls too.
+		expect(
+			screen.getByRole("button", { name: t("agents.runtime.viewLabel") }),
+		).toHaveProperty("disabled", true);
+	});
+
+	it("shows no launch pills while the source pane publishes none", () => {
+		mocks.launchPresentation = null;
+		const rendered = render(
+			<AgentSessionWindowRoot
+				agentId="agent-1"
+				sourceWindowLabel="win-workspace-2"
+				sourcePaneOwnerId="desktop-2:agent:agent-1"
+			/>,
+		);
+
+		expect(
+			rendered.container.querySelector(
+				'[data-agent-toolbar-control^="launch-"]',
+			),
+		).toBeNull();
 	});
 
 	it("moves the Agent into Chat from the large window through its source pane", async () => {

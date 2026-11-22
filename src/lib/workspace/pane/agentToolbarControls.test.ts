@@ -109,12 +109,15 @@ describe("agent toolbar surfaces", () => {
 		const offered = AGENT_TOOLBAR_CONTROLS.filter((control) =>
 			agentToolbarControlOffered(control.id, "large_window"),
 		).map((control) => control.id);
-		// The View control, project move (#624) and the account run in the
-		// source pane over the bridge; the diff and source-control windows need
-		// no pane at all.
+		// The View control, project move, the launch pills (#624) and the
+		// account run in the source pane over the bridge; the diff and
+		// source-control windows need no pane at all.
 		expect(offered.sort()).toEqual([
 			"account",
 			"diff-window",
+			"launch-effort",
+			"launch-model",
+			"launch-permissions",
 			"project-move",
 			"source-control-window",
 			"view-switch",
@@ -128,7 +131,7 @@ describe("agent toolbar surfaces", () => {
 	it("lets no attention signal show a control its surface does not offer", () => {
 		expect(
 			agentToolbarControlVisible(
-				"launch-model",
+				"conversation-history",
 				{ interfaceMode: "pro", surface: "large_window" },
 				{ mustShow: true },
 			),
