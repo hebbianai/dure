@@ -24,10 +24,11 @@ function parseEnvelope(envelope, allowedHubs, now, operation) {
   const message = JSON.parse(messageBytes.toString("utf8"));
   if (message.version !== 1 || message.operation !== operation || !Number.isSafeInteger(message.issuedAt) || Math.abs(now / 1000 - message.issuedAt) > 120) throw new Error("Expired request or wrong operation");
   const { event, subscription } = message;
-  if (operation === "send" && (!event || !["approval", "done"].includes(event.kind) || typeof event.eventId !== "string" || !event.eventId || event.eventId.length > 512)) throw new Error("Invalid event");
+  if (operation === "send" && (!event || !["approval", "done", "input"].includes(event.kind) || typeof event.eventId !== "string" || !event.eventId || event.eventId.length > 512)) throw new Error("Invalid event");
   // What travels to APNs beside the text is opaque identifiers only: never a path or a title.
   if (operation === "send" && event.sessionId !== undefined && !opaque(event.sessionId)) throw new Error("Invalid event");
   if (operation === "send" && event.approval !== undefined && (event.kind !== "approval" || event.sessionId === undefined || !event.approval || typeof event.approval !== "object" || Object.keys(event.approval).sort().join() !== "attentionId,terminalEpoch" || !opaque(event.approval.attentionId) || !opaque(event.approval.terminalEpoch))) throw new Error("Invalid event");
+  if (operation === "send" && event.reply !== undefined && (event.kind !== "done" || event.sessionId === undefined || !event.reply || typeof event.reply !== "object" || Object.keys(event.reply).join() !== "terminalEpoch" || !opaque(event.reply.terminalEpoch))) throw new Error("Invalid event");
   if (!subscription || typeof subscription.token !== "string" || subscription.token.length > 512 || !/^(?:[a-f0-9]{2})+$/.test(subscription.token)) throw new Error("Invalid device token");
   if (!["sandbox", "production"].includes(subscription.environment) || !["all", "approvals"].includes(subscription.preference) || !["en", "ko"].includes(subscription.language)) throw new Error("Invalid subscription");
   return { message, sender };

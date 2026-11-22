@@ -303,13 +303,13 @@ pub async fn hub_agent_background_work(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptInput {
-    box_id: String,
-    workspace_id: String,
-    session_id: String,
-    text: String,
-    expected_terminal_epoch: String,
+    pub(crate) box_id: String,
+    pub(crate) workspace_id: String,
+    pub(crate) session_id: String,
+    pub(crate) text: String,
+    pub(crate) expected_terminal_epoch: String,
     #[serde(default)]
-    expected_conversation_id: Option<String>,
+    pub(crate) expected_conversation_id: Option<String>,
 }
 
 /// Normalized here as the desktop will normalize it, so a prompt it would
@@ -338,11 +338,22 @@ pub async fn hub_agent_prompt(
     id: String,
     input: PromptInput,
 ) -> Result<HubAgentPromptResult, CommandError> {
+    send_prompt(&app, &id, input).await
+}
+
+/// The one way this phone sends a prompt to an agent on a paired computer:
+/// the chat's composer through the command above, and a reply from a
+/// finished turn's alert (`push::reply_from_alert`).
+pub(crate) async fn send_prompt(
+    app: &tauri::AppHandle,
+    id: &str,
+    input: PromptInput,
+) -> Result<HubAgentPromptResult, CommandError> {
     let request = match prompt_request(input) {
         Ok(request) => request,
         Err(refused) => return Ok(refused),
     };
-    exchange(&app, &id, move |stream, token| {
+    exchange(app, id, move |stream, token| {
         prompt_on_stream(stream, token, request)
     })
     .await

@@ -13,7 +13,7 @@ import {
 import { isDispatchedAgent } from "@/lib/agents/agentDispatchOrigin";
 import { pendingApproval } from "@/lib/agents/approvalRequest";
 import { agentDisplayName } from "@/lib/agents/agentDisplayName";
-import { agentSeatKey } from "@/lib/hub/sidebarLayout";
+import { agentSeatKey, chatOwnedAgent } from "@/lib/hub/sidebarLayout";
 import { t } from "@/lib/i18n";
 import type { HmuxAgentRuntimeState } from "@/lib/ipc/hmuxContracts";
 import { pushAgentNotification } from "@/lib/ipc/notifications";
@@ -30,7 +30,8 @@ import { useStore } from "@/store";
 
 export type AgentNotificationKind = AttentionEpisodeKind | "exited";
 
-/** 에피소드 kind → 알림 본문. 순수 함수 — 테스트 대상. */
+/** 에피소드 kind → 알림 본문. 순수 함수 — 테스트 대상. The desktop's
+ *  turn copy already names both a finished turn and a wait for input. */
 export function episodeNotificationBody(kind: AttentionEpisodeKind): string {
   return kind === "approval"
     ? t("agents.attention.approvalNeeded")
@@ -50,6 +51,21 @@ function alertApproval(
   const { choices } = approval.request;
   return choices.includes("approve") && choices.includes("deny")
     ? { attentionId: approval.attentionId, terminalEpoch: runtime.terminalEpoch }
+    : undefined;
+}
+
+/**
+ * The process a text reply on a finished turn's phone alert must reach: an
+ * Hmux agent idle with nothing raised, as the Host admits a prompt. A
+ * chat-owned agent takes its prompts on another path, so none.
+ */
+function alertReply(
+  agent: Parameters<typeof chatOwnedAgent>[0],
+  runtime: HmuxAgentRuntimeState | undefined,
+): { terminalEpoch: string } | undefined {
+  if (chatOwnedAgent(agent) || runtime?.lifecycle !== "running") return undefined;
+  return runtime.activity === "waiting" && runtime.attention === "none"
+    ? { terminalEpoch: runtime.terminalEpoch }
     : undefined;
 }
 
@@ -78,29 +94,32 @@ export function notifyAgentEvent(
   if (!isMainWindow()) return; // 알림은 메인 창에서만 1회
   const agent = useStore.getState().agents.find((a) => a.id === agentId);
   if (!agent) return;
-  // A dispatched worker's completion is not a separate cue for the user.
-  // Its unread dot remains; approval and exit still request attention.
-  if (kind === "done" && isDispatchedAgent(agent)) return;
+  // A dispatched worker's completion or prompt is not a separate cue for the
+  // user. Its unread dot remains; approval and exit still request attention.
+  if ((kind === "done" || kind === "input") && isDispatchedAgent(agent)) return;
   // The phone's preference and recipient authority belong to the paired Hub.
   // Desktop visibility and notification preferences apply only to this screen.
   if (kind !== "exited" && options?.eventId) {
     const sessionId = agentSeatKey(agent);
-    const approval =
-      kind === "approval" && sessionId
-        ? alertApproval(useStore.getState().sessionAgentRuntimeState[agent.sessionId])
-        : undefined;
-    void pushAgentNotification({
-      kind,
-      eventId: options.eventId,
-      ...(sessionId ? { sessionId } : {}),
-      ...(approval ? { approval } : {}),
-    }).catch(() => {
+    const runtime = useStore.getState().sessionAgentRuntimeState[agent.sessionId];
+    const approval = kind === "approval" && sessionId ? alertApproval(runtime) : undefined;
+    const reply = kind === "done" && sessionId ? alertReply(agent, runtime) : undefined;
+    void pushAgentNotification(
+      {
+        kind,
+        eventId: options.eventId,
+        ...(sessionId ? { sessionId } : {}),
+        ...(approval ? { approval } : {}),
+        ...(reply ? { reply } : {}),
+      },
+      agent.provider,
+    ).catch(() => {
       console.warn("Could not deliver the agent event to paired phone notifications");
     });
   }
   const np = notifyPrefs();
   if (!np.enabled) return;
-  if (kind === "done" && !np.agentDone) return;
+  if ((kind === "done" || kind === "input") && !np.agentDone) return;
   if (kind === "approval" && !np.approvalRequired) return;
   if (kind === "exited" && !np.agentExited) return;
   const st = useStore.getState();

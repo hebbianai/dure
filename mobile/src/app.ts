@@ -2658,13 +2658,17 @@ export function startApp(root: HTMLElement): () => void {
    * The alert actions follow the approval sheet's preference and the app's
    * language. A shell without them leaves alerts without actions.
    */
-  async function syncApprovalActions(): Promise<void> {
+  async function syncAlertActions(): Promise<void> {
     try {
-      await ipc.pushApprovalActions({
+      await ipc.pushAlertActions({
         ownerCheck: state.settings.approvalBiometric,
         approve: t("home.needsYou.approve"),
         deny: t("home.needsYou.deny"),
         failed: t("notifications.push.answer.failed"),
+        reply: t("home.needsYou.reply"),
+        send: t("chat.composer.send"),
+        placeholder: t("chat.composer.placeholder"),
+        replyFailed: t("notifications.push.reply.failed"),
       });
     } catch {
       return;
@@ -3347,7 +3351,7 @@ export function startApp(root: HTMLElement): () => void {
     saveSettingsPreferences(next);
     setState({ settings: next });
     if (changedLanguage) syncPush();
-    if (changedLanguage || changedApproval) void syncApprovalActions();
+    if (changedLanguage || changedApproval) void syncAlertActions();
     refocusSettings(refocus);
   }
 
@@ -4866,7 +4870,7 @@ export function startApp(root: HTMLElement): () => void {
     if (disposed) return;
     if (state.servers.length > 0 || state.hubs.length > 0) await census();
     if (disposed) return;
-    void syncApprovalActions();
+    void syncAlertActions();
     // After the first read, so a tap that launched the app finds its row.
     // A shell that cannot listen leaves alerts opening the app as before.
     try {

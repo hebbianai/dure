@@ -2,7 +2,7 @@
 //! and deduplication; the existing registry owns consent and token replacement.
 use super::{commands::HubState, identity};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use dure_hub_protocol::push::{PushApproval, PushId, PushKind, PushSubscription};
+use dure_hub_protocol::push::{PushApproval, PushId, PushKind, PushReply, PushSubscription};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -31,6 +31,31 @@ pub struct PushEvent {
         skip_serializing_if = "Option::is_none"
     )]
     approval: Option<PushApproval>,
+    /// The process a text reply on a finished turn's alert reaches. Only
+    /// beside a `done` event of an agent whose prompts this desktop serves.
+    #[serde(
+        default,
+        deserialize_with = "opaque",
+        skip_serializing_if = "Option::is_none"
+    )]
+    reply: Option<PushReply>,
+}
+
+impl PushEvent {
+    /// Keeps each answer the alert offers only where the phone can give it:
+    /// an approval on an approval event, a reply on a finished turn of an
+    /// Hmux-managed agent whose prompts this desktop serves (`provider`).
+    fn offer_only_answerable(&mut self, provider: Option<&str>) {
+        if self.session_id.is_none() || self.kind != PushKind::Approval {
+            self.approval = None;
+        }
+        let serves = provider.is_some_and(|provider| {
+            super::conversation::serves_conversation(&hmux_client::SessionClass::Managed, provider)
+        });
+        if self.session_id.is_none() || self.kind != PushKind::Done || !serves {
+            self.reply = None;
+        }
+    }
 }
 
 /// An identifier outside the opaque alphabet is dropped at this boundary: the
@@ -160,13 +185,12 @@ pub async fn hub_push_agent_notification(
     app: tauri::AppHandle,
     state: tauri::State<'_, HubState>,
     mut event: PushEvent,
+    provider: Option<String>,
 ) -> Result<(), String> {
     if event.event_id.is_empty() || event.event_id.len() > 512 {
         return Err("Invalid notification event identity".into());
     }
-    if event.kind != PushKind::Approval || event.session_id.is_none() {
-        event.approval = None;
-    }
+    event.offer_only_answerable(provider.as_deref());
     let registry = state.registry(&app)?;
     let recipients = registry.load().map_err(|error| error.to_string())?;
     if !recipients
@@ -260,6 +284,7 @@ mod tests {
                 attention_id: "attention-3".to_string().try_into().unwrap(),
                 terminal_epoch: "7".to_string().try_into().unwrap(),
             }),
+            reply: None,
         };
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -344,6 +369,45 @@ mod tests {
         assert_eq!(
             fields,
             ["event", "issuedAt", "operation", "subscription", "version"]
+        );
+    }
+
+    #[test]
+    fn an_alert_offers_a_reply_only_on_a_finished_turn_whose_prompts_this_desktop_serves() {
+        let event = |kind: &str| -> PushEvent {
+            serde_json::from_value(serde_json::json!({
+                "kind": kind,
+                "eventId": "hmux:pane-1:7:turn:4",
+                "sessionId": "managed_1",
+                "reply": { "terminalEpoch": "7" },
+                "approval": { "attentionId": "attention-3", "terminalEpoch": "7" },
+            }))
+            .unwrap()
+        };
+        let offered = |kind: &str, provider: Option<&str>| {
+            let mut event = event(kind);
+            event.offer_only_answerable(provider);
+            (event.reply.is_some(), event.approval.is_some())
+        };
+        assert_eq!(offered("done", Some("claude")), (true, false));
+        assert_eq!(offered("done", Some("codex")), (true, false));
+        assert_eq!(offered("done", Some("gemini")), (false, false));
+        assert_eq!(offered("done", None), (false, false));
+        assert_eq!(offered("input", Some("claude")), (false, false));
+        assert_eq!(offered("approval", Some("claude")), (false, true));
+        let signed: serde_json::Value = {
+            let mut done = event("done");
+            done.offer_only_answerable(Some("claude"));
+            serde_json::to_value(&done).unwrap()
+        };
+        assert_eq!(
+            signed,
+            serde_json::json!({
+                "kind": "done",
+                "eventId": "hmux:pane-1:7:turn:4",
+                "sessionId": "managed_1",
+                "reply": { "terminalEpoch": "7" },
+            })
         );
     }
 

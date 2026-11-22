@@ -24,14 +24,20 @@ export interface PushActivation {
 	};
 }
 
-/** Rust `ApprovalActions`: what the alert's actions need when no screen runs. */
-export interface ApprovalActions {
-	/** Face ID before an approval: the actions then open the app. */
+/** Rust `AlertActions`: what the alert's actions need when no screen runs. */
+export interface AlertActions {
+	/** Face ID before an approval: the approval actions then open the app. */
 	readonly ownerCheck: boolean;
 	readonly approve: string;
 	readonly deny: string;
 	/** What the phone says when an answer from an alert did not land. */
 	readonly failed: string;
+	/** A finished turn's reply action, its send button and placeholder. */
+	readonly reply: string;
+	readonly send: string;
+	readonly placeholder: string;
+	/** What the phone says when a reply from an alert did not land. */
+	readonly replyFailed: string;
 }
 
 /**
