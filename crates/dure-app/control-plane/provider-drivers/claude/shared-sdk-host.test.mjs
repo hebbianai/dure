@@ -41,6 +41,9 @@ function passiveInteractionControls() {
 				stillQueuedMessageIds: [],
 			};
 		},
+		backgroundTaskCount() {
+			return 0;
+		},
 		pendingInteractionCount() {
 			return 0;
 		},
@@ -763,6 +766,96 @@ test("idle-fenced close preserves a Query that started a turn before replacement
 	assert.equal(host.queryCount, 0);
 });
 
+test("background work after the turn keeps idle-only effects refused until it ends", async () => {
+	let backgroundTasks = 0;
+	const host = createSharedClaudeSdkHost({
+		hostGeneration: "host-background-work-1",
+		createQuery: async ({ terminal }) => ({
+			...passiveInteractionControls(),
+			backgroundTaskCount() {
+				return backgroundTasks;
+			},
+			async startTurn() {
+				backgroundTasks = 1;
+				return { stopReason: "end_turn" };
+			},
+			async close() {
+				terminal({ code: 0, signal: null });
+			},
+			async invalidate(reason) {
+				terminal({ reason });
+			},
+		}),
+	});
+	const client = attach(host, "client-background-work-1");
+	const prepared = binding(206);
+	await client.bind(prepared);
+	client.startTurn(prepared.identity, {
+		clientMessageId: "message-background-work-1",
+		input: "start a background shell",
+	});
+	await waitForReplay(
+		client,
+		prepared.identity,
+		({ latestSequence }) => latestSequence === 3,
+	);
+	assert.equal(client.snapshot().queries[0].state, "waiting_for_input");
+	assert.equal(client.snapshot().queries[0].backgroundTaskCount, 1);
+
+	await assert.rejects(
+		client.retireQueryIfIdle(prepared.identity),
+		/dure_claude_sdk_host_query_background_work/u,
+	);
+	await assert.rejects(
+		client.closeQueryIfIdle(prepared.identity),
+		/dure_claude_sdk_host_query_background_work/u,
+	);
+	assert.equal(host.queryCount, 1, "a refusal leaves the provider process running");
+	// The conversation stays open to the person while its work runs.
+	client.startTurn(prepared.identity, {
+		clientMessageId: "message-background-work-2",
+		input: "still here",
+	});
+	await waitForReplay(
+		client,
+		prepared.identity,
+		({ latestSequence }) => latestSequence === 5,
+	);
+
+	backgroundTasks = 0;
+	assert.equal(client.snapshot().queries[0].backgroundTaskCount, 0);
+	const retired = await client.retireQueryIfIdle(prepared.identity);
+	assert.equal(retired.outcome, "retired");
+	assert.equal(host.queryCount, 0);
+	client.detach();
+});
+
+test("force retirement does not wait for background work", async () => {
+	const host = createSharedClaudeSdkHost({
+		hostGeneration: "host-background-force-1",
+		createQuery: async ({ terminal }) => ({
+			...passiveInteractionControls(),
+			backgroundTaskCount() {
+				return 3;
+			},
+			async startTurn() {
+				return { stopReason: "end_turn" };
+			},
+			async close() {
+				terminal({ code: 0, signal: null });
+			},
+			async invalidate(reason) {
+				terminal({ reason });
+			},
+		}),
+	});
+	const client = attach(host, "client-background-force-1");
+	const prepared = binding(207);
+	await client.bind(prepared);
+	assert.equal((await client.retireQuery(prepared.identity)).outcome, "retired");
+	client.detach();
+});
+
 test("force retirement fences every provider effect while controller close is pending", async () => {
 	let finishClose;
 	let answerCalls = 0;
@@ -1327,6 +1420,9 @@ test("pending interactions survive detach while exact answers and interrupts sta
 				},
 				async invalidate(reason) {
 					terminal({ reason });
+				},
+				backgroundTaskCount() {
+					return 0;
 				},
 				pendingInteractionCount() {
 					return pending.length;

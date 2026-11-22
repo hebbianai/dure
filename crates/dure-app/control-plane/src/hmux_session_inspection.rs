@@ -157,17 +157,14 @@ impl HmuxSessionInspection {
             AgentRuntimeLifecycle::Exited => return AgentBusyReason::StateUnavailable,
             AgentRuntimeLifecycle::Running => {}
         }
-        if state.attention != AgentRuntimeAttention::None {
-            AgentBusyReason::AttentionRequired
-        } else if state.background_work {
-            AgentBusyReason::BackgroundWork
-        } else if state.activity == AgentRuntimeActivity::Working {
-            AgentBusyReason::Working
-        } else if self.controller_input_pending == Some(true) {
-            AgentBusyReason::InputPending
-        } else {
-            AgentBusyReason::StateUnavailable
+        AgentActivityEvidence {
+            attention_required: state.attention != AgentRuntimeAttention::None,
+            background_work: state.background_work,
+            working: state.activity == AgentRuntimeActivity::Working,
+            input_pending: self.controller_input_pending == Some(true),
         }
+        .busy_reason()
+        .unwrap_or(AgentBusyReason::StateUnavailable)
     }
 
     pub(crate) fn is_exited_exact(&self) -> bool {
@@ -216,6 +213,35 @@ pub(crate) enum AgentBusyReason {
     InputPending,
     /// The source changed after the caller's exact idle observation.
     ObservationChanged,
+}
+
+/// What a live provider reports doing, from either runtime mode's Host. One
+/// precedence names why it is not idle, so a Terminal and a Chat session
+/// refuse the same idle-only transition with the same reason.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct AgentActivityEvidence {
+    pub(crate) attention_required: bool,
+    /// The turn ended while work the provider started is still running.
+    pub(crate) background_work: bool,
+    pub(crate) working: bool,
+    pub(crate) input_pending: bool,
+}
+
+impl AgentActivityEvidence {
+    /// `None` when nothing reported keeps the provider from being idle.
+    pub(crate) fn busy_reason(self) -> Option<AgentBusyReason> {
+        if self.attention_required {
+            Some(AgentBusyReason::AttentionRequired)
+        } else if self.background_work {
+            Some(AgentBusyReason::BackgroundWork)
+        } else if self.working {
+            Some(AgentBusyReason::Working)
+        } else if self.input_pending {
+            Some(AgentBusyReason::InputPending)
+        } else {
+            None
+        }
+    }
 }
 
 impl AgentBusyReason {

@@ -43,6 +43,9 @@ function passiveInteractionControls() {
 				stillQueuedMessageIds: [],
 			};
 		},
+		backgroundTaskCount() {
+			return 0;
+		},
 		pendingInteractionCount() {
 			return 0;
 		},
@@ -273,6 +276,9 @@ test("DCH1 routes bounded interaction snapshots, answers, and idempotent interru
 			},
 			async invalidate(reason) {
 				terminal({ reason });
+			},
+			backgroundTaskCount() {
+				return 0;
 			},
 			pendingInteractionCount() {
 				return pending.length;

@@ -33,6 +33,8 @@ enum ClaudeDch1FailureBoundary {
 enum ClaudeDch1RemoteFailure {
     ExactQueryInactive,
     QueryBusy,
+    /// Idle for input, but running background work its process would end.
+    QueryBackgroundWork,
     Other,
 }
 
@@ -53,6 +55,7 @@ impl ClaudeDch1Error {
                     ClaudeDch1RemoteFailure::ExactQueryInactive
                 }
                 "query_busy" => ClaudeDch1RemoteFailure::QueryBusy,
+                "query_background_work" => ClaudeDch1RemoteFailure::QueryBackgroundWork,
                 _ => ClaudeDch1RemoteFailure::Other,
             }),
             reason: format!("remote_{reason}"),
@@ -67,8 +70,12 @@ impl ClaudeDch1Error {
         self.boundary == ClaudeDch1FailureBoundary::RemoteResponse
     }
 
+    /// The host refused an idle-only effect and changed nothing.
     pub fn is_query_busy(&self) -> bool {
-        self.remote_failure == Some(ClaudeDch1RemoteFailure::QueryBusy)
+        matches!(
+            self.remote_failure,
+            Some(ClaudeDch1RemoteFailure::QueryBusy | ClaudeDch1RemoteFailure::QueryBackgroundWork)
+        )
     }
 
     pub fn has_exact_retirement_candidate(&self) -> bool {
@@ -631,6 +638,10 @@ mod tests {
         assert!(busy.is_remote_response());
         assert!(busy.is_query_busy());
         assert_eq!(busy.reason(), "remote_query_busy");
+
+        let background = ClaudeDch1Error::remote("query_background_work");
+        assert!(background.is_query_busy());
+        assert_eq!(background.reason(), "remote_query_background_work");
 
         let conflict = ClaudeDch1Error::remote("query_identity_conflict");
         assert!(conflict.is_remote_response());

@@ -1,6 +1,9 @@
 use super::*;
+use crate::hmux_session_inspection::AgentActivityEvidence;
 use crate::structured_provider_runtime::*;
 use dure_app::{AgentRuntimeReplacementAuthorityV1, WorkspaceRecordV1};
+use std::io::Write;
+use std::path::Path;
 use std::sync::Mutex;
 
 struct WorkspaceRuntime {
@@ -10,6 +13,8 @@ struct WorkspaceRuntime {
     fail_first: bool,
     busy: bool,
     stops: AtomicUsize,
+    /// What the fake host reports the live source doing.
+    activity: Mutex<Option<AgentActivityEvidence>>,
 }
 
 impl WorkspaceRuntime {
@@ -126,6 +131,13 @@ impl StructuredProviderRuntime for WorkspaceRuntime {
             }
         })
     }
+    fn source_activity<'a>(
+        &'a self,
+        _: &'a AgentInteractionBindingV1,
+    ) -> StructuredProviderRuntimeFuture<'a, Option<AgentActivityEvidence>> {
+        let activity = *self.activity.lock().unwrap();
+        Box::pin(async move { Ok(activity) })
+    }
     fn quiesce_workspace_target<'a>(
         &'a self,
         transition: &'a AgentRuntimeTransitionRecordV1,
@@ -168,6 +180,7 @@ async fn fixture(
         fail_first,
         busy,
         stops: AtomicUsize::new(0),
+        activity: Mutex::new(None),
     });
     let mut runtimes = StructuredProviderRuntimeRegistry::default();
     runtimes
@@ -273,6 +286,141 @@ async fn structured_move_source_repair_keeps_failed_destination_and_exact_lineag
             plan["workspaceMove"]["sourceWorkspace"]
         );
         assert_eq!(runtime.stops.load(Ordering::SeqCst), 1);
+    }
+}
+
+fn chat_account_switch() -> agent_runtime_transition_apply::AgentRuntimeTransitionApplyBodyV1 {
+    agent_runtime_transition_apply::AgentRuntimeTransitionApplyBodyV1 {
+        schema_version: 1,
+        agent_id: AgentIdV1::new("coordinator-1").unwrap(),
+        target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
+        expected_source_revision: Some(1),
+        expected_operation_id: None,
+        source_stop_policy: dure_app::AgentRuntimeSourceStopPolicyV1::Preserve,
+        target_execution_profile: Some(AgentExecutionProfileV1::ProviderDefault),
+        target_launch_selection: None,
+    }
+}
+
+/// A background shell Claude records as running in the fixture conversation.
+fn record_running_background_shell(root: &Path) {
+    let conversation = root.join(format!(
+        ".claude/projects/original-project/{CONVERSATION}.jsonl"
+    ));
+    let records = [
+        json!({"type": "assistant", "timestamp": "2026-11-02T06:13:20.000Z", "message": {
+            "id": "message-background-1", "role": "assistant", "content": [{
+                "type": "tool_use", "id": "tool-background-1", "name": "Bash",
+                "input": {"command": "sleep 600", "description": "Run the release checks",
+                    "run_in_background": true}}]}}),
+        json!({"type": "user", "timestamp": "2026-11-02T06:13:21.000Z", "message": {"role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "tool-background-1", "content": "ok"}]},
+            "toolUseResult": {"backgroundTaskId": "shell-background-1", "stdout": "", "stderr": "",
+                "interrupted": false}}),
+    ];
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(conversation)
+        .unwrap();
+    for record in records {
+        writeln!(file, "{record}").unwrap();
+    }
+}
+
+#[tokio::test]
+async fn chat_account_switch_waits_for_background_work_the_host_reports() {
+    let (root, _destination, state, runtime) = fixture("claude", false, false).await;
+    record_running_background_shell(root.path());
+    *runtime.activity.lock().unwrap() = Some(AgentActivityEvidence {
+        background_work: true,
+        ..Default::default()
+    });
+
+    let error = agent_runtime_transition_apply::apply(
+        &state,
+        "chat-background-switch-1",
+        chat_account_switch(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "agent_runtime_source_busy", "{error:?}");
+    let details = error.details.as_ref().unwrap();
+    assert_eq!(details["reasonCode"], "agent_background_work");
+    assert_eq!(
+        details["backgroundWork"]["items"][0]["label"],
+        "Run the release checks"
+    );
+    assert_eq!(error.disposition, BackendFailureDispositionV1::RetrySame);
+    assert_eq!(
+        runtime.stops.load(Ordering::SeqCst),
+        0,
+        "nothing was stopped"
+    );
+    assert!(runtime.opens.lock().unwrap().is_empty());
+    let agent = AgentIdV1::new("coordinator-1").unwrap();
+    let selection = state
+        .store
+        .agent_runtime_selection(&agent)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(selection.revision, 1, "a refusal never changes the account");
+
+    // The work ended; the same switch is now admitted and applied.
+    *runtime.activity.lock().unwrap() = Some(AgentActivityEvidence::default());
+    agent_runtime_transition_apply::apply(
+        &state,
+        "chat-background-switch-2",
+        chat_account_switch(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(runtime.stops.load(Ordering::SeqCst), 1);
+    assert_eq!(runtime.opens.lock().unwrap().len(), 1);
+    let selection = state
+        .store
+        .agent_runtime_selection(&agent)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        selection.execution_profile,
+        AgentExecutionProfileV1::ProviderDefault
+    );
+}
+
+#[tokio::test]
+async fn chat_account_switch_names_a_running_turn_and_a_pending_approval() {
+    for (activity, expected) in [
+        (
+            AgentActivityEvidence {
+                working: true,
+                ..Default::default()
+            },
+            "agent_working",
+        ),
+        (
+            AgentActivityEvidence {
+                working: true,
+                attention_required: true,
+                background_work: false,
+                input_pending: false,
+            },
+            "agent_attention_required",
+        ),
+    ] {
+        let (_root, _destination, state, runtime) = fixture("claude", false, false).await;
+        *runtime.activity.lock().unwrap() = Some(activity);
+        let error = agent_runtime_transition_apply::apply(
+            &state,
+            "chat-busy-switch",
+            chat_account_switch(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "agent_runtime_source_busy", "{error:?}");
+        assert_eq!(error.details.as_ref().unwrap()["reasonCode"], expected);
+        assert_eq!(runtime.stops.load(Ordering::SeqCst), 0);
     }
 }
 

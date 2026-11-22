@@ -27,20 +27,23 @@ export function isSourceBusyRefusal(error) {
   return (error?.remoteCode ?? error?.code) === "agent_runtime_source_busy";
 }
 
-/** Replace the transport's generic text on a busy refusal; other errors pass. */
-export function withSourceBusyGuidance(error, providerId) {
+/** Replace the transport's generic text on a busy refusal; other errors pass.
+ * `interactionProfile` is the refused source's mode, when the caller knows it. */
+export function withSourceBusyGuidance(error, providerId, interactionProfile) {
   return isSourceBusyRefusal(error)
     ? { ...error, message: sourceBusyMessage({ reasonCode: error.reasonCode, providerId,
-      backgroundWork: error.backgroundWork }) }
+      interactionProfile, backgroundWork: error.backgroundWork }) }
     : error;
 }
 
-export function sourceBusyMessage({ reasonCode, providerId, backgroundWork } = {}) {
+export function sourceBusyMessage({ reasonCode, providerId, interactionProfile, backgroundWork } = {}) {
   return [[
     REASONS[reasonCode] ?? "The session is busy or has unsent input.",
     "Nothing was stopped or switched.",
     "Wait for that work to finish, or finish, answer or stop it inside the session, then run the same command again.",
-    ...(providerId === "claude" && BACKGROUND_REASONS.has(reasonCode) ? [
+    // Exiting and its background option exist only in Claude Code's terminal.
+    ...(providerId === "claude" && interactionProfile !== "structured_protocol" &&
+      BACKGROUND_REASONS.has(reasonCode) ? [
       "In Claude Code, exiting stops its background tasks, and \"Move to background and exit\" keeps the conversation running without a pane on the current account.",
     ] : []),
   ].join(" "), ...(backgroundWork ? formatBackgroundWork(backgroundWork) : [])].join("\n");

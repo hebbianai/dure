@@ -52,7 +52,7 @@ mod session_settings;
 mod source_background_work;
 use admission::{load_or_admit, validate_replay};
 use replacement::corrected_successor_intent;
-use source_background_work::source_busy_refusal;
+use source_background_work::{refuse_busy_structured_source, source_busy_refusal};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

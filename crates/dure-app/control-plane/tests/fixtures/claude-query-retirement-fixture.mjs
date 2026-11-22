@@ -41,6 +41,9 @@ function queryFactory() {
 			async invalidate() {
 				close();
 			},
+			backgroundTaskCount() {
+				return 0;
+			},
 			pendingInteractionCount() {
 				return 0;
 			},
