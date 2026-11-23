@@ -35,6 +35,7 @@ mod existing_worktree;
 mod external_workspace;
 mod feedback_capture;
 mod files;
+mod presented_media;
 mod local_directories;
 mod ghx;
 mod git_checkout_instance;
@@ -2259,6 +2260,7 @@ pub fn run() {
     let builder = hmux::configure_observer_webview_lifecycle(builder);
     let builder = dure_backend_transport::subscription::configure_window_lifecycle(builder);
     let builder = mobile_simulator::live::configure_window_lifecycle(builder);
+    let builder = presented_media::configure(builder);
     #[cfg(target_os = "macos")]
     let builder = builder.on_web_content_process_terminate(|webview| {
         mobile_simulator::live::close_window(webview.label());
@@ -2535,6 +2537,7 @@ pub fn run() {
             provider_wiring::provider_wiring_status,
             provider_wiring::provider_wiring_file,
             read_file,
+            presented_media::read_presented_file,
             ssh_read_file,
             write_file,
             ssh_write_file,

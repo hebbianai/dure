@@ -1,9 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
-vi.mock("@/lib/ipc", () => ({ readFile: vi.fn(), sshReadFile: vi.fn(), writeFile: vi.fn(), sshWriteFile: vi.fn(), findFileCandidates: vi.fn(), sshFindFileCandidates: vi.fn(), hostToOpts: vi.fn((host) => ({ host: host.host })) }));
+vi.mock("@/lib/ipc", () => ({ readFile: vi.fn(), readPresentedFile: vi.fn(), sshReadFile: vi.fn(), writeFile: vi.fn(), sshWriteFile: vi.fn(), findFileCandidates: vi.fn(), sshFindFileCandidates: vi.fn(), hostToOpts: vi.fn((host) => ({ host: host.host })) }));
 vi.mock("@/lib/toast", () => ({ showToast: vi.fn(), showErrorToast: vi.fn() }));
-import { readFile, writeFile, findFileCandidates, sshReadFile, sshWriteFile, sshFindFileCandidates } from "@/lib/ipc";
+import { readFile, readPresentedFile, writeFile, findFileCandidates, sshReadFile, sshWriteFile, sshFindFileCandidates } from "@/lib/ipc";
 import { useStore } from "@/store";
-import { fileDocumentIO } from "./fileDocumentIO";
+import { fileDocumentIO, presentedFileDocumentIO } from "./fileDocumentIO";
 import { fileDraftKey } from "./fileTarget";
 
 afterEach(() => vi.clearAllMocks());
@@ -35,4 +35,20 @@ it("retains session-only SSH routing and resolves edited hosts at each submissio
   fileDocumentIO.writeDraft(key, null);
   expect(fileDocumentIO.readDraft(key)).toBeUndefined();
   expect(writeFile).not.toHaveBeenCalled();
+});
+
+it("reads presented local files through the streaming read and leaves everything else to the pane IO", async () => {
+  const local = { source: "local" as const, path: "/work/screen recording.mp4" };
+  await presentedFileDocumentIO.read(local);
+  expect(readPresentedFile).toHaveBeenCalledWith(local.path);
+  expect(readFile).not.toHaveBeenCalled();
+  await presentedFileDocumentIO.findCandidates(local);
+  await presentedFileDocumentIO.write(local, "text");
+  expect(findFileCandidates).toHaveBeenCalledWith(local.path);
+  expect(writeFile).toHaveBeenCalledWith(local.path, "text");
+  useStore.setState({ sshHosts: [], fileDrafts: {} });
+  const remote = { source: "ssh" as const, path: "/srv/clip.mp4", hostId: "remote", sessionId: "session" };
+  await presentedFileDocumentIO.read(remote);
+  expect(sshReadFile).toHaveBeenCalledWith({ id: "session", connectOpts: undefined, path: remote.path });
+  expect(readPresentedFile).toHaveBeenCalledTimes(1);
 });
