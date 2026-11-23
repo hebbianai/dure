@@ -658,6 +658,27 @@ the same error or candidate picker as a GUI open. After an uncertain response,
 inspect `client observe`; reopening the same path in the same Space reuses it.
 An older app without `file_pane.open_v1` is refused before mutation.
 
+When the person needs to look at something now — a screenshot, a screen
+recording, a PDF, a rendered report or document — present it instead of only
+printing its path:
+
+```sh
+dure client pane open file ./screenshot.png --window --json
+dure client pane open file "/path/to/demo recording.mp4" --window --json
+```
+
+`--window` puts the file in Dure's one presentation window: a large window,
+raised and focused in front of the person, showing the same file viewer as a
+pane (video plays with controls). It takes no Space. Presenting again replaces
+the file in the same window, presenting the same file again reloads it unless
+it has unsaved edits, and a closed window reopens. The header names the Agent
+whose session presented the file. Agents without a shell use the MCP tool
+`app_file_present` with the same `path`. The receipt's `window.label`,
+`window.file` and `window.reused` confirm the window and the file it shows, not
+successful loading. The path rules match `pane open file`: local to the
+connected app host, no URLs, `--host` or `--backend`. An older app without
+`file_window.present_v1` is refused before mutation.
+
 Mobile simulator workflows use the same pane UI and native device owner:
 
 ```sh

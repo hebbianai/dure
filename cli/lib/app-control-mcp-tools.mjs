@@ -68,6 +68,11 @@ const operations = {
       ...(space !== undefined ? ["--space", space] : []),
       ...(spaceId !== undefined ? ["--space-id", spaceId] : [])],
   },
+  app_file_present: {
+    description: "Put one local file in front of the person in Dure's large presentation window, raised and focused: images, video, PDF, Markdown, HTML and text open in the app's file viewer. Use it when the person should look at something you produced (a screenshot, recording, report or document) instead of only printing its path. Presenting again replaces the file in the same window, and presenting the same file again reloads it; the window header names your Agent. path is a file on the connected app host, absolute or relative to this server's working directory; URLs and SSH files are refused. The receipt's window.label and window.file confirm the window and file, not that the file loaded.",
+    properties: { path: { type: "string", minLength: 1, maxLength: 4096 } }, required: ["path"],
+    args: ({ path }) => ["pane", "open", "file", path, "--window"],
+  },
   app_pane_create: {
     description: "Create a terminal through the connected app's existing local or registered SSH creation transaction, independently of the runtime backend profile. Choose space (ID or unique name) or spaceId (exact ID without a saved projection); omission uses the invoking pane's Space when known, otherwise the app's active Space. No worktree is created. Local receipts prove attachment; SSH receipts prove durable mount. A failed local create sets error.retryable=true only after confirming its pane and session were removed; otherwise follow error.nextAction. An uncertain response must not be blindly retried.",
     properties: { space: id, spaceId: id, hostId: id, cwd: { type: "string", maxLength: 4096 } }, required: [],

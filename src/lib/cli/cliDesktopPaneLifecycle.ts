@@ -3,6 +3,7 @@ import {
 	resolveCliSpaceId,
 } from "@/lib/cli/cliSpaceIdentity";
 import type { CliSpaceOwnerRoute } from "@/lib/cli/cliSpaceOwnerRouting";
+import { containsCliControlCharacter } from "@/lib/cli/cliTextBoundary";
 import { localFilePanePath } from "../../../cli/lib/contracts/local-file-pane.mjs";
 
 export interface CliDesktopPaneRequest {
@@ -33,6 +34,9 @@ export interface CliDesktopPaneDependencies {
 	spaceName(spaceId: string): string | undefined;
 	openMobile(spaceId: string): Promise<object>;
 	openFile(spaceId: string, path: string): Promise<object>;
+	/** Whether this window owns the presentation window (the main window). */
+	ownsFilePresentation(): boolean;
+	presentFile(path: string, presenterSessionId?: string): Promise<object>;
 }
 
 function errorPayload(error: unknown, fallbackCode: string) {
@@ -188,36 +192,90 @@ async function handleSpaceCreate(
 	};
 }
 
+function invalidRequest(message: string) {
+	return Object.assign(new Error(message), { code: "invalid_request" });
+}
+
+/** File panes and the presentation window open only local paths on the app host. */
+function localFilePath(params: Record<string, unknown>): string {
+	if (
+		(params.source !== undefined && params.source !== "local") ||
+		(params.hostId !== undefined && params.hostId !== "local") ||
+		params.sessionId !== undefined
+	) {
+		throw invalidRequest(
+			"file panes require a local path on the connected app host",
+		);
+	}
+	return localFilePanePath(params.path, { absolute: true });
+}
+
+function optionalSessionId(value: unknown): string | undefined {
+	if (value === undefined) return undefined;
+	if (
+		typeof value !== "string" ||
+		!value.trim() ||
+		value.length > 512 ||
+		containsCliControlCharacter(value)
+	) {
+		throw invalidRequest("presenterSessionId is invalid");
+	}
+	return value.trim();
+}
+
+/** The window is not in a Space: only its owning window claims the request. */
+async function handleFilePresentation(
+	request: CliDesktopPaneRequest,
+	dependencies: CliDesktopPaneDependencies,
+) {
+	let path: string;
+	let presenterSessionId: string | undefined;
+	try {
+		if (request.params.tool !== "file")
+			throw invalidRequest("window placement presents a file");
+		if (
+			request.params.spaceId !== undefined ||
+			request.params.desktopId !== undefined
+		)
+			throw invalidRequest("window placement does not take a Space");
+		path = localFilePath(request.params);
+		presenterSessionId = optionalSessionId(request.params.presenterSessionId);
+	} catch (error) {
+		if (!(await dependencies.claim(request.reqId))) return null;
+		return { ok: false, error: errorPayload(error, "invalid_request") };
+	}
+	if (
+		!dependencies.ownsFilePresentation() ||
+		!(await dependencies.claim(request.reqId))
+	)
+		return null;
+	try {
+		return {
+			ok: true,
+			window: await dependencies.presentFile(path, presenterSessionId),
+		};
+	} catch (error) {
+		return { ok: false, error: errorPayload(error, "file_presentation_failed") };
+	}
+}
+
 async function handlePaneOpen(
 	request: CliDesktopPaneRequest,
 	dependencies: CliDesktopPaneDependencies,
 ) {
+	if (request.params.placement === "window")
+		return handleFilePresentation(request, dependencies);
 	let claimed = false;
 	try {
+		if (request.params.placement !== undefined)
+			throw invalidRequest("placement must be window when given");
 		const spaceId = resolveCliSpaceId(request.params, { required: true });
 		const { tool } = request.params;
 		if (!spaceId || (tool !== "mobile" && tool !== "file"))
 			throw new Error(
 				"pane open requires tool mobile or file and an exact Space",
 			);
-		let path: string | undefined;
-		if (tool === "file") {
-			if (
-				(request.params.source !== undefined &&
-					request.params.source !== "local") ||
-				(request.params.hostId !== undefined &&
-					request.params.hostId !== "local") ||
-				request.params.sessionId !== undefined
-			) {
-				throw Object.assign(
-					new Error(
-						"file panes require a local path on the connected app host",
-					),
-					{ code: "invalid_request" },
-				);
-			}
-			path = localFilePanePath(request.params.path, { absolute: true });
-		}
+		const path = tool === "file" ? localFilePath(request.params) : undefined;
 		if ((await dependencies.routeToSpaceOwner(request)).kind === "forwarded")
 			return null;
 		claimed = await dependencies.claim(request.reqId);

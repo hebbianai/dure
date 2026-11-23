@@ -167,6 +167,11 @@ export const panels: Record<string, string> = {
 	"panels.fileViewer.save": "저장 (⌘S)",
 	"panels.fileViewer.tooLargeToEdit": "너무 커서 편집 불가",
 	"panels.fileViewer.truncated": "일부만 표시",
+	"panels.filePresentation.empty":
+		"아직 띄운 파일이 없습니다. 에이전트가 파일을 보여 주면 여기에 열립니다.",
+	"panels.filePresentation.presentedBy": "보여 준 에이전트: {name}",
+	"panels.filePresentation.title": "프레젠테이션",
+	"panels.filePresentation.windowTitle": "{file} — {name}",
 	"panels.git.changes": "변경사항",
 	"panels.git.cleanWorkingTree": "깨끗한 작업 트리",
 	"panels.git.commitAndPush": "커밋 & 푸시",

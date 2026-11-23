@@ -1289,6 +1289,118 @@ describe("local file pane opening", () => {
   });
 });
 
+describe("file presentation window", () => {
+  const capabilities = ["file_pane.open_v1", "file_window.present_v1"];
+  function dispatcherClient(patch = {}) {
+    let presented = 0;
+    return fixtureClient(async ({ body }) => {
+      let receipt;
+      await dispatchCliDesktopPaneRequest({ reqId: `present-${presented}`, action: "pane.open", params: body }, {
+        routeToSpaceOwner: async () => { throw new Error("window placement must not route to a Space"); },
+        claim: async () => true,
+        complete: async (_id, result) => { receipt = result; },
+        ownsFilePresentation: () => true,
+        presentFile: async (path, presenterSessionId) => ({
+          label: "win-presentation", file: { source: "local", path }, reused: presented++ > 0,
+          ...(presenterSessionId === "source-1" ? { presenter: { agentId: "agent-1", name: "Reviewer" } } : {}),
+          ...patch,
+        }),
+      });
+      return { status: 200, body: receipt };
+    }, capabilities);
+  }
+
+  it("presents from the CLI and MCP through the app dispatcher, naming the invoking session and never a Space", async () => {
+    const fixture = await dispatcherClient();
+    terminalSpaces(fixture);
+    const environment = { ...fixture.environment, HMUX_SESSION_ID: "source-1", HMUX_WORKSPACE_ID: "native-source", DURE_BACKEND_PROFILE: "remote-ignored" };
+    const first = await runCli(["client", "pane", "open", "file", "shots/a b.png", "--window", "--json"], environment);
+    expect(first.code, first.stderr).toBe(0);
+    expect(fixture.requests).toHaveLength(1);
+    expect(fixture.requests[0]).toMatchObject({ url: "/pane/open", authorization: "Bearer client-control-token" });
+    expect(fixture.requests[0].body).toEqual({ tool: "file", path: resolve("shots/a b.png"), placement: "window", presenterSessionId: "source-1" });
+    expect(JSON.parse(first.stdout)).toEqual({
+      schemaVersion: 1, apiVersion: "dure.client-pane/v1", kind: "dure.client_pane.open", action: "open",
+      client: expect.any(Object),
+      window: { label: "win-presentation", file: { source: "local", path: resolve("shots/a b.png") }, reused: false,
+        presenter: { agentId: "agent-1", name: "Reviewer" } },
+    });
+    const again = await runCli(["client", "pane", "open", "file", resolve("report.pdf"), "--window"], environment);
+    expect(again.code, again.stderr).toBe(0);
+    expect(again.stdout).toContain(`✓ file presented in the open window → win-presentation: ${resolve("report.pdf")} (by Reviewer)`);
+    const mcp = await handleMcpRequest({ jsonrpc: "2.0", id: 7, method: "tools/call", params: {
+      name: "app_file_present", arguments: { path: resolve("demo.mp4") } } }, { DURE_HOME: join(fixture.home, ".dure") });
+    expect(mcp.isError).toBe(false);
+    expect(mcp.structuredContent).toMatchObject({ kind: "dure.client_pane.open", window: { label: "win-presentation", reused: true, file: { path: resolve("demo.mp4") } } });
+    expect(fixture.requests.map(({ body }) => body)).toEqual([
+      { tool: "file", path: resolve("shots/a b.png"), placement: "window", presenterSessionId: "source-1" },
+      { tool: "file", path: resolve("report.pdf"), placement: "window", presenterSessionId: "source-1" },
+      { tool: "file", path: resolve("demo.mp4"), placement: "window" },
+    ]);
+  });
+
+  it("presents outside a Dure pane without a presenter", async () => {
+    const fixture = await dispatcherClient();
+    const result = await runCli(["client", "pane", "open", "file", resolve("notes.md"), "--window"], fixture.environment);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe(`✓ file presented → win-presentation: ${resolve("notes.md")}`);
+    expect(fixture.requests[0].body).toEqual({ tool: "file", path: resolve("notes.md"), placement: "window" });
+  });
+
+  it.each([
+    ["file", "a.png", "--window", "--space-id", "exact"],
+    ["file", "a.png", "--window", "--space", "Selected"],
+    ["file", "--window"],
+    ["file", "https://example.com/a.png", "--window"],
+    ["file", "a.png", "--window", "--window"],
+    ["file", "a.png", "--window", "--host", "ssh"],
+    ["mobile", "--window", "--space-id", "exact"],
+  ])("refuses invalid window grammar before any app request: %j", async (...tail) => {
+    const fixture = await fixtureClient(undefined, capabilities);
+    const result = await runCli(["client", "pane", "open", ...tail, "--json"], fixture.environment);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stderr).error.code).toBe("invalid_request");
+    expect(fixture.requests).toEqual([]);
+  });
+
+  it("requires the window capability before mutation, even when file panes are supported", async () => {
+    const fixture = await fixtureClient(undefined, ["file_pane.open_v1"]);
+    const result = await runCli(["client", "pane", "open", "file", "a.png", "--window", "--json"], fixture.environment);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stderr).error).toMatchObject({ code: "client_capability_missing", message: expect.stringContaining("file_window.present_v1") });
+    expect(fixture.requests).toEqual([]);
+  });
+
+  it.each([
+    { label: "" }, { label: undefined }, { reused: "yes" },
+    { file: { source: "local", path: "/elsewhere.png" } },
+    { file: { source: "ssh", path: resolve("a.png"), hostId: "remote" } },
+    { presenter: { agentId: "agent-1", name: 7 } },
+  ])("rejects an unconfirmed window receipt without retrying: %j", async (patch) => {
+    const fixture = await dispatcherClient(patch);
+    const result = await runCli(["client", "pane", "open", "file", "a.png", "--window", "--json"], fixture.environment);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stderr).error.code).toBe("client_response_invalid");
+    expect(fixture.requests).toHaveLength(1);
+  });
+
+  it("reports the app's presentation failure", async () => {
+    const fixture = await fixtureClient(() => ({ status: 200, body: { ok: false, error: { code: "file_presentation_failed", message: "window creation failed" } } }), capabilities);
+    const result = await runCli(["client", "pane", "open", "file", "a.png", "--window", "--json"], fixture.environment);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stderr).error).toMatchObject({ code: "file_presentation_failed", message: "window creation failed" });
+  });
+
+  it("discovers window presentation in offline help and the shipped guides", async () => {
+    const { environment } = isolatedHome();
+    for (const args of [["--help"], ["client", "pane", "open", "--help"], ["skills", "get", "dure"], ["skills", "get", "dure-cli"]]) {
+      const result = await runCli(args, environment);
+      expect(result.code, result.stderr).toBe(0);
+      expect(result.stdout).toMatch(/pane open file \S+ --window/);
+    }
+  });
+});
+
 it("refuses background creation on older apps before mutation and keeps explicit selection compatible", async () => {
   const fixture = await fixtureClient(() => ({ status: 200, body: { ok: true, space: { spaceId: "new", name: "Workspace", mounted: true } } }), []);
   const background = await runCli(["client", "space", "create", "--json"], fixture.environment);

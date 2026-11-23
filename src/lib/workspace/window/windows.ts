@@ -5,6 +5,7 @@ import { DURABLE_APP_STORE_NAME, useStore } from "@/store";
 import { useEffect } from "react";
 import { create } from "zustand";
 import {
+  currentMonitor,
   getCurrentWindow,
   type BackgroundThrottlingPolicy,
   type Effect,
@@ -12,6 +13,10 @@ import {
 } from "@tauri-apps/api/window";
 import { setShellGlass, setTrafficLightDrop } from "@/lib/ipc";
 import { POPOUT_WINDOW_GEOMETRY } from "@/lib/workspace/window/popoutWindowGeometry";
+import {
+  PRESENTATION_WINDOW_MIN_SIZE,
+  presentationWindowGeometry,
+} from "@/lib/workspace/window/presentationWindowGeometry";
 import { isMacPlatform } from "@/lib/workspace/desktop/desktopPlatform";
 import {
   SHELL_CORNER_RADIUS,
@@ -310,29 +315,38 @@ type SecondaryWindowFrameOptions = Omit<
   | "dataDirectory"
 >;
 
-/** Shared open-or-focus flow for single-instance secondary windows
- *  (diff / popout / source control): reveal the existing window with the same
- *  stable label, otherwise create one with the shared glass-shell options.
- *  Callers differ only in label, url, title, frame options, and log message. */
-async function openOrFocusSecondaryWindow(config: {
+/** What the shared flow did: revealed the existing window, created one, or
+ *  left the label to an opening already in flight. */
+type SecondaryWindowOpening = "revealed" | "created" | "busy";
+
+interface SecondaryWindowConfig {
   label: string;
   url: string;
   title: string;
   frame: SecondaryWindowFrameOptions;
-  /** Console prefix for both the async creation error event and thrown failures. */
-  failureLog: string;
-}): Promise<boolean> {
-  const { label, url, title, frame, failureLog } = config;
+}
+
+/** Shared open-or-focus flow for single-instance secondary windows
+ *  (diff / popout / source control / presentation): reveal the existing window
+ *  with the same stable label, otherwise create one with the shared glass-shell
+ *  options. Callers differ only in label, url, title and frame options.
+ *  Rejects when the window can be neither revealed nor created. */
+async function revealOrCreateSecondaryWindow({
+  label,
+  url,
+  title,
+  frame,
+}: SecondaryWindowConfig): Promise<SecondaryWindowOpening> {
   // 빠른 더블클릭 방지: getByLabel~생성 사이 비동기 창에서 두 호출이 모두
   // "없음"을 보고 같은 label로 생성하면 두 번째가 거부된다. 진행 중 표시로 막는다.
-  if (openingSecondaryWindows.has(label)) return false;
+  if (openingSecondaryWindows.has(label)) return "busy";
   openingSecondaryWindows.add(label);
   try {
     const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
     const existing = await lookupSecondaryWindow(() => WebviewWindow.getByLabel(label));
     if (existing) {
       await revealSecondaryWindow(existing);
-      return true;
+      return "revealed";
     }
     const w = new WebviewWindow(label, {
       ...(await webviewStorageOptions()),
@@ -345,12 +359,24 @@ async function openOrFocusSecondaryWindow(config: {
     });
     const created = await waitForSecondaryWindowCreation(w, () => WebviewWindow.getByLabel(label));
     await revealSecondaryWindow(created);
-    return true;
-  } catch (e) {
-    console.error(failureLog, e);
-    return false;
+    return "created";
   } finally {
     openingSecondaryWindows.delete(label);
+  }
+}
+
+/** Button-driven openers log a failure instead of surfacing it. */
+async function openOrFocusSecondaryWindow(
+  config: SecondaryWindowConfig & {
+    /** Console prefix for both the async creation error event and thrown failures. */
+    failureLog: string;
+  },
+): Promise<boolean> {
+  try {
+    return (await revealOrCreateSecondaryWindow(config)) !== "busy";
+  } catch (e) {
+    console.error(config.failureLog, e);
+    return false;
   }
 }
 
@@ -499,6 +525,32 @@ export async function openSourceControlWindow() {
     },
     failureLog: "Failed to open the source control window:",
   });
+}
+
+export const FILE_PRESENTATION_WINDOW_LABEL = `${SECONDARY_WINDOW_LABEL_PREFIX}presentation`;
+
+/** The one window an agent presents a file in (?panel=presentation). A new
+ *  window covers most of the display this window is on; presenting again
+ *  reveals and focuses the same window at the size the person left it.
+ *  Rejects when the window can be neither revealed nor created. */
+export async function openFilePresentationWindow(
+  title: string,
+): Promise<"revealed" | "created"> {
+  const monitor = await currentMonitor().catch(() => null);
+  const opening = await revealOrCreateSecondaryWindow({
+    label: FILE_PRESENTATION_WINDOW_LABEL,
+    url: "index.html?panel=presentation",
+    title,
+    frame: {
+      ...presentationWindowGeometry(monitor),
+      ...PRESENTATION_WINDOW_MIN_SIZE,
+      titleBarStyle: "overlay",
+      hiddenTitle: true,
+      dragDropEnabled: false,
+    },
+  });
+  if (opening === "busy") throw new Error("The presentation window is already opening");
+  return opening;
 }
 
 /** macOS(WKWebView) — 런타임에 만든 창은 WKWebView가 first responder가 되지

@@ -26,6 +26,7 @@ const fixture = {
       routeToSpaceOwner: async () => ({ kind: "local" }), claim: async () => true,
       complete: async (_id, result) => { receipt = result; }, openFile: openLocalFilePane,
       openMobile: unsupported, closePanel: unsupported, movePanel: unsupported,
+      ownsFilePresentation: () => false, presentFile: unsupported,
       addSpace: () => { throw new Error("Unexpected fixture Space"); },
       waitForSpace: unsupported, removeSpace: () => {}, spaceName: () => "Review",
     });

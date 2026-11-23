@@ -32,6 +32,7 @@ Usage:
                        [--identity-file PATH] [--name NAME] [--json]
   dure client pane open mobile (--space ID_OR_NAME | --space-id ID) [--json]
   dure client pane open file PATH [--space ID_OR_NAME | --space-id ID] [--json]
+  dure client pane open file PATH --window [--json]
   dure client pane create [--space ID_OR_NAME | --space-id ID]
                           [--cwd PATH] [--host local|SSH_HOST_ID] [--json]
   dure client pane split <reference-session-id> [--reference-panel-id ID]
@@ -79,6 +80,11 @@ scripts or follow links to other pages; relative images load from beside the fil
 Design mockup HTML opens the mockup preview.
 Use it to show a person a page, report or image you produced: it needs no sign-in or hosted link.
 The receipt confirms pane placement, not file loading; missing/unreadable files show the GUI's read error.
+Open file --window presents the file in Dure's one large presentation window instead, raised and
+focused in front of the person. It takes no Space; presenting again replaces the file in the same
+window, and presenting the same file again reloads it. Its header names the presenting Agent.
+Use it when the person should look at an image, video, document or report now; the receipt's
+window.label and window.file confirm the window and file, not file loading.
 Pane create uses the invoking pane's Space when known, otherwise the app's active Space.
 Local cwd defaults to the CLI working directory; SSH cwd defaults to the remote home.
 No Git worktree is created. --host selects a registered app SSH host, not a backend profile.
@@ -274,15 +280,25 @@ function locationSelection(options) {
 function parsePaneOpenCommand(tail) {
   const { options, target, targets } = readCommandTail(tail, {
     values: new Map([["--space", "space"], ["--space-id", "spaceId"]]),
-    flags: new Map([["--json", "json"]]), optionLabel: "client pane open", maxTargets: 2,
+    flags: new Map([["--json", "json"], ["--window", "window"]]), optionLabel: "client pane open", maxTargets: 2,
   });
   if (target !== "mobile" && target !== "file") throw invalidRequest("Supported tools: mobile, file PATH.");
   if (target === "mobile" && targets.length !== 1) throw invalidRequest("open mobile takes no PATH.");
   const path = target === "file" ? localFilePanePath(targets[1]) : undefined;
   if (target === "mobile" && options.space === undefined && options.spaceId === undefined) throw invalidRequest("pane open mobile requires --space or --space-id.");
+  if (options.window && target !== "file") throw invalidRequest("--window presents a file: use pane open file PATH --window.");
+  if (options.window && (options.space !== undefined || options.spaceId !== undefined)) {
+    throw invalidRequest("--window presents the file in its own window; it takes no --space or --space-id.");
+  }
   const selection = locationSelection(options);
   return { domain: "pane", action: "open", path: "/pane/open", ...selection,
-    body: { tool: target, ...(path === undefined ? {} : { path }), ...(selection.body.spaceId ? { spaceId: selection.body.spaceId } : {}) } };
+    body: { tool: target, ...(path === undefined ? {} : { path }), ...(selection.body.spaceId ? { spaceId: selection.body.spaceId } : {}),
+      ...(options.window ? { placement: "window" } : {}) } };
+}
+
+function presenterSessionId(environment) {
+  const sessionId = environment?.HMUX_SESSION_ID?.trim();
+  return sessionId && sessionId.length <= MAX_ID_CHARACTERS && !containsControlCharacter(sessionId) ? sessionId : undefined;
 }
 
 function parsePaneCreateCommand(tail) {
@@ -552,6 +568,7 @@ function responseMember(payload, command) {
   if (command.domain === "unopened") return payload.visibility;
   if (command.domain === "project" || command.domain === "host") return payload.registration;
   if (command.domain === "workspace") return payload.workspace;
+  if (command.body?.placement === "window") return payload.window;
   return command.action === "close" ? payload.closed : payload.pane;
 }
 
@@ -582,7 +599,15 @@ export async function runClientPresentationCommand(
     && !(Array.isArray(descriptor.capabilities) && descriptor.capabilities.includes("unopened_agents.visibility_v1"))) {
     throw new AppControlClientError("client_capability_missing", "Update the running Dure app; unopened_agents.visibility_v1 is required.");
   }
-  if ((command.domain === "pane" && (command.action === "create" || command.action === "open")) || command.domain === "project") {
+  if (command.body?.placement === "window") {
+    if (descriptor && !(Array.isArray(descriptor.capabilities) && descriptor.capabilities.includes("file_window.present_v1"))) {
+      throw new AppControlClientError("client_capability_missing", "Update the running Dure app; file_window.present_v1 is required.");
+    }
+    command.body.path = localFilePanePath(resolve(command.body.path), { absolute: true });
+    // Names the presenting Agent in the window header; not an authenticated identity.
+    const sessionId = presenterSessionId(environment);
+    if (sessionId) command.body.presenterSessionId = sessionId;
+  } else if ((command.domain === "pane" && (command.action === "create" || command.action === "open")) || command.domain === "project") {
     const capability = command.domain === "project" ? "project_registration.add_v1" : command.action === "open" ? (command.body.tool === "file" ? "file_pane.open_v1" : "mobile_pane.open_v1") : "terminal_pane.create_v1";
     if (descriptor && !(Array.isArray(descriptor.capabilities) && descriptor.capabilities.includes(capability))) {
       throw new AppControlClientError("client_capability_missing", `Update the running Dure app; ${capability} is required.`);
@@ -621,6 +646,18 @@ export async function runClientPresentationCommand(
       "client_response_invalid",
       "Dure client presentation receipt is invalid.",
     );
+  }
+  if (command.body.placement === "window") {
+    if (!humanReceiptIdentity(member.label) || typeof member.reused !== "boolean"
+      || member.file?.source !== "local" || member.file?.path !== command.body.path
+      || member.file?.hostId !== undefined || member.file?.sessionId !== undefined
+      || (member.presenter !== undefined && !humanReceiptIdentity(member.presenter?.name))) {
+      throw new AppControlClientError("client_response_invalid", "File presentation was not confirmed; inspect the app before presenting again.");
+    }
+    return {
+      schemaVersion: 1, apiVersion: PANE_API_VERSION, kind: "dure.client_pane.open",
+      action: command.action, client: clientIdentity(descriptor), window: member,
+    };
   }
   if (command.body.tool === "file" && (!humanReceiptIdentity(member.panelId)
     || member.spaceId !== command.body.spaceId || member.mounted !== true
@@ -765,6 +802,14 @@ export function formatClientPresentationReceipt(report) {
     const identity = [spaceId, panelId].filter(Boolean).join("/");
     return `✓ workspace opened${identity ? ` → ${identity}` : ""}${
       targetId ? ` in ${targetId}` : ""
+    }`;
+  }
+  if (report.window) {
+    const label = humanReceiptIdentity(report.window.label) ?? "window";
+    const file = humanReceiptIdentity(report.window.file?.path);
+    const presenter = humanReceiptIdentity(report.window.presenter?.name);
+    return `✓ file presented${report.window.reused ? " in the open window" : ""} → ${label}${file ? `: ${file}` : ""}${
+      presenter ? ` (by ${presenter})` : ""
     }`;
   }
   if (report.action === "state") {

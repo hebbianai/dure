@@ -2210,6 +2210,7 @@ with open(lock_path, "a+") as lock:
         { name: "app_workspace_open" },
         { name: "app_pane_split" },
         { name: "app_pane_open" },
+        { name: "app_file_present" },
         { name: "app_pane_create" },
         { name: "app_pane_close" },
         { name: "jev_evaluate" },

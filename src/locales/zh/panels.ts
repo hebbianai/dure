@@ -167,6 +167,11 @@ export const panels: Record<string, string> = {
 	"panels.fileViewer.save": "保存 (⌘S)",
 	"panels.fileViewer.tooLargeToEdit": "文件过大，无法编辑",
 	"panels.fileViewer.truncated": "已截断",
+	"panels.filePresentation.empty":
+		"尚未展示任何文件。智能体展示文件时，会在这里打开。",
+	"panels.filePresentation.presentedBy": "由 {name} 展示",
+	"panels.filePresentation.title": "展示",
+	"panels.filePresentation.windowTitle": "{file} — {name}",
 	"panels.git.changes": "更改",
 	"panels.git.cleanWorkingTree": "干净的工作树",
 	"panels.git.commitAndPush": "提交并推送",
