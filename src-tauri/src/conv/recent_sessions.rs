@@ -1616,16 +1616,32 @@ pub fn transcript_global(
     )
 }
 
-/// [`transcript_global`] with the tool calls between the messages, for the
-/// desktop's own conversation view. Never served to another device.
-pub fn transcript_activity_global(
+/// [`transcript_any_account`] with the tool calls between the messages, for
+/// the desktop's own conversation view. Never served to another device.
+///
+/// It searches the same account profiles: a managed agent writes its
+/// transcript under its account's state root, so the default root alone shows
+/// an empty conversation for every Agent launched under a Dure account.
+pub fn transcript_activity_any_account(
     provider: &str,
     conversation_id: &str,
 ) -> Result<ProviderConversationActivity, String> {
-    let roots = DiscoveryRoots::from_environment();
-    dure_provider_profile::transcript::read_roots_activity(
-        &roots.claude_projects, &roots.codex_sessions, provider, conversation_id,
+    activity_for_roots_and_profiles(
+        &DiscoveryRoots::from_environment(),
+        &home_account_profiles(provider),
+        provider,
+        conversation_id,
     )
+}
+
+fn activity_for_roots_and_profiles(
+    roots: &DiscoveryRoots,
+    profiles: &[PathBuf],
+    provider: &str,
+    conversation_id: &str,
+) -> Result<ProviderConversationActivity, String> {
+    let path = newest_conversation_file(roots, profiles, provider, conversation_id)?;
+    dure_provider_profile::transcript::activity_from_file(&path, provider, conversation_id)
 }
 
 /// The most entries of Dure's account root one read looks through, and the
@@ -1650,16 +1666,20 @@ pub fn transcript_any_account(
     provider: &str,
     conversation_id: &str,
 ) -> Result<ProviderConversationTranscript, String> {
-    let profiles = std::env::var_os("HOME")
-        .filter(|value| !value.is_empty())
-        .map(|home| account_profile_directories(Path::new(&home), provider))
-        .unwrap_or_default();
     transcript_for_roots_and_profiles(
         &DiscoveryRoots::from_environment(),
-        &profiles,
+        &home_account_profiles(provider),
         provider,
         conversation_id,
     )
+}
+
+/// [`account_profile_directories`] under the current user's home.
+fn home_account_profiles(provider: &str) -> Vec<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(|home| account_profile_directories(Path::new(&home), provider))
+        .unwrap_or_default()
 }
 
 /// The provider's account profile directories that managed launches would
@@ -1716,13 +1736,9 @@ pub fn background_work_any_account(
     if provider != "claude" {
         return BackgroundWorkList::default();
     }
-    let profiles = std::env::var_os("HOME")
-        .filter(|value| !value.is_empty())
-        .map(|home| account_profile_directories(Path::new(&home), provider))
-        .unwrap_or_default();
     newest_conversation_file(
         &DiscoveryRoots::from_environment(),
-        &profiles,
+        &home_account_profiles(provider),
         provider,
         conversation_id,
     )
@@ -3617,6 +3633,40 @@ mod tests {
             Some("Done under the work account")
         );
         assert_eq!(transcript.entries.len(), 2);
+    }
+
+    /// The desktop's conversation view reads the activity form of the same
+    /// transcript; an Agent launched under a Dure account keeps it in that
+    /// account's profile, and the view showed an empty conversation.
+    #[test]
+    fn the_conversation_view_finds_a_transcript_under_an_account_profile() {
+        let temporary = tempfile::tempdir().unwrap();
+        let roots = roots(&temporary);
+        fs::create_dir_all(&roots.claude_projects).unwrap();
+        let profile = temporary.path().join(".dure/accounts/claude-work");
+        let conversation_id = "conversation-view-in-profile";
+        write_claude_conversation(
+            &profile.join(format!("projects/-repo/{conversation_id}.jsonl")),
+            "Earlier request",
+            "Earlier answer",
+        );
+
+        assert!(
+            activity_for_roots_and_profiles(&roots, &[], "claude", conversation_id).is_err(),
+            "the default state root alone misses the profile"
+        );
+        let profiles = account_profile_directories(temporary.path(), "claude");
+        let activity =
+            activity_for_roots_and_profiles(&roots, &profiles, "claude", conversation_id)
+                .unwrap();
+        assert_eq!(activity.transcript.entries.len(), 2);
+        assert_eq!(
+            activity.transcript.final_response.as_deref(),
+            Some("Earlier answer")
+        );
+        assert!(
+            activity_for_roots_and_profiles(&roots, &profiles, "claude", "../escape").is_err()
+        );
     }
 
     /// A conversation moved between accounts can leave an older copy behind;

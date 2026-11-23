@@ -149,9 +149,9 @@ pub(crate) async fn read_provider_conversation_transcript(
 ) -> Result<conv::ProviderConversationActivity, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if include_tools == Some(true) {
-            conv::transcript_activity_global(&provider, &conversation_id)
+            conv::transcript_activity_any_account(&provider, &conversation_id)
         } else {
-            conv::transcript_global(&provider, &conversation_id).map(|transcript| {
+            conv::transcript_any_account(&provider, &conversation_id).map(|transcript| {
                 conv::ProviderConversationActivity {
                     transcript,
                     tools: Vec::new(),
