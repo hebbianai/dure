@@ -442,7 +442,8 @@ test("a conversation past the message bound reads its newest messages", async ()
 			);
 			parentUuid = uuid;
 		}
-		await writeFile(path.join(directory, `${HISTORY_SESSION_ID}.jsonl`), `${lines.join("\n")}\n`);
+		const source = `${lines.join("\n")}\n`;
+		await writeFile(path.join(directory, `${HISTORY_SESSION_ID}.jsonl`), source);
 
 		const history = await createClaudeAgentSdkHistoryReader({ getSessionMessages })({
 			cwd,
@@ -452,8 +453,16 @@ test("a conversation past the message bound reads its newest messages", async ()
 
 		assert.equal(history.status, "complete", history.reason);
 		assert.equal(history.items.length, 2_048);
-		assert.equal(history.items[0].body.type, "history_boundary");
-		assert.equal(history.items[0].body.dropped_through_provider_sequence, 53);
+		// The boundary names where the window starts in the transcript, so a
+		// reader pages the older records in without repeating any.
+		assert.deepEqual(history.items[0].body, {
+			dropped_through_provider_sequence: Buffer.byteLength(
+				lines.slice(0, 53).map((line) => `${line}\n`).join(""),
+			),
+			reason: "provider_transcript_window",
+			requested_after_provider_sequence: 0,
+			type: "history_boundary",
+		});
 		assert.equal(history.items[1].body.markdown, "message 53");
 		assert.equal(history.items.at(-1).body.markdown, "message 2099");
 	} finally {
@@ -501,14 +510,16 @@ test("a transcript past the store window reads its newest part and marks only a 
 
 		// The conversation starts before the window: its newest part is shown
 		// behind a boundary instead of nothing.
-		await writeFile(
-			file,
-			`${line(0, null)}\n${junk}\n${line(1, historyUuid(0))}\n${line(2, historyUuid(1))}\n`,
-		);
+		const prefix = `${line(0, null)}\n${junk}\n`;
+		await writeFile(file, `${prefix}${line(1, historyUuid(0))}\n${line(2, historyUuid(1))}\n`);
 		const cut = await read();
 		assert.equal(cut.status, "complete", cut.reason);
 		assert.equal(cut.items[0].body.type, "history_boundary");
-		assert.ok(cut.items[0].body.dropped_through_provider_sequence >= 1);
+		assert.equal(cut.items[0].body.reason, "provider_transcript_window");
+		assert.equal(
+			cut.items[0].body.dropped_through_provider_sequence,
+			Buffer.byteLength(prefix),
+		);
 		assert.deepEqual(
 			cut.items.slice(1).map((item) => item.body.markdown),
 			["message 1", "message 2"],

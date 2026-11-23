@@ -252,3 +252,185 @@ fn session_settings_read_only_a_bounded_suffix() {
         assert_eq!(suffix, latest);
     }
 }
+
+fn page(path: &Path, before: Option<u64>, limits: Limits) -> TranscriptWindow {
+    read_window(
+        path,
+        "claude",
+        "test",
+        claude_turn,
+        Some(claude_tool_events),
+        limits,
+        before,
+    )
+    .unwrap()
+}
+
+fn assistant_with_call(text: &str, call_id: &str) -> String {
+    format!(
+        "{}\n",
+        serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"text","text":text},
+            {"type":"tool_use","id":call_id,"name":"Read","input":{"file_path":text}}
+        ]}})
+    )
+}
+
+fn texts(window: &TranscriptWindow) -> Vec<String> {
+    window
+        .transcript
+        .entries
+        .iter()
+        .map(|entry| entry.text.clone())
+        .collect()
+}
+
+/// Paging back from the newest page reaches the transcript's start, and the
+/// pages join where each stopped: every message and call appears once, and a
+/// message is never split from the call its record makes.
+#[test]
+fn older_pages_join_exactly_where_the_newer_page_stopped() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    let mut expected = Vec::new();
+    for index in 0..40 {
+        if index % 3 == 0 {
+            write!(
+                file,
+                "{}",
+                assistant_with_call(&format!("reply {index}"), &format!("call-{index}"))
+            )
+            .unwrap();
+        } else {
+            write!(file, "{}", record(&format!("prompt {index}"))).unwrap();
+        }
+        expected.push(if index % 3 == 0 {
+            format!("reply {index}")
+        } else {
+            format!("prompt {index}")
+        });
+    }
+    let limits = Limits {
+        source: 1024 * 1024,
+        output: 1024,
+        entries: 7,
+    };
+    let newest = page(file.path(), None, limits);
+    assert!(!newest.transcript.history_complete);
+    let mut pages = vec![newest];
+    while let Some(before) = pages.last().unwrap().older_cursor {
+        let older = page(file.path(), Some(before), limits);
+        if let Some(next) = older.older_cursor {
+            assert!(next < before, "every page moves back");
+        }
+        pages.push(older);
+    }
+    let oldest = pages.last().unwrap();
+    assert!(oldest.transcript.history_complete, "the start is reached");
+    assert_eq!(pages.len(), 6);
+    let joined = pages.iter().rev().flat_map(texts).collect::<Vec<_>>();
+    assert_eq!(joined, expected);
+    let calls = pages
+        .iter()
+        .rev()
+        .flat_map(|window| window.tools.iter().map(|call| call.call_id.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        calls,
+        (0..40)
+            .filter(|index| index % 3 == 0)
+            .map(|index| format!("call-{index}"))
+            .collect::<Vec<_>>()
+    );
+    for window in &pages {
+        // A call sits right after the message its own record carries.
+        for call in &window.tools {
+            let reply = &window.transcript.entries[call.after_entries - 1].text;
+            assert_eq!(call.call_id.replace("call-", "reply "), *reply);
+        }
+    }
+}
+
+/// A byte-bounded page starts at a whole record; the next older page ends
+/// exactly where it starts, including a record on the exact boundary.
+#[test]
+fn byte_bounded_pages_meet_on_record_boundaries() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    for index in 0..30 {
+        write!(file, "{}", record(&format!("message {index:02} 한글"))).unwrap();
+    }
+    let line = record("message 00 한글").len() as u64;
+    for source in [line * 4, line * 4 + 3] {
+        let limits = Limits {
+            source,
+            output: 1024 * 1024,
+            entries: 1000,
+        };
+        let mut before = None;
+        let mut joined = Vec::new();
+        loop {
+            let window = page(file.path(), before, limits);
+            joined.splice(0..0, texts(&window));
+            match window.older_cursor {
+                Some(cursor) => before = Some(cursor),
+                None => break,
+            }
+        }
+        assert_eq!(
+            joined,
+            (0..30)
+                .map(|index| format!("message {index:02} 한글"))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+/// A record no page can hold is left out, the read says so, and paging still
+/// moves past it.
+#[test]
+fn a_record_larger_than_a_page_is_skipped_and_reported() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    write!(
+        file,
+        "{}{}{}",
+        record("before"),
+        record(&"x".repeat(4096)),
+        record("after")
+    )
+    .unwrap();
+    let limits = Limits {
+        source: 1024 * 1024,
+        output: 1024,
+        entries: 100,
+    };
+    let newest = page(file.path(), None, limits);
+    assert_eq!(texts(&newest), ["after"]);
+    assert!(
+        !newest.transcript.history_complete,
+        "the left-out record is reported"
+    );
+    let oldest = page(file.path(), newest.older_cursor, limits);
+    assert_eq!(texts(&oldest), ["before"]);
+    assert_eq!(oldest.older_cursor, None);
+}
+
+#[test]
+fn the_whole_small_transcript_has_no_older_cursor_and_a_stale_one_fails() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    write!(file, "{}{}", record("one"), record("two")).unwrap();
+    let read = activity_from_file(file.path(), "claude", "test").unwrap();
+    assert!(read.transcript.history_complete);
+    assert_eq!(read.older_cursor, None);
+    assert!(
+        serde_json::to_value(&read)
+            .unwrap()
+            .get("olderCursor")
+            .is_none()
+    );
+    let length = std::fs::metadata(file.path()).unwrap().len();
+    assert!(activity_page_from_file(file.path(), "claude", "test", Some(length + 1)).is_err());
+    let first = record("one").len() as u64;
+    let older = activity_page_from_file(file.path(), "claude", "test", Some(first)).unwrap();
+    assert_eq!(older.transcript.entries.len(), 1);
+    assert_eq!(older.transcript.entries[0].text, "one");
+    assert_eq!(older.older_cursor, None);
+}

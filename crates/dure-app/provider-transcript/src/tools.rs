@@ -84,6 +84,10 @@ pub struct ProviderConversationActivity {
     /// exactly as [`ProviderConversationTranscript`] does.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ProviderToolCall>,
+    /// Where older records begin: the byte offset an older page reads up to
+    /// (`before`). Absent once the read reaches the transcript's start.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub older_cursor: Option<u64>,
 }
 
 /// What one transcript record says about tool calls.
@@ -320,6 +324,24 @@ fn call_bytes(call: &ProviderToolCall) -> usize {
     call.call_id.len()
         + call.name.len()
         + serde_json::to_vec(&call.input).map_or(0, |encoded| encoded.len())
+}
+
+/// The bytes one event adds to a read's tool budget, counted as
+/// [`ToolWindow`] counts the call it records.
+pub(crate) fn event_bytes(event: &ToolEvent) -> usize {
+    match event {
+        ToolEvent::Call {
+            call_id,
+            name,
+            input,
+            ..
+        } => {
+            call_id.len()
+                + name.len()
+                + serde_json::to_vec(input).map_or(0, |encoded| encoded.len())
+        }
+        ToolEvent::Result { .. } => 0,
+    }
 }
 
 impl ToolWindow {
