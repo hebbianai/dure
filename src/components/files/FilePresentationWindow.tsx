@@ -5,6 +5,7 @@ import {
 	FileViewerPanel,
 	type FileViewerParams,
 } from "@/components/files/FileViewerPanel";
+import { FileDocumentIOContext } from "@/components/files/fileDocumentIOContext";
 import { useFilePresentationWindowState } from "@/components/files/useFilePresentationWindowState";
 import { Titled } from "@/components/ui/tooltip";
 import {
@@ -12,6 +13,7 @@ import {
 	useSecondaryWindowBoot,
 	windowChromeDragHandler,
 } from "@/components/workspace/SecondaryWindowShell";
+import { presentedFileDocumentIO } from "@/lib/files/fileDocumentIO";
 import { type FilePresentation, fileBaseName } from "@/lib/files/filePresentation";
 import { publishFileReopen } from "@/lib/files/fileReopenEvents";
 import { fileDraftKey } from "@/lib/files/fileTarget";
@@ -39,7 +41,8 @@ function standaloneViewerProps(
 
 /** ?panel=presentation — the large window an agent puts one file in. Each new
  *  presentation replaces the file; presenting the same file again reloads it
- *  unless it has unsaved edits, as reopening a file pane does. */
+ *  unless it has unsaved edits, as reopening a file pane does. Videos and PDFs
+ *  stream from the native presented-media route instead of loading inline. */
 export function FilePresentationWindowRoot() {
 	const { presentation, presenterName } = useFilePresentationWindowState();
 	const fileName = presentation
@@ -100,7 +103,9 @@ export function FilePresentationWindowRoot() {
 			</div>
 			<div className="relative min-h-0 flex-1">
 				{file && viewerProps ? (
-					<FileViewerPanel key={fileDraftKey(file)} {...viewerProps} />
+					<FileDocumentIOContext.Provider value={presentedFileDocumentIO}>
+						<FileViewerPanel key={fileDraftKey(file)} {...viewerProps} />
+					</FileDocumentIOContext.Provider>
 				) : (
 					<PanelStatus>{t("panels.filePresentation.empty")}</PanelStatus>
 				)}

@@ -16,6 +16,10 @@ pub struct FileContent {
     /// image/pdf의 MIME (data: URI 조립용)
     pub mime: Option<String>,
     pub truncated: bool,
+    /// Set instead of `content` when the presentation window streams this
+    /// video or PDF: the opaque token of its `dure-media` route.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<String>,
 }
 
 /// 확장자로 표시 종류/MIME 판별. 텍스트 계열은 폭넓게 text로.
@@ -95,6 +99,7 @@ pub fn read_local(path: &str) -> Result<FileContent, String> {
         size,
         mime: mime.map(str::to_string),
         truncated,
+        stream: None,
     })
 }
 
@@ -514,6 +519,7 @@ pub fn read_remote(exec: impl Fn(&str) -> Result<String, String>, path: &str) ->
         size,
         mime: mime.map(str::to_string),
         truncated,
+        stream: None,
     })
 }
 

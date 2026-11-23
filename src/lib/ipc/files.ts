@@ -17,10 +17,18 @@ export interface FileContent {
 	size: number;
 	mime?: string;
 	truncated: boolean;
+	/** Set instead of `content` when the presentation window streams this
+	 * video or PDF: the token of its read-only media route. */
+	stream?: string;
 }
 
 export const readFile = (path: string) =>
 	invoke<FileContent>("read_file", { path });
+
+/** The presentation window's read: a video or PDF returns a stream token and
+ * no bytes; any other file is the ordinary inline read. */
+export const readPresentedFile = (path: string) =>
+	invoke<FileContent>("read_presented_file", { path });
 
 export const searchLocalDirectories = (query: string) =>
 	invoke<string[]>("search_local_directories", { query });

@@ -527,6 +527,7 @@ export async function openSourceControlWindow() {
   });
 }
 
+/** Must match PRESENTATION_WINDOW_LABEL in src-tauri/src/presented_media.rs. */
 export const FILE_PRESENTATION_WINDOW_LABEL = `${SECONDARY_WINDOW_LABEL_PREFIX}presentation`;
 
 /** The one window an agent presents a file in (?panel=presentation). A new

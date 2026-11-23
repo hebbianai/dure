@@ -19,6 +19,7 @@ import { ImageViewerBody } from "@/components/files/ImageViewerBody";
 import { MarkdownFileImage } from "@/components/files/MarkdownFileImage";
 import { OpenExternallyButton } from "@/components/files/OpenExternallyButton";
 import { hasRenderedView, isHtmlFileName } from "@/lib/files/htmlPreview";
+import { fileMediaSource } from "@/lib/files/presentedMedia";
 import { useFileViewerPanelState } from "@/components/files/useFileViewerPanelState";
 import { PanelStatus } from "@/components/common/PanelStatus";
 import { Button } from "@/components/ui/button";
@@ -30,10 +31,6 @@ function fmtSize(n: number): string {
   if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MB`;
   if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(1)} KB`;
   return `${n} B`;
-}
-
-function dataUri(mime: string, b64: string): string {
-  return `data:${mime};base64,${b64}`;
 }
 
 export function FileViewerPanel(props: IDockviewPanelProps<FileViewerParams>) {
@@ -259,18 +256,17 @@ function FileBody({
   paneId?: string;
 }) {
   const local = target.source === "local";
+  const mediaSource = fileMediaSource(file);
   if (file.kind === "markdown") {
     return <MarkdownFileBody content={text} document={{ ...target, path: file.path }} />;
   }
   if (file.kind === "text" && !file.truncated && isHtmlFileName(file.name)) {
     return <HtmlFileBody content={text} document={{ ...target, path: file.path }} name={file.name} paneId={paneId} />;
   }
-  if (file.kind === "image" && file.mime) {
-    return (
-      <ImageViewerBody src={dataUri(file.mime, file.content)} name={file.name} />
-    );
+  if (file.kind === "image" && mediaSource) {
+    return <ImageViewerBody src={mediaSource} name={file.name} />;
   }
-  if (file.kind === "video" && file.mime) {
+  if (file.kind === "video" && mediaSource) {
     // muted는 초기 상태일 뿐 컨트롤로 해제할 수 있다 — 캡션 트랙이 없는 임의
     // 파일 뷰어에서 useMediaCaption 규칙과 양립하는 유일한 정직한 형태.
     return (
@@ -283,17 +279,17 @@ function FileBody({
         <video
           controls
           muted
-          src={dataUri(file.mime, file.content)}
+          src={mediaSource}
           className="min-h-0 max-w-full flex-1 object-contain"
         />
         {local ? <OpenExternallyButton path={file.path} paneId={paneId} /> : null}
       </div>
     );
   }
-  if (file.kind === "pdf" && file.mime) {
+  if (file.kind === "pdf" && mediaSource) {
     return (
       <object
-        data={dataUri(file.mime, file.content)}
+        data={mediaSource}
         type="application/pdf"
         className="h-full w-full"
       >

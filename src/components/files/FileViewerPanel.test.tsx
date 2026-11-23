@@ -42,6 +42,10 @@ vi.mock("@/lib/workspace/performance/workspacePerformance", () => ({
   workspacePerformance: { beginPaneOpen: vi.fn(), markPaneReady: vi.fn() },
 }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openPath: vi.fn() }));
+vi.mock("@/lib/ipc/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ipc/core")>()),
+  convertFileSrc: (token: string, scheme: string) => `${scheme}://localhost/${token}`,
+}));
 vi.mock("@/lib/toast", () => ({ showErrorToast: vi.fn(), showToast: vi.fn() }));
 
 import {
@@ -53,6 +57,8 @@ import type { SshHostConfig } from "@/types";
 import { readFile, writeFile, findFileCandidates, type FileContent } from "@/lib/ipc";
 import { t } from "@/lib/i18n";
 import { publishFileDeletion } from "@/lib/files/fileDeletionEvents";
+import { FileDocumentIOContext } from "@/components/files/fileDocumentIOContext";
+import { fileDocumentIO } from "@/lib/files/fileDocumentIO";
 
 function panelProps(params: FileViewerParams): IDockviewPanelProps<FileViewerParams> {
   return {
@@ -380,6 +386,36 @@ describe("HTML pages", () => {
     expect(mocks.sshReadFile).toHaveBeenCalledWith({ id: undefined, connectOpts: { host: "example.com", user: "dev" }, path: "/srv/media/logo.png" });
     expect(screen.getByText(t("panels.fileViewer.htmlScriptsBlocked"))).toBeTruthy();
     expect(screen.queryByRole("button", { name: t("panels.fileViewer.openInDefaultApp") })).toBeNull();
+    expect(readFile).not.toHaveBeenCalled();
+  });
+});
+
+describe("streamed presented media", () => {
+  const streamed = (path: string, kind: "video" | "pdf", mime: string): FileContent => ({
+    path, name: path.split("/").pop() ?? path, kind, mime, content: "", size: 3 * 1024 * 1024 * 1024,
+    truncated: false, stream: `token-${kind}`,
+  });
+
+  it("loads a streamed video and PDF from the presented-media route instead of inline bytes", async () => {
+    const read = vi.fn(async ({ path }: { path: string }) =>
+      path.endsWith(".pdf") ? streamed(path, "pdf", "application/pdf") : streamed(path, "video", "video/mp4"));
+    const io = { ...fileDocumentIO, read };
+    const { rerender } = render(
+      <FileDocumentIOContext.Provider value={io}>
+        <FileViewerPanel {...panelProps({ path: "/work/long recording.mp4", source: "local" })} />
+      </FileDocumentIOContext.Provider>,
+    );
+    await waitFor(() => expect(document.querySelector("video")?.getAttribute("src")).toBe("dure-media://localhost/token-video"));
+    expect(document.querySelector("video")?.hasAttribute("controls")).toBe(true);
+    expect(screen.queryByText(t("panels.fileViewer.mediaPreviewCap"))).toBeNull();
+    expect(screen.getByText(/3072\.0 MB/)).toBeTruthy();
+    rerender(
+      <FileDocumentIOContext.Provider value={io}>
+        <FileViewerPanel {...panelProps({ path: "/work/report.pdf", source: "local" })} />
+      </FileDocumentIOContext.Provider>,
+    );
+    await waitFor(() => expect(document.querySelector("object")?.getAttribute("data")).toBe("dure-media://localhost/token-pdf"));
+    expect(read).toHaveBeenCalledWith(expect.objectContaining({ path: "/work/report.pdf", source: "local" }));
     expect(readFile).not.toHaveBeenCalled();
   });
 });

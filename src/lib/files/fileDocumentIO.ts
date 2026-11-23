@@ -1,5 +1,5 @@
 import type { FileTarget } from "@/lib/files/fileTarget";
-import { readFile, sshReadFile, writeFile, sshWriteFile, findFileCandidates, sshFindFileCandidates, hostToOpts } from "@/lib/ipc";
+import { readFile, readPresentedFile, sshReadFile, writeFile, sshWriteFile, findFileCandidates, sshFindFileCandidates, hostToOpts } from "@/lib/ipc";
 import type { FileDocumentIO } from "@/lib/files/fileDocument";
 import { useStore } from "@/store";
 import { t } from "@/lib/i18n";
@@ -22,4 +22,11 @@ export const fileDocumentIO: FileDocumentIO = {
     if (event === "saved") showToast(t("common.saved"), 1500);
     if (event === "saveFailed") showErrorToast(t("common.saveFailed", { error: String(error) }));
   },
+};
+
+/** The presentation window streams the video or PDF it shows instead of
+ * reading its bytes; drafts, saving and other files behave as in a pane. */
+export const presentedFileDocumentIO: FileDocumentIO = {
+  ...fileDocumentIO,
+  read: (target) => target.source === "local" ? readPresentedFile(target.path) : fileDocumentIO.read(target),
 };

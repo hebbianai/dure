@@ -41,13 +41,20 @@ vi.mock("@/lib/files/fileReopenEvents", () => ({
 	publishFileReopen: (target: { path: string }) => mocks.reopens.push(target.path),
 }));
 vi.mock("@/components/files/FileViewerPanel", async () => {
-	const { useEffect } = await import("react");
+	const { useContext, useEffect } = await import("react");
+	const { FileDocumentIOContext } = await import("@/components/files/fileDocumentIOContext");
+	const { presentedFileDocumentIO } = await import("@/lib/files/fileDocumentIO");
 	return {
 		FileViewerPanel: ({ params }: { params: { path: string } }) => {
+			const streaming = useContext(FileDocumentIOContext) === presentedFileDocumentIO;
 			useEffect(() => {
 				mocks.mounts.push(params.path);
 			}, [params.path]);
-			return <div data-testid="viewer">{params.path}</div>;
+			return (
+				<div data-testid="viewer" data-streaming={String(streaming)}>
+					{params.path}
+				</div>
+			);
 		},
 	};
 });
@@ -94,6 +101,8 @@ describe("FilePresentationWindowRoot", () => {
 		render(<FilePresentationWindowRoot />);
 		await act(async () => {});
 		expect(screen.getByTestId("viewer").textContent).toBe("/work/shot.png");
+		// The window's viewer reads through the streaming presented-file IO.
+		expect(screen.getByTestId("viewer").dataset.streaming).toBe("true");
 		expect(screen.getByText("shot.png")).toBeTruthy();
 		expect(
 			screen.getByText('panels.filePresentation.presentedBy {"name":"Docs pass"}'),

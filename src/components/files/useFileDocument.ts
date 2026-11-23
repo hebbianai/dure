@@ -1,7 +1,7 @@
 import type { FileTarget } from "@/lib/files/fileTarget";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useContext, useEffect, useMemo, useSyncExternalStore } from "react";
+import { FileDocumentIOContext } from "@/components/files/fileDocumentIOContext";
 import { createFileDocument } from "@/lib/files/fileDocument";
-import { fileDocumentIO } from "@/lib/files/fileDocumentIO";
 import { subscribeFileDeletion } from "@/lib/files/fileDeletionEvents";
 import { subscribeFileReopen } from "@/lib/files/fileReopenEvents";
 import { t } from "@/lib/i18n";
@@ -12,7 +12,8 @@ export function useFileDocument(
   autoSaveEnabled: boolean,
   autoSaveDelayMs: number,
 ) {
-  const document = useMemo(() => createFileDocument({ path, source, hostId, sessionId }, fileDocumentIO), [path, source, hostId, sessionId]);
+  const io = useContext(FileDocumentIOContext);
+  const document = useMemo(() => createFileDocument({ path, source, hostId, sessionId }, io), [path, source, hostId, sessionId, io]);
   const state = useSyncExternalStore(document.subscribe, document.getSnapshot);
   useEffect(() => {
     document.attach();
