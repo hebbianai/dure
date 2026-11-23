@@ -608,6 +608,54 @@ describe("PaneChrome", () => {
     },
   );
 
+  it("offers a Chat Agent's large window without a terminal binding", () => {
+    const interactionProfile = {
+      schemaVersion: 1,
+      kind: "structured_protocol",
+      backendProfileId: "local",
+      interactionSessionId: "interaction-1",
+    } as const;
+    const agent = makeAgent({
+      id: "large-chat",
+      provider: "claude",
+      displayName: "Chat polish",
+      runtimeBinding: undefined,
+      interactionProfile,
+    });
+    useStore.setState({ agents: [agent] });
+    renderAgentPane(agent);
+
+    fireEvent.click(screen.getByRole("button", { name: /Claude/ }));
+    expect(windowMocks.openAgentSessionWindow).toHaveBeenCalledWith(
+      agent.id,
+      "Chat polish",
+      "detached:agent:large-chat",
+    );
+  });
+
+  it("does not offer the large window for a record that names two runtimes", () => {
+    const binding = hmuxManagedBinding("session-1", "workspace-1");
+    const agent = makeAgent({
+      id: "large-contradiction",
+      provider: "claude",
+      sessionId: "session-1",
+      runtimeBinding: binding,
+      interactionProfile: {
+        schemaVersion: 1,
+        kind: "structured_protocol",
+        backendProfileId: "local",
+        interactionSessionId: "interaction-1",
+      },
+    });
+    useStore.setState({ agents: [agent] });
+    const { container } = renderAgentPane(agent, {
+      binding,
+      sessionId: agent.sessionId,
+    });
+
+    expect(container.querySelector("[data-pane-window-action]")).toBeNull();
+  });
+
   it.each([false, true])("projects active=%s onto the large-session action", (isGroupActive) => {
     const binding = hmuxManagedBinding("session-hover", "workspace-hover");
     const agent = makeAgent({

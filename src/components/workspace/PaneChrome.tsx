@@ -83,7 +83,7 @@ import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
 import { usePaneQuickCommands } from "@/components/workspace/usePaneQuickCommands";
 import { QuickCommandDialog } from "@/components/workspace/QuickCommandDialog";
 import { ErrorText } from "@/components/ui/error-text";
-import { PaneHmuxWindowActions } from "@/components/workspace/PaneHmuxWindowActions";
+import { PaneAgentSessionWindowAction } from "@/components/workspace/PaneAgentSessionWindowAction";
 import { PaneInfoDialog } from "@/components/workspace/PaneInfoDialog";
 import { planAgentWorktreeRemoval } from "@/lib/scm/worktrees/worktreeRemoval";
 import { useManagedCredentialSwitchHealthState } from "@/lib/sessions/managed/managedCredentialSwitchTransition";
@@ -681,13 +681,11 @@ export function PaneChrome(props: IDockviewPanelHeaderProps) {
           </span>
         </Titled>
       ) : null}
-      {hmuxBinding && (
-        <PaneHmuxWindowActions
-          agent={agent}
-          active={isGroupActive}
-          sourcePaneOwnerId={paneRuntimeId}
-        />
-      )}
+      <PaneAgentSessionWindowAction
+        agent={agent}
+        active={isGroupActive}
+        sourcePaneOwnerId={paneRuntimeId}
+      />
       {interfaceMode === "pro" &&
         conversion.target === "managed" &&
         managedPromotion !== "hidden" && (

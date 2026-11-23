@@ -68,7 +68,7 @@ export function initialPopoutDesktopId(): string | null {
   return new URLSearchParams(location.search).get("popout");
 }
 
-/** URL의 ?sessionWindow=<agentId> — Hmux Agent를 크게 보는 단독 창. */
+/** URL의 ?sessionWindow=<agentId> — Agent의 Terminal 또는 Chat을 크게 보는 단독 창. */
 export function initialAgentSessionWindowId(): string | null {
   return new URLSearchParams(location.search).get("sessionWindow");
 }
@@ -373,7 +373,7 @@ export async function openAgentDiffWindow(agentId: string, title?: string) {
 }
 
 /**
- * 한 Agent의 Hmux 세션을 pane 이동 없이 크게 보여주는 단독 창.
+ * 한 Agent의 Terminal(Hmux 세션) 또는 Chat을 pane 이동 없이 크게 보여주는 단독 창.
  * stable label을 써서 같은 Agent 버튼을 다시 누르면 새 observer를 더 만들지 않고
  * 기존 창을 복원·포커스한다. 실제 runtime identity는 새 창의 persisted store에서
  * agentId로 다시 해석하므로 URL에 터미널 내용이나 credential을 넣지 않는다.

@@ -115,6 +115,14 @@ const mocks = vi.hoisted(() => ({
 		| undefined
 		| ((phase: "begin" | "end") => void),
 	liveResizeUnsubscribe: vi.fn(),
+	chatSession: vi.fn((agentId: string, profile: unknown) => ({
+		phase: "ready",
+		agentId,
+		profile,
+	})),
+	autoChatReady: true,
+	chatReady: undefined as undefined | (() => void),
+	chatUnmounted: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -364,12 +372,55 @@ vi.mock("@/components/terminal/TerminalView", () => ({
 	},
 }));
 
+vi.mock("@/components/agents/chat/useAgentChatSession", () => ({
+	useAgentChatSession: mocks.chatSession,
+}));
+vi.mock("@/components/agents/chat/StructuredAgentChatSurface", () => ({
+	StructuredAgentChatSurface: ({
+		session,
+		attachmentsEnabled,
+		onReady,
+	}: {
+		session: { agentId: string };
+		attachmentsEnabled?: boolean;
+		onReady?: () => void;
+	}) => {
+		useEffect(() => {
+			mocks.chatReady = onReady;
+			if (mocks.autoChatReady) onReady?.();
+		}, [onReady]);
+		useEffect(() => () => mocks.chatUnmounted(), []);
+		return (
+			<div
+				data-testid="chat-view"
+				data-agent-id={session.agentId}
+				data-attachments={String(attachmentsEnabled)}
+			/>
+		);
+	},
+}));
+
 import { AgentSessionWindowRoot } from "@/components/workspace/AgentSessionWindow";
 
 const target: Agent = agentFixture({
 	displayName: "UI polish",
 	runtimeBinding: hmuxManagedBinding("session-1", "workspace-1"),
 });
+
+const chatProfile = {
+	schemaVersion: 1,
+	kind: "structured_protocol",
+	backendProfileId: "local",
+	interactionSessionId: "interaction-1",
+} as const;
+
+/** The same Agent after its View moved it into Chat. */
+const chatTarget: Agent = {
+	...target,
+	provider: "claude",
+	runtimeBinding: undefined,
+	interactionProfile: chatProfile,
+};
 
 /** What the source pane publishes for its launch pills. */
 function launchPresentation(model = "gpt-5.5") {
@@ -399,6 +450,8 @@ beforeEach(() => {
 	}));
 	mocks.autoObserveGeometry = true;
 	mocks.geometryObserved = undefined;
+	mocks.autoChatReady = true;
+	mocks.chatReady = undefined;
 	mocks.liveResizeListener = undefined;
 	mocks.liveResizeUnsubscribe.mockReset();
 	mocks.closeRequested = undefined;
@@ -1027,7 +1080,117 @@ describe("AgentSessionWindowRoot", () => {
 		]);
 	});
 
-	it("returns to the source pane once the Agent runs in Chat", async () => {
+	it("presents a Chat Agent's conversation without an Hmux binding", () => {
+		useStore.setState({
+			agents: [chatTarget],
+			projects: [
+				{
+					id: "project-1",
+					name: "Project",
+					path: "/repo",
+					kind: "local",
+					isRepo: true,
+				},
+			],
+		});
+
+		render(<AgentSessionWindowRoot agentId="agent-1" />);
+
+		const chat = screen.getByTestId("chat-view");
+		expect(chat.dataset.agentId).toBe("agent-1");
+		expect(chat.dataset.attachments).toBe("true");
+		expect(mocks.chatSession).toHaveBeenCalledWith("agent-1", chatProfile);
+		expect(screen.queryByTestId("terminal-view")).toBeNull();
+		expect(
+			screen.queryByText(t("workspace.agentWindow.unavailable")),
+		).toBeNull();
+	});
+
+	it("hands the source pane over only once the Chat shows its first page", async () => {
+		mocks.autoChatReady = false;
+		useStore.setState({ agents: [chatTarget] });
+		const source = {
+			windowLabel: "win-workspace-2",
+			paneOwnerId: "desktop-2:agent:agent-1",
+		};
+
+		render(
+			<AgentSessionWindowRoot
+				agentId="agent-1"
+				sourceWindowLabel={source.windowLabel}
+				sourcePaneOwnerId={source.paneOwnerId}
+			/>,
+		);
+
+		await waitFor(() => expect(mocks.chatReady).toBeTypeOf("function"));
+		expect(mocks.setAgentSessionSourceOpen).not.toHaveBeenCalledWith(
+			"agent-1",
+			source,
+			true,
+		);
+		act(() => mocks.chatReady?.());
+		await waitFor(() =>
+			expect(mocks.setAgentSessionSourceOpen).toHaveBeenLastCalledWith(
+				"agent-1",
+				source,
+				true,
+			),
+		);
+	});
+
+	it("follows the Agent's View into Chat and back instead of closing", async () => {
+		const source = {
+			windowLabel: "win-workspace-2",
+			paneOwnerId: "desktop-2:agent:agent-1",
+		};
+		render(
+			<AgentSessionWindowRoot
+				agentId="agent-1"
+				sourceWindowLabel={source.windowLabel}
+				sourcePaneOwnerId={source.paneOwnerId}
+			/>,
+		);
+		expect(screen.getByTestId("terminal-view")).toBeTruthy();
+		await waitFor(() =>
+			expect(mocks.setAgentSessionSourceOpen).toHaveBeenLastCalledWith(
+				"agent-1",
+				source,
+				true,
+			),
+		);
+
+		// The terminal's readiness never stands in for the Chat's first page.
+		mocks.autoChatReady = false;
+		act(() => {
+			useStore.setState({ agents: [chatTarget] });
+		});
+
+		expect(screen.getByTestId("chat-view")).toBeTruthy();
+		expect(screen.queryByTestId("terminal-view")).toBeNull();
+		expect(mocks.setAgentSessionSourceOpen).toHaveBeenLastCalledWith(
+			"agent-1",
+			source,
+			false,
+		);
+		act(() => mocks.chatReady?.());
+		expect(mocks.setAgentSessionSourceOpen).toHaveBeenLastCalledWith(
+			"agent-1",
+			source,
+			true,
+		);
+
+		act(() => {
+			useStore.setState({ agents: [target] });
+		});
+
+		expect(screen.getByTestId("terminal-view")).toBeTruthy();
+		expect(screen.queryByTestId("chat-view")).toBeNull();
+		expect(mocks.close).not.toHaveBeenCalled();
+		expect(mocks.restoreWindowAfterSecondaryClose).not.toHaveBeenCalled();
+	});
+
+	it("returns a Chat window's source pane on close without a terminal handoff", async () => {
+		useStore.setState({ agents: [chatTarget] });
 		render(
 			<AgentSessionWindowRoot
 				agentId="agent-1"
@@ -1035,32 +1198,36 @@ describe("AgentSessionWindowRoot", () => {
 				sourcePaneOwnerId="desktop-2:agent:agent-1"
 			/>,
 		);
-		expect(mocks.close).not.toHaveBeenCalled();
+		await vi.waitFor(() => expect(mocks.closeRequested).toBeTypeOf("function"));
+		const preventDefault = vi.fn();
 
-		act(() => {
-			useStore.setState({
-				agents: [
-					{
-						...target,
-						runtimeBinding: undefined,
-						interactionProfile: {
-							schemaVersion: 1,
-							kind: "structured_protocol",
-							backendProfileId: "local",
-							interactionSessionId: "interaction-1",
-						},
-					},
-				],
-			});
+		await act(async () => {
+			await mocks.closeRequested?.({ preventDefault });
 		});
 
-		await waitFor(() => expect(mocks.close).toHaveBeenCalledOnce());
+		expect(preventDefault).toHaveBeenCalledOnce();
+		expect(mocks.beginLargeViewReturnToWindow).not.toHaveBeenCalled();
+		expect(mocks.hide).toHaveBeenCalledOnce();
+		expect(mocks.setAgentSessionSourceOpen).toHaveBeenLastCalledWith(
+			"agent-1",
+			{
+				windowLabel: "win-workspace-2",
+				paneOwnerId: "desktop-2:agent:agent-1",
+			},
+			false,
+		);
+		expect(mocks.chatUnmounted).toHaveBeenCalledOnce();
 		expect(mocks.restoreWindowAfterSecondaryClose).toHaveBeenCalledWith(
 			"win-workspace-2",
 		);
 		expect(
 			mocks.restoreWindowAfterSecondaryClose.mock.invocationCallOrder[0],
+		).toBeLessThan(mocks.settleDurableAppState.mock.invocationCallOrder[0]);
+		expect(
+			mocks.settleDurableAppState.mock.invocationCallOrder[0],
 		).toBeLessThan(mocks.close.mock.invocationCallOrder[0]);
+		expect(mocks.close).toHaveBeenCalledOnce();
+		expect(screen.queryByTestId("chat-view")).toBeNull();
 	});
 
 	it("asks the source window to present a fork created from the large view", async () => {

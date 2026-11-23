@@ -119,7 +119,7 @@ const diffAgentId = qaParams.get("diff");
 const bareRootPanel = qaParams.get("panel");
 // ?popout=<desktopId> — pane 분리 경량 창 (사이드바·데스크탑 바 없음)
 const popoutDesktopId = qaParams.get("popout");
-// ?sessionWindow=<agentId> — pane/layout은 유지하고 같은 Hmux 세션에 붙는 큰 창
+// ?sessionWindow=<agentId> — pane/layout은 유지하고 같은 Agent runtime(Terminal 또는 Chat)을 보여주는 큰 창
 const sessionWindowAgentId = qaParams.get("sessionWindow");
 const sessionWindowSource = agentSessionSourceFromSearch(location.search);
 // DockviewReact creates its imperative layout and React portal bridge in a

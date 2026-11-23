@@ -2,12 +2,14 @@ import { AgentChatSurface } from "@/components/agents/chat/AgentChatSurface";
 import type { IDockviewPanelProps } from "dockview-react";
 import { AgentPendingRequestCard } from "@/components/agents/chat/AgentPendingRequestCard";
 import type { ChatTurnFailureRecovery } from "@/components/agents/chat/ChatComposer";
-import { useApprovedPlanPermissionSelection } from "@/components/agents/chat/useApprovedPlanPermissionSelection";
 import { useChatContentTypography } from "@/components/agents/chat/useChatContentTypography";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
 import type { ProviderCatalogSource } from "@/lib/agents/providerModelCatalogSource";
 import type { AgentChatSessionView } from "@/lib/agents/chat/agentChatSessionView";
 
+/** A Chat Agent's conversation and composer. Presentation only: the pane, its
+ * large window and a shared conversation all render it, so runtime side
+ * effects stay with the owner of the session and launch selection. */
 export function StructuredAgentChatSurface({
 	session,
 	paneApi,
@@ -30,7 +32,6 @@ export function StructuredAgentChatSurface({
 	onNewConversation?: () => void;
 }) {
 	const typography = useChatContentTypography();
-	useApprovedPlanPermissionSelection(session, launchSelection);
 	return (
 		<AgentChatSurface
 			session={session}

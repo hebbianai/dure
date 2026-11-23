@@ -15,12 +15,14 @@ import { StructuredAgentPanel as StructuredAgentPanelImpl } from "@/components/p
 import type { AgentCredentialTransitionResult } from "@/lib/agents/agentCredentialTransition";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
 import { dispatchCliPaneActionRequest } from "@/lib/cli/cliPaneActions";
+import { t } from "@/lib/i18n";
 import type { AgentStructuredInteractionProfileV1 } from "@/lib/agents/chat/agentInteractionProfile";
 import { publishConversationTitle } from "@/lib/agents/chat/conversationPresentationState";
 import {
 	invokePaneAction,
 	paneActionSnapshot,
 } from "@/lib/workspace/pane/paneActionRegistry";
+import { setAgentSessionSourceOpen } from "@/lib/workspace/window/agentSessionWindowSource";
 import { useStore } from "@/store";
 import { agentFixture } from "@/test/agentFixtures";
 import type { Project } from "@/types";
@@ -47,7 +49,21 @@ const mocks = vi.hoisted(() => ({
 	chatSend: vi.fn(),
 	autoSwitch: true,
 	launchFreshConversation: vi.fn(async () => ({})),
+	openAgentSessionWindow: vi.fn(async () => {}),
+	followApprovedPlan: vi.fn(),
 }));
+
+vi.mock("@tauri-apps/api/webviewWindow", () => ({
+	getCurrentWebviewWindow: () => ({ label: "main" }),
+}));
+vi.mock(import("@/lib/workspace/window/windows"), async (importOriginal) => ({
+	...(await importOriginal()),
+	openAgentSessionWindow: mocks.openAgentSessionWindow,
+}));
+vi.mock(
+	"@/components/agents/chat/useApprovedPlanPermissionSelection",
+	() => ({ useApprovedPlanPermissionSelection: mocks.followApprovedPlan }),
+);
 
 vi.mock("@/components/agents/chat/useAgentChatSession", () => ({
 	useAgentChatSession: mocks.chatHook,
@@ -275,6 +291,82 @@ describe("StructuredAgentPanel mount", () => {
 			projectKind: "local",
 		});
 		expect(mocks.chatProps?.attachmentsEnabled).toBe(true);
+	});
+
+	it("hands its conversation to the large window while staying the session's owner", () => {
+		const onRuntimeInvalidated = vi.fn();
+		const source = {
+			windowLabel: "main",
+			paneOwnerId: "desktop-1:agent:agent-1",
+		};
+		render(
+			<StructuredAgentPanel
+				agent={agent}
+				profile={profile}
+				panelProps={panelProps}
+				launchSelection={launchSelection}
+				onRuntimeInvalidated={onRuntimeInvalidated}
+				switchCredential={vi.fn()}
+				switchToNativeTerminal={vi.fn()}
+			/>,
+		);
+		expect(screen.getByTestId("structured-chat")).toBeTruthy();
+
+		try {
+			act(() => setAgentSessionSourceOpen(agent.id, source, true));
+
+			expect(screen.queryByTestId("structured-chat")).toBeNull();
+			fireEvent.click(
+				screen.getByRole("button", {
+					name: t("terminal.largeView.bringToFront"),
+				}),
+			);
+			expect(mocks.openAgentSessionWindow).toHaveBeenCalledWith(
+				agent.id,
+				undefined,
+				source.paneOwnerId,
+			);
+			// The pane keeps the session, its toolbar and the launch selection's
+			// follow-ups; only the conversation's presentation moved.
+			expect(mocks.chatHook).toHaveBeenLastCalledWith(
+				agent.id,
+				profile,
+				onRuntimeInvalidated,
+			);
+			expect(mocks.followApprovedPlan).toHaveBeenLastCalledWith(
+				expect.objectContaining({ phase: "ready" }),
+				launchSelection,
+			);
+			expect(screen.getByTestId("conversation-history")).toBeTruthy();
+		} finally {
+			act(() => setAgentSessionSourceOpen(agent.id, source, false));
+		}
+
+		expect(screen.getByTestId("structured-chat")).toBeTruthy();
+	});
+
+	it("keeps its conversation while a large window presents another pane", () => {
+		render(
+			<StructuredAgentPanel
+				agent={agent}
+				profile={profile}
+				panelProps={panelProps}
+				launchSelection={launchSelection}
+				onRuntimeInvalidated={vi.fn()}
+				switchCredential={vi.fn()}
+				switchToNativeTerminal={vi.fn()}
+			/>,
+		);
+		const otherPane = {
+			windowLabel: "main",
+			paneOwnerId: "desktop-2:agent:agent-1",
+		};
+		try {
+			act(() => setAgentSessionSourceOpen(agent.id, otherPane, true));
+			expect(screen.getByTestId("structured-chat")).toBeTruthy();
+		} finally {
+			act(() => setAgentSessionSourceOpen(agent.id, otherPane, false));
+		}
 	});
 
 	it("gives the composer's /clear the history menu's fresh sibling launch", async () => {

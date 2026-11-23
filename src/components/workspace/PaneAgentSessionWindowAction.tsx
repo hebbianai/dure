@@ -2,11 +2,11 @@ import { Expand } from "lucide-react";
 import { Titled } from "@/components/ui/tooltip";
 import { agentDisplayName } from "@/lib/agents/agentDisplayName";
 import { t } from "@/lib/i18n";
-import { agentSessionWindowBinding } from "@/lib/workspace/window/agentSessionWindowTarget";
+import { agentSessionWindowTarget } from "@/lib/workspace/window/agentSessionWindowTarget";
 import { openAgentSessionWindow } from "@/lib/workspace/window/windows";
 import { type Agent, PROVIDERS } from "@/types";
 
-interface PaneHmuxWindowActionsProps {
+interface PaneAgentSessionWindowActionProps {
 	agent?: Agent;
 	active?: boolean;
 	sourcePaneOwnerId?: string;
@@ -15,19 +15,20 @@ interface PaneHmuxWindowActionsProps {
 const buttonClassName =
 	"flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-[color,background-color,opacity] duration-150 hover:bg-glass-tint-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
-/** Opens a detached large view for an attached managed agent session. */
-export function PaneHmuxWindowActions({
+/** Opens the Agent's large window, offered only when that window can present
+ * the Agent's current view (its Terminal or its Chat). */
+export function PaneAgentSessionWindowAction({
 	agent,
 	active = false,
 	sourcePaneOwnerId,
-}: PaneHmuxWindowActionsProps) {
+}: PaneAgentSessionWindowActionProps) {
 	const sessionWindowLabel = agent
 		? t("workspace.agentWindow.viewSession", {
 				provider: PROVIDERS[agent.provider].label,
 			})
 		: undefined;
 
-	if (!agent || !agentSessionWindowBinding(agent) || !sessionWindowLabel) {
+	if (!agent || !agentSessionWindowTarget(agent) || !sessionWindowLabel) {
 		return null;
 	}
 

@@ -1,3 +1,4 @@
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useCallback, useEffect, useState } from "react";
 import { Alert } from "@/components/ui/alert";
 import { AccountsDialog } from "@/components/agents/AccountsDialog";
@@ -10,6 +11,7 @@ import { AgentProjectMove } from "@/components/agents/AgentProjectMove";
 import { AgentRuntimeProfileSwitch } from "@/components/agents/AgentRuntimeProfileSwitch";
 import { StructuredAgentChatSurface } from "@/components/agents/chat/StructuredAgentChatSurface";
 import { useAgentChatSession } from "@/components/agents/chat/useAgentChatSession";
+import { useApprovedPlanPermissionSelection } from "@/components/agents/chat/useApprovedPlanPermissionSelection";
 import { useChatPaneActions } from "@/components/agents/chat/useChatPaneActions";
 import { useConversationTitle } from "@/components/agents/chat/useConversationTitle";
 import { useUsageLimitHandoff } from "@/components/agents/chat/useUsageLimitHandoff";
@@ -32,6 +34,10 @@ import {
 	useStructuredAgentPanelState,
 } from "@/components/panels/useAgentPanelState";
 import { useRemoteAgentCredentialActions } from "@/components/panels/useRemoteAgentCredentialActions";
+import {
+	AgentLargeViewSourceProxy,
+	useAgentLargeViewSource,
+} from "@/components/workspace/AgentLargeViewSourceProxy";
 import { useNamedPaneAction } from "@/components/workspace/useNamedPaneAction";
 import { AgentPluginClaimStatus } from "@/components/plugins/AgentPluginClaimStatus";
 import { useWorkspaceRuntimeDesktopId } from "@/components/workspace/WorkspaceRuntimeContext";
@@ -119,6 +125,9 @@ export function StructuredAgentPanel({
 		getActiveSpaceId,
 	} = useStructuredAgentPanelState(agent);
 	const session = useAgentChatSession(agent.id, profile, onRuntimeInvalidated);
+	// The pane owns the launch selection, so it follows an approved plan here
+	// even while the Agent's large window presents the conversation.
+	useApprovedPlanPermissionSelection(session, launchSelection);
 	const activeTurn = "activeTurn" in session ? session.activeTurn : undefined;
 	const answeringRequestId =
 		"answeringRequestId" in session ? session.answeringRequestId : undefined;
@@ -163,6 +172,13 @@ export function StructuredAgentPanel({
 	const chatInputLocked = accountBusy || profileBusy || projectMoveBusy;
 	const paneId = panelProps.api.id;
 	const paneDesktopId = useWorkspaceRuntimeDesktopId();
+	const largeView = useAgentLargeViewSource(
+		{
+			agentId: agent.id,
+			sourceWindowLabel: getCurrentWebviewWindow().label,
+		},
+		paneId,
+	);
 	useAgentPaneAttentionAck(agent.id, panelProps.api);
 	// `/clear` in the composer is the history menu's "new conversation": the
 	// same sibling-pane launch, under the same pane-owned action lease.
@@ -554,65 +570,69 @@ export function StructuredAgentPanel({
 					)}
 			</AgentPanelToolbarFrame>
 			<div className="relative min-h-0 flex-1">
-				<StructuredAgentChatSurface
-					session={session}
-					paneApi={panelProps.api}
-					disabled={chatInputLocked}
-					attachmentsEnabled={project?.kind === "local"}
-					launchSelection={launchSelection}
-					catalogSource={agentProviderCatalogSource(agent, project, accounts)}
-					onReady={markReady}
-					onNewConversation={
-						newConversationAvailable && !accountMovesLocked
-							? startNewConversation
-							: undefined
-					}
-					recovery={
-						supportsAccounts(agent.provider)
-							? {
-									// The pane's own switch to the account the handoff policy
-									// chose from fresh observed usage — never the global
-									// active account, never a guess.
-									...(handoffDecision?.kind === "handoff"
-										? {
-												switchAccount: {
-													targetName: handoffDecision.targetName,
-													run: () => void requestHandoff().catch(() => {}),
-												},
-											}
-										: {}),
-									manageAccounts: () => setAccountsOpen(true),
-									// The episode was already answered by a handoff: say so,
-									// and offer the failed message back with one click.
-									...(handoffView.kind === "handled" && handoffView.outcome
-										? {
-												handedOff: {
-													...handoffView.outcome,
-													...(resendLastMessage
-														? { resend: resendLastMessage.run }
-														: {}),
-												},
-											}
-										: {}),
-									// Remote panes sign in on the host through the
-									// account switcher instead of a local terminal.
-									...(project?.kind === "ssh"
-										? {}
-										: {
-												signIn: () =>
-													openCommandTerminalOn(panelProps.containerApi, {
-														title: t("agents.chat.recovery.signIn"),
-														command: providerLoginCmd(
-															agent.provider,
-															currentAccount,
-														),
-														closeOnSuccess: true,
-													}),
-											}),
-								}
-							: undefined
-					}
-				/>
+				{largeView ? (
+					<AgentLargeViewSourceProxy {...largeView} />
+				) : (
+					<StructuredAgentChatSurface
+						session={session}
+						paneApi={panelProps.api}
+						disabled={chatInputLocked}
+						attachmentsEnabled={project?.kind === "local"}
+						launchSelection={launchSelection}
+						catalogSource={agentProviderCatalogSource(agent, project, accounts)}
+						onReady={markReady}
+						onNewConversation={
+							newConversationAvailable && !accountMovesLocked
+								? startNewConversation
+								: undefined
+						}
+						recovery={
+							supportsAccounts(agent.provider)
+								? {
+										// The pane's own switch to the account the handoff policy
+										// chose from fresh observed usage — never the global
+										// active account, never a guess.
+										...(handoffDecision?.kind === "handoff"
+											? {
+													switchAccount: {
+														targetName: handoffDecision.targetName,
+														run: () => void requestHandoff().catch(() => {}),
+													},
+												}
+											: {}),
+										manageAccounts: () => setAccountsOpen(true),
+										// The episode was already answered by a handoff: say so,
+										// and offer the failed message back with one click.
+										...(handoffView.kind === "handled" && handoffView.outcome
+											? {
+													handedOff: {
+														...handoffView.outcome,
+														...(resendLastMessage
+															? { resend: resendLastMessage.run }
+															: {}),
+													},
+												}
+											: {}),
+										// Remote panes sign in on the host through the
+										// account switcher instead of a local terminal.
+										...(project?.kind === "ssh"
+											? {}
+											: {
+													signIn: () =>
+														openCommandTerminalOn(panelProps.containerApi, {
+															title: t("agents.chat.recovery.signIn"),
+															command: providerLoginCmd(
+																agent.provider,
+																currentAccount,
+															),
+															closeOnSuccess: true,
+														}),
+												}),
+									}
+								: undefined
+						}
+					/>
+				)}
 				{conversationFailure && (
 					<Alert
 						surface="dock"

@@ -1,17 +1,18 @@
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { Expand } from "lucide-react";
 import { useCallback, useLayoutEffect, useSyncExternalStore } from "react";
 import { RetiredLegacyPane } from "@/components/terminal/RetiredLegacyPane";
-import { Titled } from "@/components/ui/tooltip";
 import type { TerminalViewProps } from "@/components/terminal/TerminalViewProps";
 import { VisibilityRetainedStructuredTerminal } from "@/components/terminal/VisibilityRetainedStructuredTerminal";
+import {
+	AgentLargeViewSourceProxy,
+	useAgentLargeViewSource,
+} from "@/components/workspace/AgentLargeViewSourceProxy";
 import {
 	useWorkspaceRuntimeDesktopId,
 	useWorkspaceTerminalPresentationRetained,
 	useWorkspaceTerminalPresentationRole,
 } from "@/components/workspace/WorkspaceRuntimeContext";
 import { hmuxPaneOwnerId } from "@/lib/hmux/hmuxPaneRetirement";
-import { t } from "@/lib/i18n";
 import { clearHmuxPaneHealth } from "@/lib/terminal/hmuxPaneHealthStore";
 import { structuredTerminalAttachmentKey } from "@/lib/terminal/structuredTerminalRecordAdapter";
 import {
@@ -19,11 +20,6 @@ import {
 	isHmuxPaneBinding,
 } from "@/lib/terminal/terminalBinding";
 import { hmuxPaneHealthId } from "@/lib/terminal/terminalHealth";
-import {
-	agentSessionSourceIsOpen,
-	subscribeAgentSessionSourcePresence,
-} from "@/lib/workspace/window/agentSessionWindowSource";
-import { openAgentSessionWindow } from "@/lib/workspace/window/windows";
 export type { TerminalQaBufferState } from "@/lib/terminal/terminalViewContracts";
 
 // The legacy xterm renderer is retired (2026-08-16): every runtime producer
@@ -102,37 +98,11 @@ export function TerminalView(props: TerminalViewProps) {
 	const attachmentKey = binding
 		? structuredTerminalAttachmentKey(binding)
 		: undefined;
-	const largeViewAgentId = props.largeView?.agentId;
-	const largeViewSourceWindowLabel = props.largeView?.sourceWindowLabel;
-	const sourcePaneOwnerId =
-		largeViewAgentId && desktopId && props.paneApi
-			? `${desktopId}:${props.paneApi.id}`
-			: undefined;
-	const subscribePresence = useCallback(
-		(listener: () => void) =>
-			largeViewAgentId
-				? subscribeAgentSessionSourcePresence(largeViewAgentId, listener)
-				: () => {},
-		[largeViewAgentId],
+	const largeView = useAgentLargeViewSource(
+		props.largeView,
+		props.paneApi?.id,
 	);
-	const readPresence = useCallback(
-		() =>
-			Boolean(
-				largeViewAgentId &&
-					sourcePaneOwnerId &&
-					largeViewSourceWindowLabel &&
-					agentSessionSourceIsOpen(largeViewAgentId, {
-						windowLabel: largeViewSourceWindowLabel,
-						paneOwnerId: sourcePaneOwnerId,
-					}),
-			),
-		[largeViewAgentId, largeViewSourceWindowLabel, sourcePaneOwnerId],
-	);
-	const largeViewActive = useSyncExternalStore(
-		subscribePresence,
-		readPresence,
-		() => false,
-	);
+	const largeViewActive = largeView !== undefined;
 	// Ordinary hiding retains this binding's last exact frame. Replacing the
 	// binding or handing presentation to another window retires its observation
 	// before a replacement renderer can publish a frame in the layout phase.
@@ -140,30 +110,6 @@ export function TerminalView(props: TerminalViewProps) {
 		if (!paneHealthId) return;
 		return () => clearHmuxPaneHealth(paneHealthId);
 	}, [paneHealthId, attachmentKey, largeViewActive]);
-	if (largeViewActive && largeViewAgentId && sourcePaneOwnerId) {
-		const label = t("terminal.largeView.bringToFront");
-		return (
-			<Titled title={label}>
-				<button
-					type="button"
-					className="flex h-full w-full cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:inset-ring-1 focus-visible:inset-ring-ring"
-					data-agent-session-window-proxy=""
-					aria-label={label}
-					onClick={() =>
-						void openAgentSessionWindow(
-							largeViewAgentId,
-							undefined,
-							sourcePaneOwnerId,
-						)
-					}
-				>
-					<span className="flex items-center gap-2 text-xs">
-						<Expand className="size-3.5" />
-						{t("terminal.largeView.openNotice")}
-					</span>
-				</button>
-			</Titled>
-		);
-	}
+	if (largeView) return <AgentLargeViewSourceProxy {...largeView} />;
 	return <VisibleTerminalPresentation {...props} paneHealthId={paneHealthId} />;
 }
