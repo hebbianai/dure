@@ -1,4 +1,6 @@
 import { NativeAgentResponseView } from "@/components/agents/NativeAgentResponseView";
+import { StructuredAgentChatSurface } from "@/components/agents/chat/StructuredAgentChatSurface";
+import { useAgentChatSession } from "@/components/agents/chat/useAgentChatSession";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   type ReactNode,
@@ -20,6 +22,7 @@ import {
   windowChromeDragHandler,
 } from "@/components/workspace/SecondaryWindowShell";
 import { agentDisplayName } from "@/lib/agents/agentDisplayName";
+import type { AgentStructuredInteractionProfileV1 } from "@/lib/agents/chat/agentInteractionProfile";
 import { t } from "@/lib/i18n";
 import { preloadTerminalFont } from "@/lib/terminal/renderer/terminalFontPreload";
 import {
@@ -35,7 +38,10 @@ import {
 import { useNativeWindowTheme } from "@/lib/platform/windowAppearance";
 import { useResolvedDark } from "@/lib/theme/themePreference";
 import { toggleWindowMaximizeAtomic } from "@/lib/ipc/system";
-import { agentSessionWindowBinding } from "@/lib/workspace/window/agentSessionWindowTarget";
+import {
+  agentSessionWindowTarget,
+  agentSessionWindowTargetKey,
+} from "@/lib/workspace/window/agentSessionWindowTarget";
 import { agentPaneTitle } from "@/lib/workspace/pane/paneTitle";
 import { useTerminalFontShortcut } from "@/lib/workspace/window/windowShortcutHooks";
 import {
@@ -70,10 +76,12 @@ import { useStore } from "@/store";
 import type { Agent } from "@/types";
 
 /**
- * ?sessionWindow=<agentId>로 열린 Hmux 세션의 단독 큰 창.
+ * ?sessionWindow=<agentId>로 열린 Agent의 단독 큰 창. Agent의 pane과 같은 view를
+ * 그린다: Terminal Agent는 Hmux 세션, Chat Agent는 그 대화.
  *
  * Dockview pane을 옮기거나 복제하지 않는다. 이 창이 살아 있는 동안 원본 pane은
- * renderer를 내려놓고 이 창을 앞으로 가져오는 proxy로만 남는다.
+ * runtime을 계속 소유하고, 표면만 내려놓은 채 이 창을 앞으로 가져오는 proxy로
+ * 남는다.
  */
 export function AgentSessionWindowRoot({
   agentId,
@@ -106,8 +114,10 @@ export function AgentSessionWindowRoot({
   const agentCwd = useStore((state) =>
     agent ? state.sessionCwd[agent.sessionId] : undefined,
   );
-  const binding = agent ? agentSessionWindowBinding(agent) : undefined;
-  const largeViewAvailable = Boolean(binding);
+  const target = agent ? agentSessionWindowTarget(agent) : undefined;
+  const targetKey = agentSessionWindowTargetKey(target);
+  const binding = target?.kind === "terminal" ? target.binding : undefined;
+  const largeViewAvailable = Boolean(target);
   const structuredBinding =
     isHmuxPaneBinding(binding) && binding.source === "local"
       ? binding
@@ -120,8 +130,11 @@ export function AgentSessionWindowRoot({
     windowLabel: normalizeAgentSessionSourceWindowLabel(sourceWindowLabel),
     paneOwnerId: normalizeAgentSessionSourcePaneOwnerId(sourcePaneOwnerId),
   }));
-  const [readySessionId, setReadySessionId] = useState<string>();
-  const largeViewReady = binding?.sessionId === readySessionId;
+  // The source pane hands its presentation over only once this window shows
+  // the same runtime generation: the terminal's first geometry, or the Chat's
+  // first page.
+  const [readyKey, setReadyKey] = useState<string>();
+  const largeViewReady = targetKey !== undefined && targetKey === readyKey;
   const initialGeometryGenerationRef = useRef<number | undefined>(undefined);
   const structuredSurfaceRetirementsRef = useRef(
     new LargeViewSurfaceRetirementDrain(),
@@ -156,12 +169,15 @@ export function AgentSessionWindowRoot({
   }, [structuredBinding?.sessionId]);
 
   const onGeometryObserved = useCallback(() => {
-    if (binding?.sessionId) setReadySessionId(binding.sessionId);
+    if (targetKey) setReadyKey(targetKey);
     const generation = initialGeometryGenerationRef.current;
     if (generation === undefined) return;
     initialGeometryGenerationRef.current = undefined;
     finishTerminalDocumentResize(document, "surface_ready", generation);
-  }, [binding?.sessionId]);
+  }, [targetKey]);
+  const onChatReady = useCallback(() => {
+    if (targetKey) setReadyKey(targetKey);
+  }, [targetKey]);
   const onStructuredSurfaceRetirement = useCallback(
     (retirement: Promise<void>) => {
       structuredSurfaceRetirementsRef.current.report(retirement);
@@ -228,33 +244,13 @@ export function AgentSessionWindowRoot({
     });
   }, [binding?.sessionId, toolbarSource.windowLabel]);
 
-  // This window presents the Agent's terminal. Once the Agent runs in Chat —
-  // moved by this window's View control or anywhere else — there is nothing
-  // left to present here: hand the user back to the source pane, which now
-  // shows that Chat. Without a terminal binding there is no surface to
-  // retire, so this is an ordinary close.
-  const runsInChat = agent?.interactionProfile?.kind === "structured_protocol";
-  const followSourceWindowLabel = toolbarSource.windowLabel;
-  useEffect(() => {
-    if (!runsInChat) return;
-    void restoreWindowAfterSecondaryClose(followSourceWindowLabel)
-      .catch(() => {})
-      .then(() =>
-        withSecondaryWindowTimeout(
-          "large view close after the Agent moved to Chat",
-          getCurrentWindow().close(),
-          SECONDARY_WINDOW_CLOSE_TIMEOUT_MS,
-        ),
-      )
-      .catch((error) => {
-        console.warn("[large-view] failed to close after moving to Chat", error);
-      });
-  }, [runsInChat, followSourceWindowLabel]);
-
+  // One close transaction for both views. Only a terminal has a Host
+  // geometry proposal to hand back; a Chat close just returns the source pane
+  // its presentation.
   useDurableWindowClose({
-    enabled: Boolean(returnIdentity),
+    enabled: largeViewAvailable,
     prepare: async () => {
-      if (!returnIdentity) return;
+      if (!largeViewAvailable) return;
       const win = getCurrentWindow();
       const returnSource = currentAgentSessionSource(
         agentId,
@@ -274,16 +270,18 @@ export function AgentSessionWindowRoot({
       // The source must cover its retained large grid before its workspace
       // window becomes visible. This acknowledgement is bounded and fails open
       // if that exact originating window is no longer available.
-      const preparedReturn = await beginLargeViewReturnToWindow(
-        {
-          ...returnIdentity,
-          ...(returnSource.paneOwnerId
-            ? { sourcePaneOwnerId: returnSource.paneOwnerId }
-            : {}),
-        },
-        win.label,
-        returnSource.windowLabel,
-      );
+      const preparedReturn = returnIdentity
+        ? await beginLargeViewReturnToWindow(
+            {
+              ...returnIdentity,
+              ...(returnSource.paneOwnerId
+                ? { sourcePaneOwnerId: returnSource.paneOwnerId }
+                : {}),
+            },
+            win.label,
+            returnSource.windowLabel,
+          )
+        : undefined;
       // The native close request is outside React's event system. Commit the
       // TerminalView unmount before waiting for its exact structured
       // attachment to retire from the Host geometry proposal set.
@@ -382,7 +380,14 @@ export function AgentSessionWindowRoot({
           </span>
         </Titled>
       </header>
-      {agent && binding && !closing ? (
+      {agent && target?.kind === "chat" && !closing ? (
+        <AgentSessionWindowChat
+          key={targetKey}
+          agent={agent}
+          profile={target.profile}
+          onReady={onChatReady}
+        />
+      ) : agent && binding && !closing ? (
         <AgentSessionWindowPresentation
           agent={agent}
           binding={binding}
@@ -439,5 +444,34 @@ function AgentSessionWindowPresentation({
         </NativeAgentResponseView>
       </div>
     </>
+  );
+}
+
+/** A Chat Agent's conversation at the window's full size. The source pane
+ * keeps owning the session's side effects (activity, launch selection, pane
+ * actions); this window reads and writes the same backend session through
+ * its own registry lease, as the pane does. */
+function AgentSessionWindowChat({
+  agent,
+  profile,
+  onReady,
+}: {
+  agent: Agent;
+  profile: AgentStructuredInteractionProfileV1;
+  onReady(): void;
+}) {
+  const session = useAgentChatSession(agent.id, profile);
+  const projectKind = useStore(
+    (state) =>
+      state.projects.find((project) => project.id === agent.projectId)?.kind,
+  );
+  return (
+    <div className="relative min-h-0 flex-1">
+      <StructuredAgentChatSurface
+        session={session}
+        attachmentsEnabled={projectKind === "local"}
+        onReady={onReady}
+      />
+    </div>
   );
 }
