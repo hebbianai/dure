@@ -201,6 +201,199 @@ async fn incomplete_history_releases_the_snapshot_and_continues_live_replay() {
     );
 }
 
+/// A conversation longer than one snapshot arrives as its newest window behind
+/// a history boundary. Chat shows that window instead of an empty timeline,
+/// keeps the history incomplete, and never asks for it again.
+#[tokio::test]
+async fn windowed_history_commits_behind_its_boundary_and_is_never_reseeded() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = fixture_with_history_state(
+        &temp_dir.path().join("domain.sqlite"),
+        Some("session-claude-1"),
+        false,
+    )
+    .await;
+    let replay = || {
+        json!({
+            "events": [],
+            "gap": null,
+            "hasMore": false,
+            "latestSequence": 0,
+            "nextAfterSequence": 0
+        })
+    };
+    let pending = || json!({ "observedThroughSequence": 0, "requests": [] });
+    let transport = FakeTransport::new(
+        Arc::clone(&store),
+        [replay(), replay()],
+        [pending(), pending()],
+    )
+    .with_history(json!({
+        "status": "complete",
+        "offset": 0,
+        "nextOffset": 2,
+        "hasMore": false,
+        "items": [
+            {
+                "sourceId": "history-boundary",
+                "createdAtMs": 10,
+                "providerMessageId": null,
+                "body": {
+                    "type": "history_boundary",
+                    "reason": "provider_history_truncated",
+                    "requested_after_provider_sequence": 0,
+                    "dropped_through_provider_sequence": 900
+                }
+            },
+            {
+                "sourceId": "history-assistant-901:message:0",
+                "createdAtMs": 10,
+                "providerMessageId": "msg_901",
+                "body": {
+                    "type": "message",
+                    "role": "assistant",
+                    "markdown": "the newest answer"
+                }
+            }
+        ]
+    }));
+    let service = Arc::new(AgentConversationService::new(Arc::clone(&store)));
+    let mut notifications = service.subscribe();
+    let bridge = ClaudeTimelineBridge::new(
+        Arc::clone(&service),
+        transport.clone(),
+        AgentInteractionSessionIdV1::new("interaction-claude").unwrap(),
+        identity(),
+    )
+    .unwrap();
+
+    bridge.reconcile().await.unwrap();
+    // An open Chat pane learns about the seeded rows without a new turn.
+    let notification = notifications.try_recv().unwrap();
+    assert_eq!(
+        notification.interaction_session_id.as_str(),
+        "interaction-claude"
+    );
+    assert_eq!(
+        notification.kinds,
+        vec![crate::agent_conversation::AgentConversationNotificationKindV1::Timeline]
+    );
+    let page = tail(&store).await;
+    assert!(!page.binding.history_complete);
+    assert_eq!(page.rows.len(), 2);
+    assert!(matches!(
+        page.rows[0].item.body,
+        AgentTimelineItemBodyV1::HistoryBoundary { .. }
+    ));
+    assert!(matches!(
+        &page.rows[1].item.body,
+        AgentTimelineItemBodyV1::Message { markdown, .. } if markdown == "the newest answer"
+    ));
+
+    // A later attachment of the same timeline sees a known gap.
+    let reattached = ClaudeTimelineBridge::new(
+        Arc::new(AgentConversationService::new(Arc::clone(&store))),
+        transport.clone(),
+        AgentInteractionSessionIdV1::new("interaction-claude").unwrap(),
+        identity(),
+    )
+    .unwrap();
+    reattached.reconcile().await.unwrap();
+    assert_eq!(tail(&store).await.rows.len(), 2);
+    assert_eq!(
+        transport
+            .calls()
+            .into_iter()
+            .map(|(action, _)| action)
+            .collect::<Vec<_>>(),
+        vec![
+            "history_page",
+            "ack_history",
+            "replay",
+            "pending_snapshot",
+            "ack_history",
+            "replay",
+            "pending_snapshot",
+        ]
+    );
+}
+
+/// The host packs a window up to the snapshot byte bound as it encodes it. A
+/// started tool call arrives without an output field, so a re-encoding that
+/// writes `"output":null` would grow past the bound the host kept.
+#[tokio::test]
+async fn a_window_packed_to_the_byte_bound_is_measured_as_received() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = fixture_with_history_state(
+        &temp_dir.path().join("domain.sqlite"),
+        Some("session-claude-1"),
+        false,
+    )
+    .await;
+    let tool = |index: usize, padding: &str| {
+        json!({
+            "sourceId": format!("history-{index:04}:tool-start:0"),
+            "createdAtMs": 10,
+            "providerMessageId": format!("msg_{index:04}"),
+            "body": {
+                "type": "tool",
+                "tool_call_id": format!("toolu_{index:04}"),
+                "name": "Read",
+                "state": "running",
+                "input": { "path": padding }
+            }
+        })
+    };
+    let count = MAX_AGENT_HISTORY_ITEMS_V1;
+    let base = serde_json::to_vec(&tool(0, "")).unwrap().len();
+    // Leave less room than the omitted `"output":null` fields would take.
+    let target = (MAX_HISTORY_BYTES - count * 8) / count;
+    let padding = "p".repeat(target - base);
+    let items = (0..count)
+        .map(|index| tool(index, &padding))
+        .collect::<Vec<_>>();
+    let received = items
+        .iter()
+        .map(|item| serde_json::to_vec(item).unwrap().len())
+        .sum::<usize>();
+    assert!(received <= MAX_HISTORY_BYTES);
+    assert!(received + count * ",\"output\":null".len() > MAX_HISTORY_BYTES);
+    let transport = FakeTransport::new(
+        Arc::clone(&store),
+        [json!({
+            "events": [],
+            "gap": null,
+            "hasMore": false,
+            "latestSequence": 0,
+            "nextAfterSequence": 0
+        })],
+        [json!({ "observedThroughSequence": 0, "requests": [] })],
+    )
+    .with_history(json!({
+        "status": "complete",
+        "offset": 0,
+        "nextOffset": count,
+        "hasMore": false,
+        "items": items
+    }));
+    let bridge = ClaudeTimelineBridge::new(
+        Arc::new(AgentConversationService::new(Arc::clone(&store))),
+        transport,
+        AgentInteractionSessionIdV1::new("interaction-claude").unwrap(),
+        identity(),
+    )
+    .unwrap();
+
+    bridge.reconcile().await.unwrap();
+    let page = tail(&store).await;
+    assert!(page.binding.history_complete);
+    assert!(matches!(
+        &page.rows.last().unwrap().item.body,
+        AgentTimelineItemBodyV1::Tool { tool_call_id, output: None, .. }
+            if tool_call_id == &format!("toolu_{:04}", count - 1)
+    ));
+}
+
 fn identity() -> ClaudeDch1QueryIdentity {
     ClaudeDch1QueryIdentity {
         runtime_generation: "runtime-claude-1".into(),

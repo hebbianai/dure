@@ -669,7 +669,8 @@ pub struct AgentTimelineCommitReceiptV1 {
     pub live_text_changed: bool,
 }
 
-/// One complete provider-owned history snapshot for the exact current binding.
+/// One provider-owned history snapshot for the exact current binding: the
+/// whole bounded history, or its newest window opened by a history boundary.
 /// The store is the sole durable sequencer: adapters collect the full bounded
 /// snapshot before presenting it here and never advance a live provider cursor.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -682,6 +683,15 @@ pub struct AgentHistorySnapshotV1 {
 }
 
 impl AgentHistorySnapshotV1 {
+    /// Whether this is the newest window of a longer history: its first item
+    /// is the boundary that marks where the shown history starts.
+    pub fn omits_older_history(&self) -> bool {
+        matches!(
+            self.items.first().map(|item| &item.body),
+            Some(AgentTimelineItemBodyV1::HistoryBoundary { .. })
+        )
+    }
+
     pub fn validate(&self) -> Result<(), DomainStoreErrorV1> {
         validate_schema(self.schema_version)?;
         self.binding.validate()?;
@@ -701,13 +711,16 @@ impl AgentHistorySnapshotV1 {
             return invalid("items", "must be a bounded complete history");
         }
         let mut item_ids = std::collections::BTreeSet::new();
-        for item in &self.items {
+        for (index, item) in self.items.iter().enumerate() {
             item.validate()?;
             if item.turn_id.is_some() || item.client_message_id.is_some() {
                 return invalid(
                     "items",
                     "provider history cannot claim a Dure turn or client message",
                 );
+            }
+            if index > 0 && matches!(item.body, AgentTimelineItemBodyV1::HistoryBoundary { .. }) {
+                return invalid("items", "a history boundary can only open the snapshot");
             }
             if !item_ids.insert(&item.item_id) {
                 return invalid("items", "contains duplicate stable item IDs");

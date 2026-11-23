@@ -2,6 +2,9 @@ import fs from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 
+// A conversation larger than these bounds is read as its newest window, behind
+// one history boundary, never dropped whole: the newest messages, entries and
+// transcript bytes, then the newest items that fit one snapshot.
 const MAX_SOURCE_MESSAGES = 2_048;
 const MAX_HISTORY_BYTES = 4 * 1024 * 1024;
 const MAX_STORE_BYTES = 64 * 1024 * 1024;
@@ -9,6 +12,8 @@ const MAX_STORE_ENTRIES = 65_536;
 const MAX_PROJECT_ENTRIES = 131_072;
 const MAX_HISTORY_ITEMS = 2_048;
 const MAX_HISTORY_ITEM_BYTES = 128 * 1024;
+const MIN_CLIPPED_TEXT_BYTES = 1024;
+const HISTORY_BOUNDARY_SOURCE_ID = "history-boundary";
 const SAFE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const SDK_HISTORY_ENTRY_TYPES = new Set([
 	"assistant",
@@ -49,13 +54,129 @@ function evidence(sourceType, block) {
 	};
 }
 
-function pushItem(items, sourceId, providerMessageId, body) {
-	const item = { body: Object.freeze(body), providerMessageId, sourceId };
-	if (Buffer.byteLength(JSON.stringify(item), "utf8") > MAX_HISTORY_ITEM_BYTES) {
-		throw new Error("history_item_too_large");
+function jsonBytes(value) {
+	return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+/** The first `bytes` UTF-8 bytes of `text`, never splitting a character. */
+function clipText(text, bytes) {
+	const encoded = Buffer.from(text, "utf8");
+	if (encoded.length <= bytes) return text;
+	let end = bytes;
+	while (end > 0 && (encoded[end] & 0xc0) === 0x80) end -= 1;
+	return encoded.subarray(0, end).toString("utf8");
+}
+
+/** Smaller forms of one oversized body, largest first. A tool keeps its call
+ * and drops its input, then its output, then both, as live tool events do;
+ * text keeps its beginning, marked as clipped; evidence keeps only its block
+ * kind. The last form always fits. */
+function* fittedBodies(body) {
+	if (body.type === "tool") {
+		yield { ...body, input: null };
+		if (Object.hasOwn(body, "output")) {
+			yield { ...body, output: null };
+			yield { ...body, input: null, output: null };
+		}
+	} else if (body.type === "message" || body.type === "reasoning") {
+		const field = body.type === "message" ? "markdown" : "text";
+		for (
+			let bytes = MAX_HISTORY_ITEM_BYTES - MIN_CLIPPED_TEXT_BYTES;
+			bytes >= MIN_CLIPPED_TEXT_BYTES;
+			bytes = Math.floor(bytes / 2)
+		) {
+			yield { ...body, [field]: `${clipText(body[field], bytes)}…` };
+		}
+	} else if (body.type === "provider_evidence") {
+		const kind = body.value?.block?.type;
+		yield {
+			...body,
+			value: {
+				block: typeof kind === "string" ? { type: clipText(kind, 64) } : {},
+				sourceType: body.value?.sourceType ?? null,
+			},
+		};
+	}
+	yield {
+		type: "provider_evidence",
+		namespace: "provider.claude.history",
+		kind: "history_block_omitted",
+		value: {},
+	};
+}
+
+function historyItem(sourceId, providerMessageId, body, createdAtMs) {
+	return Object.freeze({
+		body: Object.freeze(body),
+		createdAtMs,
+		providerMessageId,
+		sourceId,
+	});
+}
+
+function pushItem(items, sourceId, providerMessageId, body, createdAtMs) {
+	let item = historyItem(sourceId, providerMessageId, body, createdAtMs);
+	if (jsonBytes(item) > MAX_HISTORY_ITEM_BYTES) {
+		for (const fitted of fittedBodies(body)) {
+			item = historyItem(sourceId, providerMessageId, fitted, createdAtMs);
+			if (jsonBytes(item) <= MAX_HISTORY_ITEM_BYTES) break;
+		}
 	}
 	items.push(item);
-	if (items.length > MAX_HISTORY_ITEMS) throw new Error("history_item_limit");
+}
+
+/** Marks where a windowed history starts. At least `omittedMessages` provider
+ * messages precede it; a read that started inside the transcript cannot count
+ * the rest. */
+function historyBoundary(omittedMessages, createdAtMs) {
+	return historyItem(
+		HISTORY_BOUNDARY_SOURCE_ID,
+		null,
+		{
+			dropped_through_provider_sequence: Math.max(1, omittedMessages),
+			reason: "provider_history_truncated",
+			requested_after_provider_sequence: 0,
+			type: "history_boundary",
+		},
+		createdAtMs,
+	);
+}
+
+const HISTORY_BOUNDARY_BYTES = jsonBytes(
+	historyBoundary(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
+);
+
+function sourceOf(item) {
+	const separator = item.sourceId.indexOf(":");
+	return separator === -1 ? item.sourceId : item.sourceId.slice(0, separator);
+}
+
+/** The newest items that fit one snapshot, whole source messages at a time,
+ * behind a history boundary when anything older is left out. */
+function newestHistoryWindow(items, omittedMessages, precededByOmittedHistory) {
+	// The byte bound covers the encoded array: brackets and separators too.
+	let bytes = 1 + items.reduce((total, item) => total + jsonBytes(item) + 1, 0);
+	let start = 0;
+	let omitted = omittedMessages;
+	const windowed = () => precededByOmittedHistory || omitted > 0;
+	const fits = () => {
+		const boundary = windowed() ? 1 : 0;
+		return (
+			items.length - start + boundary <= MAX_HISTORY_ITEMS &&
+			bytes + boundary * (HISTORY_BOUNDARY_BYTES + 1) <= MAX_HISTORY_BYTES
+		);
+	};
+	while (start < items.length && !fits()) {
+		const source = sourceOf(items[start]);
+		while (start < items.length && sourceOf(items[start]) === source) {
+			bytes -= jsonBytes(items[start]) + 1;
+			start += 1;
+		}
+		omitted += 1;
+	}
+	const kept = items.slice(start);
+	if (!windowed()) return kept;
+	return [historyBoundary(omitted, kept[0]?.createdAtMs ?? 0), ...kept];
 }
 
 function contentBlocks(message) {
@@ -64,25 +185,27 @@ function contentBlocks(message) {
 }
 
 /** Normalize the pinned SDK's provider-owned history into bounded canonical bodies.
- * Every source block is represented either by a visible body or durable evidence. */
+ * Every source block is represented either by a visible body or durable evidence.
+ * History past the bounds keeps its newest window behind a history boundary;
+ * `precededByOmittedHistory` says the messages themselves are such a window. */
 export function normalizeClaudeHistoryMessages(
 	messages,
 	{ cwd, providerSessionId },
 	timestamps = new Map(),
+	{ precededByOmittedHistory = false } = {},
 ) {
-	if (!Array.isArray(messages) || messages.length > MAX_SOURCE_MESSAGES) {
-		return incomplete("history_unavailable");
-	}
+	if (!Array.isArray(messages)) return incomplete("history_unavailable");
 	if (typeof cwd !== "string" || !path.isAbsolute(cwd) || cwd.includes("\0")) {
 		return incomplete("history_identity_invalid");
 	}
 	if (!token(providerSessionId)) return incomplete("history_identity_invalid");
 
+	const omittedMessages = Math.max(0, messages.length - MAX_SOURCE_MESSAGES);
 	const seenMessages = new Set();
 	const tools = new Map();
 	const items = [];
 	try {
-		for (const source of messages) {
+		for (const source of messages.slice(omittedMessages)) {
 			if (!plainObject(source) || source.session_id !== providerSessionId) {
 				return incomplete("history_identity_mismatch");
 			}
@@ -91,10 +214,13 @@ export function normalizeClaudeHistoryMessages(
 				return incomplete("history_identity_invalid");
 			}
 			seenMessages.add(sourceId);
+			const createdAtMs = timestamps.get(sourceId) ?? 0;
+			const push = (itemSourceId, providerMessageId, body) =>
+				pushItem(items, itemSourceId, providerMessageId, body, createdAtMs);
 			if (source.parent_tool_use_id !== null) {
 				const value = jsonValue(source.message);
 				if (value === null) return incomplete("history_payload_invalid");
-				pushItem(items, `${sourceId}:nested:0`, null, evidence(source.type, value));
+				push(`${sourceId}:nested:0`, null, evidence(source.type, value));
 				continue;
 			}
 
@@ -102,8 +228,7 @@ export function normalizeClaudeHistoryMessages(
 				if (source.message.role !== "user") return incomplete("history_payload_invalid");
 				if (typeof source.message.content === "string") {
 					const markdown = source.message.content;
-					pushItem(
-						items,
+					push(
 						`${sourceId}:message:0`,
 						null,
 						markdown.length > 0
@@ -115,13 +240,13 @@ export function normalizeClaudeHistoryMessages(
 				const blocks = contentBlocks(source.message);
 				if (blocks === null) return incomplete("history_payload_invalid");
 				if (blocks.length === 0) {
-					pushItem(items, `${sourceId}:empty:0`, null, evidence("user", { content: [] }));
+					push(`${sourceId}:empty:0`, null, evidence("user", { content: [] }));
 				}
 				for (let index = 0; index < blocks.length; index += 1) {
 					const block = jsonValue(blocks[index]);
 					if (!plainObject(block)) return incomplete("history_payload_invalid");
 					if (block.type === "text" && typeof block.text === "string" && block.text.length > 0) {
-						pushItem(items, `${sourceId}:message:${index}`, null, {
+						push(`${sourceId}:message:${index}`, null, {
 							markdown: block.text,
 							role: "user",
 							type: "message",
@@ -132,7 +257,7 @@ export function normalizeClaudeHistoryMessages(
 						const toolCallId = token(block.tool_use_id);
 						const tool = toolCallId === null ? null : tools.get(toolCallId);
 						if (tool) {
-							pushItem(items, `${sourceId}:tool-result:${index}`, tool.providerMessageId, {
+							push(`${sourceId}:tool-result:${index}`, tool.providerMessageId, {
 								input: tool.input,
 								name: tool.name,
 								output: block.content ?? null,
@@ -143,7 +268,7 @@ export function normalizeClaudeHistoryMessages(
 							continue;
 						}
 					}
-					pushItem(items, `${sourceId}:evidence:${index}`, null, evidence("user", block));
+					push(`${sourceId}:evidence:${index}`, null, evidence("user", block));
 				}
 				continue;
 			}
@@ -154,18 +279,13 @@ export function normalizeClaudeHistoryMessages(
 				const blocks = contentBlocks(source.message);
 				if (!providerMessageId || blocks === null) return incomplete("history_payload_invalid");
 				if (blocks.length === 0) {
-					pushItem(
-						items,
-						`${sourceId}:empty:0`,
-						providerMessageId,
-						evidence("assistant", { content: [] }),
-					);
+					push(`${sourceId}:empty:0`, providerMessageId, evidence("assistant", { content: [] }));
 				}
 				for (let index = 0; index < blocks.length; index += 1) {
 					const block = jsonValue(blocks[index]);
 					if (!plainObject(block)) return incomplete("history_payload_invalid");
 					if (block.type === "text" && typeof block.text === "string" && block.text.length > 0) {
-						pushItem(items, `${sourceId}:message:${index}`, providerMessageId, {
+						push(`${sourceId}:message:${index}`, providerMessageId, {
 							markdown: block.text,
 							role: "assistant",
 							type: "message",
@@ -177,7 +297,7 @@ export function normalizeClaudeHistoryMessages(
 						typeof block.thinking === "string" &&
 						block.thinking.length > 0
 					) {
-						pushItem(items, `${sourceId}:reasoning:${index}`, providerMessageId, {
+						push(`${sourceId}:reasoning:${index}`, providerMessageId, {
 							text: block.thinking,
 							type: "reasoning",
 						});
@@ -191,7 +311,7 @@ export function normalizeClaudeHistoryMessages(
 							const tool = Object.freeze({ input, name, providerMessageId });
 							if (tools.has(toolCallId)) return incomplete("history_identity_invalid");
 							tools.set(toolCallId, tool);
-							pushItem(items, `${sourceId}:tool-start:${index}`, providerMessageId, {
+							push(`${sourceId}:tool-start:${index}`, providerMessageId, {
 								input,
 								name,
 								state: "running",
@@ -201,35 +321,20 @@ export function normalizeClaudeHistoryMessages(
 							continue;
 						}
 					}
-					pushItem(
-						items,
-						`${sourceId}:evidence:${index}`,
-						providerMessageId,
-						evidence("assistant", block),
-					);
+					push(`${sourceId}:evidence:${index}`, providerMessageId, evidence("assistant", block));
 				}
 				continue;
 			}
 			return incomplete("history_payload_invalid");
 		}
 	} catch {
-		return incomplete("history_bounds_exceeded");
+		return incomplete("history_payload_invalid");
 	}
 
-	const normalizedItems = items.map((item) => {
-		const separator = item.sourceId.indexOf(":");
-		const sourceId = separator === -1 ? item.sourceId : item.sourceId.slice(0, separator);
-		return Object.freeze({
-			...item,
-			createdAtMs: timestamps.get(sourceId) ?? 0,
-		});
-	});
-	const source = JSON.stringify(normalizedItems);
-	if (Buffer.byteLength(source, "utf8") > MAX_HISTORY_BYTES) {
-		return incomplete("history_bounds_exceeded");
-	}
 	return Object.freeze({
-		items: Object.freeze(normalizedItems),
+		items: Object.freeze(
+			newestHistoryWindow(items, omittedMessages, precededByOmittedHistory),
+		),
 		status: "complete",
 	});
 }
@@ -334,15 +439,32 @@ function readOnlySessionStore(
 				if (
 					!metadata.isFile() ||
 					metadata.dev !== found.metadata.dev ||
-					metadata.ino !== found.metadata.ino ||
-					metadata.size > MAX_STORE_BYTES
+					metadata.ino !== found.metadata.ino
 				) {
 					throw new Error("dure_claude_history_store_not_file");
 				}
 				sourceState.present = true;
-				const entries = [];
+				// A transcript past the byte bound is read from its newest bytes;
+				// the first line there is a fragment of an older entry.
+				const start = Math.max(0, metadata.size - MAX_STORE_BYTES);
+				sourceState.windowed = start > 0;
+				const parents = new Map();
+				sourceState.parents = parents;
+				let entries = [];
+				const keepNewestEntries = () => {
+					const dropped = entries.length - MAX_STORE_ENTRIES;
+					if (dropped <= 0) return;
+					for (const entry of entries.slice(0, dropped)) parents.delete(entry.uuid);
+					entries = entries.slice(dropped);
+					sourceState.windowed = true;
+				};
+				let fragment = start > 0;
 				let bytes = 0;
-				for await (const line of handle.readLines()) {
+				for await (const line of handle.readLines({ start })) {
+					if (fragment) {
+						fragment = false;
+						continue;
+					}
 					bytes += Buffer.byteLength(line, "utf8") + 1;
 					if (bytes > MAX_STORE_BYTES)
 						throw new Error("dure_claude_history_store_bounds_exceeded");
@@ -364,9 +486,12 @@ function readOnlySessionStore(
 						continue;
 					}
 					entries.push(entry);
-					if (entries.length > MAX_STORE_ENTRIES) {
-						throw new Error("dure_claude_history_store_bounds_exceeded");
-					}
+					parents.set(
+						entry.uuid,
+						typeof entry.parentUuid === "string" ? entry.parentUuid : null,
+					);
+					// Trim in batches so a long transcript stays linear.
+					if (entries.length >= 2 * MAX_STORE_ENTRIES) keepNewestEntries();
 					const sourceId = token(entry.uuid);
 					const createdAtMs = timestamp(entry.timestamp);
 					if (sourceId && createdAtMs !== null) {
@@ -377,12 +502,25 @@ function readOnlySessionStore(
 						timestamps.set(sourceId, createdAtMs);
 					}
 				}
+				keepNewestEntries();
 				return entries;
 			} finally {
 				await handle.close();
 			}
 		},
 	});
+}
+
+/** Whether the conversation the SDK chained from a windowed read continues
+ * before the window: its oldest message's parent links leave the entries read
+ * instead of reaching the conversation's start. */
+function chainLeavesWindow(messages, parents) {
+	let uuid = messages[0]?.uuid;
+	for (let steps = 0; typeof uuid === "string" && steps <= parents.size; steps += 1) {
+		if (!parents.has(uuid)) return true;
+		uuid = parents.get(uuid);
+	}
+	return uuid !== null;
 }
 
 /** Read one exact provider-owned transcript through the pinned SDK without
@@ -403,11 +541,10 @@ export function createClaudeAgentSdkHistoryReader({
 			return incomplete("history_identity_invalid");
 		}
 		const timestamps = new Map();
-		const sourceState = { present: false };
+		const sourceState = { parents: new Map(), present: false, windowed: false };
 		try {
 			const messages = await getSessionMessages(binding.providerSessionId, {
 				dir: binding.cwd,
-				limit: MAX_SOURCE_MESSAGES + 1,
 				sessionStore: readOnlySessionStore(
 					root,
 					binding.providerSessionId,
@@ -416,7 +553,10 @@ export function createClaudeAgentSdkHistoryReader({
 				),
 			});
 			if (!sourceState.present) return incomplete("history_unavailable");
-			return normalizeClaudeHistoryMessages(messages, binding, timestamps);
+			return normalizeClaudeHistoryMessages(messages, binding, timestamps, {
+				precededByOmittedHistory:
+					sourceState.windowed && chainLeavesWindow(messages, sourceState.parents),
+			});
 		} catch {
 			return incomplete("history_reader_failed");
 		}

@@ -17,7 +17,7 @@ use dure_app::{
     AgentTimelineTextKindV1, AgentTimelineToolStateV1, AgentTurnFailureReasonV1,
     MAX_AGENT_HISTORY_ITEMS_V1,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
@@ -317,18 +317,10 @@ where
                     next_offset,
                     has_more,
                 } => {
-                    for raw in page_items {
-                        bytes = bytes
-                            .checked_add(
-                                serde_json::to_vec(&raw)
-                                    .map_err(|_| {
-                                        ClaudeTimelineBridgeError::new("history_item_invalid")
-                                    })?
-                                    .len(),
-                            )
-                            .ok_or_else(|| {
-                                ClaudeTimelineBridgeError::new("history_bounds_exceeded")
-                            })?;
+                    for (wire_bytes, raw) in page_items {
+                        bytes = bytes.checked_add(wire_bytes).ok_or_else(|| {
+                            ClaudeTimelineBridgeError::new("history_bounds_exceeded")
+                        })?;
                         if bytes > MAX_HISTORY_BYTES || items.len() >= MAX_AGENT_HISTORY_ITEMS_V1 {
                             return Err(ClaudeTimelineBridgeError::new("history_bounds_exceeded"));
                         }
@@ -351,17 +343,20 @@ where
             }
         }
 
+        let snapshot = AgentHistorySnapshotV1 {
+            schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+            binding,
+            items,
+            observed_at_ms: now_ms()?,
+        };
         let receipt = self
             .service
-            .reconcile_history(&AgentHistorySnapshotV1 {
-                schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
-                binding,
-                items,
-                observed_at_ms: now_ms()?,
-            })
+            .reconcile_history(&snapshot)
             .await
             .map_err(conversation_error)?;
-        if !receipt.binding.history_complete {
+        // The newest window of a longer history commits behind its boundary
+        // and leaves the history incomplete; anything else must complete it.
+        if !receipt.binding.history_complete && !snapshot.omits_older_history() {
             return Err(ClaudeTimelineBridgeError::new("history_commit_incomplete"));
         }
         self.release_history().await
@@ -625,7 +620,7 @@ enum HistoryPageWire {
     Complete {
         #[serde(rename = "hasMore")]
         has_more: bool,
-        items: Vec<HistoryItemWire>,
+        items: Vec<Value>,
         #[serde(rename = "nextOffset")]
         next_offset: usize,
         offset: usize,
@@ -641,7 +636,7 @@ enum HistoryPageWire {
     },
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct HistoryItemWire {
     source_id: String,
@@ -652,7 +647,9 @@ struct HistoryItemWire {
 
 enum HistoryPage {
     Complete {
-        page_items: Vec<HistoryItemWire>,
+        /// Each item with the size it arrived in: the snapshot bound covers
+        /// what the host sent, not a re-encoding of it.
+        page_items: Vec<(usize, HistoryItemWire)>,
         next_offset: usize,
         has_more: bool,
     },
@@ -696,8 +693,19 @@ fn history_page(
             {
                 return Err(ClaudeTimelineBridgeError::new("history_page_invalid"));
             }
+            let page_items = items
+                .into_iter()
+                .map(|item| {
+                    let wire_bytes = serde_json::to_vec(&item)
+                        .map_err(|_| ClaudeTimelineBridgeError::new("history_item_invalid"))?
+                        .len();
+                    let item = serde_json::from_value::<HistoryItemWire>(item)
+                        .map_err(|_| ClaudeTimelineBridgeError::new("history_page_invalid"))?;
+                    Ok((wire_bytes, item))
+                })
+                .collect::<Result<Vec<_>, ClaudeTimelineBridgeError>>()?;
             Ok(HistoryPage::Complete {
-                page_items: items,
+                page_items,
                 next_offset,
                 has_more,
             })
