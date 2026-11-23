@@ -940,6 +940,118 @@ async fn empty_exact_history_completes_without_rows_or_live_cursor_movement() {
     );
 }
 
+fn history_boundary_item(omitted_messages: i64) -> AgentTimelineItemDraftV1 {
+    AgentTimelineItemDraftV1 {
+        item_id: AgentTimelineItemIdV1::new("history-boundary").unwrap(),
+        turn_id: None,
+        client_message_id: None,
+        provider_message_id: None,
+        body: AgentTimelineItemBodyV1::HistoryBoundary {
+            reason: "provider_history_truncated".into(),
+            requested_after_provider_sequence: 0,
+            dropped_through_provider_sequence: omitted_messages,
+        },
+        created_at_ms: 0,
+    }
+}
+
+/// A conversation past the snapshot bounds seeds its newest window: the rows
+/// show behind their boundary, the history stays a known gap, and a replay
+/// never seeds it twice.
+#[tokio::test]
+async fn windowed_history_seeds_behind_its_boundary_as_a_known_gap() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut binding = interaction_binding();
+    binding.history_complete = false;
+    let store = provision_with_binding(&temp_dir.path().join("domain.sqlite"), binding).await;
+    let interaction_session_id = AgentInteractionSessionIdV1::new("interaction-1").unwrap();
+    let current = store
+        .agent_interaction(&interaction_session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let snapshot = AgentHistorySnapshotV1 {
+        schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+        binding: current,
+        items: vec![
+            history_boundary_item(40),
+            history_item("history-user", dure_app::AgentTimelineMessageRoleV1::User),
+            history_item(
+                "history-assistant",
+                dure_app::AgentTimelineMessageRoleV1::Assistant,
+            ),
+        ],
+        observed_at_ms: 120,
+    };
+    assert!(snapshot.omits_older_history());
+
+    let receipt = store.reconcile_agent_history(&snapshot).await.unwrap();
+    assert!(!receipt.binding.history_complete);
+    assert!(!receipt.newly_completed);
+    assert!(receipt.timeline_changed);
+    assert_eq!(
+        store
+            .agent_history_hydration_authority(&interaction_session_id)
+            .await
+            .unwrap()
+            .disposition,
+        AgentHistoryHydrationDispositionV1::KnownGap
+    );
+    let replay = store.reconcile_agent_history(&snapshot).await.unwrap();
+    assert!(!replay.timeline_changed);
+    assert!(!replay.binding.history_complete);
+
+    let page = tail(&store).await;
+    assert!(!page.binding.history_complete);
+    assert_eq!(page.rows.len(), 3, "each history row is seeded once");
+    assert!(matches!(
+        page.rows[0].item.body,
+        AgentTimelineItemBodyV1::HistoryBoundary { .. }
+    ));
+    assert!(matches!(
+        &page.rows[2].item.body,
+        AgentTimelineItemBodyV1::Message { markdown, .. } if markdown == "history history-assistant"
+    ));
+    assert_eq!(
+        store
+            .agent_provider_cursor(&interaction_session_id, &runtime(1))
+            .await
+            .unwrap()
+            .committed_through_sequence,
+        0
+    );
+}
+
+#[tokio::test]
+async fn a_history_boundary_can_only_open_a_snapshot() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut binding = interaction_binding();
+    binding.history_complete = false;
+    let store = provision_with_binding(&temp_dir.path().join("domain.sqlite"), binding).await;
+    let current = store
+        .agent_interaction(&AgentInteractionSessionIdV1::new("interaction-1").unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let error = store
+        .reconcile_agent_history(&AgentHistorySnapshotV1 {
+            schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+            binding: current,
+            items: vec![
+                history_item("history-user", dure_app::AgentTimelineMessageRoleV1::User),
+                history_boundary_item(1),
+            ],
+            observed_at_ms: 120,
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        DomainStoreErrorV1::InvalidRecord { field: "items", .. }
+    ));
+    assert!(tail(&store).await.rows.is_empty());
+}
+
 #[tokio::test]
 async fn history_hydration_authority_never_mixes_pre_and_post_commit_rows() {
     let temp_dir = TempDir::new().unwrap();

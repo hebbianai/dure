@@ -308,7 +308,9 @@ where
         snapshot: &AgentHistorySnapshotV1,
     ) -> Result<AgentHistorySnapshotReceiptV1, AgentConversationErrorV1> {
         let receipt = self.store.reconcile_agent_history(snapshot).await?;
-        if receipt.newly_completed {
+        // A windowed history adds rows without completing; open views still
+        // need to read them.
+        if receipt.newly_completed || receipt.timeline_changed {
             self.publish_after_commit(
                 snapshot.binding.interaction_session_id.clone(),
                 receipt.timeline_cursor.clone(),

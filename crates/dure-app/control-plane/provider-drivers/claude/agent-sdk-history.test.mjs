@@ -320,3 +320,200 @@ test("an exact present-empty transcript completes while a missing transcript sta
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+const HISTORY_SESSION_ID = "11111111-1111-4111-8111-111111111111";
+const HISTORY_ITEM_BYTES = 128 * 1024;
+
+function historyUuid(index) {
+	return `22222222-2222-4222-8222-${String(index).padStart(12, "0")}`;
+}
+
+function sessionMessage(index, role, content) {
+	return {
+		message:
+			role === "assistant"
+				? { content, id: `msg_${index}`, role }
+				: { content, role },
+		parent_tool_use_id: null,
+		session_id: HISTORY_SESSION_ID,
+		type: role,
+		uuid: historyUuid(index),
+	};
+}
+
+function itemBytes(item) {
+	return Buffer.byteLength(JSON.stringify(item), "utf8");
+}
+
+test("an oversized block shrinks to fit instead of dropping the whole history", () => {
+	const history = normalizeClaudeHistoryMessages(
+		[
+			sessionMessage(0, "user", "before"),
+			sessionMessage(1, "assistant", [
+				{ id: "toolu_big", input: { path: "a" }, name: "Read", type: "tool_use" },
+			]),
+			sessionMessage(2, "user", [
+				{ content: "x".repeat(300 * 1024), tool_use_id: "toolu_big", type: "tool_result" },
+			]),
+			sessionMessage(3, "user", [
+				{ source: { data: "y".repeat(600 * 1024), type: "base64" }, type: "image" },
+			]),
+			sessionMessage(4, "user", "z".repeat(300 * 1024)),
+			sessionMessage(5, "assistant", [{ text: "after", type: "text" }]),
+		],
+		{ cwd: "/workspace/history", providerSessionId: HISTORY_SESSION_ID },
+	);
+
+	assert.equal(history.status, "complete", history.reason);
+	assert.deepEqual(
+		history.items.map((item) => item.body.type),
+		["message", "tool", "tool", "provider_evidence", "message", "message"],
+		"nothing before the oversized blocks is dropped and no boundary is claimed",
+	);
+	for (const item of history.items) {
+		assert.ok(itemBytes(item) <= HISTORY_ITEM_BYTES, item.sourceId);
+	}
+	assert.deepEqual(history.items[2].body, {
+		input: { path: "a" },
+		name: "Read",
+		output: null,
+		state: "completed",
+		tool_call_id: "toolu_big",
+		type: "tool",
+	});
+	assert.deepEqual(history.items[3].body.value, {
+		block: { type: "image" },
+		sourceType: "user",
+	});
+	assert.match(history.items[4].body.markdown, /^z+…$/u);
+	assert.equal(history.items[5].body.markdown, "after");
+});
+
+test("history past the byte bound keeps its newest window behind a history boundary", () => {
+	const messages = Array.from({ length: 40 }, (_, index) =>
+		sessionMessage(index, "user", `${index}:${"w".repeat(120 * 1024)}`),
+	);
+	const history = normalizeClaudeHistoryMessages(messages, {
+		cwd: "/workspace/history",
+		providerSessionId: HISTORY_SESSION_ID,
+	});
+
+	assert.equal(history.status, "complete", history.reason);
+	assert.ok(Buffer.byteLength(JSON.stringify(history.items), "utf8") <= 4 * 1024 * 1024);
+	const [boundary, ...window] = history.items;
+	assert.equal(boundary.providerMessageId, null);
+	assert.equal(boundary.sourceId, "history-boundary");
+	assert.deepEqual(boundary.body, {
+		dropped_through_provider_sequence: messages.length - window.length,
+		reason: "provider_history_truncated",
+		requested_after_provider_sequence: 0,
+		type: "history_boundary",
+	});
+	assert.ok(window.length > 0);
+	assert.ok(window[0].body.markdown.startsWith(`${messages.length - window.length}:`));
+	assert.ok(window.at(-1).body.markdown.startsWith("39:"));
+});
+
+test("a conversation past the message bound reads its newest messages", async () => {
+	const { getSessionMessages } = await loadPinnedClaudeSdkRuntime();
+	const root = await mkdtemp(path.join(os.tmpdir(), "dure-history-long-"));
+	const cwd = "/workspace/long-history";
+	try {
+		const directory = path.join(root, "projects", "-workspace-long-history");
+		await mkdir(directory, { recursive: true });
+		const lines = [];
+		let parentUuid = null;
+		for (let index = 0; index < 2_100; index += 1) {
+			const uuid = historyUuid(index);
+			lines.push(
+				JSON.stringify(
+					sdkMessage({
+						content:
+							index % 2 === 0
+								? `message ${index}`
+								: [{ text: `message ${index}`, type: "text" }],
+						parentUuid,
+						role: index % 2 === 0 ? "user" : "assistant",
+						sessionId: HISTORY_SESSION_ID,
+						timestamp: "2026-01-02T03:04:05.000Z",
+						uuid,
+					}),
+				),
+			);
+			parentUuid = uuid;
+		}
+		await writeFile(path.join(directory, `${HISTORY_SESSION_ID}.jsonl`), `${lines.join("\n")}\n`);
+
+		const history = await createClaudeAgentSdkHistoryReader({ getSessionMessages })({
+			cwd,
+			env: { CLAUDE_CONFIG_DIR: root },
+			providerSessionId: HISTORY_SESSION_ID,
+		});
+
+		assert.equal(history.status, "complete", history.reason);
+		assert.equal(history.items.length, 2_048);
+		assert.equal(history.items[0].body.type, "history_boundary");
+		assert.equal(history.items[0].body.dropped_through_provider_sequence, 53);
+		assert.equal(history.items[1].body.markdown, "message 53");
+		assert.equal(history.items.at(-1).body.markdown, "message 2099");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("a transcript past the store window reads its newest part and marks only a cut chain", async () => {
+	const { getSessionMessages } = await loadPinnedClaudeSdkRuntime();
+	const root = await mkdtemp(path.join(os.tmpdir(), "dure-history-window-"));
+	const cwd = "/workspace/window-history";
+	const file = path.join(root, "projects", "-workspace-window-history", `${HISTORY_SESSION_ID}.jsonl`);
+	const junk = JSON.stringify({
+		payload: "x".repeat(65 * 1024 * 1024),
+		type: "file-history-snapshot",
+	});
+	const line = (index, parentUuid) =>
+		JSON.stringify(
+			sdkMessage({
+				content: index % 2 === 0 ? `message ${index}` : [{ text: `message ${index}`, type: "text" }],
+				parentUuid,
+				role: index % 2 === 0 ? "user" : "assistant",
+				sessionId: HISTORY_SESSION_ID,
+				timestamp: "2026-01-02T03:04:05.000Z",
+				uuid: historyUuid(index),
+			}),
+		);
+	const read = () =>
+		createClaudeAgentSdkHistoryReader({ getSessionMessages })({
+			cwd,
+			env: { CLAUDE_CONFIG_DIR: root },
+			providerSessionId: HISTORY_SESSION_ID,
+		});
+	try {
+		await mkdir(path.dirname(file), { recursive: true });
+
+		// The whole conversation follows the oversized prefix: nothing is lost.
+		await writeFile(file, `${junk}\n${line(0, null)}\n${line(1, historyUuid(0))}\n`);
+		const whole = await read();
+		assert.equal(whole.status, "complete", whole.reason);
+		assert.deepEqual(
+			whole.items.map((item) => item.body.markdown),
+			["message 0", "message 1"],
+		);
+
+		// The conversation starts before the window: its newest part is shown
+		// behind a boundary instead of nothing.
+		await writeFile(
+			file,
+			`${line(0, null)}\n${junk}\n${line(1, historyUuid(0))}\n${line(2, historyUuid(1))}\n`,
+		);
+		const cut = await read();
+		assert.equal(cut.status, "complete", cut.reason);
+		assert.equal(cut.items[0].body.type, "history_boundary");
+		assert.ok(cut.items[0].body.dropped_through_provider_sequence >= 1);
+		assert.deepEqual(
+			cut.items.slice(1).map((item) => item.body.markdown),
+			["message 1", "message 2"],
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});

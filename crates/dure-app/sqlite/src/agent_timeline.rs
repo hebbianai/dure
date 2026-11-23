@@ -1019,7 +1019,9 @@ async fn reconcile_history_on(
             "snapshot binding does not match the current interaction authority",
         ));
     }
-    if current.history_complete {
+    // A complete history, or a known gap such as an earlier window's boundary,
+    // is never seeded again.
+    if current.history_complete || has_history_boundary(connection, &current).await? {
         return Ok(AgentHistorySnapshotReceiptV1 {
             timeline_cursor: timeline_cursor_on(connection, &current).await?,
             binding: current,
@@ -1045,6 +1047,16 @@ async fn reconcile_history_on(
     let mut timeline_changed = false;
     for item in &snapshot.items {
         timeline_changed |= append_item_on(connection, &current, item).await?;
+    }
+    if snapshot.omits_older_history() {
+        // The newest window is shown behind its boundary; the history stays
+        // incomplete, a known gap that is never seeded again.
+        return Ok(AgentHistorySnapshotReceiptV1 {
+            timeline_cursor: timeline_cursor_on(connection, &current).await?,
+            binding: current,
+            newly_completed: false,
+            timeline_changed,
+        });
     }
     let updated = sqlx::query(
         r#"
