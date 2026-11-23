@@ -1,15 +1,6 @@
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { useCallback, useEffect, useState } from "react";
-import { Alert } from "@/components/ui/alert";
-import { AccountsDialog } from "@/components/agents/AccountsDialog";
-import {
-	type AgentConversationHistoryActionLease,
-	AgentConversationHistoryControl,
-} from "@/components/agents/AgentConversationHistoryControl";
-import { AgentCredentialSwitcher } from "@/components/agents/AgentCredentialSwitcher";
-import { AgentProjectMove } from "@/components/agents/AgentProjectMove";
-import { AgentRuntimeProfileSwitch } from "@/components/agents/AgentRuntimeProfileSwitch";
-import { StructuredAgentChatSurface } from "@/components/agents/chat/StructuredAgentChatSurface";
+import { useCallback, useEffect } from "react";
+import type { AgentConversationHistoryActionLease } from "@/components/agents/AgentConversationHistoryControl";
 import { useAgentChatSession } from "@/components/agents/chat/useAgentChatSession";
 import { useApprovedPlanPermissionSelection } from "@/components/agents/chat/useApprovedPlanPermissionSelection";
 import { useChatPaneActions } from "@/components/agents/chat/useChatPaneActions";
@@ -17,18 +8,10 @@ import { useConversationTitle } from "@/components/agents/chat/useConversationTi
 import { useUsageLimitHandoff } from "@/components/agents/chat/useUsageLimitHandoff";
 import { useAgentPaneAttentionAck } from "@/components/agents/useAgentPaneAttentionAck";
 import {
-	useAgentToolbarControls,
-	useAgentToolbarGroupPresentation,
-} from "@/components/agents/useAgentToolbarControls";
-import {
 	useRuntimeOwnedRequest,
 	useRuntimeOwnedValue,
 } from "@/components/agents/useRuntimeOwnedValue";
-import {
-	AgentPanelToolbarFrame,
-	presentForkInAgentPanelDesktop,
-} from "@/components/panels/AgentPanelToolbarFrame";
-import { AgentPanelWindowActions } from "@/components/panels/AgentPanelWindowActions";
+import { presentForkInAgentPanelDesktop } from "@/components/panels/AgentPanelToolbarFrame";
 import type { AgentPanelDockProps } from "@/components/panels/agentPanelContract";
 import {
 	useStructuredAgentPanelState,
@@ -38,6 +21,14 @@ import {
 	AgentLargeViewSourceProxy,
 	useAgentLargeViewSource,
 } from "@/components/workspace/AgentLargeViewSourceProxy";
+import { useAgentSessionPanePublication } from "@/components/workspace/useAgentSessionPaneChannel";
+import { StructuredAgentView } from "@/components/panels/StructuredAgentView";
+import {
+	type StructuredAgentPaneSurface,
+	StructuredAgentPaneRefusal,
+} from "@/lib/agents/chat/structuredAgentPaneSurface";
+import { agentRuntimeTransitionRefusal } from "@/lib/ipc/dureAgentRuntime";
+import { publishAgentSessionChatPane } from "@/lib/workspace/window/agentSessionWindowChatPane";
 import { useNamedPaneAction } from "@/components/workspace/useNamedPaneAction";
 import { AgentPluginClaimStatus } from "@/components/plugins/AgentPluginClaimStatus";
 import { useWorkspaceRuntimeDesktopId } from "@/components/workspace/WorkspaceRuntimeContext";
@@ -81,11 +72,6 @@ import { resolveAgentPaneTitle } from "@/lib/workspace/pane/paneTitle";
 import { applyAutomaticPaneTitle } from "@/lib/workspace/pane/paneTitleOverrideStore";
 import { workspacePerformance } from "@/lib/workspace/performance/workspacePerformance";
 import type { Agent } from "@/types";
-
-const STRUCTURED_WINDOW_ACTION_CONTROL_IDS = [
-	"diff-window",
-	"source-control-window",
-] as const;
 
 export function StructuredAgentPanel({
 	agent,
@@ -132,10 +118,6 @@ export function StructuredAgentPanel({
 	const answeringRequestId =
 		"answeringRequestId" in session ? session.answeringRequestId : undefined;
 	const conversationTitle = useConversationTitle(agent.id);
-	const toolbarControls = useAgentToolbarControls();
-	const windowActionsPresentation = useAgentToolbarGroupPresentation(
-		STRUCTURED_WINDOW_ACTION_CONTROL_IDS,
-	);
 	// Structured chat sessions have no hmux terminal, so the semantic-state
 	// watch never feeds them; this pane is the one activity producer for its
 	// agent, mirroring the turn lifecycle the chat controller already owns.
@@ -148,7 +130,6 @@ export function StructuredAgentPanel({
 	useEffect(() => {
 		setAgentActivity(agent.id, chatActivity);
 	}, [agent.id, chatActivity, setAgentActivity]);
-	const [accountsOpen, setAccountsOpen] = useState(false);
 	const [accountFailure, setAccountFailure] =
 		useRuntimeOwnedValue<string>(runtimeOwnerKey);
 	const [remoteRecoveryAccount, setRemoteRecoveryAccount] =
@@ -189,8 +170,8 @@ export function StructuredAgentPanel({
 		projectKind: project?.kind,
 		provider: agent.provider,
 	});
-	const startNewConversation = useCallback(() => {
-		void historyActionLease
+	const launchNewConversation = async () => {
+		const ran = await historyActionLease
 			.run(async () => {
 				await launchManagedConversationTargetInSibling({
 					sourceAgentId: agent.id,
@@ -199,17 +180,11 @@ export function StructuredAgentPanel({
 					target: { kind: "fresh" },
 				});
 			})
-			.catch((error: unknown) =>
-				setConversationFailure(managedConversationLaunchFailureMessage(error)),
-			);
-	}, [
-		agent.id,
-		getActiveSpaceId,
-		historyActionLease,
-		paneDesktopId,
-		paneId,
-		setConversationFailure,
-	]);
+			.catch((error: unknown) => {
+				throw new Error(managedConversationLaunchFailureMessage(error));
+			});
+		if (!ran) throw new StructuredAgentPaneRefusal();
+	};
 	const turnFailure =
 		activeTurn || !("page" in session)
 			? undefined
@@ -365,9 +340,6 @@ export function StructuredAgentPanel({
 			})
 			.finally(() => setAccountBusy(false));
 	};
-	const runAccountSwitch = (accountId: string | null) => {
-		void performAccountSwitch(accountId).catch(() => {});
-	};
 	// The toolbar switcher's own disabled predicate; the pane actions and the
 	// automatic handoff honour exactly the same lock.
 	const accountMovesLocked =
@@ -461,194 +433,160 @@ export function StructuredAgentPanel({
 		runtimeOwnerKey,
 	);
 
+	const accountById = (accountId: string) => {
+		const account = accountPool.find((candidate) => candidate.id === accountId);
+		if (!account) throw new Error("credential_reference_unavailable");
+		return account;
+	};
+	const newConversationOffered = newConversationAvailable && !accountMovesLocked;
+	const signInOffered = project?.kind !== "ssh";
+	// The pane's own state and actions as one surface: rendered here, and
+	// mirrored by the Agent's large window, whose commands run on exactly
+	// these handlers under the same locks the controls show.
+	const paneSurface: StructuredAgentPaneSurface = {
+		presentation: {
+			schemaVersion: 1,
+			inputLocked: chatInputLocked,
+			accountMovesLocked,
+			accountBusy: accountBusy || remoteAccountBusy,
+			accountFailure: boundedPaneText(presentedAccountFailure),
+			recoveryAccountId: remoteRecoveryAccount?.id ?? null,
+			runtimeSwitchLocked,
+			runtimeSwitchBusy: runtimeProfileSwitchBusy,
+			newConversation: newConversationOffered,
+			conversationFailure: boundedPaneText(conversationFailure),
+			recovery: supportsAccounts(agent.provider)
+				? {
+						switchAccountTarget:
+							handoffDecision?.kind === "handoff"
+								? handoffDecision.targetName
+								: null,
+						signIn: signInOffered,
+						handedOff:
+							handoffView.kind === "handled" && handoffView.outcome
+								? {
+										...(handoffView.outcome.fromName !== undefined
+											? { fromName: handoffView.outcome.fromName }
+											: {}),
+										toName: handoffView.outcome.toName,
+										resend: resendLastMessage !== undefined,
+									}
+								: null,
+					}
+				: null,
+		},
+		run: async (command) => {
+			switch (command.kind) {
+				case "switch_account":
+					if (accountMovesLocked) throw new StructuredAgentPaneRefusal();
+					await performAccountSwitch(command.accountId);
+					return;
+				case "remote_login":
+					await openRemoteLogin(accountById(command.accountId));
+					return;
+				case "copy_to_host":
+					await copyAccountToHost(accountById(command.accountId));
+					return;
+				case "switch_to_terminal": {
+					if (runtimeSwitchLocked) throw new StructuredAgentPaneRefusal();
+					setProfileBusy(true);
+					try {
+						await switchToNativeTerminal(
+							agent.id,
+							command.sourceStopPolicy,
+							command.expectedSourceRevision,
+						);
+					} catch (error) {
+						// A refusal crosses to the requesting surface intact, so
+						// it can offer to replace an active source.
+						const refusal = agentRuntimeTransitionRefusal(error);
+						if (refusal) return { kind: "runtime_transition_refused", refusal };
+						throw error;
+					} finally {
+						setProfileBusy(false);
+					}
+					return;
+				}
+				case "new_conversation":
+					if (!newConversationOffered) throw new StructuredAgentPaneRefusal();
+					await launchNewConversation();
+					return;
+				case "dismiss_conversation_failure":
+					setConversationFailure(undefined);
+					return;
+				case "recovery_switch_account":
+					if (handoffDecision?.kind !== "handoff")
+						throw new StructuredAgentPaneRefusal();
+					await requestHandoff();
+					return;
+				case "resend_last_message":
+					if (!resendLastMessage) throw new StructuredAgentPaneRefusal();
+					await resendLastMessage.run();
+					return;
+				case "sign_in":
+					if (!supportsAccounts(agent.provider) || !signInOffered)
+						throw new StructuredAgentPaneRefusal();
+					openCommandTerminalOn(panelProps.containerApi, {
+						title: t("agents.chat.recovery.signIn"),
+						command: providerLoginCmd(agent.provider, currentAccount),
+						closeOnSuccess: true,
+					});
+					return;
+			}
+		},
+	};
+	useAgentSessionPanePublication(
+		paneId,
+		paneSurface,
+		publishAgentSessionChatPane,
+	);
 	return (
-		<div className="flex h-full flex-col">
-			<AgentPanelToolbarFrame
-				agent={agent}
-				hmux
-				presentFork={(forkedAgent) =>
+		<StructuredAgentView
+			agent={agent}
+			session={session}
+			onReady={markReady}
+			body={largeView ? <AgentLargeViewSourceProxy {...largeView} /> : undefined}
+			runtime={{
+				surface: "pane",
+				pane: paneSurface,
+				presentFork: (forkedAgent) =>
 					presentForkInAgentPanelDesktop(
 						{ desktopId: paneDesktopId, panelId: paneId },
 						forkedAgent,
-					)
-				}
-			>
-				<AgentPluginClaimStatus agent={agent} paneId={paneId} />
-				{supportsStructuredChat(agent.provider) &&
-					supportsAccounts(agent.provider) &&
-					toolbarControls.visible("account", {
-						mustShow: !!presentedAccountFailure,
-					}) &&
-					toolbarControls.slot(
-						"account",
-						<AgentCredentialSwitcher
-							agentId={agent.id}
-							provider={agent.provider}
-							accounts={accountPool}
-							currentAccount={currentAccount}
-							recoveryAccount={remoteRecoveryAccount}
-							followsGlobal={false}
-							failure={presentedAccountFailure}
-							hostName={remoteHost?.name}
-							accountBusy={accountBusy || remoteAccountBusy}
-							allowCurrentAccountReselect={session.phase !== "ready"}
-							disabled={accountMovesLocked}
-							disabledTitle={t("common.paneAccount")}
-							onSwitch={runAccountSwitch}
-							onApplyNow={() => {}}
-							onCancel={() => {}}
-							onRemoteLogin={(account) => void openRemoteLogin(account)}
-							onCopyToHost={(account) => void copyAccountToHost(account)}
-							onManageAccounts={() => setAccountsOpen(true)}
-						/>,
-					)}
-				{supportsStructuredChat(agent.provider) &&
-					toolbarControls.visible("view-switch") &&
-					toolbarControls.slot(
-						"view-switch",
-						<AgentRuntimeProfileSwitch
-							key={`runtime-profile:${runtimeOwnerKey}`}
-							target="terminal"
-							disabled={runtimeSwitchLocked}
-							disabledTitle={
-								runtimeProfileSwitchBusy ? t("common.loading") : undefined
-							}
-							onSwitch={(sourceStopPolicy, expectedSourceRevision) =>
-								switchToNativeTerminal(
-									agent.id,
-									sourceStopPolicy,
-									expectedSourceRevision,
-								)
-							}
-							onSwitchingChange={setProfileBusy}
-						/>,
-					)}
-				{supportsStructuredChat(agent.provider) &&
-					toolbarControls.visible("project-move") &&
-					toolbarControls.slot(
-						"project-move",
-						<AgentProjectMove
-							key={`project-move:${runtimeOwnerKey}`}
-							port={localAgentProjectMovePort(agent.id)}
-							disabled={
-								accountMovesLocked || !!agent.pendingCmd || !!agent.pendingCredentialSwitch
-							}
-							onBusyChange={setProjectMoveBusy}
-						/>,
-					)}
-				<AgentPanelWindowActions
-					agent={agent}
-					project={project}
-					showDiff={project?.kind !== "ssh"}
-					presentation={windowActionsPresentation}
-				/>
-				{toolbarControls.visible("conversation-history") &&
-					toolbarControls.slot(
-						"conversation-history",
-						<AgentConversationHistoryControl
-							key={`conversation-history:${runtimeOwnerKey}`}
-							actionLease={historyActionLease}
-							activeConversationId={agent.conversationId ?? null}
-							activity={chatActivity}
-							agent={agent}
-							binding={undefined}
-							conversations={conversations}
-							mutationAllowed
-							mutationDisabledTitle=""
-							onError={(error) => setConversationFailure(String(error))}
-							onLoad={() => void loadConversations()}
-							onSwitchExisting={async () => {
-								throw new Error(
-									"structured_conversation_history_requires_sibling",
-								);
-							}}
-							paneDesktopId={paneDesktopId}
-							panelId={paneId}
-							projectKind={project?.kind}
-							resuming={accountMovesLocked}
-						/>,
-					)}
-			</AgentPanelToolbarFrame>
-			<div className="relative min-h-0 flex-1">
-				{largeView ? (
-					<AgentLargeViewSourceProxy {...largeView} />
-				) : (
-					<StructuredAgentChatSurface
-						session={session}
-						paneApi={panelProps.api}
-						disabled={chatInputLocked}
-						attachmentsEnabled={project?.kind === "local"}
-						launchSelection={launchSelection}
-						catalogSource={agentProviderCatalogSource(agent, project, accounts)}
-						onReady={markReady}
-						onNewConversation={
-							newConversationAvailable && !accountMovesLocked
-								? startNewConversation
-								: undefined
-						}
-						recovery={
-							supportsAccounts(agent.provider)
-								? {
-										// The pane's own switch to the account the handoff policy
-										// chose from fresh observed usage — never the global
-										// active account, never a guess.
-										...(handoffDecision?.kind === "handoff"
-											? {
-													switchAccount: {
-														targetName: handoffDecision.targetName,
-														run: () => void requestHandoff().catch(() => {}),
-													},
-												}
-											: {}),
-										manageAccounts: () => setAccountsOpen(true),
-										// The episode was already answered by a handoff: say so,
-										// and offer the failed message back with one click.
-										...(handoffView.kind === "handled" && handoffView.outcome
-											? {
-													handedOff: {
-														...handoffView.outcome,
-														...(resendLastMessage
-															? { resend: resendLastMessage.run }
-															: {}),
-													},
-												}
-											: {}),
-										// Remote panes sign in on the host through the
-										// account switcher instead of a local terminal.
-										...(project?.kind === "ssh"
-											? {}
-											: {
-													signIn: () =>
-														openCommandTerminalOn(panelProps.containerApi, {
-															title: t("agents.chat.recovery.signIn"),
-															command: providerLoginCmd(
-																agent.provider,
-																currentAccount,
-															),
-															closeOnSuccess: true,
-														}),
-												}),
-									}
-								: undefined
-						}
-					/>
-				)}
-				{conversationFailure && (
-					<Alert
-						surface="dock"
-						className="absolute inset-x-2 top-2 z-20"
-						dismiss={{
-							label: t("common.close"),
-							onClick: () => setConversationFailure(undefined),
-						}}
-					>
-						<span className="min-w-0 flex-1">{conversationFailure}</span>
-					</Alert>
-				)}
-			</div>
-			{accountsOpen && (
-				<AccountsDialog onClose={() => setAccountsOpen(false)} />
-			)}
-		</div>
+					),
+				projectMove: localAgentProjectMovePort(agent.id),
+				// The pane's own project move locks it through its presentation.
+				transitioning: false,
+				setTransitioning: setProjectMoveBusy,
+				paneStatus: <AgentPluginClaimStatus agent={agent} paneId={paneId} />,
+				composer: {
+					paneApi: panelProps.api,
+					launchSelection,
+					catalogSource: agentProviderCatalogSource(agent, project, accounts),
+				},
+				history: {
+					actionLease: historyActionLease,
+					activeConversationId: agent.conversationId ?? null,
+					activity: chatActivity,
+					conversations,
+					mutationAllowed: true,
+					mutationDisabledTitle: "",
+					onError: (error) => setConversationFailure(String(error)),
+					onLoad: () => void loadConversations(),
+					onSwitchExisting: async () => {
+						throw new Error("structured_conversation_history_requires_sibling");
+					},
+					paneDesktopId,
+					panelId: paneId,
+					projectKind: project?.kind,
+					resuming: accountMovesLocked,
+				},
+			}}
+		/>
 	);
+}
+
+/** Pane text bounded to what the presentation carries. */
+function boundedPaneText(text: string | undefined): string | null {
+	return text === undefined ? null : text.slice(0, 4_096);
 }

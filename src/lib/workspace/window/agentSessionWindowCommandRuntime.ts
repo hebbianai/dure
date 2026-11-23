@@ -23,6 +23,7 @@ import type {
 	AgentSessionWindowCommandExecution,
 	AgentSessionWindowCommandResult,
 } from "./agentSessionWindowCommand";
+import { executeAgentSessionChatPaneStep } from "./agentSessionWindowChatPane";
 import { executeAgentSessionLaunchSelectionStep } from "./agentSessionWindowLaunchSelection";
 import { activateLargeViewSourcePane } from "./largeViewSourcePane";
 import { revalidateMountedPaneWindow } from "./mountedPaneWindow";
@@ -83,6 +84,8 @@ function sourceAgentMismatch(
 			return "project move command source Agent mismatch";
 		case "launch_selection":
 			return "launch selection command source Agent mismatch";
+		case "chat_pane":
+			return "chat pane command source Agent mismatch";
 		default:
 			return "credential command source Agent mismatch";
 	}
@@ -244,6 +247,15 @@ export async function executeAgentSessionWindowCommand(
 		if (command.step !== "unwatch")
 			requireSourceAgent(command, presentationRuntime);
 		return executeAgentSessionLaunchSelectionStep(command);
+	}
+
+	if (command.action === "chat_pane") {
+		// The source Chat pane's own toolbar, recovery and new-conversation
+		// handlers: the large window watches the presentation the pane
+		// publishes and runs every command on that pane.
+		if (command.step !== "unwatch")
+			requireSourceAgent(command, presentationRuntime);
+		return executeAgentSessionChatPaneStep(command);
 	}
 
 	if (command.action === "switch") {

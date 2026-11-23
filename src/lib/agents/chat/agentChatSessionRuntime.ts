@@ -8,7 +8,10 @@ import { AgentChatSessionController } from "@/lib/agents/chat/agentChatSessionCo
 import { createAgentChatSessionRegistry } from "@/lib/agents/chat/agentChatSessionRegistry";
 import type { AgentStructuredInteractionProfileV1 } from "@/lib/agents/chat/agentInteractionProfile";
 import { observedConversationActivity } from "@/lib/agents/chat/observedRuntimeFacts";
-import { createDureAgentConversationClient } from "@/lib/ipc/dureAgentConversation";
+import {
+	createDureAgentConversationClient,
+	type DureAgentConversationClient,
+} from "@/lib/ipc/dureAgentConversation";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
 import { useStore } from "@/store";
 
@@ -16,8 +19,24 @@ const clients = new Map<
 	string,
 	ReturnType<typeof createDureAgentConversationClient>
 >();
+let fixtureClient: DureAgentConversationClient | undefined;
+
+/** Development-only native QA: every Chat surface in this window reads and
+ * writes this fixture conversation instead of a backend. Only an explicit
+ * `qaChatLargeWindow` page may install one. */
+export function serveAgentChatFixtureForQa(
+	client: DureAgentConversationClient,
+): void {
+	if (
+		!import.meta.env.DEV ||
+		!new URLSearchParams(location.search).has("qaChatLargeWindow")
+	)
+		throw new Error("A fixture conversation requires explicit development QA");
+	fixtureClient = client;
+}
 
 function clientForProfile(backendProfileId: string) {
+	if (fixtureClient) return fixtureClient;
 	let client = clients.get(backendProfileId);
 	if (!client) {
 		client = createDureAgentConversationClient({ profileId: backendProfileId });

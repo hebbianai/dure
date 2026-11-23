@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { t } from "@/lib/i18n";
 import {
 	agentRuntimeTransitionFailure,
+	agentRuntimeTransitionRefusal,
+	agentRuntimeTransitionRefusalError,
 	createDureAgentRuntimeClient,
 	DureAgentRuntimeSourceActiveError,
+	parseAgentRuntimeTransitionRefusal,
 } from "@/lib/ipc/dureAgentRuntime";
 import { DureBackendRequestError } from "@/lib/ipc/dureBackend";
 import { testDureBackendRouteAuthority } from "@/test/dureBackendRouteFixtures";
@@ -1541,5 +1544,80 @@ describe("agentRuntimeTransitionFailure", () => {
 		expect(agentRuntimeTransitionFailure(new Error("boom"))).toEqual({});
 		expect(agentRuntimeTransitionFailure("boom")).toEqual({});
 		expect(agentRuntimeTransitionFailure(undefined)).toEqual({});
+	});
+});
+
+describe("agent runtime transition refusals across a window bridge", () => {
+	const failure = { kind: "operation", disposition: "retry_same" } as const;
+	/** What crosses the bridge: plain JSON, then parsed on the other side. */
+	const transfer = (error: unknown) => {
+		const refusal = agentRuntimeTransitionRefusal(error);
+		return refusal
+			? parseAgentRuntimeTransitionRefusal(JSON.parse(JSON.stringify(refusal)))
+			: undefined;
+	};
+
+	it("rebuilds a source-active refusal with the revision that replaces it", () => {
+		const refusal = transfer(
+			new DureAgentRuntimeSourceActiveError(
+				new DureBackendRequestError(
+					"agent_runtime_source_busy",
+					"source busy",
+					failure,
+					{ reasonCode: "agent_working" },
+				),
+				7,
+			),
+		);
+		expect(refusal).toBeDefined();
+		const error = agentRuntimeTransitionRefusalError(refusal!);
+		expect(error).toBeInstanceOf(DureAgentRuntimeSourceActiveError);
+		expect((error as DureAgentRuntimeSourceActiveError).expectedSourceRevision).toBe(7);
+		expect(
+			(error as DureAgentRuntimeSourceActiveError).requestError.failure,
+		).toEqual(failure);
+		expect(agentRuntimeTransitionFailure(error)).toEqual({
+			code: "agent_runtime_source_busy",
+			reason: "agent_working",
+		});
+	});
+
+	it("rebuilds any other backend refusal with its code and reason", () => {
+		const error = agentRuntimeTransitionRefusalError(
+			transfer(
+				new DureBackendRequestError(
+					"agent_runtime_structured_profile_unavailable",
+					"Chat is unavailable",
+					failure,
+					{ reasonCode: "provider_missing" },
+				),
+			)!,
+		);
+		expect(error).toBeInstanceOf(DureBackendRequestError);
+		expect(error).not.toBeInstanceOf(DureAgentRuntimeSourceActiveError);
+		expect(agentRuntimeTransitionFailure(error)).toEqual({
+			code: "agent_runtime_structured_profile_unavailable",
+			reason: "provider_missing",
+		});
+	});
+
+	it("leaves errors that did not come from the backend to the caller", () => {
+		expect(agentRuntimeTransitionRefusal(new Error("boom"))).toBeUndefined();
+	});
+
+	it("parses only a well-formed refusal", () => {
+		for (const candidate of [
+			null,
+			{ code: "", message: "x" },
+			{ code: "agent_runtime_x", message: 3 },
+			{ code: "agent_runtime_x", message: "x", details: "detail" },
+			{
+				code: "agent_runtime_x",
+				message: "x",
+				sourceActive: { expectedSourceRevision: -1 },
+			},
+		]) {
+			expect(parseAgentRuntimeTransitionRefusal(candidate)).toBeUndefined();
+		}
 	});
 });
