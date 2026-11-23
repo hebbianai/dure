@@ -1,20 +1,16 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type {
-	AgentLaunchSelectionPresentationV1,
-	AgentLaunchSelectionSurface,
-} from "@/lib/agents/agentLaunchSelectionSurface";
+import { useMemo, useState } from "react";
+import {
+	useAgentSessionPaneMirror,
+	useAgentSessionPanePublication,
+} from "@/components/workspace/useAgentSessionPaneChannel";
+import type { AgentLaunchSelectionSurface } from "@/lib/agents/agentLaunchSelectionSurface";
 import {
 	type AgentRuntimeLaunchFailure,
 	agentRuntimeLaunchFailure,
 } from "@/lib/agents/agentRuntimeLaunchSelection";
-import {
-	type AgentSessionWindowRoute,
-	agentSessionWindowLaunchSelection,
-} from "@/lib/workspace/window/agentSessionWindowCommand";
-import {
-	type AgentSessionLaunchSelectionPublication,
-	publishAgentSessionLaunchSelection,
-} from "@/lib/workspace/window/agentSessionWindowLaunchSelection";
+import type { AgentSessionWindowRoute } from "@/lib/workspace/window/agentSessionWindowCommand";
+import { publishAgentSessionLaunchSelection } from "@/lib/workspace/window/agentSessionWindowLaunchSelection";
+import { agentSessionWindowLaunchSelection } from "@/lib/workspace/window/agentSessionWindowPaneMirrors";
 
 /** Source pane side: publishes the launch pills this pane owns to the large
  * window that shows the pane, for as long as the pane is mounted. */
@@ -22,24 +18,11 @@ export function useAgentSessionLaunchSelectionPublication(
 	paneId: string,
 	surface: AgentLaunchSelectionSurface | undefined,
 ): void {
-	const surfaceRef = useRef(surface);
-	surfaceRef.current = surface;
-	const publicationRef =
-		useRef<AgentSessionLaunchSelectionPublication>(undefined);
-	const published = surface !== undefined;
-	useLayoutEffect(() => {
-		const initial = surfaceRef.current;
-		if (!initial) return;
-		const publication = publishAgentSessionLaunchSelection(paneId, initial);
-		publicationRef.current = publication;
-		return () => {
-			publicationRef.current = undefined;
-			publication.dispose();
-		};
-	}, [paneId, published]);
-	useLayoutEffect(() => {
-		if (surface) publicationRef.current?.update(surface);
-	});
+	useAgentSessionPanePublication(
+		paneId,
+		surface,
+		publishAgentSessionLaunchSelection,
+	);
 }
 
 /** Large window side: the source pane's launch pills. The presentation is
@@ -58,21 +41,11 @@ export function useAgentSessionWindowLaunchSelection(
 			}),
 		[agentId, sourceWindowLabel, sourcePaneOwnerId],
 	);
-	const [followed, setFollowed] = useState<{
-		mirror: typeof mirror;
-		presentation: AgentLaunchSelectionPresentationV1 | null;
-	}>();
+	const presentation = useAgentSessionPaneMirror(mirror);
 	const [undelivered, setUndelivered] = useState<{
 		mirror: typeof mirror;
 		failure: AgentRuntimeLaunchFailure;
 	}>();
-	useEffect(
-		() =>
-			mirror?.watch((presentation) => setFollowed({ mirror, presentation })),
-		[mirror],
-	);
-	const presentation =
-		followed && followed.mirror === mirror ? followed.presentation : null;
 	if (!mirror || !presentation) return undefined;
 	const failure =
 		undelivered && undelivered.mirror === mirror

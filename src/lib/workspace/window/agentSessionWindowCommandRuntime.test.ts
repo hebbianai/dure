@@ -32,6 +32,7 @@ import {
 	type AgentSessionWindowCommandRuntime,
 	executeAgentSessionWindowCommand,
 } from "./agentSessionWindowCommandRuntime";
+import { publishAgentSessionChatPane } from "./agentSessionWindowChatPane";
 import { publishAgentSessionLaunchSelection } from "./agentSessionWindowLaunchSelection";
 
 const forkedAgent = agentFixture({
@@ -399,6 +400,100 @@ describe("Agent session window command runtime", () => {
 			} finally {
 				publication.dispose();
 			}
+		});
+	});
+	describe("a large window's Chat pane", () => {
+		const source = {
+			action: "chat_pane" as const,
+			agentId: "agent-source",
+			desktopId: "desktop-source",
+			panelId: "agent:agent-source",
+			replyWindowLabel: "win-large-view",
+		};
+		function publishSourcePane() {
+			const run = vi.fn(async () => undefined);
+			const publication = publishAgentSessionChatPane(
+				source.panelId,
+				{
+					presentation: {
+						schemaVersion: 1,
+						inputLocked: false,
+						accountMovesLocked: false,
+						accountBusy: false,
+						accountFailure: null,
+						recoveryAccountId: null,
+						runtimeSwitchLocked: false,
+						runtimeSwitchBusy: false,
+						newConversation: true,
+						conversationFailure: null,
+						recovery: null,
+					},
+					run,
+				},
+				{
+					currentWindowLabel: () => "win-workspace",
+					emitPresentation: vi.fn(async () => {}),
+					listenPresentation: vi.fn(async () => () => {}),
+				},
+			);
+			return { run, publication };
+		}
+
+		it("runs a command on the surface the source Chat pane publishes", async () => {
+			const { runtime } = presentationRuntime();
+			const { run, publication } = publishSourcePane();
+			try {
+				await expect(
+					executeAgentSessionWindowCommand({ ...source, step: "watch" }, runtime),
+				).resolves.toMatchObject({
+					kind: "chat_pane_watched",
+					presentation: { newConversation: true },
+				});
+				await expect(
+					executeAgentSessionWindowCommand(
+						{ ...source, step: "run", command: { kind: "new_conversation" } },
+						runtime,
+					),
+				).resolves.toEqual({ kind: "chat_pane_ran" });
+				expect(run).toHaveBeenCalledWith({ kind: "new_conversation" });
+			} finally {
+				publication.dispose();
+				await executeAgentSessionWindowCommand(
+					{ ...source, step: "unwatch" },
+					runtime,
+				);
+			}
+		});
+
+		it("refuses a command when the source pane now holds another Agent or none", async () => {
+			const { runtime } = presentationRuntime();
+			const { run, publication } = publishSourcePane();
+			try {
+				await expect(
+					executeAgentSessionWindowCommand(
+						{
+							...source,
+							agentId: "agent-moved-away",
+							step: "run",
+							command: { kind: "sign_in" },
+						},
+						runtime,
+					),
+				).rejects.toThrow("chat pane command source Agent mismatch");
+				expect(run).not.toHaveBeenCalled();
+			} finally {
+				publication.dispose();
+			}
+			// Once the pane stops publishing, a command starts nothing.
+			await expect(
+				executeAgentSessionWindowCommand(
+					{ ...source, step: "run", command: { kind: "sign_in" } },
+					runtime,
+				),
+			).rejects.toMatchObject({
+				code: "client_chat_pane_unavailable",
+				submitted: false,
+			});
 		});
 	});
 });

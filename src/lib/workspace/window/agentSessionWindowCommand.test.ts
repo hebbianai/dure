@@ -3,13 +3,16 @@ import { t } from "@/lib/i18n";
 import {
 	type AgentSessionWindowCommandBackend,
 	agentSessionWindowCredentialPort,
-	agentSessionWindowLaunchSelection,
 	agentSessionWindowProjectMovePort,
 	agentSessionWindowViewPort,
 	requestAgentSessionCredentialCommand,
 	requestAgentSessionForkPresentation,
 	subscribeAgentSessionWindowCommands,
 } from "./agentSessionWindowCommand";
+import {
+	agentSessionWindowChatPane,
+	agentSessionWindowLaunchSelection,
+} from "./agentSessionWindowPaneMirrors";
 
 function transport() {
 	let commandListener: ((payload: unknown) => void) | undefined;
@@ -310,6 +313,96 @@ describe("large-view source command routing", () => {
 				backend,
 			),
 		).toBeUndefined();
+		stop();
+	});
+
+	it("runs a large window's Chat pane commands in the exact source pane", async () => {
+		const backend = transport();
+		const refusal = {
+			code: "agent_runtime_source_busy",
+			message: "The source is busy.",
+			details: { disposition: "retry_same" },
+			sourceActive: { expectedSourceRevision: 7 },
+		};
+		const execute = vi.fn(async (command: { step?: string }) =>
+			command.step === "run"
+				? {
+						kind: "chat_pane_ran" as const,
+						outcome: { kind: "runtime_transition_refused", refusal },
+					}
+				: { kind: "chat_pane_unwatched" as const },
+		);
+		const stop = subscribeAgentSessionWindowCommands(execute as never, backend);
+		await vi.waitFor(() =>
+			expect(backend.listenCommand).toHaveBeenCalledOnce(),
+		);
+		const mirror = agentSessionWindowChatPane(sourceRoute, backend);
+
+		// The pane's refusal comes back as its outcome, intact.
+		await expect(
+			mirror?.run({ kind: "switch_to_terminal", sourceStopPolicy: "preserve" }),
+		).resolves.toEqual({ kind: "runtime_transition_refused", refusal });
+		expect(execute).toHaveBeenCalledWith({
+			action: "chat_pane",
+			step: "run",
+			command: { kind: "switch_to_terminal", sourceStopPolicy: "preserve" },
+			agentId: "agent-1",
+			desktopId: "desktop-2",
+			panelId: "agent:agent-1",
+			replyWindowLabel: "win-large-view",
+		});
+		// A window that lost its source pane has no Chat pane to follow.
+		expect(
+			agentSessionWindowChatPane(
+				{ agentId: "agent-1", sourceWindowLabel: "win-workspace-2" },
+				backend,
+			),
+		).toBeUndefined();
+		stop();
+	});
+
+	it("drops malformed Chat pane steps before they reach the source pane", async () => {
+		const backend = transport();
+		let commandListener: ((payload: unknown) => void) | undefined;
+		vi.mocked(backend.listenCommand).mockImplementation(async (listener) => {
+			commandListener = listener;
+			return () => {};
+		});
+		const execute = vi.fn();
+		const stop = subscribeAgentSessionWindowCommands(execute, backend, () => 10);
+		await vi.waitFor(() => expect(commandListener).toBeTypeOf("function"));
+
+		for (const [generation, step] of [
+			["generation-1", { step: "subscribe" }],
+			["generation-2", { step: "run", command: { kind: "delete_agent" } }],
+			[
+				"generation-3",
+				{
+					step: "run",
+					command: { kind: "switch_to_terminal", sourceStopPolicy: "force" },
+				},
+			],
+			[
+				"generation-4",
+				{ step: "run", command: { kind: "switch_account", accountId: 3 } },
+			],
+			[
+				"generation-5",
+				{ step: "run", command: { kind: "sign_in", account: "extra" } },
+			],
+		] as const) {
+			commandListener?.({
+				action: "chat_pane",
+				agentId: "agent-1",
+				generation,
+				sourcePaneOwnerId: "desktop-1:agent:agent-1",
+				replyWindowLabel: "win-large-view",
+				expiresAtMs: 30,
+				...step,
+			});
+		}
+
+		expect(execute).not.toHaveBeenCalled();
 		stop();
 	});
 

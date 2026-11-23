@@ -123,6 +123,13 @@ const mocks = vi.hoisted(() => ({
 	autoChatReady: true,
 	chatReady: undefined as undefined | (() => void),
 	chatUnmounted: vi.fn(),
+	chatProps: undefined as Record<string, unknown> | undefined,
+	/** The surface the source Chat pane publishes, and its follower. */
+	chatPanePresentation: undefined as unknown,
+	followChatPane: undefined as undefined | ((presentation: unknown) => void),
+	requestAgentSessionChatPane: vi.fn(
+		async (_request: Record<string, unknown>): Promise<unknown> => undefined,
+	),
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -206,26 +213,6 @@ vi.mock("@/lib/workspace/window/agentSessionWindowCommand", () => {
 				},
 			};
 		},
-		agentSessionWindowLaunchSelection: (source: Route) =>
-			source.sourcePaneOwnerId
-				? {
-						watch: (onPresentation: (presentation: unknown) => void) => {
-							mocks.followLaunchPresentation = onPresentation;
-							onPresentation(mocks.launchPresentation);
-							return () => {
-								mocks.followLaunchPresentation = undefined;
-							};
-						},
-						run: async (command: unknown) => {
-							await mocks.requestAgentSessionLaunchSelection({
-								action: "launch_selection",
-								step: "run",
-								command,
-								...route(source),
-							});
-						},
-					}
-				: undefined,
 		agentSessionWindowViewPort: (source: Route) => ({
 			setView: async (view: string) => {
 				await mocks.requestAgentSessionViewCommand({
@@ -255,6 +242,60 @@ vi.mock("@/lib/workspace/window/agentSessionWindowCommand", () => {
 				});
 			},
 		}),
+	};
+});
+vi.mock("@/lib/workspace/window/agentSessionWindowPaneMirrors", () => {
+	// The mirrors' own step mapping is covered by the bridge's tests; here
+	// they follow the fixture presentation and record each command's route.
+	const route = (source: {
+		agentId: string;
+		sourceWindowLabel: string;
+		sourcePaneOwnerId?: string;
+	}) => {
+		if (!source.sourcePaneOwnerId) throw new Error("source pane missing");
+		return source;
+	};
+	type Route = Parameters<typeof route>[0];
+	return {
+		agentSessionWindowLaunchSelection: (source: Route) =>
+			source.sourcePaneOwnerId
+				? {
+						watch: (onPresentation: (presentation: unknown) => void) => {
+							mocks.followLaunchPresentation = onPresentation;
+							onPresentation(mocks.launchPresentation);
+							return () => {
+								mocks.followLaunchPresentation = undefined;
+							};
+						},
+						run: async (command: unknown) => {
+							await mocks.requestAgentSessionLaunchSelection({
+								action: "launch_selection",
+								step: "run",
+								command,
+								...route(source),
+							});
+						},
+					}
+				: undefined,
+		agentSessionWindowChatPane: (source: Route) =>
+			source.sourcePaneOwnerId
+				? {
+						watch: (onPresentation: (presentation: unknown) => void) => {
+							mocks.followChatPane = onPresentation;
+							onPresentation(mocks.chatPanePresentation);
+							return () => {
+								mocks.followChatPane = undefined;
+							};
+						},
+						run: (command: unknown) =>
+							mocks.requestAgentSessionChatPane({
+								action: "chat_pane",
+								step: "run",
+								command,
+								...route(source),
+							}),
+					}
+				: undefined,
 	};
 });
 vi.mock("@/lib/agents/agentInstalls", () => ({
@@ -376,15 +417,14 @@ vi.mock("@/components/agents/chat/useAgentChatSession", () => ({
 	useAgentChatSession: mocks.chatSession,
 }));
 vi.mock("@/components/agents/chat/StructuredAgentChatSurface", () => ({
-	StructuredAgentChatSurface: ({
-		session,
-		attachmentsEnabled,
-		onReady,
-	}: {
+	StructuredAgentChatSurface: (props: {
 		session: { agentId: string };
 		attachmentsEnabled?: boolean;
+		disabled?: boolean;
 		onReady?: () => void;
 	}) => {
+		const { session, attachmentsEnabled, onReady } = props;
+		mocks.chatProps = props;
 		useEffect(() => {
 			mocks.chatReady = onReady;
 			if (mocks.autoChatReady) onReady?.();
@@ -413,6 +453,28 @@ const chatProfile = {
 	backendProfileId: "local",
 	interactionSessionId: "interaction-1",
 } as const;
+
+/** What a source Chat pane publishes while every action is open. */
+function chatPanePresentation(patch: Record<string, unknown> = {}) {
+	return {
+		schemaVersion: 1,
+		inputLocked: false,
+		accountMovesLocked: false,
+		accountBusy: false,
+		accountFailure: null,
+		recoveryAccountId: null,
+		runtimeSwitchLocked: false,
+		runtimeSwitchBusy: false,
+		newConversation: true,
+		conversationFailure: null,
+		recovery: {
+			switchAccountTarget: "Work",
+			signIn: true,
+			handedOff: { fromName: "Personal", toName: "Work", resend: true },
+		},
+		...patch,
+	};
+}
 
 /** The same Agent after its View moved it into Chat. */
 const chatTarget: Agent = {
@@ -452,6 +514,10 @@ beforeEach(() => {
 	mocks.geometryObserved = undefined;
 	mocks.autoChatReady = true;
 	mocks.chatReady = undefined;
+	mocks.chatProps = undefined;
+	mocks.chatPanePresentation = chatPanePresentation();
+	mocks.followChatPane = undefined;
+	mocks.requestAgentSessionChatPane.mockReset().mockResolvedValue(undefined);
 	mocks.liveResizeListener = undefined;
 	mocks.liveResizeUnsubscribe.mockReset();
 	mocks.closeRequested = undefined;
@@ -1228,6 +1294,157 @@ describe("AgentSessionWindowRoot", () => {
 		).toBeLessThan(mocks.close.mock.invocationCallOrder[0]);
 		expect(mocks.close).toHaveBeenCalledOnce();
 		expect(screen.queryByTestId("chat-view")).toBeNull();
+	});
+
+	it("gives a Chat Agent the pane's toolbar, run in its source pane", async () => {
+		useStore.setState({ agents: [chatTarget] });
+		const rendered = render(
+			<AgentSessionWindowRoot
+				agentId="agent-1"
+				sourceWindowLabel="win-workspace-2"
+				sourcePaneOwnerId="desktop-2:agent:agent-1"
+			/>,
+		);
+
+		expect(
+			rendered.container.querySelector("[data-agent-panel-toolbar]"),
+		).toBeTruthy();
+		expect(mocks.chatProps?.disabled).toBe(false);
+		const view = screen.getByRole("combobox", {
+			name: t("agents.runtime.viewLabel"),
+		});
+		chooseSelectValue(view, "terminal");
+
+		await waitFor(() =>
+			expect(mocks.requestAgentSessionChatPane).toHaveBeenCalledWith({
+				action: "chat_pane",
+				step: "run",
+				command: { kind: "switch_to_terminal", sourceStopPolicy: "preserve" },
+				agentId: "agent-1",
+				sourceWindowLabel: "win-workspace-2",
+				sourcePaneOwnerId: "desktop-2:agent:agent-1",
+			}),
+		);
+	});
+
+	it("offers to replace an active source the Chat pane refused to stop", async () => {
+		useStore.setState({ agents: [chatTarget] });
+		mocks.requestAgentSessionChatPane.mockResolvedValueOnce({
+			kind: "runtime_transition_refused",
+			refusal: {
+				code: "agent_runtime_source_busy",
+				message: "The source is busy.",
+				details: {},
+				sourceActive: { expectedSourceRevision: 7 },
+			},
+		});
+		render(
+			<AgentSessionWindowRoot
+				agentId="agent-1"
+				sourceWindowLabel="win-workspace-2"
+				sourcePaneOwnerId="desktop-2:agent:agent-1"
+			/>,
+		);
+
+		chooseSelectValue(
+			screen.getByRole("combobox", { name: t("agents.runtime.viewLabel") }),
+			"terminal",
+		);
+		fireEvent.click(
+			await screen.findByRole("button", {
+				name: t("agents.runtime.discardSourceAction"),
+			}),
+		);
+
+		await waitFor(() =>
+			expect(mocks.requestAgentSessionChatPane).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					command: {
+						kind: "switch_to_terminal",
+						sourceStopPolicy: "discard",
+						expectedSourceRevision: 7,
+					},
+				}),
+			),
+		);
+	});
+
+	it("runs /clear and the usage-limit recoveries on the source Chat pane", async () => {
+		useStore.setState({ agents: [chatTarget] });
+		render(
+			<AgentSessionWindowRoot
+				agentId="agent-1"
+				sourceWindowLabel="win-workspace-2"
+				sourcePaneOwnerId="desktop-2:agent:agent-1"
+			/>,
+		);
+		const props = mocks.chatProps as {
+			onNewConversation?: () => void;
+			recovery?: {
+				switchAccount?: { targetName: string; run: () => void };
+				signIn?: () => void;
+				handedOff?: {
+					fromName?: string;
+					toName: string;
+					resend?: () => Promise<void>;
+				};
+			};
+		};
+		expect(props.recovery?.switchAccount?.targetName).toBe("Work");
+		expect(props.recovery?.handedOff).toMatchObject({
+			fromName: "Personal",
+			toName: "Work",
+		});
+
+		props.onNewConversation?.();
+		props.recovery?.switchAccount?.run();
+		props.recovery?.signIn?.();
+		await act(async () => {
+			await props.recovery?.handedOff?.resend?.();
+		});
+
+		const sent = mocks.requestAgentSessionChatPane.mock.calls.map(
+			([request]) => (request.command as { kind: string }).kind,
+		);
+		expect(sent).toEqual([
+			"new_conversation",
+			"recovery_switch_account",
+			"sign_in",
+			"resend_last_message",
+		]);
+	});
+
+	it("follows the Chat pane's locks and offers nothing before it publishes", () => {
+		useStore.setState({ agents: [chatTarget] });
+		mocks.chatPanePresentation = null;
+		render(
+			<AgentSessionWindowRoot
+				agentId="agent-1"
+				sourceWindowLabel="win-workspace-2"
+				sourcePaneOwnerId="desktop-2:agent:agent-1"
+			/>,
+		);
+
+		const view = screen.getByRole("combobox", {
+			name: t("agents.runtime.viewLabel"),
+		});
+		expect(view.hasAttribute("disabled")).toBe(true);
+		expect(mocks.chatProps).toMatchObject({
+			disabled: true,
+			onNewConversation: undefined,
+			recovery: undefined,
+		});
+
+		act(() =>
+			mocks.followChatPane?.(chatPanePresentation({ newConversation: false })),
+		);
+		expect(view.hasAttribute("disabled")).toBe(false);
+		expect(mocks.chatProps?.onNewConversation).toBeUndefined();
+
+		act(() =>
+			mocks.followChatPane?.(chatPanePresentation({ runtimeSwitchLocked: true })),
+		);
+		expect(view.hasAttribute("disabled")).toBe(true);
 	});
 
 	it("asks the source window to present a fork created from the large view", async () => {

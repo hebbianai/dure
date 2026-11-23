@@ -1,6 +1,6 @@
 import { NativeAgentResponseView } from "@/components/agents/NativeAgentResponseView";
-import { StructuredAgentChatSurface } from "@/components/agents/chat/StructuredAgentChatSurface";
 import { useAgentChatSession } from "@/components/agents/chat/useAgentChatSession";
+import { StructuredAgentView } from "@/components/panels/StructuredAgentView";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   type ReactNode,
@@ -15,7 +15,10 @@ import { PanelStatus } from "@/components/common/PanelStatus";
 import { Titled } from "@/components/ui/tooltip";
 import { TerminalView } from "@/components/terminal/TerminalView";
 import { NativeAgentToolbar } from "@/components/panels/NativeAgentToolbar";
-import { useAgentSessionWindowToolbarRuntime } from "@/components/workspace/useAgentSessionWindowToolbarRuntime";
+import {
+  useAgentSessionWindowChatRuntime,
+  useAgentSessionWindowToolbarRuntime,
+} from "@/components/workspace/useAgentSessionWindowToolbarRuntime";
 import {
   SecondaryWindowShell,
   useSecondaryWindowBoot,
@@ -385,6 +388,7 @@ export function AgentSessionWindowRoot({
           key={targetKey}
           agent={agent}
           profile={target.profile}
+          source={toolbarSource}
           onReady={onChatReady}
         />
       ) : agent && binding && !closing ? (
@@ -447,29 +451,30 @@ function AgentSessionWindowPresentation({
   );
 }
 
-/** A Chat Agent's conversation at the window's full size. The source pane
+/** A Chat Agent's toolbar and conversation at the window's full size: the
+ * pane's own view, driven by the surface the source pane publishes. The pane
  * keeps owning the session's side effects (activity, launch selection, pane
- * actions); this window reads and writes the same backend session through
- * its own registry lease, as the pane does. */
+ * actions, account and View moves); this window reads and writes the same
+ * backend session through its own registry lease, as the pane does. */
 function AgentSessionWindowChat({
   agent,
   profile,
+  source,
   onReady,
 }: {
   agent: Agent;
   profile: AgentStructuredInteractionProfileV1;
+  source: AgentSessionSource;
   onReady(): void;
 }) {
   const session = useAgentChatSession(agent.id, profile);
-  const projectKind = useStore(
-    (state) =>
-      state.projects.find((project) => project.id === agent.projectId)?.kind,
-  );
+  const runtime = useAgentSessionWindowChatRuntime(agent, source);
   return (
-    <div className="relative min-h-0 flex-1">
-      <StructuredAgentChatSurface
+    <div className="min-h-0 flex-1">
+      <StructuredAgentView
+        agent={agent}
         session={session}
-        attachmentsEnabled={projectKind === "local"}
+        runtime={runtime}
         onReady={onReady}
       />
     </div>

@@ -22,6 +22,9 @@ import {
 	invokePaneAction,
 	paneActionSnapshot,
 } from "@/lib/workspace/pane/paneActionRegistry";
+import type { StructuredAgentPaneSurface } from "@/lib/agents/chat/structuredAgentPaneSurface";
+import { DureAgentRuntimeSourceActiveError } from "@/lib/ipc/dureAgentRuntime";
+import { DureBackendRequestError } from "@/lib/ipc/dureBackend";
 import { setAgentSessionSourceOpen } from "@/lib/workspace/window/agentSessionWindowSource";
 import { useStore } from "@/store";
 import { agentFixture } from "@/test/agentFixtures";
@@ -51,7 +54,32 @@ const mocks = vi.hoisted(() => ({
 	launchFreshConversation: vi.fn(async () => ({})),
 	openAgentSessionWindow: vi.fn(async () => {}),
 	followApprovedPlan: vi.fn(),
+	/** The surface the pane publishes for its large window. */
+	published: undefined as
+		| undefined
+		| { paneId: string; surface: StructuredAgentPaneSurface },
 }));
+
+vi.mock(
+	import("@/lib/workspace/window/agentSessionWindowChatPane"),
+	async (importOriginal) => ({
+	...(await importOriginal()),
+	publishAgentSessionChatPane: (
+		paneId: string,
+		surface: StructuredAgentPaneSurface,
+	) => {
+		mocks.published = { paneId, surface };
+		return {
+			update: (next: StructuredAgentPaneSurface) => {
+				mocks.published = { paneId, surface: next };
+			},
+			dispose: () => {
+				mocks.published = undefined;
+			},
+		};
+	},
+	}),
+);
 
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
 	getCurrentWebviewWindow: () => ({ label: "main" }),
@@ -369,6 +397,116 @@ describe("StructuredAgentPanel mount", () => {
 		}
 	});
 
+	it("publishes its own state and actions for the Agent's large window", () => {
+		render(
+			<StructuredAgentPanel
+				agent={agent}
+				profile={profile}
+				panelProps={panelProps}
+				launchSelection={launchSelection}
+				onRuntimeInvalidated={vi.fn()}
+				switchCredential={vi.fn()}
+				switchToNativeTerminal={vi.fn()}
+			/>,
+		);
+
+		expect(mocks.published?.paneId).toBe("agent:agent-1");
+		expect(mocks.published?.surface.presentation).toMatchObject({
+			schemaVersion: 1,
+			inputLocked: false,
+			accountMovesLocked: false,
+			runtimeSwitchLocked: false,
+			newConversation: true,
+			conversationFailure: null,
+		});
+	});
+
+	it("runs a large window's View switch on its own handler, refusal intact", async () => {
+		const switchToNativeTerminal = vi.fn(async () => {
+			throw new DureAgentRuntimeSourceActiveError(
+				new DureBackendRequestError(
+					"agent_runtime_source_busy",
+					"source busy",
+					{ kind: "operation", disposition: "retry_same" },
+				),
+				4,
+			);
+		});
+		render(
+			<StructuredAgentPanel
+				agent={agent}
+				profile={profile}
+				panelProps={panelProps}
+				launchSelection={launchSelection}
+				onRuntimeInvalidated={vi.fn()}
+				switchCredential={vi.fn()}
+				switchToNativeTerminal={switchToNativeTerminal}
+			/>,
+		);
+
+		let outcome: unknown;
+		await act(async () => {
+			outcome = await mocks.published?.surface.run({
+				kind: "switch_to_terminal",
+				sourceStopPolicy: "preserve",
+			});
+		});
+
+		expect(switchToNativeTerminal).toHaveBeenCalledWith(
+			agent.id,
+			"preserve",
+			undefined,
+		);
+		expect(outcome).toMatchObject({
+			kind: "runtime_transition_refused",
+			refusal: {
+				code: "agent_runtime_source_busy",
+				sourceActive: { expectedSourceRevision: 4 },
+			},
+		});
+		expect(mocks.published?.surface.presentation.runtimeSwitchBusy).toBe(false);
+	});
+
+	it("runs only the commands it offers, and reports a failed new conversation", async () => {
+		render(
+			<StructuredAgentPanel
+				agent={agent}
+				profile={profile}
+				panelProps={panelProps}
+				launchSelection={launchSelection}
+				onRuntimeInvalidated={vi.fn()}
+				switchCredential={vi.fn()}
+				switchToNativeTerminal={vi.fn()}
+			/>,
+		);
+		const run = (command: Parameters<StructuredAgentPaneSurface["run"]>[0]) =>
+			mocks.published!.surface.run(command);
+
+		// No usage-limit failure is on screen, so there is nothing to recover.
+		await expect(run({ kind: "recovery_switch_account" })).rejects.toMatchObject(
+			{ code: "client_chat_pane_action_unavailable", submitted: false },
+		);
+		await expect(run({ kind: "resend_last_message" })).rejects.toMatchObject({
+			code: "client_chat_pane_action_unavailable",
+		});
+
+		mocks.launchFreshConversation.mockClear();
+		await act(async () => {
+			await run({ kind: "new_conversation" });
+		});
+		expect(mocks.launchFreshConversation).toHaveBeenCalledWith({
+			sourceAgentId: agent.id,
+			desktopId: "desktop-1",
+			referencePanelId: "agent:agent-1",
+			target: { kind: "fresh" },
+		});
+
+		mocks.launchFreshConversation.mockRejectedValueOnce(new Error("no sibling"));
+		await expect(run({ kind: "new_conversation" })).rejects.toThrow(
+			"no sibling",
+		);
+	});
+
 	it("gives the composer's /clear the history menu's fresh sibling launch", async () => {
 		mocks.launchFreshConversation.mockClear();
 		const { rerender } = render(
@@ -505,7 +643,14 @@ describe("StructuredAgentPanel mount", () => {
 			expect(mocks.chatProps?.disabled).toBe(true);
 			expect(mocks.profileProps?.disabled).toBe(true);
 		});
-		it("profile switching locks project moves", () => {
+		it("profile switching locks project moves", async () => {
+			let finish!: () => void;
+			const switchToNativeTerminal = vi.fn(
+				() =>
+					new Promise<void>((resolve) => {
+						finish = resolve;
+					}),
+			);
 			render(
 				<StructuredAgentPanel
 					agent={agent}
@@ -514,11 +659,28 @@ describe("StructuredAgentPanel mount", () => {
 					launchSelection={launchSelection}
 					onRuntimeInvalidated={vi.fn()}
 					switchCredential={vi.fn()}
-					switchToNativeTerminal={vi.fn()}
+					switchToNativeTerminal={switchToNativeTerminal}
 				/>,
 			);
-			act(() => busyCallback(mocks.profileProps, "onSwitchingChange")(true));
+			expect(mocks.moveProps?.disabled).toBe(false);
+			const onSwitch = mocks.profileProps?.onSwitch as (
+				policy: "preserve" | "discard",
+			) => Promise<void>;
+			let switching!: Promise<void>;
+			act(() => {
+				switching = onSwitch("preserve");
+			});
+			expect(switchToNativeTerminal).toHaveBeenCalledWith(
+				agent.id,
+				"preserve",
+				undefined,
+			);
 			expect(mocks.moveProps?.disabled).toBe(true);
+			await act(async () => {
+				finish();
+				await switching;
+			});
+			expect(mocks.moveProps?.disabled).toBe(false);
 		});
 		it.each([
 			{ activeTurn: { turnId: "busy-turn" } },

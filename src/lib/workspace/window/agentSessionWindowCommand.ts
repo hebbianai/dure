@@ -32,14 +32,14 @@ import type {
 import { t } from "@/lib/i18n";
 import { isRecord } from "@/lib/payloadGuards";
 import { listenWhenReady } from "@/lib/platform/tauriBridge";
+import type { AgentSessionChatPaneResult } from "./agentSessionWindowChatPane";
+import type { AgentSessionLaunchSelectionResult } from "./agentSessionWindowLaunchSelection";
 import {
-	type AgentSessionLaunchSelectionCommand,
-	type AgentSessionLaunchSelectionMirror,
-	type AgentSessionLaunchSelectionResult,
-	agentSessionLaunchSelectionMirror,
-	agentSessionLaunchSelectionStep,
-	agentSessionLaunchSelectionStepValid,
-} from "./agentSessionWindowLaunchSelection";
+	type AgentSessionPaneChannelStep,
+	agentSessionPaneChannelStep,
+	agentSessionPaneChannelStepValid,
+	isAgentSessionPaneChannelAction,
+} from "./agentSessionWindowPaneChannels";
 import {
 	type AgentSessionProjectMoveCommand,
 	type AgentSessionProjectMoveResult,
@@ -111,7 +111,7 @@ type AgentSessionWindowCommand =
 	| AgentSessionForkPresentationCommand
 	| AgentSessionViewCommand
 	| AgentSessionProjectMoveCommand
-	| AgentSessionLaunchSelectionCommand
+	| AgentSessionPaneChannelStep
 	| AgentSessionDraftAppendCommand;
 
 export type AgentSessionCredentialCommandResult =
@@ -137,6 +137,7 @@ export type AgentSessionWindowCommandResult =
 	| AgentSessionViewCommandResult
 	| AgentSessionProjectMoveResult
 	| AgentSessionLaunchSelectionResult
+	| AgentSessionChatPaneResult
 	| { kind: "drafted" }
 	| AgentChatDraftMoveReceipt
 	| AgentChatPaneMoveResult;
@@ -333,8 +334,8 @@ function parseCommand(value: unknown): CommandPayload | undefined {
 			? (payload as unknown as CommandPayload)
 			: undefined;
 	}
-	if (payload.action === "launch_selection") {
-		return agentSessionLaunchSelectionStepValid(payload)
+	if (isAgentSessionPaneChannelAction(payload.action)) {
+		return agentSessionPaneChannelStepValid({ ...payload, action: payload.action })
 			? (payload as unknown as CommandPayload)
 			: undefined;
 	}
@@ -424,7 +425,7 @@ function requestAgentSessionWindowCommand(
 		| SourcePaneRequest<
 				| AgentSessionViewCommand
 				| AgentSessionProjectMoveCommand
-				| AgentSessionLaunchSelectionCommand
+				| AgentSessionPaneChannelStep
 				| AgentSessionDraftAppendCommand
 				| AgentSessionDraftMoveCommand
 				| AgentSessionPaneMoveCommand
@@ -599,24 +600,16 @@ export function agentSessionWindowProjectMovePort(
 	);
 }
 
-/** A large window's launch pills: the source pane's presentation, followed
- * as it changes, and every pill command run in the window that owns the
- * source pane. Undefined while the window does not know its source pane. */
-export function agentSessionWindowLaunchSelection(
+/** Delivers one step of a surface the source pane publishes to the window
+ * that owns it (the large window's mirrors in agentSessionWindowPaneMirrors). */
+export function requestAgentSessionPaneChannelStep(
 	route: AgentSessionWindowRoute,
+	command: AgentSessionPaneChannelStep,
 	transport: AgentSessionWindowCommandBackend = backend,
-): AgentSessionLaunchSelectionMirror | undefined {
-	const source = route.sourcePaneOwnerId
-		? parseLargeViewSourcePaneOwnerId(route.sourcePaneOwnerId)
-		: undefined;
-	if (!source) return undefined;
-	return agentSessionLaunchSelectionMirror(
-		{ sourceWindowLabel: route.sourceWindowLabel, paneId: source.panelId },
-		(command) =>
-			requestAgentSessionWindowCommand(
-				{ ...command, ...sourcePaneRoute(route) },
-				transport,
-			),
+): Promise<AgentSessionWindowCommandResult> {
+	return requestAgentSessionWindowCommand(
+		{ ...command, ...sourcePaneRoute(route) },
+		transport,
 	);
 }
 
@@ -765,8 +758,8 @@ export type AgentSessionWindowCommandExecution = {
 	desktopId: string;
 	panelId: string;
 } & (
-	| Exclude<AgentSessionWindowCommand, AgentSessionLaunchSelectionCommand>
-	| (AgentSessionLaunchSelectionCommand & {
+	| Exclude<AgentSessionWindowCommand, AgentSessionPaneChannelStep>
+	| (AgentSessionPaneChannelStep & {
 			/** The window that sent the step; a `watch` names it as the watcher. */
 			replyWindowLabel: string;
 	  })
@@ -811,9 +804,10 @@ function commandExecution(
 		case "project_move":
 			return { ...target, ...agentSessionProjectMoveStep(payload) };
 		case "launch_selection":
+		case "chat_pane":
 			return {
 				...target,
-				...agentSessionLaunchSelectionStep(payload),
+				...agentSessionPaneChannelStep(payload),
 				replyWindowLabel: payload.replyWindowLabel,
 			};
 		case "switch":

@@ -13,7 +13,7 @@ const mirror = vi.hoisted(() => ({
 		| ((presentation: AgentLaunchSelectionPresentationV1 | null) => void),
 	run: vi.fn(async (_command: unknown) => {}),
 }));
-vi.mock("@/lib/workspace/window/agentSessionWindowCommand", () => ({
+vi.mock("@/lib/workspace/window/agentSessionWindowPaneMirrors", () => ({
 	agentSessionWindowLaunchSelection: (route: { sourcePaneOwnerId?: string }) =>
 		route.sourcePaneOwnerId
 			? {

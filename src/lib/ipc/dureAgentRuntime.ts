@@ -55,6 +55,7 @@ import {
 	type DureBackendIdentity,
 	type DureBackendInvoke,
 	DureBackendRequestError,
+	dureBackendInvokeFailure,
 } from "@/lib/ipc/dureBackend";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
 import {
@@ -159,6 +160,98 @@ export function agentRuntimeTransitionFailure(
 		...(code === undefined ? {} : { code }),
 		...(reason === undefined ? {} : { reason }),
 	};
+}
+
+/** A refused runtime transition in the plain form a window bridge carries, so
+ * the requesting window decides from it exactly as the source pane would. */
+export interface DureAgentRuntimeTransitionRefusalV1 {
+	readonly code: string;
+	readonly message: string;
+	readonly details?: Record<string, unknown>;
+	/** The source is still active; replacing it needs this exact revision. */
+	readonly sourceActive?: { readonly expectedSourceRevision?: number };
+}
+
+/** The transferable form of a backend transition refusal; undefined for an
+ * error that did not come from the backend. */
+export function agentRuntimeTransitionRefusal(
+	error: unknown,
+): DureAgentRuntimeTransitionRefusalV1 | undefined {
+	const sourceActive =
+		error instanceof DureAgentRuntimeSourceActiveError ? error : undefined;
+	const request = sourceActive ? sourceActive.requestError : error;
+	if (!(request instanceof DureBackendRequestError)) return undefined;
+	const disposition =
+		request.failure.kind === "operation"
+			? { disposition: request.failure.disposition }
+			: {};
+	return {
+		code: request.code,
+		message: request.message,
+		details: { ...request.details, ...disposition },
+		...(sourceActive
+			? {
+					sourceActive:
+						sourceActive.expectedSourceRevision === undefined
+							? {}
+							: { expectedSourceRevision: sourceActive.expectedSourceRevision },
+				}
+			: {}),
+	};
+}
+
+export function parseAgentRuntimeTransitionRefusal(
+	value: unknown,
+): DureAgentRuntimeTransitionRefusalV1 | undefined {
+	const candidate = record(value);
+	if (
+		!candidate ||
+		!nonEmptyString(candidate.code) ||
+		candidate.code.length > 512 ||
+		typeof candidate.message !== "string" ||
+		candidate.message.length > 4_096
+	)
+		return undefined;
+	const details =
+		candidate.details === undefined ? undefined : record(candidate.details);
+	if (candidate.details !== undefined && !details) return undefined;
+	let sourceActive: DureAgentRuntimeTransitionRefusalV1["sourceActive"];
+	if (candidate.sourceActive !== undefined) {
+		const active = record(candidate.sourceActive);
+		if (
+			!active ||
+			(active.expectedSourceRevision !== undefined &&
+				!nonNegativeInteger(active.expectedSourceRevision))
+		)
+			return undefined;
+		sourceActive =
+			active.expectedSourceRevision === undefined
+				? {}
+				: { expectedSourceRevision: active.expectedSourceRevision as number };
+	}
+	return {
+		code: candidate.code,
+		message: candidate.message,
+		...(details ? { details } : {}),
+		...(sourceActive ? { sourceActive } : {}),
+	};
+}
+
+/** The error the source pane's own surface would have seen for a refusal. */
+export function agentRuntimeTransitionRefusalError(
+	refusal: DureAgentRuntimeTransitionRefusalV1,
+): Error {
+	const request = dureBackendInvokeFailure(
+		refusal,
+		refusal.code,
+		refusal.message,
+	);
+	return refusal.sourceActive
+		? new DureAgentRuntimeSourceActiveError(
+				request,
+				refusal.sourceActive.expectedSourceRevision,
+			)
+		: request;
 }
 
 function normalizeTransitionError(error: unknown): unknown {
