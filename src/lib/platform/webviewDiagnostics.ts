@@ -11,6 +11,7 @@ const BOUNDARIES = new Set([
 	"[boundary:session-window]",
 	"[boundary:source-control-window]",
 	"[boundary:popout-window]",
+	"[boundary:presentation-window]",
 ]);
 
 // Do not stringify console values, traverse objects, call getters, or retain

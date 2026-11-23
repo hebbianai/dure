@@ -88,9 +88,12 @@ import { openExternalWorkspaceForPane } from "@/lib/workspace/externalWorkspace"
 import { dispatchCliWorktreePresentation } from "@/lib/cli/cliWorktreePresentation";
 import { dispatchCliUnopenedAgentVisibility } from "@/lib/cli/cliUnopenedAgentVisibility";
 import { openLocalFilePane } from "@/lib/files/localFilePane";
+import { presentLocalFile } from "@/lib/files/localFilePresentation";
 
 const cliDesktopPaneDependencies = {
   openFile: openLocalFilePane,
+  ownsFilePresentation: () => getCurrentWebviewWindow().label === "main",
+  presentFile: presentLocalFile,
   openMobile: async (spaceId: string) => {
     const state = useStore.getState();
     if (!state.spaces.some((space) => space.id === spaceId))

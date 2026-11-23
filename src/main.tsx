@@ -67,7 +67,8 @@ const renderEntryFailure = (
 		| "diff-window"
 		| "session-window"
 		| "source-control-window"
-		| "popout-window" = "main",
+		| "popout-window"
+		| "presentation-window" = "main",
 ) => {
 	console.error("[main] entry import failed", error);
 	root.render(
@@ -116,6 +117,7 @@ const imePreeditQa =
 // 단독 창(에이전트 pane의 "새 창에서 diff" 버튼). App 대신 bare 루트를 렌더한다.
 const diffAgentId = qaParams.get("diff");
 // ?panel=source-control — 소스 제어 패널 미러 단독 창 (slds)
+// ?panel=presentation — the large window an agent presents one file in
 const bareRootPanel = qaParams.get("panel");
 // ?popout=<desktopId> — pane 분리 경량 창 (사이드바·데스크탑 바 없음)
 const popoutDesktopId = qaParams.get("popout");
@@ -311,6 +313,15 @@ if (import.meta.env.DEV && qaParams.has("qaProjectRepository")) {
 			);
 		})
 		.catch((error) => renderEntryFailure(error, "source-control-window"));
+} else if (bareRootPanel === "presentation") {
+	import("./components/files/FilePresentationWindow")
+		.then(({ FilePresentationWindowRoot }) => {
+			renderAuxiliaryWindowRoot(
+				"presentation-window",
+				<FilePresentationWindowRoot />,
+			);
+		})
+		.catch((error) => renderEntryFailure(error, "presentation-window"));
 } else if (popoutDesktopId) {
 	import("./components/workspace/PopoutWindow")
 		.then(({ PopoutWindowRoot }) => {

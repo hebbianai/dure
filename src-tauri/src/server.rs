@@ -62,6 +62,9 @@ const SERVER_CAPABILITIES: &[&str] = &[
     "pane.move_v1",
     "mobile_pane.open_v1",
     "file_pane.open_v1",
+    // `/pane/open` with `placement: "window"` presents one local file in the
+    // reusable presentation window instead of a Space pane.
+    "file_window.present_v1",
     "project_registration.add_v1",
     "ssh_hosts.add_v1",
     "ssh_hosts.get_v1",
@@ -2658,6 +2661,7 @@ mod tests {
                 "pane.move_v1",
                 "mobile_pane.open_v1",
                 "file_pane.open_v1",
+                "file_window.present_v1",
                 "project_registration.add_v1",
                 "ssh_hosts.add_v1",
                 "ssh_hosts.get_v1",

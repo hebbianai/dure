@@ -17,13 +17,15 @@ export type ErrorReportSurface =
   | "diff-window"
   | "session-window"
   | "source-control-window"
-  | "popout-window";
+  | "popout-window"
+  | "presentation-window";
 export type ErrorIncidentBoundary =
   | "app"
   | "diff-window"
   | "session-window"
   | "source-control-window"
   | "popout-window"
+  | "presentation-window"
   | "entry";
 
 export interface ErrorDiagnosticReference {

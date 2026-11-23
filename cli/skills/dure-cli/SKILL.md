@@ -26,6 +26,10 @@ driving and waiting on a session. Parse `--json` — `dure.sessions/v1`,
 - **Space/pane id** (`desk-…`, `pane-…`) and **project id** — consumed by
   `dure run --space`, `dure run --project` and `dure client`, all in the `dure` skill.
 
+Showing the person a result needs no identifier: present the file you made
+with `dure client pane open file PATH --window` (MCP: `app_file_present`). It
+opens one large window in front of them instead of leaving a path to find.
+
 ```sh
 dure ls   # SESSION WORKSPACE PROVIDER PID LIVE CWD AGENTS ACCOUNT FAILURE
 dure spaces show desk-Jd7tlL   # PANE TYPE TITLE STATE LIVE IDLE SESSION

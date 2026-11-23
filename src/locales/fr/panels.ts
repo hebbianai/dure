@@ -168,6 +168,11 @@ export const panels: Record<string, string> = {
 	"panels.fileViewer.save": "Enregistrer (⌘S)",
 	"panels.fileViewer.tooLargeToEdit": "trop volumineux pour être modifié",
 	"panels.fileViewer.truncated": "tronqué",
+	"panels.filePresentation.empty":
+		"Rien n'est encore présenté. Quand un agent présente un fichier, il s'ouvre ici.",
+	"panels.filePresentation.presentedBy": "Présenté par {name}",
+	"panels.filePresentation.title": "Présentation",
+	"panels.filePresentation.windowTitle": "{file} — {name}",
 	"panels.git.changes": "Modifications",
 	"panels.git.cleanWorkingTree": "Arbre de travail propre",
 	"panels.git.commitAndPush": "Commit et Push",

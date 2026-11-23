@@ -44,7 +44,8 @@ export class AppErrorBoundary extends Component<
       | "diff-window"
       | "session-window"
       | "source-control-window"
-      | "popout-window";
+      | "popout-window"
+      | "presentation-window";
   },
   AppErrorBoundaryState
 > {

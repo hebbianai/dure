@@ -24,6 +24,15 @@ function dependencies(
 			file: { source: "local", path },
 			mounted: true,
 		})),
+		ownsFilePresentation: vi.fn(() => true),
+		presentFile: vi.fn(async (path, presenterSessionId) => ({
+			label: "win-presentation",
+			file: { source: "local", path },
+			reused: false,
+			...(presenterSessionId
+				? { presenter: { agentId: "agent-1", name: "Reviewer" } }
+				: {}),
+		})),
 		addSpace: vi.fn(() => "desktop-new"),
 		waitForSpace: vi.fn(async () => ({})),
 		removeSpace: vi.fn(),
@@ -100,6 +109,136 @@ describe("dispatchCliDesktopPaneRequest", () => {
 			);
 		},
 	);
+
+	it("presents a window file from the owning window without routing to a Space", async () => {
+		const request = {
+			reqId: "present",
+			action: "pane.open",
+			params: {
+				tool: "file",
+				placement: "window",
+				path: "/recordings/demo run.mp4",
+				presenterSessionId: "session-1",
+			},
+		};
+		const other = dependencies({ ownsFilePresentation: vi.fn(() => false) });
+		await dispatchCliDesktopPaneRequest(request, other);
+		expect(other.claim).not.toHaveBeenCalled();
+		expect(other.presentFile).not.toHaveBeenCalled();
+		expect(other.complete).not.toHaveBeenCalled();
+
+		const owner = dependencies();
+		await dispatchCliDesktopPaneRequest(request, owner);
+		expect(owner.routeToSpaceOwner).not.toHaveBeenCalled();
+		expect(owner.openFile).not.toHaveBeenCalled();
+		expect(owner.presentFile).toHaveBeenCalledWith(
+			"/recordings/demo run.mp4",
+			"session-1",
+		);
+		expect(owner.complete).toHaveBeenCalledWith(
+			"present",
+			{
+				ok: true,
+				window: {
+					label: "win-presentation",
+					file: { source: "local", path: "/recordings/demo run.mp4" },
+					reused: false,
+					presenter: { agentId: "agent-1", name: "Reviewer" },
+				},
+			},
+			"pane.open",
+		);
+	});
+
+	it("does not present when another window claimed the request first", async () => {
+		const deps = dependencies({ claim: vi.fn(async () => false) });
+		await dispatchCliDesktopPaneRequest(
+			{
+				reqId: "present",
+				action: "pane.open",
+				params: { tool: "file", placement: "window", path: "/a.png" },
+			},
+			deps,
+		);
+		expect(deps.presentFile).not.toHaveBeenCalled();
+		expect(deps.complete).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{ tool: "mobile" },
+		{ spaceId: "review" },
+		{ desktopId: "review" },
+		{ path: "relative.png" },
+		{ path: "https://example.com/a.png" },
+		{ source: "ssh" },
+		{ hostId: "remote" },
+		{ sessionId: "remote-session" },
+		{ presenterSessionId: "" },
+		{ presenterSessionId: "bad\nid" },
+		{ presenterSessionId: 7 },
+	])("refuses an invalid window presentation before presenting: %j", async (invalid) => {
+		const deps = dependencies();
+		await dispatchCliDesktopPaneRequest(
+			{
+				reqId: "invalid-present",
+				action: "pane.open",
+				params: { tool: "file", placement: "window", path: "/a.png", ...invalid },
+			},
+			deps,
+		);
+		expect(deps.presentFile).not.toHaveBeenCalled();
+		expect(deps.openFile).not.toHaveBeenCalled();
+		expect(deps.complete).toHaveBeenCalledWith(
+			"invalid-present",
+			{
+				ok: false,
+				error: expect.objectContaining({ code: "invalid_request" }),
+			},
+			"pane.open",
+		);
+	});
+
+	it("refuses an unknown placement and reports a presentation failure", async () => {
+		const unknown = dependencies();
+		await dispatchCliDesktopPaneRequest(
+			{
+				reqId: "tab",
+				action: "pane.open",
+				params: { tool: "file", placement: "tab", path: "/a.md", spaceId: "review" },
+			},
+			unknown,
+		);
+		expect(unknown.openFile).not.toHaveBeenCalled();
+		expect(unknown.complete).toHaveBeenCalledWith(
+			"tab",
+			{ ok: false, error: expect.objectContaining({ code: "invalid_request" }) },
+			"pane.open",
+		);
+		const failed = dependencies({
+			presentFile: vi.fn(async () => {
+				throw new Error("window creation failed");
+			}),
+		});
+		await dispatchCliDesktopPaneRequest(
+			{
+				reqId: "present",
+				action: "pane.open",
+				params: { tool: "file", placement: "window", path: "/a.md" },
+			},
+			failed,
+		);
+		expect(failed.complete).toHaveBeenCalledWith(
+			"present",
+			{
+				ok: false,
+				error: {
+					code: "file_presentation_failed",
+					message: "window creation failed",
+				},
+			},
+			"pane.open",
+		);
+	});
 
 	it("does not open an unclaimed file and returns the opener's failure", async () => {
 		const request = {
