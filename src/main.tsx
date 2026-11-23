@@ -188,6 +188,11 @@ if (import.meta.env.DEV) {
 			await probe.runChatDraftWindowsProbe();
 		});
 	}
+	if (qaParams.has("qaChatLargeWindow") && !qaParams.has("sessionWindow")) {
+		void import("./qa/chatLargeWindow").then((probe) =>
+			probe.runChatLargeWindowProbe(),
+		);
+	}
 	if (qaParams.has("qaManagedRehostSync")) {
 		void import("./qa/managedRehostSync").then(async (probe) => {
 			if (!(await cliServer))
@@ -331,6 +336,27 @@ if (import.meta.env.DEV && qaParams.has("qaProjectRepository")) {
 			);
 		})
 		.catch((error) => renderEntryFailure(error, "popout-window"));
+} else if (
+	import.meta.env.DEV &&
+	sessionWindowAgentId &&
+	qaParams.has("qaChatLargeWindow")
+) {
+	Promise.all([
+		import("./qa/chatLargeWindow"),
+		import("./components/workspace/AgentSessionWindow"),
+	])
+		.then(([qa, { AgentSessionWindowRoot }]) => {
+			qa.prepareChatLargeWindowQa(sessionWindowSource.windowLabel);
+			renderAuxiliaryWindowRoot(
+				"session-window",
+				<AgentSessionWindowRoot
+					agentId={sessionWindowAgentId}
+					sourceWindowLabel={sessionWindowSource.windowLabel}
+					sourcePaneOwnerId={sessionWindowSource.paneOwnerId}
+				/>,
+			);
+		})
+		.catch((error) => renderEntryFailure(error, "session-window"));
 } else if (sessionWindowAgentId) {
 	import("./components/workspace/AgentSessionWindow")
 		.then(({ AgentSessionWindowRoot }) => {
