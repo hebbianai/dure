@@ -311,3 +311,88 @@ async fn enrolling_a_live_session_no_agent_binds_is_stale_not_retryable() {
             .is_none()
     );
 }
+
+/// Hmux observes this Session generation as live, but no Dispatch binds it, so
+/// it has no durable inbox yet. A sender's tracked message (`dure send
+/// --track`) has nowhere to go; every context path names that reason instead
+/// of a bare generation conflict, and only the Session's own lookup may enroll.
+#[tokio::test]
+async fn a_live_session_without_a_dispatch_names_its_missing_inbox() {
+    let (_root, state, launcher, prompt_deliverer) =
+        fixture_with_delivery(Vec::new(), Vec::new()).await;
+    let session: WorkflowSessionGenerationV1 =
+        serde_json::from_value(existing_session_run_body()["session"].clone()).unwrap();
+    verify_exact_orchestration_session(&state, &session)
+        .await
+        .unwrap();
+    let context = json!({"schemaVersion": 1, "session": session});
+    let message = json!({
+        "schemaVersion": 1,
+        "session": session,
+        "expectedEndpointRef": "endpoint-never-opened",
+        "idempotencyKey": "message-to-unassigned-session",
+        "interactionId": "message-to-unassigned-session",
+        "title": "[dure send · from lead]",
+        "descriptionMarkdown": "A tracked message.",
+        "openedAtMs": 1_100
+    });
+    for (label, method, body, disposition) in [
+        (
+            "unassigned-context",
+            "dispatch.context.get",
+            context.clone(),
+            BackendFailureDispositionV1::Unassigned,
+        ),
+        (
+            "unassigned-exact-context",
+            "dispatch.context.get.exact-session",
+            context,
+            BackendFailureDispositionV1::Terminal,
+        ),
+        (
+            "unassigned-exact-message",
+            "interaction.message.open.exact-session",
+            message,
+            BackendFailureDispositionV1::Terminal,
+        ),
+    ] {
+        let error = dispatch(
+            &state,
+            &orchestration_backend_request(&state, label, method, body),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "orchestration_generation_conflict", "{method}");
+        assert_eq!(
+            error.details.as_ref().unwrap()["reasonCode"],
+            "session_dispatch_unassigned",
+            "{method}"
+        );
+        assert_eq!(error.disposition, disposition, "{method}");
+    }
+    let batch = invoke_orchestration(
+        &state,
+        "unassigned-batch",
+        "dispatch.context.get.batch",
+        json!({"schemaVersion": 1, "sessions": [session]}),
+    )
+    .await;
+    let error = &batch["receipt"]["results"][0]["error"];
+    assert_eq!(error["code"], "orchestration_generation_conflict");
+    assert_eq!(
+        error["details"]["reasonCode"],
+        "session_dispatch_unassigned"
+    );
+    assert_eq!(error["details"]["disposition"], "unassigned");
+    assert!(launcher.requests().is_empty());
+    assert!(prompt_deliverer.requests().is_empty());
+    assert!(
+        state
+            .store
+            .inspect_orchestration_dispatch_session(&session)
+            .await
+            .unwrap()
+            .target
+            .is_none()
+    );
+}

@@ -3300,11 +3300,7 @@ async fn exact_orchestration_context(
     session: &WorkflowSessionGenerationV1,
 ) -> Result<DispatchContextReceipt, BackendDispatchError> {
     verify_exact_orchestration_session(state, session).await?;
-    let target = state
-        .store
-        .orchestration_target_for_exact_session(session)
-        .await
-        .map_err(exact_context_error)?;
+    let target = dispatch_context_target(state, session).await?;
     let task_id = TaskIdV1::new(target.task_id.as_str())
         .map_err(|_| BackendDispatchError::from("orchestration_context_invalid"))?;
     let dispatch_id = DispatchIdV1::new(target.dispatch_id.as_str())
@@ -3663,13 +3659,25 @@ async fn dispatch_context_target(
         .inspect_orchestration_dispatch_session(session)
         .await
         .map_err(dispatch_context_error)?;
-    let disposition = if inspection.target.is_none() {
+    if inspection.target.is_none() {
         verify_exact_orchestration_session(state, session).await?;
-        BackendFailureDispositionV1::Unassigned
-    } else {
-        BackendFailureDispositionV1::StaleGeneration
-    };
-    Err(orchestration_store_error(error).with_disposition(disposition))
+        return Err(session_dispatch_unassigned());
+    }
+    Err(orchestration_store_error(error)
+        .with_disposition(BackendFailureDispositionV1::StaleGeneration))
+}
+
+/// Hmux observed this Session generation as live, but no Dispatch binds it,
+/// so it has no durable inbox yet. Only the Session's own context lookup can
+/// enroll it; a message to it cannot be delivered until then. Exact-session
+/// methods report this as terminal.
+fn session_dispatch_unassigned() -> BackendDispatchError {
+    BackendDispatchError {
+        code: "orchestration_generation_conflict".into(),
+        message: "No Dispatch binds this live Session generation, so it has no durable inbox yet. The Session opens one when it resolves its own orchestration context.".into(),
+        details: Some(json!({ "reasonCode": "session_dispatch_unassigned" })),
+        disposition: BackendFailureDispositionV1::Unassigned,
+    }
 }
 
 fn exact_message_error(error: ServiceError) -> BackendDispatchError {
