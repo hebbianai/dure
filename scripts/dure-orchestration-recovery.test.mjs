@@ -94,6 +94,23 @@ it.each(["orchestration_context_get_current", "orchestration_events_read"])(
   },
 );
 
+it("explains a destination Session without an inbox instead of a bare generation conflict", async () => {
+  const failure = new BackendTransportError("backend_transport_remote_error", {
+    details: { code: "orchestration_generation_conflict", reasonCode: "session_dispatch_unassigned", disposition: "terminal" },
+  });
+  const request = vi.fn(async () => { throw failure; });
+  await expect(handleMcpRequest({ jsonrpc: "2.0", method: "tools/call",
+    params: { name: "orchestration_message_open_exact_session", arguments: { body: {} } },
+  }, environment, { request })).rejects.toMatchObject({
+    message: expect.stringMatching(new RegExp(
+      "^orchestration_generation_conflict: session_dispatch_unassigned \\(terminal\\): " +
+      "This managed Session is live, but no Dispatch binds its current generation.*" +
+      "orchestration_context_get_current.*dure runs resume <agent>.*without --track.*cannot succeed")),
+    cause: failure,
+  });
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
 it("corrects an older backend's invalid-request retry guidance without exposing its payload", async () => {
   const failure = new BackendTransportError("backend_transport_remote_error", {
     details: { code: "orchestration_request_invalid", disposition: "retry_same",

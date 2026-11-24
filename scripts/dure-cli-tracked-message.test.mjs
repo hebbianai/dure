@@ -87,6 +87,26 @@ test("a context lookup failure reports typed codes as unsent, without backend te
   expect(request).toHaveBeenCalledTimes(1);
 });
 
+test("a destination without an inbox names its Session and how to reach it", async () => {
+  const options = fixture();
+  const request = vi.fn(async () => { throw new BackendTransportError("backend_transport_remote_error", { details: { code: "orchestration_generation_conflict", reasonCode: "session_dispatch_unassigned", disposition: "terminal" } }); });
+  const error = await sendTrackedMessage({ sessionId: "session", workspaceId: "workspace" }, "hello", { ...options, request }).catch((caught) => caught);
+  expect(error.code).toBe("dure_send_context_unavailable");
+  expect(error.message).toMatch(/^The message context of Session session is unavailable \(orchestration_generation_conflict: session_dispatch_unassigned\)\. Nothing was sent\. /);
+  expect(error.message).toContain("no Dispatch binds its current generation");
+  expect(error.message).toContain("without --track");
+  expect(error.message).not.toContain("dure ls --alive");
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(fs.existsSync(path.join(options.environment.DURE_HOME, "message-receipts"))).toBe(false);
+});
+
+test("an older backend's bare generation conflict still names the destination Session", async () => {
+  const options = fixture();
+  const request = vi.fn(async () => { throw new BackendTransportError("backend_transport_remote_error", { details: { code: "orchestration_generation_conflict", disposition: "terminal" } }); });
+  const error = await sendTrackedMessage({ sessionId: "session", workspaceId: "workspace" }, "hello", { ...options, request }).catch((caught) => caught);
+  expect(error.message).toBe("The message context of Session session is unavailable (orchestration_generation_conflict). Nothing was sent; check the target with dure ls --alive.");
+});
+
 test("an exited target names Agents with similar names and the live listing", () => {
   const agent = (id, name, sessionId) => ({ id, name, project: "app", sessionId });
   const target = agent("1", "android-release", "session-1");
