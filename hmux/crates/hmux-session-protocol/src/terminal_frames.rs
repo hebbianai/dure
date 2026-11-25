@@ -366,6 +366,24 @@ pub struct AgentRuntimeStateProjection {
     /// presentation-only, so older decoders ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_request: Option<Box<AgentApprovalRequest>>,
+    /// Agent prompts the person's unsent input holds back: prompts to the
+    /// running conversation, such as inbox messages, that the Host refused
+    /// because that input still stands at the prompt. Present only while it
+    /// stands and beside a running agent. Additive and presentation-only, so
+    /// older decoders ignore it and older Hosts never send it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_prompts: Option<HeldAgentPromptsProjection>,
+}
+
+/// How many agent prompts unsent input holds back, and since when. The Host
+/// counts each prompt once however often its sender retries it.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct HeldAgentPromptsProjection {
+    #[serde(with = "super::json_u64")]
+    pub count: u64,
+    /// When the first of them was refused, in Unix milliseconds.
+    #[serde(with = "super::json_u64")]
+    pub since_unix_ms: u64,
 }
 
 fn u64_is_zero(value: &u64) -> bool {
@@ -408,6 +426,7 @@ impl fmt::Debug for AgentRuntimeStateProjection {
             .field("program_status", &self.program_status)
             .field("background_work", &self.background_work)
             .field("approval_request", &self.approval_request)
+            .field("held_prompts", &self.held_prompts)
             .finish()
     }
 }

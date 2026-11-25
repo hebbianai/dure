@@ -1151,6 +1151,7 @@ mod tests {
             program_status: None,
             background_work: false,
             approval_request: None,
+            held_prompts: None,
         }
     }
 

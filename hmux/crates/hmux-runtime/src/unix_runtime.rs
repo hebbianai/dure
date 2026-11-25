@@ -6369,6 +6369,7 @@ mod tests {
             turn_completed_count: 0,
             program_status: None,
             background_work: false,
+            held_prompts: None,
         });
         let ordinary = FrameBody::Detach(Detach { reason: None });
 
@@ -6417,6 +6418,7 @@ mod tests {
                 turn_completed_count: 0,
                 program_status: None,
                 background_work: false,
+                held_prompts: None,
             }),
             provider_conversation_identity: Some(Box::new(
                 hmux_host::local_protocol::ProviderConversationIdentityProjection {

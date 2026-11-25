@@ -2002,24 +2002,18 @@ impl WindowsServerState {
             )
         });
         if let Some(reason) = agent_prompt_wait.and_then(|wait| {
-            wait.not_written_reason(
-                self.stopping.load(Ordering::Acquire) || exact_host_exiting,
-            )
-            .map(|reason| match admission.agent_prompt() {
-                Some((target, _)) => crate::agent_prompt_admission::agent_prompt_refusal(
-                    &host,
-                    &self.fence,
-                    target,
-                    reason,
-                ),
-                None => reason,
-            })
+            wait.not_written_reason(self.stopping.load(Ordering::Acquire) || exact_host_exiting)
         }) {
+            let (reason, held) = admission.agent_prompt_refusal(&mut host, &self.fence, reason);
             let receipt = windows_terminal::terminal_record(
                 &host,
                 &self.fence,
                 windows_terminal::input_not_written(record_id, reason, None),
             );
+            drop(host);
+            if let Some(runtime_state) = held {
+                self.broadcast_control(FrameBody::AgentRuntimeState(runtime_state));
+            }
             return Ok((receipt, false));
         }
 

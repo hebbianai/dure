@@ -764,6 +764,20 @@ pub struct ObserverAgentRuntimeState {
     /// beside `approval_required`; omitted otherwise and by older Hosts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval_request: Option<ObserverApprovalRequest>,
+    /// How many agent prompts, such as inbox messages, the person's unsent
+    /// input holds back, and since when. Omitted while it holds none and by
+    /// older Hosts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub held_prompts: Option<ObserverHeldPrompts>,
+}
+
+/// Agent prompts the Host refused because unsent input stands at the
+/// prompt, counted once each, and when the first was refused (Unix ms).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObserverHeldPrompts {
+    pub count: u64,
+    pub since_unix_ms: u64,
 }
 
 /// The pending approval's tool, input summary and offered answers, for the
@@ -2366,6 +2380,10 @@ fn project_agent_runtime_state(state: AgentRuntimeStateDescriptor) -> ObserverAg
             summary: request.summary,
             choices: request.choices,
         }),
+        held_prompts: state.held_prompts.map(|held| ObserverHeldPrompts {
+            count: held.count,
+            since_unix_ms: held.since_unix_ms,
+        }),
     }
 }
 
@@ -2957,9 +2975,41 @@ mod tests {
             turn_completed_count: "3".into(),
             program_status: None,
             background_work: false,
+            held_prompts: None,
         });
         assert_eq!(projected.turn_completed_count, "3");
         assert_eq!(projected.activity, "waiting");
+        assert!(serde_json::to_value(projected)
+            .unwrap()
+            .get("heldPrompts")
+            .is_none());
+    }
+
+    #[test]
+    fn agent_runtime_state_projection_carries_the_prompts_unsent_input_holds() {
+        let projected = project_agent_runtime_state(AgentRuntimeStateDescriptor {
+            approval_request: None,
+            terminal_epoch: "epoch-1".into(),
+            revision: "8".into(),
+            observed_through_output_seq: "42".into(),
+            lifecycle: AgentRuntimeLifecycle::Running,
+            activity: AgentRuntimeActivity::Waiting,
+            attention: AgentRuntimeAttention::None,
+            attention_id: None,
+            source: AgentRuntimeStateSource::ProviderEvent,
+            progress: None,
+            turn_completed_count: "3".into(),
+            program_status: None,
+            background_work: false,
+            held_prompts: Some(hmux_session_protocol::HeldAgentPromptsProjection {
+                count: 3,
+                since_unix_ms: 1_700_000_000_000,
+            }),
+        });
+        assert_eq!(
+            serde_json::to_value(projected).unwrap()["heldPrompts"],
+            serde_json::json!({ "count": 3, "sinceUnixMs": 1_700_000_000_000_u64 })
+        );
     }
 
     #[test]

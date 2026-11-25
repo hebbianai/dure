@@ -43,6 +43,24 @@ export function workingDirectory(value, generation, outputSequence) {
   };
 }
 
+// Agent prompts the person's unsent input holds back, such as inbox messages,
+// counted once each by the Host, and since when (Unix ms). Only beside a
+// running agent; anything malformed is absent rather than a failed row.
+function heldPrompts(value, lifecycle) {
+  if (
+    lifecycle !== "running" ||
+    !record(value) ||
+    !decimal(value.count) ||
+    !decimal(value.since_unix_ms) ||
+    !Number.isSafeInteger(Number(value.count)) ||
+    !Number.isSafeInteger(Number(value.since_unix_ms)) ||
+    Number(value.count) < 1
+  ) {
+    return null;
+  }
+  return { count: Number(value.count), sinceMs: Number(value.since_unix_ms) };
+}
+
 // Project the Host's observation; terminal output and client state never infer it.
 export function agentRuntimeState(value, generation, outputSequence) {
   if (
@@ -72,6 +90,9 @@ export function agentRuntimeState(value, generation, outputSequence) {
     ...(agentProgress(value.progress) ? { progress: agentProgress(value.progress) } : {}),
     // The turn ended and the prompt accepts input; background work keeps it busy.
     ...(value.background_work === true && value.activity === "working" ? { backgroundWork: true } : {}),
+    ...(heldPrompts(value.held_prompts, value.lifecycle)
+      ? { heldPrompts: heldPrompts(value.held_prompts, value.lifecycle) }
+      : {}),
   };
 }
 
@@ -361,6 +382,8 @@ export function projectSession(value, observedAtMs) {
     ? semanticIdleMs(value.semanticIdleMs, runtimeState, observedAtMs)
     : null;
   const idleSinceMs = idleMs === null ? null : observedAtMs - Number(idleMs);
+  // Like idle age, only a live generation can hold messages now.
+  const held = value.health === "healthy" ? runtimeState?.heldPrompts ?? null : null;
   return {
     schemaVersion: SESSION_QUERY_SCHEMA_VERSION,
     sessionId: value.session_id,
@@ -369,11 +392,13 @@ export function projectSession(value, observedAtMs) {
     forkedFrom: null,
     cwd: directory?.path ?? null,
     idleSinceMs,
+    heldPrompts: held,
     fieldSources: {
       conversationId: conversation ? "hmux_host" : "unavailable",
       forkedFrom: "unavailable",
       cwd: directory ? "hmux_host" : "unavailable",
       idleSinceMs: idleMs === null ? "unavailable" : "hmux_host",
+      heldPrompts: held === null ? "unavailable" : "hmux_host",
     },
     provider: {
       id: value.provider_id,

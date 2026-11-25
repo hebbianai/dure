@@ -256,23 +256,32 @@ pub(crate) fn fold_written_input_prefix(
     // partial write of a longer sequence is not such a key and is scanned.
     if !continues_frame && completes_frame {
         if let Some(fold) = scanner.non_inserting_key_fold(bytes) {
-            match fold {
-                DraftFold::Edit(edit) => host.record_controller_draft_edit(fence, edit)?,
-                DraftFold::InterruptRequest => host.record_controller_interrupt_request(fence)?,
-                DraftFold::Bytes | DraftFold::WriteOnly => host.record_controller_write(fence)?,
-            }
-            return Ok(None);
+            return match fold {
+                DraftFold::Edit(edit) => host.record_controller_draft_edit(fence, edit),
+                DraftFold::InterruptRequest => {
+                    host.record_controller_interrupt_request(fence)?;
+                    Ok(None)
+                }
+                DraftFold::Bytes | DraftFold::WriteOnly => {
+                    host.record_controller_write(fence)?;
+                    Ok(None)
+                }
+            };
         }
     }
     let scan = scanner.observe_chunk(bytes, continues_frame);
-    let runtime_state = if scan.submitted {
+    let mut runtime_state = if scan.submitted {
         host.record_controller_submit(fence)?
     } else {
         host.record_controller_write(fence)?;
         None
     };
+    // Each projection is the Host's whole current state, so the newest one
+    // supersedes any earlier one from the same chunk.
     for edit in scan.edits {
-        host.record_controller_draft_edit(fence, edit)?;
+        if let Some(projection) = host.record_controller_draft_edit(fence, edit)? {
+            runtime_state = Some(projection);
+        }
     }
     Ok(runtime_state)
 }

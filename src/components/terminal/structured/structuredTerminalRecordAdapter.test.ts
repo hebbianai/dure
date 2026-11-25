@@ -402,6 +402,67 @@ describe("structured terminal record carrier", () => {
 		]);
 	});
 
+	it("carries the prompts unsent input holds and drops a malformed count without rejecting Host state", async () => {
+		const runtimeState = (
+			revision: string,
+			lifecycle: string,
+			heldPrompts: unknown,
+		) =>
+			new TextEncoder().encode(
+				JSON.stringify({
+					kind: "agent_runtime_state",
+					state: {
+						terminalEpoch: "terminal-1",
+						revision,
+						observedThroughOutputSeq: "1",
+						lifecycle,
+						activity: "waiting",
+						attention: "none",
+						source: "provider_event",
+						turnCompletedCount: "0",
+						heldPrompts,
+					},
+				}),
+			);
+		const held = { count: 3, sinceUnixMs: 1_700_000_000_000 };
+		mocks.attachLocal.mockImplementation(
+			(request: { onRecord(record: ArrayBuffer): void }) => {
+				for (const record of [
+					runtimeState("7", "running", held),
+					runtimeState("8", "running", { count: 0, sinceUnixMs: 1 }),
+					runtimeState("9", "running", { count: "3", sinceUnixMs: 1 }),
+					runtimeState("10", "exited", held),
+				]) {
+					request.onRecord(record.buffer as ArrayBuffer);
+				}
+				return Promise.resolve({ ...receipt, initialDeliveryRecordCount: 4 });
+			},
+		);
+
+		const attached = await attachStructuredTerminalRecords({
+			observerId: "observer-a",
+			surfaceId: "surface-a",
+			binding: hmuxStandaloneBinding("session-a", "workspace-a"),
+			sshHosts: [],
+		});
+
+		const states = attached
+			.startDelivery()
+			.map((delivered) =>
+				delivered.kind === "adapter" &&
+				delivered.record.kind === "agent_runtime_state"
+					? delivered.record.state
+					: undefined,
+			);
+		expect(states.map((state) => state?.revision)).toEqual(["7", "8", "9", "10"]);
+		expect(states.map((state) => state?.heldPrompts)).toEqual([
+			held,
+			undefined,
+			undefined,
+			undefined,
+		]);
+	});
+
 	it("carries generic agent identity transitions in the ordered pull stream", async () => {
 		mocks.attachLocal.mockImplementation(
 			(request: { onRecord(record: ArrayBuffer): void }) => {

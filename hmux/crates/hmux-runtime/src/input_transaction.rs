@@ -41,6 +41,9 @@ pub(crate) enum InputAdmission {
 pub(crate) struct ParsedAgentPromptAdmission {
     target: hmux_host::terminal_replay::AgentPromptTarget,
     wait: Duration,
+    /// The prompt across its sender's retries, for the prompts unsent input
+    /// holds back.
+    key: hmux_host::terminal_replay::AgentPromptKey,
 }
 
 impl InputAdmission {
@@ -131,6 +134,7 @@ impl InputAdmission {
         Ok(Self::AgentPrompt(ParsedAgentPromptAdmission {
             target,
             wait,
+            key: hmux_host::terminal_replay::AgentPromptKey::of(&prompt.utf8),
         }))
     }
 
@@ -142,6 +146,37 @@ impl InputAdmission {
             Self::AgentPrompt(prompt) => Some((&prompt.target, prompt.wait)),
             Self::Ordinary | Self::DraftGuarded { .. } | Self::AttentionResponse { .. } => None,
         }
+    }
+
+    /// Names why an agent prompt was not written. An unsubmitted draft
+    /// refuses a prompt to an existing conversation: say so, so the sender
+    /// learns the agent reads its inbox once that input is submitted rather
+    /// than that the provider runtime changed, and count the prompt among
+    /// those the draft holds back. Returns the projection to publish when
+    /// that count changed. A fresh prompt keeps its own reason: any earlier
+    /// write has used its one-shot authority.
+    #[cfg(feature = "terminal-state-stream")]
+    pub(crate) fn agent_prompt_refusal(
+        &self,
+        host: &mut SessionHost,
+        fence: &SessionFence,
+        reason: OperationReceiptReason,
+    ) -> (OperationReceiptReason, Option<AgentRuntimeStateProjection>) {
+        let Self::AgentPrompt(prompt) = self else {
+            return (reason, None);
+        };
+        if reason != OperationReceiptReason::AgentRuntimeChanged
+            || !matches!(
+                prompt.target,
+                hmux_host::terminal_replay::AgentPromptTarget::ExistingConversation { .. }
+            )
+            || !matches!(host.has_unsubmitted_controller_draft(fence), Ok(true))
+        {
+            return (reason, None);
+        }
+        // The refusal stands even if the presentation cannot be republished.
+        let held = host.hold_agent_prompt(fence, prompt.key).ok().flatten();
+        (OperationReceiptReason::UnsubmittedDraft, held)
     }
 
     /// Why this admission refuses before its first byte, read under the

@@ -513,8 +513,12 @@ fn counted_draft_follows_inserts_and_erases_and_gives_up_on_input_it_cannot_foll
 fn a_draft_typed_and_erased_again_releases_both_input_facts() {
     let (mut replay, _) = provider_ready_for_agent_prompt();
     let target = existing_conversation_prompt_target();
-    replay.record_controller_draft_edit(ControllerDraftEdit::Inserted(2));
-    replay.record_controller_draft_edit(ControllerDraftEdit::Erased(1));
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::Inserted(2))
+        .unwrap();
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::Erased(1))
+        .unwrap();
     assert!(replay.has_unsubmitted_controller_draft());
     assert!(replay.has_pending_controller_input());
     assert_eq!(
@@ -522,7 +526,9 @@ fn a_draft_typed_and_erased_again_releases_both_input_facts() {
         AgentPromptAdmission::Refused
     );
 
-    replay.record_controller_draft_edit(ControllerDraftEdit::Erased(1));
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::Erased(1))
+        .unwrap();
     assert!(!replay.has_unsubmitted_controller_draft());
     assert!(!replay.has_pending_controller_input());
     assert_eq!(
@@ -538,8 +544,12 @@ fn a_draft_typed_and_erased_again_releases_both_input_facts() {
     );
 
     // Erasing an empty line, or moving its cursor, changes nothing.
-    replay.record_controller_draft_edit(ControllerDraftEdit::Erased(3));
-    replay.record_controller_draft_edit(ControllerDraftEdit::EditedUncounted);
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::Erased(3))
+        .unwrap();
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::EditedUncounted)
+        .unwrap();
     assert!(!replay.has_pending_controller_input());
     assert_eq!(
         replay.agent_prompt_admission(&target),
@@ -558,9 +568,11 @@ fn a_draft_the_host_cannot_count_waits_for_a_submit() {
         let (mut replay, _) = provider_ready_for_agent_prompt();
         let target = existing_conversation_prompt_target();
         for edit in &edits {
-            replay.record_controller_draft_edit(*edit);
+            replay.record_controller_draft_edit(*edit).unwrap();
         }
-        replay.record_controller_draft_edit(Erased(usize::MAX));
+        replay
+            .record_controller_draft_edit(Erased(usize::MAX))
+            .unwrap();
         assert!(replay.has_unsubmitted_controller_draft(), "{edits:?}");
         assert_eq!(
             replay.agent_prompt_admission(&target),
@@ -585,10 +597,16 @@ fn a_draft_the_host_cannot_count_waits_for_a_submit() {
 fn erasing_a_draft_typed_after_a_submit_keeps_waiting_for_the_provider() {
     let (mut replay, _) = provider_ready_for_agent_prompt();
     let target = existing_conversation_prompt_target();
-    replay.record_controller_draft_edit(ControllerDraftEdit::Inserted(3));
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::Inserted(3))
+        .unwrap();
     assert!(replay.record_controller_submit().unwrap().is_none());
-    replay.record_controller_draft_edit(ControllerDraftEdit::Inserted(1));
-    replay.record_controller_draft_edit(ControllerDraftEdit::Erased(1));
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::Inserted(1))
+        .unwrap();
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::Erased(1))
+        .unwrap();
     assert!(!replay.has_unsubmitted_controller_draft());
     assert!(
         replay.has_pending_controller_input(),
@@ -613,9 +631,13 @@ fn erasing_a_draft_typed_after_a_submit_keeps_waiting_for_the_provider() {
 #[test]
 fn provider_acknowledgement_during_a_draft_settles_the_earlier_submit() {
     let (mut replay, _) = provider_ready_for_agent_prompt();
-    replay.record_controller_draft_edit(ControllerDraftEdit::Inserted(3));
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::Inserted(3))
+        .unwrap();
     replay.record_controller_submit().unwrap();
-    replay.record_controller_draft_edit(ControllerDraftEdit::Inserted(1));
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::Inserted(1))
+        .unwrap();
     replay
         .observe_agent_runtime_state(AgentRuntimeObservation::waiting(
             AgentRuntimeStateSource::ProviderEvent,
@@ -625,9 +647,166 @@ fn provider_acknowledgement_during_a_draft_settles_the_earlier_submit() {
         replay.has_pending_controller_input(),
         "provider progress cannot consume a newer draft"
     );
-    replay.record_controller_draft_edit(ControllerDraftEdit::Erased(1));
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::Erased(1))
+        .unwrap();
     assert!(
         !replay.has_pending_controller_input(),
         "the acknowledged submit leaves nothing pending once the draft is erased"
     );
+}
+
+fn held(
+    count: u64,
+    since_unix_ms: u64,
+) -> Option<crate::local_protocol::HeldAgentPromptsProjection> {
+    Some(crate::local_protocol::HeldAgentPromptsProjection {
+        count,
+        since_unix_ms,
+    })
+}
+
+#[test]
+fn unsent_input_counts_each_prompt_it_holds_once_until_a_submit_releases_them() {
+    let (mut replay, idle) = provider_ready_for_agent_prompt();
+    let first = AgentPromptKey::of(b"Dure inbox message: 0123456789ab");
+    let second = AgentPromptKey::of(b"Dure inbox message: ba9876543210");
+    assert_eq!(
+        replay.hold_agent_prompt(first, 1_000).unwrap(),
+        None,
+        "without unsent input a refusal holds nothing back"
+    );
+
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::Inserted(5))
+        .unwrap();
+    let one = replay
+        .hold_agent_prompt(first, 1_000)
+        .unwrap()
+        .expect("the first held prompt is published");
+    assert_eq!(one.held_prompts, held(1, 1_000));
+    assert_eq!(one.revision, idle.revision + 1);
+    assert_eq!(
+        (one.lifecycle, one.activity, one.attention, one.source),
+        (idle.lifecycle, idle.activity, idle.attention, idle.source),
+        "holding prompts changes nothing the Host knows about the turn"
+    );
+    assert_eq!(
+        replay.hold_agent_prompt(first, 31_000).unwrap(),
+        None,
+        "a retry of the same prompt is the same message"
+    );
+    let two = replay.hold_agent_prompt(second, 61_000).unwrap().unwrap();
+    assert_eq!(two.held_prompts, held(2, 1_000));
+    assert_eq!(replay.semantic_idle_ms_at(Instant::now()), None);
+
+    let submitted = replay
+        .record_controller_submit()
+        .unwrap()
+        .expect("a submit that releases held prompts republishes");
+    assert_eq!(submitted.held_prompts, None);
+    assert_eq!(submitted.revision, two.revision + 1);
+
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::Inserted(1))
+        .unwrap();
+    let again = replay.hold_agent_prompt(first, 90_000).unwrap().unwrap();
+    assert_eq!(
+        again.held_prompts,
+        held(1, 90_000),
+        "new unsent input starts its own count"
+    );
+}
+
+#[test]
+fn erasing_unsent_input_releases_the_prompts_it_held() {
+    let (mut replay, _) = provider_ready_for_agent_prompt();
+    let prompt = AgentPromptKey::of(b"prompt");
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::Inserted(2))
+        .unwrap();
+    replay.hold_agent_prompt(prompt, 5).unwrap().unwrap();
+    assert_eq!(
+        replay
+            .record_controller_draft_edit(ControllerDraftEdit::Erased(1))
+            .unwrap(),
+        None,
+        "a character remains"
+    );
+    let released = replay
+        .record_controller_draft_edit(ControllerDraftEdit::Erased(1))
+        .unwrap()
+        .expect("an empty line releases them");
+    assert_eq!(released.held_prompts, None);
+    assert_eq!(replay.hold_agent_prompt(prompt, 6).unwrap(), None);
+}
+
+#[test]
+fn input_the_host_cannot_count_holds_prompts_until_a_submit() {
+    let (mut replay, _) = provider_ready_for_agent_prompt();
+    replay.record_controller_input();
+    replay
+        .hold_agent_prompt(AgentPromptKey::of(b"prompt"), 5)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        replay
+            .record_controller_draft_edit(ControllerDraftEdit::Erased(usize::MAX))
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        replay
+            .record_controller_submit()
+            .unwrap()
+            .unwrap()
+            .held_prompts,
+        None
+    );
+}
+
+#[test]
+fn held_prompts_survive_runtime_reports_but_not_the_agent() {
+    let (mut replay, _) = provider_ready_for_agent_prompt();
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::Inserted(1))
+        .unwrap();
+    replay
+        .hold_agent_prompt(AgentPromptKey::of(b"prompt"), 7)
+        .unwrap()
+        .unwrap();
+    let working = replay
+        .observe_agent_runtime_state(AgentRuntimeObservation::working(
+            AgentRuntimeStateSource::ProviderEvent,
+        ))
+        .unwrap()
+        .unwrap();
+    assert_eq!(working.held_prompts, held(1, 7));
+    let exited = replay
+        .observe_agent_runtime_state(AgentRuntimeObservation::exited())
+        .unwrap()
+        .unwrap();
+    assert_eq!(exited.held_prompts, None);
+}
+
+#[test]
+fn a_full_count_stops_growing_instead_of_counting_retries() {
+    let (mut replay, _) = provider_ready_for_agent_prompt();
+    replay
+        .record_controller_draft_edit(ControllerDraftEdit::Inserted(1))
+        .unwrap();
+    for index in 0..1024_u32 {
+        replay
+            .hold_agent_prompt(AgentPromptKey::of(&index.to_be_bytes()), 1)
+            .unwrap();
+    }
+    let full = replay.agent_runtime_state.clone().unwrap();
+    assert_eq!(full.held_prompts, held(1024, 1));
+    assert_eq!(
+        replay
+            .hold_agent_prompt(AgentPromptKey::of(b"one more"), 2)
+            .unwrap(),
+        None
+    );
+    assert_eq!(replay.agent_runtime_state, Some(full));
 }

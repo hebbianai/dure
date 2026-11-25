@@ -686,3 +686,143 @@ fn a_key_sequence_split_across_pty_writes_is_not_typed_text() {
         "the recalled line has no countable length"
     );
 }
+
+/// Presses one key or chunk and returns the projection the Host publishes.
+fn press(
+    host: &mut SessionHost,
+    scanner: &mut SubmitScanner,
+    press: &KeyPress,
+) -> Option<AgentRuntimeStateProjection> {
+    let (input, effect) = match press {
+        KeyPress::Structured(intent) => (
+            PtyInput::Structured(intent),
+            ControllerInputEffect::from_non_resize_structured(intent.intent.as_ref().unwrap())
+                .unwrap(),
+        ),
+        KeyPress::Bytes(bytes) => (PtyInput::Bytes(bytes), ControllerInputEffect::DraftCapable),
+    };
+    let written = apply_input_transaction(
+        host,
+        &fence(),
+        scanner,
+        input,
+        effect,
+        InputAdmission::Ordinary,
+        |bytes| PtyWriteOutcome::from_progress(bytes.len(), bytes.len(), Ok(())),
+    )
+    .unwrap();
+    assert_eq!(written.outcome, InputTransactionOutcome::Written);
+    written.runtime_state
+}
+
+/// Sends the inbox wake prompt for one message, as the Backend does on every
+/// retry, and returns its refusal with the projection the Host publishes.
+fn inbox_wake(
+    host: &mut SessionHost,
+    scanner: &mut SubmitScanner,
+    reference: &str,
+) -> (InputTransactionOutcome, Option<AgentRuntimeStateProjection>) {
+    let prompt = existing_prompt(
+        format!("Dure inbox message: {reference}\nRead and acknowledge it.").as_bytes(),
+        "conversation-1",
+    );
+    let refused = apply_input_transaction(
+        host,
+        &fence(),
+        scanner,
+        PtyInput::Structured(&prompt),
+        ControllerInputEffect::DraftCapable,
+        admission(&prompt),
+        |bytes| PtyWriteOutcome::from_progress(bytes.len(), bytes.len(), Ok(())),
+    )
+    .unwrap();
+    (refused.outcome, refused.runtime_state)
+}
+
+const HELD: InputTransactionOutcome =
+    InputTransactionOutcome::NotWritten(OperationReceiptReason::UnsubmittedDraft);
+
+#[test]
+fn unsent_input_publishes_the_inbox_messages_it_holds_until_it_is_submitted() {
+    let mut host = ready_host(true);
+    let mut scanner = SubmitScanner::default();
+    press(&mut host, &mut scanner, &typed("half typed"));
+    let before: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        .try_into()
+        .unwrap();
+
+    let (outcome, published) = inbox_wake(&mut host, &mut scanner, "0123456789ab");
+    assert_eq!(outcome, HELD);
+    let first = published
+        .expect("the first held message is published")
+        .held_prompts
+        .expect("the projection names the held messages");
+    assert_eq!(first.count, 1);
+    assert!(first.since_unix_ms >= before);
+
+    assert_eq!(
+        inbox_wake(&mut host, &mut scanner, "0123456789ab"),
+        (HELD, None),
+        "a retry of the same message changes nothing"
+    );
+    let (outcome, published) = inbox_wake(&mut host, &mut scanner, "ba9876543210");
+    assert_eq!(outcome, HELD);
+    assert_eq!(
+        published.unwrap().held_prompts,
+        Some(hmux_host::local_protocol::HeldAgentPromptsProjection {
+            count: 2,
+            since_unix_ms: first.since_unix_ms,
+        })
+    );
+
+    let submitted = press(&mut host, &mut scanner, &KeyPress::Bytes(b"\r"))
+        .expect("the person's submit releases the held messages");
+    assert_eq!(submitted.held_prompts, None);
+}
+
+#[test]
+fn erasing_unsent_input_publishes_that_it_holds_nothing_any_more() {
+    for erase in [backspace(), KeyPress::Bytes(b"\x7f")] {
+        let mut host = ready_host(true);
+        let mut scanner = SubmitScanner::default();
+        press(&mut host, &mut scanner, &typed("ab"));
+        let (outcome, published) = inbox_wake(&mut host, &mut scanner, "0123456789ab");
+        assert_eq!(outcome, HELD);
+        assert!(published.unwrap().held_prompts.is_some());
+
+        assert_eq!(press(&mut host, &mut scanner, &erase), None, "{erase:?}");
+        let released = press(&mut host, &mut scanner, &erase)
+            .unwrap_or_else(|| panic!("{erase:?}: an empty line publishes the release"));
+        assert_eq!(released.held_prompts, None);
+        assert_eq!(
+            inbox_wake(&mut host, &mut scanner, "0123456789ab").0,
+            InputTransactionOutcome::Written
+        );
+    }
+}
+
+#[test]
+fn a_guarded_send_refused_by_unsent_input_is_not_counted_as_held() {
+    let mut host = ready_host(true);
+    let mut scanner = SubmitScanner::default();
+    press(&mut host, &mut scanner, &typed("half typed"));
+    let report = draft_guarded(b"lane report", true);
+    let refused = apply_input_transaction(
+        &mut host,
+        &fence(),
+        &mut scanner,
+        PtyInput::Structured(&report),
+        ControllerInputEffect::DraftCapable,
+        guarded_admission(&report),
+        |_| -> PtyWriteOutcome { panic!("a refused send writes nothing") },
+    )
+    .unwrap();
+    assert_eq!(refused.outcome, HELD);
+    assert_eq!(
+        refused.runtime_state, None,
+        "its sender is told at once and retries nothing"
+    );
+}

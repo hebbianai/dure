@@ -94,15 +94,14 @@ impl<'a> PreparedInput<'a> {
                     .prepare_agent_prompt(fence, target)
                     .map_err(InputTransactionFailure::before_write)?
                 else {
-                    let reason = crate::agent_prompt_admission::agent_prompt_refusal(
+                    let (reason, runtime_state) = self.admission.agent_prompt_refusal(
                         host,
                         fence,
-                        target,
                         OperationReceiptReason::AgentRuntimeChanged,
                     );
                     return Ok(InputStep::Complete(InputTransaction {
                         outcome: self.failure(reason),
-                        runtime_state: None,
+                        runtime_state,
                         admitted_agent_runtime_revision: None,
                     }));
                 };
@@ -146,11 +145,9 @@ impl<'a> PreparedInput<'a> {
                 .map_err(InputTransactionFailure::after_write)?,
                 // One keypress has one effect, however many PTY writes
                 // deliver its bytes.
-                DraftFold::Edit(edit) if start == 0 => {
-                    host.record_controller_draft_edit(fence, edit)
-                        .map_err(InputTransactionFailure::after_write)?;
-                    None
-                }
+                DraftFold::Edit(edit) if start == 0 => host
+                    .record_controller_draft_edit(fence, edit)
+                    .map_err(InputTransactionFailure::after_write)?,
                 DraftFold::InterruptRequest if start == 0 => {
                     host.record_controller_interrupt_request(fence)
                         .map_err(InputTransactionFailure::after_write)?;

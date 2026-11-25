@@ -4913,6 +4913,7 @@ mod tests {
             turn_completed_count: 2,
             program_status: None,
             background_work: false,
+            held_prompts: None,
         };
         let expected = provider_identity(7);
         let (gateway_connection, _local_host) = structured_connection(
@@ -5095,6 +5096,7 @@ mod tests {
             turn_completed_count: 0,
             program_status: None,
             background_work: false,
+            held_prompts: None,
         };
         let identity = ProviderConversationIdentityProjection {
             fence: fence(),
