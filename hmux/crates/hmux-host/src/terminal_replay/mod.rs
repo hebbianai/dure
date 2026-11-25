@@ -142,9 +142,18 @@ fn runtime_agent_prompt_admission(
     let prompt_accepts_input = runtime.activity == AgentRuntimeActivity::Waiting
         || runtime.background_work
         || interrupt_requested;
+    // A question or an approval would take the prompt as its answer. A failed
+    // turn is over instead: the provider is back at its own prompt and does
+    // not retry, so another message is how its conversation continues, just
+    // as a provider error does not hold guarded input. A fresh agent's
+    // one-shot brief still waits for a start that did not fail.
+    let attention_admits_prompt = match runtime.attention {
+        AgentRuntimeAttention::None => runtime.attention_id.is_none(),
+        AgentRuntimeAttention::Error => !target.is_fresh(),
+        AgentRuntimeAttention::InputRequired | AgentRuntimeAttention::ApprovalRequired => false,
+    };
     if runtime.lifecycle != AgentRuntimeLifecycle::Running
-        || runtime.attention != AgentRuntimeAttention::None
-        || runtime.attention_id.is_some()
+        || !attention_admits_prompt
         || !prompt_accepts_input
     {
         return AgentPromptAdmission::Refused;
