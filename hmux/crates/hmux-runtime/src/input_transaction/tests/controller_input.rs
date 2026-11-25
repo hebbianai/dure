@@ -441,6 +441,54 @@ fn keys_that_can_insert_text_still_hold_the_draft_guard() {
     }
 }
 
+/// Focus and SGR mouse reports a terminal attached with `hmux attach` sends
+/// as raw bytes once the repaint turns those modes on.
+const ATTACHED_TERMINAL_REPORTS: &[&[u8]] = &[
+    b"\x1b[I",
+    b"\x1b[O",
+    b"\x1b[<0;10;5M",
+    b"\x1b[<0;10;5m",
+    b"\x1b[<64;10;5M\x1b[<64;10;5M\x1b[<64;10;5M",
+    b"\x1b[O\x1b[<35;11;5M\x1b[I",
+];
+
+#[test]
+fn reports_from_an_attached_terminal_leave_an_idle_prompt_open() {
+    let reports = || {
+        ATTACHED_TERMINAL_REPORTS
+            .iter()
+            .copied()
+            .map(KeyPress::Bytes)
+    };
+    for report in reports() {
+        assert!(
+            prompt_open_after(std::slice::from_ref(&report)),
+            "{report:?} is not typing and must not hold inbox wakes or guarded input"
+        );
+    }
+    assert!(prompt_open_after(&reports().collect::<Vec<_>>()));
+    // Typing around a report is counted exactly, so erasing it opens the
+    // prompt again.
+    assert!(!prompt_open_after(&[KeyPress::Bytes(b"\x1b[Iab")]));
+    assert!(prompt_open_after(&[
+        KeyPress::Bytes(b"\x1b[Iab"),
+        KeyPress::Bytes(b"\x1b[O"),
+        backspace(),
+        backspace(),
+    ]));
+}
+
+#[test]
+fn reports_from_an_attached_terminal_never_release_an_earlier_draft() {
+    for report in ATTACHED_TERMINAL_REPORTS {
+        assert!(
+            !prompt_open_after(&[typed("half typed"), KeyPress::Bytes(report)]),
+            "{:?} must preserve the person's draft",
+            KeyPress::Bytes(report)
+        );
+    }
+}
+
 fn typed(text: &str) -> KeyPress {
     KeyPress::Structured(InputIntent {
         intent: Some(input_intent::Intent::Text(
