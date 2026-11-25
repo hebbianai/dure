@@ -20,7 +20,6 @@ export function StructuredAgentChatSurface({
 	onReady,
 	recovery,
 	onNewConversation,
-	providerTranscriptReadable,
 }: {
 	session: AgentChatSessionView;
 	paneApi?: IDockviewPanelProps["api"];
@@ -31,7 +30,6 @@ export function StructuredAgentChatSurface({
 	onReady?: () => void;
 	recovery?: ChatTurnFailureRecovery;
 	onNewConversation?: () => void;
-	providerTranscriptReadable?: boolean;
 }) {
 	const typography = useChatContentTypography();
 	return (
@@ -46,7 +44,6 @@ export function StructuredAgentChatSurface({
 			onReady={onReady}
 			recovery={recovery}
 			onNewConversation={onNewConversation}
-			providerTranscriptReadable={providerTranscriptReadable}
 			renderPending={(pending) => (
 				<AgentPendingRequestCard
 					pending={pending}

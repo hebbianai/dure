@@ -129,6 +129,11 @@ export function NativeAgentChatView({
 	const older = useOlderProviderHistory(
 		{ provider, conversationId },
 		snapshot?.transcript.olderCursor,
+		(before) =>
+			readProviderConversationTranscript(provider, conversationId, {
+				includeTools: true,
+				before,
+			}),
 	);
 	const olderPages = older.pages?.pages;
 	const livePending =

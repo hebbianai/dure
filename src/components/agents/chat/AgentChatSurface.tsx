@@ -32,7 +32,6 @@ export function AgentChatSurface({
 	onReady,
 	recovery,
 	onNewConversation,
-	providerTranscriptReadable = false,
 }: {
 	session: AgentChatSessionView;
 	paneApi?: IDockviewPanelProps["api"];
@@ -53,17 +52,15 @@ export function AgentChatSurface({
 	recovery?: ChatTurnFailureRecovery;
 	/** The pane's "new conversation" control, run by `/clear`. */
 	onNewConversation?: () => void;
-	/** The provider transcript is on this machine, so history older than the
-	 * seeded window loads from it on request. */
-	providerTranscriptReadable?: boolean;
 }) {
 	const readyReported = useRef(false);
 	const storePage = session.page;
-	const olderAnchor =
-		storePage && providerTranscriptReadable
-			? seededProviderHistoryCursor(storePage)
-			: undefined;
+	const olderAnchor = storePage
+		? seededProviderHistoryCursor(storePage)
+		: undefined;
 	const conversationRef = storePage?.binding.providerConversationRef;
+	// History older than the seeded window loads on request through the
+	// backend that owns the session, which holds the provider transcript.
 	const older = useOlderProviderHistory(
 		storePage && conversationRef
 			? {
@@ -72,8 +69,10 @@ export function AgentChatSurface({
 				}
 			: undefined,
 		olderAnchor,
+		session.readProviderHistory,
 	);
-	const olderPages = older.pages;
+	// A backend that cannot read it keeps the boundary where history starts.
+	const olderPages = older.unavailable ? undefined : older.pages;
 	const page = useMemo(
 		() =>
 			storePage && olderPages

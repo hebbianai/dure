@@ -31,6 +31,14 @@ const MAX_TRANSCRIPT_ENTRIES: usize = 10_000;
 pub const MAX_TRANSCRIPT_PAGE_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_TRANSCRIPT_PAGE_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TRANSCRIPT_PAGE_ENTRIES: usize = 2_000;
+/// The bounds of one older page that crosses a backend connection (see
+/// [`read_roots_activity_page`]), whose whole response is bounded: messages
+/// and tool calls together stay well inside one response even when much of
+/// their text needs escaping in JSON.
+const MAX_BACKEND_PAGE_OUTPUT_BYTES: usize = 512 * 1024;
+const MAX_BACKEND_PAGE_ENTRIES: usize = 1_000;
+const MAX_BACKEND_PAGE_TOOL_BYTES: usize = 256 * 1024;
+const MAX_BACKEND_PAGE_TOOL_CALLS: usize = 1_000;
 pub const MAX_TRANSCRIPT_DISCOVERY_ENTRIES: usize = 131_072;
 #[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -325,6 +333,21 @@ pub fn activity_page_from_file(
     conversation_id: &str,
     before: Option<u64>,
 ) -> Result<ProviderConversationActivity, String> {
+    let limits = if before.is_some() {
+        Limits::PAGE
+    } else {
+        Limits::DEFAULT
+    };
+    activity_window(path, provider, conversation_id, limits, before)
+}
+
+fn activity_window(
+    path: &Path,
+    provider: &str,
+    conversation_id: &str,
+    limits: Limits,
+    before: Option<u64>,
+) -> Result<ProviderConversationActivity, String> {
     let (parse, tool_events) = provider_parsers(provider)?;
     let window = read_window(
         path,
@@ -332,11 +355,7 @@ pub fn activity_page_from_file(
         conversation_id,
         parse,
         Some(tool_events),
-        if before.is_some() {
-            Limits::PAGE
-        } else {
-            Limits::DEFAULT
-        },
+        limits,
         before,
     )?;
     Ok(ProviderConversationActivity {
@@ -361,6 +380,8 @@ struct Limits {
     source: u64,
     output: usize,
     entries: usize,
+    tool_bytes: usize,
+    tool_calls: usize,
 }
 
 impl Limits {
@@ -368,6 +389,8 @@ impl Limits {
         source: MAX_TRANSCRIPT_SOURCE_BYTES,
         output: MAX_TRANSCRIPT_OUTPUT_BYTES,
         entries: MAX_TRANSCRIPT_ENTRIES,
+        tool_bytes: MAX_TOOL_OUTPUT_BYTES,
+        tool_calls: MAX_TOOL_CALLS,
     };
     /// One older page a reader asks for on demand: small enough to answer
     /// quickly, large enough that a long conversation takes few pages.
@@ -375,6 +398,16 @@ impl Limits {
         source: MAX_TRANSCRIPT_PAGE_SOURCE_BYTES,
         output: MAX_TRANSCRIPT_PAGE_OUTPUT_BYTES,
         entries: MAX_TRANSCRIPT_PAGE_ENTRIES,
+        ..Self::DEFAULT
+    };
+    /// One older page answered across a backend connection: a [`Self::PAGE`]
+    /// whose messages and calls fit one backend response.
+    const BACKEND_PAGE: Self = Self {
+        output: MAX_BACKEND_PAGE_OUTPUT_BYTES,
+        entries: MAX_BACKEND_PAGE_ENTRIES,
+        tool_bytes: MAX_BACKEND_PAGE_TOOL_BYTES,
+        tool_calls: MAX_BACKEND_PAGE_TOOL_CALLS,
+        ..Self::PAGE
     };
 }
 
@@ -397,6 +430,7 @@ fn transcript_window(
             source: source_limit,
             output: output_limit,
             entries: entry_limit,
+            ..Limits::DEFAULT
         },
         None,
     )
@@ -429,6 +463,8 @@ fn read_window(
         source: source_limit,
         output: output_limit,
         entries: entry_limit,
+        tool_bytes: tool_byte_limit,
+        tool_calls: tool_call_limit,
     }: Limits,
     before: Option<u64>,
 ) -> Result<TranscriptWindow, String> {
@@ -534,8 +570,8 @@ fn read_window(
         records.push_back(record);
         while output_bytes > output_limit
             || entry_count > entry_limit
-            || tool_bytes > MAX_TOOL_OUTPUT_BYTES
-            || tool_calls > MAX_TOOL_CALLS
+            || tool_bytes > tool_byte_limit
+            || tool_calls > tool_call_limit
         {
             let Some(oldest) = records.pop_front() else {
                 break;
@@ -688,6 +724,28 @@ pub fn read_roots_activity(
     provider_parsers(provider)?;
     let path = conversation_path(claude_projects, codex_sessions, provider, conversation_id)?;
     activity_from_file(&path, provider, conversation_id)
+}
+
+/// The older page of [`read_roots_activity`] that ends `before` a cursor an
+/// earlier page named, for a client across a backend connection: it joins
+/// the pages before and after it as [`activity_page_from_file`] does, and
+/// carries fewer messages and calls, so that it fits one backend response.
+pub fn read_roots_activity_page(
+    claude_projects: &Path,
+    codex_sessions: &Path,
+    provider: &str,
+    conversation_id: &str,
+    before: u64,
+) -> Result<ProviderConversationActivity, String> {
+    provider_parsers(provider)?;
+    let path = conversation_path(claude_projects, codex_sessions, provider, conversation_id)?;
+    activity_window(
+        &path,
+        provider,
+        conversation_id,
+        Limits::BACKEND_PAGE,
+        Some(before),
+    )
 }
 
 fn conversation_path(

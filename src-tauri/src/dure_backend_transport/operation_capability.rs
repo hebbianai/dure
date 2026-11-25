@@ -51,6 +51,9 @@ pub(super) fn operation_capability(operation: &str) -> Option<&'static str> {
         "agent_conversation.inspect" => Some("agent_conversation.inspect"),
         "agent_conversation.interrupt_turn" => Some("agent_conversation.interrupt_turn"),
         "agent_conversation.read" => Some("agent_conversation.read.v7"),
+        "agent_conversation.read_provider_history" => {
+            Some("agent_conversation.read_provider_history")
+        }
         "agent_conversation.read_queue" => Some("agent_conversation.read_queue"),
         "agent_conversation.inspect_input" => Some("agent_conversation.inspect_input"),
         "agent_conversation.recover" => Some("agent_conversation.recover"),

@@ -1,6 +1,7 @@
 mod agent_checkpoint_binding;
 pub mod agent_conversation;
 pub mod agent_conversation_api;
+mod agent_conversation_history;
 #[cfg(unix)]
 mod agent_conversation_recover;
 #[cfg(unix)]
@@ -3891,6 +3892,11 @@ async fn dispatch_authorized(
         "agent_goal.get" | "agent_goal.put" => {
             boxed_operation(|| agent_goal::invoke(state, &request.operation, &request.body)).await
         }
+        agent_conversation_history::OPERATION => {
+            boxed_operation(|| agent_conversation_history::read(state, &request.body))
+                .await
+                .map_err(agent_conversation_api_error)
+        }
         "work_claim.put" | "work_claim.list" | "work_claim.release" => {
             boxed_operation(|| work_claim::invoke(state, &request.operation, &request.body)).await
         }
@@ -4325,7 +4331,8 @@ fn agent_conversation_api_error(
         AgentConversationApiErrorV1::RequestInvalid
         | AgentConversationApiErrorV1::NotFound
         | AgentConversationApiErrorV1::SteerUnsupported
-        | AgentConversationApiErrorV1::ProviderFailed(_) => BackendFailureDispositionV1::Terminal,
+        | AgentConversationApiErrorV1::ProviderFailed(_)
+        | AgentConversationApiErrorV1::HistoryUnavailable => BackendFailureDispositionV1::Terminal,
         AgentConversationApiErrorV1::Conflict => BackendFailureDispositionV1::StaleGeneration,
         AgentConversationApiErrorV1::RuntimeUnavailable
         | AgentConversationApiErrorV1::StoreFailed => BackendFailureDispositionV1::RetrySame,

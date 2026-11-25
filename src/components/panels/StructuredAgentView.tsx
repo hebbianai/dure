@@ -309,7 +309,6 @@ function StructuredAgentViewContent({
 						paneApi={runtime.composer?.paneApi}
 						disabled={presentation.inputLocked || locked}
 						attachmentsEnabled={project?.kind === "local"}
-						providerTranscriptReadable={project?.kind === "local"}
 						launchSelection={runtime.composer?.launchSelection}
 						catalogSource={runtime.composer?.catalogSource}
 						onReady={onReady}

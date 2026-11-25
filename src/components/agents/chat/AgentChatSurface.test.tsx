@@ -85,6 +85,7 @@ function session(): AgentChatSessionView {
 		},
 		retryConnection: vi.fn(),
 		loadOlder: vi.fn(async () => {}),
+		readProviderHistory: vi.fn(async () => null),
 		send: vi.fn(async () => {}),
 		retryTurn: vi.fn(async () => {}),
 		editRetryableTurn: vi.fn(async () => undefined),
@@ -299,6 +300,88 @@ describe("AgentChatSurface", () => {
 			expect.arrayContaining(["timeline-1:2", "timeline-1:3"]),
 		);
 		// Real layout/scroll anchoring is exercised by agent-chat-virtualization.mjs.
+	});
+
+	describe("history older than the seeded window", () => {
+		/** A Chat timeline seeded from the newest part of a provider
+		 * conversation, behind a boundary placed at transcript offset 900. */
+		function seeded() {
+			const value = session();
+			if (!value.page) throw new Error("expected a timeline page");
+			value.page.binding.providerConversationRef = "conversation-1";
+			value.page.rows = [
+				{
+					cursor: { epoch: "timeline-1", sequence: 1 },
+					item: {
+						itemId: "history-boundary",
+						turnId: null,
+						clientMessageId: null,
+						providerMessageId: null,
+						body: {
+							type: "history_boundary",
+							reason: "provider_conversation_compacted",
+							requestedAfterProviderSequence: 0,
+							droppedThroughProviderSequence: 900,
+						},
+						createdAtMs: 1,
+					},
+				},
+				...value.page.rows.map((row) => ({
+					...row,
+					cursor: { ...row.cursor, sequence: 2 },
+				})),
+			];
+			return value;
+		}
+
+		const loadEarlier = () =>
+			screen.getByRole("button", {
+				name: t("agents.chat.loadEarlierHistory"),
+			});
+
+		it("pages it in through the session's own backend", async () => {
+			const value = seeded();
+			value.readProviderHistory = vi.fn(async () => ({
+				schemaVersion: 1 as const,
+				provider: "claude",
+				conversationId: "conversation-1",
+				historyComplete: true,
+				finalResponse: null,
+				entries: [
+					{ role: "user" as const, text: "Before the move" },
+					{ role: "agent" as const, text: "Answered in the terminal" },
+				],
+			}));
+			render(<AgentChatSurface session={value} />);
+			expect(screen.queryByText(t("agents.chat.historyBoundary"))).toBeNull();
+
+			fireEvent.click(loadEarlier());
+
+			await screen.findByText("Answered in the terminal");
+			expect(value.readProviderHistory).toHaveBeenCalledWith(900);
+			expect(screen.getByText("Before the move")).toBeTruthy();
+			expect(screen.getByText("Hello from Claude")).toBeTruthy();
+			expect(
+				screen.queryByRole("button", {
+					name: t("agents.chat.loadEarlierHistory"),
+				}),
+			).toBeNull();
+		});
+
+		it("keeps the boundary when the backend cannot read it", async () => {
+			const value = seeded();
+			render(<AgentChatSurface session={value} />);
+
+			fireEvent.click(loadEarlier());
+
+			await screen.findByText(t("agents.chat.historyBoundary"));
+			expect(value.readProviderHistory).toHaveBeenCalledTimes(1);
+			expect(
+				screen.queryByRole("button", {
+					name: t("agents.chat.loadEarlierHistory"),
+				}),
+			).toBeNull();
+		});
 	});
 
 	it("keeps a tail-following reader pinned when an older read fails", async () => {

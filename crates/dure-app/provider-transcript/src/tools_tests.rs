@@ -176,6 +176,7 @@ fn calls_before_a_left_out_message_are_left_out_and_the_rest_rebased() {
             source: 1024 * 1024,
             output: 1024,
             entries: 2,
+            ..Limits::PAGE
         },
         None,
     )

@@ -129,6 +129,22 @@ export class DureBackendRequestError extends Error {
 	}
 }
 
+/** The transport refused a request, before sending anything, because the
+ * backend does not declare `capability`: it predates what was asked. */
+export function dureBackendCapabilityMissing(
+	error: unknown,
+	capability: string,
+): boolean {
+	return (
+		error instanceof DureBackendRequestError &&
+		[
+			"backend_transport_capability_missing",
+			"backend_transport_profile_capability_missing",
+		].includes(error.code) &&
+		error.details?.capability === capability
+	);
+}
+
 function token(value: unknown): value is string {
 	if (typeof value !== "string" || value.length === 0 || value.length > 512) {
 		return false;
