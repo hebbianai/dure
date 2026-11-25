@@ -26,6 +26,11 @@ pub const MAX_AGENT_HISTORY_ITEMS_V1: usize = 2_048;
 /// is complete; those records stay readable in the provider's transcript.
 pub const PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1: &str = "provider_conversation_compacted";
 /// The history boundary reason that opens the newest window of a longer
+/// provider history at its place in the provider's transcript:
+/// `droppedThroughProviderSequence` is the transcript offset where the window
+/// starts, which a transcript reader pages the older history before.
+pub const PROVIDER_TRANSCRIPT_WINDOW_HISTORY_BOUNDARY_V1: &str = "provider_transcript_window";
+/// The history boundary reason that opens the newest window of a longer
 /// provider history at no known place in the provider's transcript: older
 /// history precedes it, at least `droppedThroughProviderSequence` messages or
 /// turns of it.

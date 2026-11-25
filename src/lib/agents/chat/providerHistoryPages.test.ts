@@ -212,6 +212,26 @@ describe("Chat history older than its seeded window", () => {
 		]);
 	});
 
+	it("pages a Codex window back from its oldest turn in the rollout", () => {
+		const base = seededPage();
+		const codex = seededPage({
+			binding: { ...base.binding, providerId: "codex" },
+		});
+		expect(seededProviderHistoryCursor(codex)).toBe(900);
+		const pages = withOlderProviderPage(providerHistoryPages(900), 900, {
+			...read(["ask before the window", "before the window"]),
+			provider: "codex",
+		});
+		const page = chatPageWithOlderProviderHistory(codex, pages);
+		expect(page.hasMore).toBe(false);
+		expect(messages(page)).toEqual([
+			"ask before the window",
+			"before the window",
+			"ask seeded",
+			"seeded answer",
+		]);
+	});
+
 	it("keeps the boundary where the pages do not belong to it", () => {
 		const unplaced = seededPage({}, "provider_history_truncated");
 		expect(

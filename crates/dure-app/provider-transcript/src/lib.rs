@@ -761,25 +761,117 @@ fn conversation_path(
         "claude" => {
             find_claude_conversation(claude_projects, conversation_id).map(|(_, path)| path)
         }
-        "codex" => {
-            let mut inspected = 0;
-            let active =
-                find_codex_conversation(codex_sessions, conversation_id, 0, &mut inspected);
-            let archived = codex_sessions
-                .parent()
-                .map(|root| root.join("archived_sessions"))
-                .and_then(|directory| {
-                    find_codex_conversation(&directory, conversation_id, 0, &mut inspected)
-                });
-            [active, archived]
-                .into_iter()
-                .flatten()
-                .max_by_key(|(modified, _)| *modified)
-                .map(|(_, path)| path)
-        }
+        "codex" => codex_rollout(codex_sessions, conversation_id),
         _ => return Err("provider transcript export is unsupported".to_string()),
     };
     path.ok_or_else(|| "provider conversation was not found".to_string())
+}
+
+/// The rollout of a Codex conversation: the newest written of its active and
+/// archived copies.
+fn codex_rollout(codex_sessions: &Path, conversation_id: &str) -> Option<PathBuf> {
+    let mut inspected = 0;
+    let active = find_codex_conversation(codex_sessions, conversation_id, 0, &mut inspected);
+    let archived = codex_sessions
+        .parent()
+        .map(|root| root.join("archived_sessions"))
+        .and_then(|directory| {
+            find_codex_conversation(&directory, conversation_id, 0, &mut inspected)
+        });
+    [active, archived]
+        .into_iter()
+        .flatten()
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, path)| path)
+}
+
+/// The cursor an older page of [`read_roots_activity_page`] reads before to
+/// end just before turn `turn_id` of a Codex conversation: the offset of the
+/// `task_started` event that opens the turn, its first record in the rollout.
+/// A history that shows a conversation from that turn on places its start
+/// there, so that the pages before it join it exactly. `None` when the rollout
+/// records no such turn, as one written before Codex named its turns.
+///
+/// A history that starts partway through holds the newest turns, which are at
+/// the rollout's end, so the rollout is read back from there.
+pub fn codex_turn_start_cursor(
+    codex_sessions: &Path,
+    conversation_id: &str,
+    turn_id: &str,
+) -> Result<Option<u64>, String> {
+    if !safe_id(conversation_id) || !safe_id(turn_id) {
+        return Err("provider conversation id is invalid".to_string());
+    }
+    let path = codex_rollout(codex_sessions, conversation_id)
+        .ok_or_else(|| "provider conversation was not found".to_string())?;
+    let read_error = |error| format!("read provider transcript: {error}");
+    let mut file = fs::File::open(path).map_err(read_error)?;
+    let opens_turn = |value: &Value| {
+        value.get("type").and_then(Value::as_str) == Some("event_msg")
+            && value.pointer("/payload/type").and_then(Value::as_str) == Some("task_started")
+            && value.pointer("/payload/turn_id").and_then(Value::as_str) == Some(turn_id)
+    };
+    last_record_offset(&mut file, turn_id.as_bytes(), opens_turn).map_err(read_error)
+}
+
+/// How much of a transcript one step of [`last_record_offset`] reads.
+const BACKWARD_READ_BYTES: u64 = 1024 * 1024;
+
+/// The offset of the last record in `file` that `matches`, reading back from
+/// its end. Only records that contain `needle` are decoded.
+fn last_record_offset(
+    file: &mut fs::File,
+    needle: &[u8],
+    matches: impl Fn(&Value) -> bool,
+) -> std::io::Result<Option<u64>> {
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::other(
+            "provider transcript is not a regular file",
+        ));
+    }
+    let mut end = metadata.len();
+    // The start of the earliest record read so far, whose line began before
+    // `end`: it is decoded once the step before it completes it.
+    let mut carried = Vec::new();
+    while end > 0 {
+        let start = end.saturating_sub(BACKWARD_READ_BYTES);
+        let mut bytes = vec![0; (end - start) as usize];
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut bytes)?;
+        bytes.append(&mut carried);
+        // Every line after the first line break is whole; before it, at the
+        // file's start, so is the first.
+        let whole_from = if start == 0 {
+            0
+        } else {
+            match bytes.iter().position(|byte| *byte == b'\n') {
+                Some(index) => index + 1,
+                None => {
+                    carried = bytes;
+                    end = start;
+                    continue;
+                }
+            }
+        };
+        let mut lines = Vec::new();
+        let mut offset = start + whole_from as u64;
+        for line in bytes[whole_from..].split_inclusive(|byte| *byte == b'\n') {
+            lines.push((offset, line));
+            offset += line.len() as u64;
+        }
+        for (offset, line) in lines.into_iter().rev() {
+            if line.windows(needle.len()).any(|window| window == needle)
+                && serde_json::from_slice::<Value>(line).is_ok_and(|value| matches(&value))
+            {
+                return Ok(Some(offset));
+            }
+        }
+        bytes.truncate(whole_from);
+        carried = bytes;
+        end = start;
+    }
+    Ok(None)
 }
 
 /// The model and reasoning effort a conversation's latest main-thread turn

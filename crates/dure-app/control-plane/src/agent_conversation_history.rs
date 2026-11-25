@@ -9,6 +9,8 @@
 //! conversation, from the session's own credential profile, through the
 //! shared transcript reader the desktop's own views use.
 
+use std::path::Path;
+
 use dure_app::{AGENT_TIMELINE_SCHEMA_VERSION_V1, AgentInteractionSessionIdV1};
 use dure_provider_profile::transcript;
 use serde::Deserialize;
@@ -87,4 +89,15 @@ pub(super) async fn read(
         return Err(AgentConversationApiErrorV1::HistoryUnavailable);
     }
     Ok(response)
+}
+
+/// Where a Codex thread's history from turn `turn_id` on starts in the
+/// thread's rollout under the provider `home`: the cursor [`read`] pages the
+/// older history before, in the same rollout. `None` when the rollout or its
+/// record of the turn cannot be found.
+pub(crate) fn codex_turn_start_cursor(home: &Path, thread_id: &str, turn_id: &str) -> Option<u64> {
+    transcript::codex_turn_start_cursor(&home.join("sessions"), thread_id, turn_id)
+        .ok()
+        .flatten()
+        .filter(|cursor| *cursor > 0)
 }

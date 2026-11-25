@@ -522,6 +522,7 @@ async fn disconnected_runtime_slot_is_released_when_exact_stop_fails() {
             binding.clone(),
             client,
             "thread-disconnected".into(),
+            None,
             settings.clone(),
             Arc::clone(&conversation_service),
         )
@@ -650,6 +651,7 @@ async fn a_live_chat_runtime_hosts_only_its_exact_session_generation() {
             binding.clone(),
             client,
             "thread-hosted".into(),
+            None,
             settings.clone(),
             Arc::clone(&conversation_service),
         )

@@ -639,3 +639,97 @@ fn backend_pages_fit_one_response_and_join_where_each_stopped() {
             .collect::<Vec<_>>()
     );
 }
+
+/// A Codex rollout under a sessions root with one turn per answer, each a
+/// prompt and that answer, and the offset of each turn's `task_started` event.
+fn codex_rollout_fixture(sessions: &Path, id: &str, answers: &[String]) -> Vec<u64> {
+    let day = sessions.join("2026/11/25");
+    fs::create_dir_all(&day).unwrap();
+    let path = day.join(format!("rollout-2026-11-25T00-00-00-{id}.jsonl"));
+    let mut source = format!(
+        "{}\n",
+        serde_json::json!({"type":"session_meta","payload":{"id":id}})
+    );
+    let mut starts = Vec::new();
+    for (index, answer) in answers.iter().enumerate() {
+        let turn = format!("turn-{index}");
+        starts.push(source.len() as u64);
+        let records = [
+            serde_json::json!({"type":"event_msg","payload":{"type":"task_started","turn_id":turn}}),
+            serde_json::json!({"type":"turn_context","payload":{"turn_id":turn}}),
+            serde_json::json!({"type":"response_item","payload":{"type":"message","role":"user",
+                "content":[{"type":"input_text","text":format!("prompt {index}")}]}}),
+            serde_json::json!({"type":"response_item","payload":{"type":"message","role":"assistant",
+                "content":[{"type":"output_text","text":answer}]}}),
+            serde_json::json!({"type":"event_msg","payload":{"type":"task_complete","turn_id":turn}}),
+        ];
+        for record in records {
+            source.push_str(&format!("{record}\n"));
+        }
+    }
+    fs::write(path, source).unwrap();
+    starts
+}
+
+/// A turn starts at the `task_started` event that opens it, though other
+/// records name it too, and the page before that cursor ends just before the
+/// turn: its records are the newer history's, never shown twice.
+#[test]
+fn a_codex_turn_starts_at_its_task_started_event_where_the_page_before_it_ends() {
+    let root = tempfile::tempdir().unwrap();
+    let sessions = root.path().join("sessions");
+    let id = "019f0000-0000-7000-8000-000000000675";
+    // Answers longer than one backward read put records across its steps.
+    let long = "x".repeat(BACKWARD_READ_BYTES as usize * 5 / 2);
+    let answers = [
+        "answer 0".to_string(),
+        long.clone(),
+        long,
+        "answer 3".into(),
+    ];
+    let starts = codex_rollout_fixture(&sessions, id, &answers);
+
+    for (index, start) in starts.iter().enumerate() {
+        assert_eq!(
+            codex_turn_start_cursor(&sessions, id, &format!("turn-{index}")),
+            Ok(Some(*start)),
+            "turn {index}"
+        );
+    }
+    let before = codex_turn_start_cursor(&sessions, id, "turn-1")
+        .unwrap()
+        .unwrap();
+    let older = read_roots_activity_page(
+        &root.path().join("projects"),
+        &sessions,
+        "codex",
+        id,
+        before,
+    )
+    .unwrap();
+    assert_eq!(
+        older
+            .transcript
+            .entries
+            .iter()
+            .map(|entry| entry.text.as_str())
+            .collect::<Vec<_>>(),
+        ["prompt 0", "answer 0"]
+    );
+    assert_eq!(older.older_cursor, None);
+}
+
+#[test]
+fn a_codex_turn_the_rollout_does_not_name_has_no_start() {
+    let root = tempfile::tempdir().unwrap();
+    let sessions = root.path().join("sessions");
+    let id = "019f0000-0000-7000-8000-000000000676";
+    codex_rollout_fixture(&sessions, id, &["answer".to_string()]);
+
+    assert_eq!(codex_turn_start_cursor(&sessions, id, "turn-9"), Ok(None));
+    assert!(
+        codex_turn_start_cursor(&sessions, "019f0000-0000-7000-8000-000000000000", "turn-0")
+            .is_err()
+    );
+    assert!(codex_turn_start_cursor(&sessions, id, "").is_err());
+}

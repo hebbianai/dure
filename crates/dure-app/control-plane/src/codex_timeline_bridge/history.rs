@@ -1,6 +1,8 @@
 use super::*;
 
-use dure_app::PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1;
+use dure_app::{
+    PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1, PROVIDER_TRANSCRIPT_WINDOW_HISTORY_BOUNDARY_V1,
+};
 
 use crate::codex_app_server_protocol::{thread_turns_page_params, thread_turns_paged};
 
@@ -71,7 +73,8 @@ where
         if window.omits_older
             && let Some(oldest) = window.turns.first()
         {
-            self.commit_history_boundary(oldest).await?;
+            let start = self.transcript_start(oldest).await?;
+            self.commit_history_boundary(oldest, start).await?;
         }
         for turn in &window.turns {
             let provider_turn_id = field_string(turn, "id")?;
@@ -249,22 +252,49 @@ where
         })
     }
 
+    /// Where `turn` starts in the thread's rollout, which the backend pages
+    /// the history before it from. `None` when this backend cannot find it.
+    async fn transcript_start(
+        &self,
+        turn: &Value,
+    ) -> Result<Option<i64>, AgentProviderCommandErrorV1> {
+        let Some(home) = self.provider_home.clone() else {
+            return Ok(None);
+        };
+        let thread_id = self.thread_id.clone();
+        let turn_id = field_string(turn, "id")?.to_owned();
+        let start = tokio::task::spawn_blocking(move || {
+            crate::agent_conversation_history::codex_turn_start_cursor(&home, &thread_id, &turn_id)
+        })
+        .await
+        .ok()
+        .flatten();
+        Ok(start.and_then(|start| i64::try_from(start).ok()))
+    }
+
     /// Marks where a window that left older turns out starts: the existing
-    /// boundary row, placed before the window's oldest turn. It says only that
-    /// older turns precede the window, not how many.
+    /// boundary row, before the window's oldest turn. Placed at the turn's
+    /// `start` in the rollout, it is where the older history pages in;
+    /// unplaced, it says only that older turns precede the window, not how
+    /// many.
     async fn commit_history_boundary(
         &self,
         oldest: &Value,
+        start: Option<i64>,
     ) -> Result<(), AgentProviderCommandErrorV1> {
         let provider_turn_id = field_string(oldest, "id")?;
         let created_at_ms = provider_timestamp_ms(oldest, "startedAt")?.unwrap_or(now_ms()?);
+        let (reason, dropped_through_provider_sequence) = match start {
+            Some(start) => (PROVIDER_TRANSCRIPT_WINDOW_HISTORY_BOUNDARY_V1, start),
+            None => (PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1, 1),
+        };
         let item = self.item_for_turn(
             provider_turn_id,
             "history-boundary",
             AgentTimelineItemBodyV1::HistoryBoundary {
-                reason: PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1.into(),
+                reason: reason.into(),
                 requested_after_provider_sequence: 0,
-                dropped_through_provider_sequence: 1,
+                dropped_through_provider_sequence,
             },
             TimelineItemContext {
                 turn_id: None,

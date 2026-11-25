@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -88,6 +89,10 @@ pub(crate) struct CodexTimelineBridge<S> {
     binding: AgentInteractionBindingV1,
     client: JsonRpcSocketClient,
     thread_id: String,
+    /// The provider home whose rollout of the thread the backend pages older
+    /// history from (`agent_conversation_history`), where a history window
+    /// places its start.
+    provider_home: Option<PathBuf>,
     settings: ProviderTurnSettings,
     service: Arc<AgentConversationService<S>>,
     sequence: Mutex<i64>,
@@ -108,6 +113,7 @@ where
         binding: AgentInteractionBindingV1,
         client: JsonRpcSocketClient,
         thread_id: String,
+        provider_home: Option<PathBuf>,
         settings: ProviderTurnSettings,
         service: Arc<AgentConversationService<S>>,
     ) -> Result<Self, AgentProviderCommandErrorV1> {
@@ -121,6 +127,7 @@ where
             binding,
             client,
             thread_id,
+            provider_home,
             settings,
             service,
             sequence: Mutex::new(sequence),
@@ -776,6 +783,7 @@ mod tests {
             binding.clone(),
             client,
             "thread-history".into(),
+            None,
             ProviderTurnSettings::new(ProviderPermissionModeV1::Default, None, None),
             Arc::clone(&service),
         )
@@ -938,6 +946,7 @@ mod tests {
         socket_path: &std::path::Path,
         binding: &AgentInteractionBindingV1,
         service: &Arc<AgentConversationService<crate::SqliteDomainStore>>,
+        provider_home: Option<PathBuf>,
     ) -> (
         CodexTimelineBridge<crate::SqliteDomainStore>,
         JsonRpcSocketIncoming,
@@ -947,6 +956,7 @@ mod tests {
             binding.clone(),
             client,
             "thread-history".into(),
+            provider_home,
             ProviderTurnSettings::new(ProviderPermissionModeV1::Default, None, None),
             Arc::clone(service),
         )
@@ -955,11 +965,11 @@ mod tests {
         (bridge, incoming)
     }
 
-    /// The timeline's user prompts and history boundaries, in order.
-    async fn prompts_and_boundaries(
+    /// The timeline's rows, oldest first.
+    async fn timeline_rows(
         service: &AgentConversationService<crate::SqliteDomainStore>,
         binding: &AgentInteractionBindingV1,
-    ) -> Vec<String> {
+    ) -> Vec<AgentTimelineRowV1> {
         let read = service
             .read(&AgentTimelineReadRequestV1 {
                 schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
@@ -975,6 +985,15 @@ mod tests {
         };
         assert!(!page.has_more);
         page.rows
+    }
+
+    /// The timeline's user prompts and history boundaries, in order.
+    async fn prompts_and_boundaries(
+        service: &AgentConversationService<crate::SqliteDomainStore>,
+        binding: &AgentInteractionBindingV1,
+    ) -> Vec<String> {
+        timeline_rows(service, binding)
+            .await
             .iter()
             .filter_map(|row| match &row.item.body {
                 AgentTimelineItemBodyV1::HistoryBoundary { reason, .. } => {
@@ -994,7 +1013,7 @@ mod tests {
         let (temporary, service, binding) = conversation_fixture().await;
         let socket_path = temporary.path().join("app.sock");
         let (server, mut requests) = paged_thread_server(&socket_path, THREAD_PAGES);
-        let (bridge, incoming) = paged_bridge(&socket_path, &binding, &service).await;
+        let (bridge, incoming) = paged_bridge(&socket_path, &binding, &service, None).await;
 
         // The window's bound falls inside the second page, which it keeps
         // whole.
@@ -1038,12 +1057,134 @@ mod tests {
         server.abort();
     }
 
+    /// A provider home holding the paged thread's rollout: each turn opened
+    /// by its `task_started` event, with the turn's prompt and answer. Returns
+    /// where each turn starts.
+    fn rollout_home(home: &std::path::Path, turns: std::ops::RangeInclusive<u32>) -> Vec<u64> {
+        let day = home.join("sessions/2026/11/25");
+        std::fs::create_dir_all(&day).unwrap();
+        let mut source = format!(
+            "{}\n",
+            json!({ "type": "session_meta", "payload": { "id": "thread-history" } })
+        );
+        let mut starts = Vec::new();
+        for index in turns {
+            starts.push(source.len() as u64);
+            let turn_id = format!("provider-turn-{index}");
+            for record in [
+                json!({ "type": "event_msg",
+                    "payload": { "type": "task_started", "turn_id": turn_id } }),
+                json!({ "type": "response_item", "payload": { "type": "message", "role": "user",
+                    "content": [{ "type": "input_text", "text": format!("Prompt {index}") }] } }),
+                json!({ "type": "response_item", "payload": { "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": format!("Answer {index}") }] } }),
+                json!({ "type": "event_msg",
+                    "payload": { "type": "task_complete", "turn_id": turn_id } }),
+            ] {
+                source.push_str(&format!("{record}\n"));
+            }
+        }
+        std::fs::write(
+            day.join("rollout-2026-11-25T00-00-00-thread-history.jsonl"),
+            source,
+        )
+        .unwrap();
+        starts
+    }
+
+    /// A window placed in the thread's rollout starts where its oldest turn
+    /// does, so the older history the backend pages before it ends with the
+    /// turn before the window: every turn shows once, in order.
+    #[tokio::test]
+    async fn a_windowed_thread_starts_its_history_where_its_oldest_turn_starts_in_the_rollout() {
+        let (temporary, service, binding) = conversation_fixture().await;
+        let home = temporary.path().join("codex-home");
+        let starts = rollout_home(&home, 1..=5);
+        let socket_path = temporary.path().join("app.sock");
+        let (server, _requests) = paged_thread_server(&socket_path, THREAD_PAGES);
+        let (bridge, incoming) =
+            paged_bridge(&socket_path, &binding, &service, Some(home.clone())).await;
+
+        let newest_page = encoded_len(&history_turn(5)) + encoded_len(&history_turn(4));
+        bridge
+            .reconcile_history_within(paged_resume(), newest_page + 1)
+            .await
+            .unwrap();
+
+        let rows = timeline_rows(&service, &binding).await;
+        let AgentTimelineItemBodyV1::HistoryBoundary {
+            reason,
+            dropped_through_provider_sequence,
+            ..
+        } = &rows[0].item.body
+        else {
+            panic!("the window opens with its history boundary");
+        };
+        assert_eq!(
+            reason,
+            dure_app::PROVIDER_TRANSCRIPT_WINDOW_HISTORY_BOUNDARY_V1
+        );
+        assert_eq!(*dropped_through_provider_sequence, starts[1] as i64);
+        assert_eq!(
+            prompts_and_boundaries(&service, &binding).await[1..],
+            ["Prompt 2", "Prompt 3", "Prompt 4", "Prompt 5"]
+        );
+        let older = dure_provider_profile::transcript::read_roots_activity_page(
+            &home.join("projects"),
+            &home.join("sessions"),
+            "codex",
+            "thread-history",
+            starts[1],
+        )
+        .unwrap();
+        assert_eq!(
+            older
+                .transcript
+                .entries
+                .iter()
+                .map(|entry| entry.text.as_str())
+                .collect::<Vec<_>>(),
+            ["Prompt 1", "Answer 1"]
+        );
+        drop(bridge);
+        drop(incoming);
+        server.abort();
+    }
+
+    /// A window whose start this backend cannot find in a rollout keeps the
+    /// boundary that only says older turns precede it.
+    #[tokio::test]
+    async fn a_window_without_its_turn_in_the_rollout_stays_unplaced() {
+        let (temporary, service, binding) = conversation_fixture().await;
+        let home = temporary.path().join("codex-home");
+        // The rollout starts after the window's oldest turn.
+        rollout_home(&home, 3..=5);
+        let socket_path = temporary.path().join("app.sock");
+        let (server, _requests) = paged_thread_server(&socket_path, THREAD_PAGES);
+        let (bridge, incoming) = paged_bridge(&socket_path, &binding, &service, Some(home)).await;
+
+        let newest_page = encoded_len(&history_turn(5)) + encoded_len(&history_turn(4));
+        bridge
+            .reconcile_history_within(paged_resume(), newest_page + 1)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            prompts_and_boundaries(&service, &binding).await[0],
+            "boundary:provider_history_truncated"
+        );
+        drop(bridge);
+        drop(incoming);
+        server.abort();
+    }
+
     #[tokio::test]
     async fn a_paged_thread_read_to_its_start_seeds_its_whole_history() {
         let (temporary, service, binding) = conversation_fixture().await;
         let socket_path = temporary.path().join("app.sock");
         let (server, mut requests) = paged_thread_server(&socket_path, THREAD_PAGES);
-        let (bridge, incoming) = paged_bridge(&socket_path, &binding, &service).await;
+        let (bridge, incoming) = paged_bridge(&socket_path, &binding, &service, None).await;
 
         bridge.reconcile_history(paged_resume()).await.unwrap();
 
@@ -1064,7 +1205,7 @@ mod tests {
         let (temporary, service, binding) = conversation_fixture().await;
         let socket_path = temporary.path().join("app.sock");
         let (server, mut requests) = paged_thread_server(&socket_path, &[(None, &[], None)]);
-        let (bridge, incoming) = paged_bridge(&socket_path, &binding, &service).await;
+        let (bridge, incoming) = paged_bridge(&socket_path, &binding, &service, None).await;
 
         let window = bridge
             .reconcile_history(json!({
@@ -1090,7 +1231,7 @@ mod tests {
         let (temporary, service, binding) = conversation_fixture().await;
         let socket_path = temporary.path().join("app.sock");
         let (server, mut requests) = paged_thread_server(&socket_path, THREAD_PAGES);
-        let (bridge, incoming) = paged_bridge(&socket_path, &binding, &service).await;
+        let (bridge, incoming) = paged_bridge(&socket_path, &binding, &service, None).await;
         // An earlier attach seeded the thread's first three turns from a
         // server that answered the whole thread.
         bridge
@@ -1160,6 +1301,7 @@ mod tests {
             binding.clone(),
             client,
             "thread-history".into(),
+            None,
             ProviderTurnSettings::new(ProviderPermissionModeV1::AutoEdit, None, None),
             service,
         )
