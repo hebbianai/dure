@@ -51,6 +51,9 @@ pub enum AgentConversationApiErrorV1 {
     SteerUnsupported,
     ProviderFailed(AgentProviderCommandErrorV1),
     StoreFailed,
+    /// The provider history the read named could not be read: its
+    /// transcript, or the credential profile holding it, is gone or changed.
+    HistoryUnavailable,
 }
 
 impl AgentConversationApiErrorV1 {
@@ -63,6 +66,7 @@ impl AgentConversationApiErrorV1 {
             Self::SteerUnsupported => "agent_conversation_steer_unsupported",
             Self::ProviderFailed(_) => "agent_conversation_provider_failed",
             Self::StoreFailed => "agent_conversation_store_failed",
+            Self::HistoryUnavailable => "agent_conversation_history_unavailable",
         }
     }
 }
@@ -314,6 +318,16 @@ where
                 agent_id,
                 crate::agent_conversation::AgentConversationNotificationKindV1::Recovery,
             )
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn binding(
+        &self,
+        interaction_session_id: &AgentInteractionSessionIdV1,
+    ) -> Result<Option<AgentInteractionBindingV1>, AgentConversationApiErrorV1> {
+        self.service
+            .binding(interaction_session_id)
             .await
             .map_err(Into::into)
     }

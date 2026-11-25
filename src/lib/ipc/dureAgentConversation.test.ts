@@ -931,6 +931,80 @@ describe("Dure agent conversation client", () => {
 		},
 	);
 
+	it("reads older provider history from the session's own backend", async () => {
+		const binding = {
+			...read().page.binding,
+			providerConversationRef: "conversation-1",
+		};
+		const activity = {
+			schemaVersion: 1,
+			provider: "claude",
+			conversationId: "conversation-1",
+			historyComplete: false,
+			finalResponse: null,
+			entries: [{ role: "user", text: "earlier prompt" }],
+			tools: [],
+			olderCursor: 400,
+		};
+		const invokeCommand = vi
+			.fn()
+			.mockResolvedValueOnce(envelope({ activity }))
+			.mockResolvedValueOnce(
+				envelope({ activity: { ...activity, conversationId: "other" } }),
+			)
+			.mockResolvedValueOnce(
+				envelope({ activity: { ...activity, olderCursor: 900 } }),
+			)
+			.mockRejectedValueOnce({
+				code: "backend_transport_capability_missing",
+				details: { capability: "agent_conversation.read_provider_history" },
+			})
+			.mockRejectedValueOnce({
+				code: "agent_conversation_history_unavailable",
+				message: "agent_conversation_history_unavailable",
+				details: { disposition: "terminal" },
+			});
+		const client = createDureAgentConversationClient({ invokeCommand });
+
+		expect(
+			await client.readProviderHistory(binding, 900, routeAuthority()),
+		).toEqual(activity);
+		expect(invokeCommand).toHaveBeenCalledWith("dure_backend_request", {
+			route: { kind: "exact", authority: routeAuthority() },
+			operation: "agent_conversation.read_provider_history",
+			body: {
+				schemaVersion: 1,
+				interactionSessionId: "interaction-1",
+				providerConversationRef: "conversation-1",
+				before: 900,
+			},
+		});
+		// Another conversation's page, or one that does not move back, is
+		// never shown.
+		for (let attempt = 0; attempt < 2; attempt += 1) {
+			await expect(
+				client.readProviderHistory(binding, 900, routeAuthority()),
+			).rejects.toMatchObject({ code: "agent_conversation_response_invalid" });
+		}
+		// A backend that predates the read cannot answer it at all.
+		expect(
+			await client.readProviderHistory(binding, 900, routeAuthority()),
+		).toBeNull();
+		await expect(
+			client.readProviderHistory(binding, 900, routeAuthority()),
+		).rejects.toMatchObject({ code: "agent_conversation_history_unavailable" });
+		// A session with no provider conversation yet has none to page.
+		invokeCommand.mockClear();
+		expect(
+			await client.readProviderHistory(
+				read().page.binding,
+				900,
+				routeAuthority(),
+			),
+		).toBeNull();
+		expect(invokeCommand).not.toHaveBeenCalled();
+	});
+
 	it("interrupts only through the observed exact route", async () => {
 		const interrupt = {
 			schemaVersion: 1 as const,

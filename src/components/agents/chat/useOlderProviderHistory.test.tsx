@@ -42,10 +42,7 @@ describe("older provider history", () => {
 		// Nothing older is left to ask for.
 		await act(() => result.current.loadOlder());
 
-		expect(read.mock.calls).toEqual([
-			["claude", "conversation-one", { includeTools: true, before: 900 }],
-			["claude", "conversation-one", { includeTools: true, before: 400 }],
-		]);
+		expect(read.mock.calls).toEqual([[900], [400]]);
 		expect(
 			result.current.pages?.pages.map((loaded) => loaded.entries[0]?.text),
 		).toEqual(["one", "two"]);
@@ -100,6 +97,38 @@ describe("older provider history", () => {
 		await act(() => result.current.loadOlder());
 		expect(result.current.failed).toBe(false);
 		expect(result.current.pages?.before).toBeNull();
+	});
+
+	it("never shows another conversation's page", async () => {
+		const read = vi
+			.fn()
+			.mockResolvedValueOnce({ ...page("other"), conversationId: "other" })
+			.mockResolvedValueOnce({ ...page("codex"), provider: "codex" });
+		const { result } = renderHook(() =>
+			useOlderProviderHistory(source, 900, read),
+		);
+
+		for (let attempt = 0; attempt < 2; attempt += 1) {
+			await act(() => result.current.loadOlder());
+			expect(result.current.failed).toBe(true);
+			expect(result.current.pages?.pages).toEqual([]);
+		}
+	});
+
+	it("stops asking a reader that cannot read older history", async () => {
+		const read = vi.fn().mockResolvedValue(null);
+		const { result } = renderHook(() =>
+			useOlderProviderHistory(source, 900, read),
+		);
+
+		await act(() => result.current.loadOlder());
+		await act(() => result.current.loadOlder());
+
+		expect(read.mock.calls).toEqual([[900]]);
+		expect(result.current.unavailable).toBe(true);
+		expect(result.current.failed).toBe(false);
+		expect(result.current.loading).toBe(false);
+		expect(result.current.pages?.pages).toEqual([]);
 	});
 
 	it("has nothing to load without an anchor", async () => {

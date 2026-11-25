@@ -6,6 +6,7 @@ pub fn is_durable_agent_observation(operation: &str) -> bool {
         operation,
         "agent_conversation.inspect"
             | "agent_conversation.read"
+            | "agent_conversation.read_provider_history"
             | "agent_conversation.subscribe"
             | "agent_goal.get"
             | "agent_recovery.read"
@@ -26,6 +27,7 @@ mod tests {
         for operation in [
             "agent_conversation.inspect",
             "agent_conversation.read",
+            "agent_conversation.read_provider_history",
             "agent_conversation.subscribe",
             "agent_goal.get",
             "agent_runtime.inspect",

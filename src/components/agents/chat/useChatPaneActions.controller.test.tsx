@@ -118,6 +118,7 @@ it("does not interrupt the next controller turn during a claimed projection upda
 	const client: DureAgentConversationClient = {
 		inspectInput: vi.fn(async () => null),
 		readQueue: vi.fn(),
+		readProviderHistory: vi.fn(),
 		enqueueTurn: vi.fn(),
 		cancelQueuedTurn: vi.fn(),
 		putGoal: async () => {

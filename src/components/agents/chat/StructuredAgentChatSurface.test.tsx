@@ -70,6 +70,7 @@ function session(
 		},
 		retryConnection: vi.fn(),
 		loadOlder: vi.fn(async () => {}),
+		readProviderHistory: vi.fn(async () => null),
 		send: vi.fn(async () => {}),
 		retryTurn: vi.fn(async () => {}),
 		editRetryableTurn: vi.fn(async () => undefined),

@@ -2,11 +2,14 @@
 //! provider transcript as the messages.
 //!
 //! This is an opt-in read for a view on the machine that owns the transcript
-//! (the desktop's conversation view of a native terminal agent). The text-only
-//! read stays the default, so the CLI, the desktop hub and `hmux
-//! mobile-gateway` answer exactly what they answered before: tool inputs carry
-//! commands and file paths, and nothing here decides that they may leave the
-//! machine.
+//! (the desktop's conversation view of a native terminal agent), and for the
+//! backend that owns a Chat session, which answers that session's own client
+//! with the older history of the session's own conversation: its Chat
+//! timeline already carries that conversation's tool calls to the same
+//! client. The text-only read stays the default, so the CLI, the desktop hub
+//! and `hmux mobile-gateway` answer exactly what they answered before: tool
+//! inputs carry commands and file paths, and nothing here decides that they
+//! may leave the machine.
 //!
 //! Each call keeps its position between the messages (`after_entries`), the
 //! provider's tool name, how it ended and a bounded copy of its input. Tool

@@ -313,6 +313,7 @@ fn older_pages_join_exactly_where_the_newer_page_stopped() {
         source: 1024 * 1024,
         output: 1024,
         entries: 7,
+        ..Limits::PAGE
     };
     let newest = page(file.path(), None, limits);
     assert!(!newest.transcript.history_complete);
@@ -364,6 +365,7 @@ fn byte_bounded_pages_meet_on_record_boundaries() {
             source,
             output: 1024 * 1024,
             entries: 1000,
+            ..Limits::PAGE
         };
         let mut before = None;
         let mut joined = Vec::new();
@@ -401,6 +403,7 @@ fn a_record_larger_than_a_page_is_skipped_and_reported() {
         source: 1024 * 1024,
         output: 1024,
         entries: 100,
+        ..Limits::PAGE
     };
     let newest = page(file.path(), None, limits);
     assert_eq!(texts(&newest), ["after"]);
@@ -483,6 +486,7 @@ fn an_older_page_settles_a_call_whose_result_the_newer_page_holds() {
         source: 1024 * 1024,
         output: 1024 * 1024,
         entries: 1,
+        ..Limits::PAGE
     };
     let pages = all_pages(file.path(), limits);
     assert_eq!(
@@ -533,6 +537,7 @@ fn an_older_page_settles_its_last_turn_from_past_its_end_within_its_bound() {
         source: 1024,
         output: 1024 * 1024,
         entries: 1,
+        ..Limits::PAGE
     };
     let steered_page = page(file.path(), Some(steered.len() as u64), limits);
     assert_eq!(texts(&steered_page), ["steered"]);
@@ -566,5 +571,71 @@ fn an_older_page_settles_its_last_turn_from_past_its_end_within_its_bound() {
     assert_eq!(
         states(&newest),
         [("call-newest".to_string(), ProviderToolState::Completed)]
+    );
+}
+
+/// An older page read for a client across a backend connection fits one
+/// backend response, however long the conversation's messages are, and its
+/// pages still join exactly where each stopped.
+#[test]
+fn backend_pages_fit_one_response_and_join_where_each_stopped() {
+    let root = tempfile::tempdir().unwrap();
+    let project = root.path().join("-project");
+    std::fs::create_dir(&project).unwrap();
+    let path = project.join("conversation.jsonl");
+    let mut file = std::fs::File::create(&path).unwrap();
+    // Quotes and line breaks grow when the page is encoded as JSON.
+    let long = "\"quoted\" line\n".repeat(2048);
+    let mut expected = Vec::new();
+    for index in 0..120 {
+        let message = format!("{index} {long}");
+        write!(
+            file,
+            "{}",
+            assistant_with_call(&message, &format!("call-{index}"))
+        )
+        .unwrap();
+        expected.push(message);
+    }
+    drop(file);
+    let codex = root.path().join("no-codex-sessions");
+    let mut before = std::fs::metadata(&path).unwrap().len();
+    let (mut joined, mut calls, mut pages) = (Vec::new(), Vec::new(), 0);
+    loop {
+        let page = read_roots_activity_page(root.path(), &codex, "claude", "conversation", before)
+            .unwrap();
+        let encoded = serde_json::to_vec(&page).unwrap();
+        assert!(
+            encoded.len() <= 1024 * 1024,
+            "a page of {} bytes does not fit one response",
+            encoded.len()
+        );
+        joined.splice(
+            0..0,
+            page.transcript
+                .entries
+                .iter()
+                .map(|entry| entry.text.clone()),
+        );
+        calls.splice(0..0, page.tools.iter().map(|call| call.call_id.clone()));
+        pages += 1;
+        match page.older_cursor {
+            Some(cursor) => {
+                assert!(cursor < before, "every page moves back");
+                before = cursor;
+            }
+            None => {
+                assert!(page.transcript.history_complete, "the start is reached");
+                break;
+            }
+        }
+    }
+    assert!(pages > 1, "a long conversation takes several backend pages");
+    assert_eq!(joined, expected);
+    assert_eq!(
+        calls,
+        (0..120)
+            .map(|index| format!("call-{index}"))
+            .collect::<Vec<_>>()
     );
 }
