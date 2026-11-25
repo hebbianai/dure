@@ -37,7 +37,8 @@ pub(super) fn item(
         provider_message_id: provider
             .map(|id| AgentProviderMessageIdV1::new(format!("pi-{id}")).map_err(store_error))
             .transpose()?,
-        body,
+        // One oversized part must not fail its whole message.
+        body: body.fitted(),
         created_at_ms: at,
     };
     item.validate().map_err(store_error)?;
@@ -414,5 +415,54 @@ mod tests {
             pending_answer(&input, &json!({"answers":{"answer":"한글\ninput"}})).unwrap(),
             json!({"id":"input","value":"한글\ninput"})
         );
+    }
+
+    /// One tool call, tool result or message over the timeline's item bound
+    /// fits by the shared rule instead of failing the history, which fails
+    /// the attach and every later sync.
+    #[test]
+    fn oversized_entries_fit_the_timeline_instead_of_failing_the_history() {
+        let large = "x".repeat(MAX_AGENT_TIMELINE_JSON_BYTES_V1 + 1);
+        let entries = Entries {
+            entries: vec![
+                json!({"id":"user","parentId":null,"type":"message","message":{"role":"user","content":format!("Paste {large}"),"timestamp":1}}),
+                json!({"id":"call","parentId":"user","type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"tool-write","name":"write","arguments":{"path":"/fixture/a","content":large}}],"stopReason":"toolUse","timestamp":2}}),
+                json!({"id":"result","parentId":"call","type":"message","message":{"role":"toolResult","toolCallId":"tool-write","toolName":"write","content":[{"type":"text","text":large}],"isError":false,"timestamp":3}}),
+                json!({"id":"answer","parentId":"result","type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Done"}],"stopReason":"stop","timestamp":4}}),
+            ],
+            leaf_id: Some("answer".into()),
+        };
+        let history = project(&entries, &BTreeMap::new()).unwrap();
+        let tools = history
+            .items
+            .iter()
+            .filter_map(|item| match &item.body {
+                AgentTimelineItemBodyV1::Tool {
+                    tool_call_id,
+                    input,
+                    output,
+                    ..
+                } => Some((tool_call_id.as_str(), input.is_some(), output.is_some())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tools,
+            [("tool-write", false, false), ("tool-write", false, false)]
+        );
+        let texts = history
+            .items
+            .iter()
+            .filter_map(|item| match &item.body {
+                AgentTimelineItemBodyV1::Message { markdown, .. } => Some(markdown.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(texts.len(), 2);
+        assert!(texts[0].starts_with("Paste xxx") && texts[0].ends_with('…'));
+        assert_eq!(texts[1], "Done");
+        for item in &history.items {
+            item.validate().unwrap();
+        }
     }
 }
