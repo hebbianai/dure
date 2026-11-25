@@ -189,6 +189,29 @@ describe("Chat history older than its seeded window", () => {
 		).toEqual(["turn", "turn", "row", "row"]);
 	});
 
+	it("pages in the history before the provider's compaction", () => {
+		// A compacted conversation seeds a complete history from the summary
+		// the provider resumes from; the turns before it stay in the transcript.
+		const compacted = seededPage(
+			{ binding: { ...seededPage().binding, historyComplete: true } },
+			"provider_conversation_compacted",
+		);
+		expect(seededProviderHistoryCursor(compacted)).toBe(900);
+		const pages = withOlderProviderPage(
+			providerHistoryPages(900),
+			900,
+			read(["ask before compaction", "before compaction"]),
+		);
+		const page = chatPageWithOlderProviderHistory(compacted, pages);
+		expect(page.hasMore).toBe(false);
+		expect(messages(page)).toEqual([
+			"ask before compaction",
+			"before compaction",
+			"ask seeded",
+			"seeded answer",
+		]);
+	});
+
 	it("keeps the boundary where the pages do not belong to it", () => {
 		const unplaced = seededPage({}, "provider_history_truncated");
 		expect(

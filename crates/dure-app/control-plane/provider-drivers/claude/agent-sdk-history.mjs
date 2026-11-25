@@ -125,12 +125,23 @@ function pushItem(items, sourceId, providerMessageId, body, createdAtMs) {
 	items.push(item);
 }
 
-/** Marks where a windowed history starts. Placed in its transcript, it names
- * the byte offset of the window's oldest record: everything before it stays
- * in the transcript, where a reader pages it in (`provider_transcript_window`).
- * Unplaced, it only says that at least `omittedMessages` messages precede it. */
-function historyBoundary(omittedMessages, windowStart, createdAtMs) {
+/** Marks where the seeded history starts. Placed in its transcript, it names
+ * the byte offset of the oldest record shown: everything before it stays in
+ * the transcript, where a reader pages it in. A window of a longer history
+ * (`provider_transcript_window`) leaves part of the provider's conversation
+ * out. A compaction (`provider_conversation_compacted`) leaves out only what
+ * the provider's summary stands in for, so the history it opens is complete.
+ * Unplaced, a window only says that at least `omittedMessages` messages
+ * precede it. */
+function historyBoundary(precededBy, omittedMessages, windowStart, createdAtMs) {
 	const placed = Number.isSafeInteger(windowStart) && windowStart > 0;
+	let reason = "provider_history_truncated";
+	if (placed) {
+		reason =
+			precededBy === "compaction"
+				? "provider_conversation_compacted"
+				: "provider_transcript_window";
+	}
 	return historyItem(
 		HISTORY_BOUNDARY_SOURCE_ID,
 		null,
@@ -138,7 +149,7 @@ function historyBoundary(omittedMessages, windowStart, createdAtMs) {
 			dropped_through_provider_sequence: placed
 				? windowStart
 				: Math.max(1, omittedMessages),
-			reason: placed ? "provider_transcript_window" : "provider_history_truncated",
+			reason,
 			requested_after_provider_sequence: 0,
 			type: "history_boundary",
 		},
@@ -147,9 +158,16 @@ function historyBoundary(omittedMessages, windowStart, createdAtMs) {
 }
 
 const HISTORY_BOUNDARY_BYTES = Math.max(
-	...[Number.MAX_SAFE_INTEGER, null].map((windowStart) =>
-		jsonBytes(
-			historyBoundary(Number.MAX_SAFE_INTEGER, windowStart, Number.MAX_SAFE_INTEGER),
+	...["window", "compaction"].flatMap((precededBy) =>
+		[Number.MAX_SAFE_INTEGER, null].map((windowStart) =>
+			jsonBytes(
+				historyBoundary(
+					precededBy,
+					Number.MAX_SAFE_INTEGER,
+					windowStart,
+					Number.MAX_SAFE_INTEGER,
+				),
+			),
 		),
 	),
 );
@@ -159,21 +177,32 @@ function sourceOf(item) {
 	return separator === -1 ? item.sourceId : item.sourceId.slice(0, separator);
 }
 
+/** The transcript offset of the oldest record that `items` show. A
+ * compaction's preserved messages follow its summary in the conversation but
+ * precede it in the transcript, so the first item need not be the oldest. */
+function oldestSourceOffset(items, sourceOffsets) {
+	let oldest;
+	for (const item of items) {
+		const offset = sourceOffsets.get(sourceOf(item));
+		if (Number.isSafeInteger(offset) && (oldest === undefined || offset < oldest)) {
+			oldest = offset;
+		}
+	}
+	return oldest;
+}
+
 /** The newest items that fit one snapshot, whole source messages at a time,
- * behind a history boundary when anything older is left out. */
-function newestHistoryWindow(
-	items,
-	omittedMessages,
-	precededByOmittedHistory,
-	sourceOffsets,
-) {
+ * behind a history boundary when anything older is left out, or when the
+ * conversation starts at a compaction with transcript records before it. */
+function newestHistoryWindow(items, omittedMessages, precededBy, sourceOffsets) {
 	// The byte bound covers the encoded array: brackets and separators too.
 	let bytes = 1 + items.reduce((total, item) => total + jsonBytes(item) + 1, 0);
 	let start = 0;
 	let omitted = omittedMessages;
-	const windowed = () => precededByOmittedHistory || omitted > 0;
+	const windowed = () => precededBy === "window" || omitted > 0;
+	const marked = () => windowed() || precededBy === "compaction";
 	const fits = () => {
-		const boundary = windowed() ? 1 : 0;
+		const boundary = marked() ? 1 : 0;
 		return (
 			items.length - start + boundary <= MAX_HISTORY_ITEMS &&
 			bytes + boundary * (HISTORY_BOUNDARY_BYTES + 1) <= MAX_HISTORY_BYTES
@@ -188,11 +217,17 @@ function newestHistoryWindow(
 		omitted += 1;
 	}
 	const kept = items.slice(start);
-	if (!windowed()) return kept;
-	const windowStart =
-		kept.length > 0 ? sourceOffsets.get(sourceOf(kept[0])) : undefined;
+	if (!marked()) return kept;
+	const windowStart = oldestSourceOffset(kept, sourceOffsets);
+	// A compaction at the transcript's start leaves nothing to page in.
+	if (!windowed() && (windowStart ?? 0) <= 0) return kept;
 	return [
-		historyBoundary(omitted, windowStart, kept[0]?.createdAtMs ?? 0),
+		historyBoundary(
+			windowed() ? "window" : "compaction",
+			omitted,
+			windowStart,
+			kept[0]?.createdAtMs ?? 0,
+		),
 		...kept,
 	];
 }
@@ -204,14 +239,16 @@ function contentBlocks(message) {
 
 /** Normalize the pinned SDK's provider-owned history into bounded canonical bodies.
  * Every source block is represented either by a visible body or durable evidence.
- * History past the bounds keeps its newest window behind a history boundary;
- * `precededByOmittedHistory` says the messages themselves are such a window,
- * and `sourceOffsets` (message uuid → byte offset) places it in the transcript. */
+ * History past the bounds keeps its newest window behind a history boundary.
+ * `precededBy` says what comes before the messages themselves: `"window"` when
+ * they are such a window, `"compaction"` when they start at the provider's
+ * compaction, or null. `sourceOffsets` (message uuid → byte offset) places the
+ * boundary in the transcript. */
 export function normalizeClaudeHistoryMessages(
 	messages,
 	{ cwd, providerSessionId },
 	timestamps = new Map(),
-	{ precededByOmittedHistory = false, sourceOffsets = new Map() } = {},
+	{ precededBy = null, sourceOffsets = new Map() } = {},
 ) {
 	if (!Array.isArray(messages)) return incomplete("history_unavailable");
 	if (typeof cwd !== "string" || !path.isAbsolute(cwd) || cwd.includes("\0")) {
@@ -352,12 +389,7 @@ export function normalizeClaudeHistoryMessages(
 
 	return Object.freeze({
 		items: Object.freeze(
-			newestHistoryWindow(
-				items,
-				omittedMessages,
-				precededByOmittedHistory,
-				sourceOffsets,
-			),
+			newestHistoryWindow(items, omittedMessages, precededBy, sourceOffsets),
 		),
 		status: "complete",
 	});
@@ -488,8 +520,10 @@ function readOnlySessionStore(
 				sourceState.windowed = start > 0;
 				const parents = new Map();
 				const offsets = new Map();
+				const compactions = new Set();
 				sourceState.parents = parents;
 				sourceState.offsets = offsets;
+				sourceState.compactions = compactions;
 				let entries = [];
 				const keepNewestEntries = () => {
 					const dropped = entries.length - MAX_STORE_ENTRIES;
@@ -497,6 +531,7 @@ function readOnlySessionStore(
 					for (const entry of entries.slice(0, dropped)) {
 						parents.delete(entry.uuid);
 						offsets.delete(entry.uuid);
+						compactions.delete(entry.uuid);
 					}
 					entries = entries.slice(dropped);
 					sourceState.windowed = true;
@@ -536,6 +571,14 @@ function readOnlySessionStore(
 						entry.uuid,
 						typeof entry.parentUuid === "string" ? entry.parentUuid : null,
 					);
+					// A compaction cuts the parent link and names the record it
+					// summarizes instead.
+					if (
+						typeof entry.parentUuid !== "string" &&
+						typeof entry.logicalParentUuid === "string"
+					) {
+						compactions.add(entry.uuid);
+					}
 					offsets.set(entry.uuid, offset);
 					// Trim in batches so a long transcript stays linear.
 					if (entries.length >= 2 * MAX_STORE_ENTRIES) keepNewestEntries();
@@ -558,16 +601,21 @@ function readOnlySessionStore(
 	});
 }
 
-/** Whether the conversation the SDK chained from a windowed read continues
- * before the window: its oldest message's parent links leave the entries read
- * instead of reaching the conversation's start. */
-function chainLeavesWindow(messages, parents) {
+/** What the conversation the SDK chained continues from before its oldest
+ * message: `"window"` when its parent links leave the entries read (only a
+ * windowed read leaves any out), `"compaction"` when they end at the
+ * provider's compaction, whose summary stands in for the records before it,
+ * or null when they reach the conversation's start. */
+function chainContinuation(messages, { compactions, parents, windowed }) {
 	let uuid = messages[0]?.uuid;
+	let oldest = uuid;
 	for (let steps = 0; typeof uuid === "string" && steps <= parents.size; steps += 1) {
-		if (!parents.has(uuid)) return true;
+		if (!parents.has(uuid)) return windowed ? "window" : null;
+		oldest = uuid;
 		uuid = parents.get(uuid);
 	}
-	return uuid !== null;
+	if (uuid !== null) return windowed ? "window" : null;
+	return compactions.has(oldest) ? "compaction" : null;
 }
 
 /** Read one exact provider-owned transcript through the pinned SDK without
@@ -589,6 +637,7 @@ export function createClaudeAgentSdkHistoryReader({
 		}
 		const timestamps = new Map();
 		const sourceState = {
+			compactions: new Set(),
 			offsets: new Map(),
 			parents: new Map(),
 			present: false,
@@ -606,8 +655,7 @@ export function createClaudeAgentSdkHistoryReader({
 			});
 			if (!sourceState.present) return incomplete("history_unavailable");
 			return normalizeClaudeHistoryMessages(messages, binding, timestamps, {
-				precededByOmittedHistory:
-					sourceState.windowed && chainLeavesWindow(messages, sourceState.parents),
+				precededBy: chainContinuation(messages, sourceState),
 				sourceOffsets: sourceState.offsets,
 			});
 		} catch {
