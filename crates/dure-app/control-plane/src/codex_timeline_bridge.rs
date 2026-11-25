@@ -799,7 +799,7 @@ mod tests {
             })
         }));
         bridge
-            .reconcile_history(&json!({
+            .reconcile_history(json!({
                 "thread": {
                     "id": "thread-history",
                     "turns": [{
@@ -1000,7 +1000,7 @@ mod tests {
         // whole.
         let newest_page = encoded_len(&history_turn(5)) + encoded_len(&history_turn(4));
         let window = bridge
-            .reconcile_history_within(&paged_resume(), newest_page + 1)
+            .reconcile_history_within(paged_resume(), newest_page + 1)
             .await
             .unwrap();
 
@@ -1045,7 +1045,7 @@ mod tests {
         let (server, mut requests) = paged_thread_server(&socket_path, THREAD_PAGES);
         let (bridge, incoming) = paged_bridge(&socket_path, &binding, &service).await;
 
-        bridge.reconcile_history(&paged_resume()).await.unwrap();
+        bridge.reconcile_history(paged_resume()).await.unwrap();
 
         assert_eq!(
             prompts_and_boundaries(&service, &binding).await,
@@ -1067,7 +1067,7 @@ mod tests {
         let (bridge, incoming) = paged_bridge(&socket_path, &binding, &service).await;
 
         let window = bridge
-            .reconcile_history(&json!({
+            .reconcile_history(json!({
                 "thread": { "id": "thread-history", "turns": [] },
                 "turnsBackwardsCursor": null,
             }))
@@ -1094,7 +1094,7 @@ mod tests {
         // An earlier attach seeded the thread's first three turns from a
         // server that answered the whole thread.
         bridge
-            .reconcile_history(&json!({
+            .reconcile_history(json!({
                 "thread": {
                     "id": "thread-history",
                     "turns": [history_turn(1), history_turn(2), history_turn(3)],
@@ -1103,7 +1103,7 @@ mod tests {
             .await
             .unwrap();
 
-        bridge.reconcile_history(&paged_resume()).await.unwrap();
+        bridge.reconcile_history(paged_resume()).await.unwrap();
 
         // The turns since then follow once, with no boundary between.
         assert_eq!(

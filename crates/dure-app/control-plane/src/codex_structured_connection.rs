@@ -151,7 +151,7 @@ pub(crate) async fn attach<S: AgentTimelineStore + 'static>(
         .map_err(|_| unavailable())?,
     );
     let history = bridge
-        .reconcile_history(&response)
+        .reconcile_history(response)
         .await
         .map_err(|_| unavailable())?;
     bridge

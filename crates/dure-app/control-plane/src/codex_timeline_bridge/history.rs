@@ -31,7 +31,7 @@ where
     /// refresh of one) and returns the turns it seeded.
     pub(crate) async fn reconcile_history(
         &self,
-        response: &Value,
+        response: Value,
     ) -> Result<CodexHistoryWindow, AgentProviderCommandErrorV1> {
         self.reconcile_history_within(response, MAX_HISTORY_WINDOW_BYTES)
             .await
@@ -39,10 +39,16 @@ where
 
     pub(super) async fn reconcile_history_within(
         &self,
-        response: &Value,
+        mut response: Value,
         max_window_bytes: usize,
     ) -> Result<CodexHistoryWindow, AgentProviderCommandErrorV1> {
         let mut projection = self.read_timeline_projection().await?;
+        let paged = thread_turns_paged(&response);
+        // The reply's own turns move into the window rather than being copied.
+        let whole_thread = match response.pointer_mut("/thread/turns").map(Value::take) {
+            Some(Value::Array(turns)) => turns,
+            _ => Vec::new(),
+        };
         let thread = response.get("thread").unwrap_or(&Value::Null);
         if let Some(title) = thread.get("name").and_then(Value::as_str).map(str::trim)
             && projection.adopt_conversation_title(title)
@@ -53,9 +59,15 @@ where
             self.commit("thread/history/title", thread, vec![mutation])
                 .await?;
         }
-        let window = self
-            .history_window(response, &projection, max_window_bytes)
-            .await?;
+        let window = if paged {
+            self.paged_history_window(&projection, max_window_bytes)
+                .await?
+        } else {
+            CodexHistoryWindow {
+                turns: whole_thread,
+                omits_older: false,
+            }
+        };
         if window.omits_older
             && let Some(oldest) = window.turns.first()
         {
@@ -188,33 +200,22 @@ where
         Ok(window)
     }
 
-    /// The newest turns of the thread, paged back from its newest turn until
-    /// the thread's start, a turn the timeline already holds, or
-    /// `max_window_bytes` of turn data. Whole pages are kept, so one page past
-    /// the bound is the most a window holds beyond it.
-    async fn history_window(
+    /// The newest turns of a thread whose reply left them to pages, paged
+    /// back from its newest turn until the thread's start, a turn the
+    /// timeline already holds, or `max_window_bytes` of turn data. Whole pages
+    /// are kept, so one page past the bound is the most a window holds beyond
+    /// it.
+    async fn paged_history_window(
         &self,
-        response: &Value,
         projection: &CodexTimelineProjection,
         max_window_bytes: usize,
     ) -> Result<CodexHistoryWindow, AgentProviderCommandErrorV1> {
-        if !thread_turns_paged(response) {
-            let turns = response
-                .pointer("/thread/turns")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            return Ok(CodexHistoryWindow {
-                turns,
-                omits_older: false,
-            });
-        }
         let mut newest_first = Vec::new();
         let mut window_bytes = 0_usize;
         let mut cursor = None::<String>;
         let mut reached_held_history = false;
         loop {
-            let page = self
+            let mut page = self
                 .client
                 .request(
                     "thread/turns/list",
@@ -222,14 +223,17 @@ where
                 )
                 .await
                 .map_err(provider_client_error)?;
-            let turns = page.get("data").and_then(Value::as_array).ok_or_else(|| {
-                AgentProviderCommandErrorV1::new("event_invalid", "missing turns page")
-            })?;
-            for turn in turns {
+            let Some(Value::Array(turns)) = page.get_mut("data").map(Value::take) else {
+                return Err(AgentProviderCommandErrorV1::new(
+                    "event_invalid",
+                    "missing turns page",
+                ));
+            };
+            for turn in &turns {
                 reached_held_history |= projection.holds_turn(turn)?;
                 window_bytes = window_bytes.saturating_add(encoded_len(turn));
             }
-            newest_first.extend(turns.iter().cloned());
+            newest_first.extend(turns);
             cursor = page
                 .get("nextCursor")
                 .and_then(Value::as_str)
