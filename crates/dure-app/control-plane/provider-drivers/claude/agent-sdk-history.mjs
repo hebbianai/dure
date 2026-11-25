@@ -282,11 +282,13 @@ export function normalizeClaudeHistoryMessages(
 
 			if (source.type === "user" && plainObject(source.message)) {
 				if (source.message.role !== "user") return incomplete("history_payload_invalid");
+				// A user message's provider id is its uuid: the one Dure sent a
+				// Chat prompt with, so the timeline can tell the prompt it holds.
 				if (typeof source.message.content === "string") {
 					const markdown = source.message.content;
 					push(
 						`${sourceId}:message:0`,
-						null,
+						sourceId,
 						markdown.length > 0
 							? { markdown, role: "user", type: "message" }
 							: evidence("user", { content: "" }),
@@ -296,13 +298,13 @@ export function normalizeClaudeHistoryMessages(
 				const blocks = contentBlocks(source.message);
 				if (blocks === null) return incomplete("history_payload_invalid");
 				if (blocks.length === 0) {
-					push(`${sourceId}:empty:0`, null, evidence("user", { content: [] }));
+					push(`${sourceId}:empty:0`, sourceId, evidence("user", { content: [] }));
 				}
 				for (let index = 0; index < blocks.length; index += 1) {
 					const block = jsonValue(blocks[index]);
 					if (!plainObject(block)) return incomplete("history_payload_invalid");
 					if (block.type === "text" && typeof block.text === "string" && block.text.length > 0) {
-						push(`${sourceId}:message:${index}`, null, {
+						push(`${sourceId}:message:${index}`, sourceId, {
 							markdown: block.text,
 							role: "user",
 							type: "message",
@@ -324,7 +326,7 @@ export function normalizeClaudeHistoryMessages(
 							continue;
 						}
 					}
-					push(`${sourceId}:evidence:${index}`, null, evidence("user", block));
+					push(`${sourceId}:evidence:${index}`, sourceId, evidence("user", block));
 				}
 				continue;
 			}
