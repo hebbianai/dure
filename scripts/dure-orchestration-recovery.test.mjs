@@ -94,6 +94,42 @@ it.each(["orchestration_context_get_current", "orchestration_events_read"])(
   },
 );
 
+it.each(["orchestration_context_get_current", "orchestration_events_read"])(
+  "tells an agent on its Chat runtime to report in the conversation instead of retrying (%s)",
+  async (tool) => {
+    const unassigned = new BackendTransportError("backend_transport_remote_error", {
+      details: { code: "orchestration_generation_conflict", disposition: "unassigned" },
+    });
+    const chat = new BackendTransportError("backend_transport_remote_error", {
+      details: {
+        code: "orchestration_interaction_profile_unsupported",
+        reasonCode: "structured_protocol",
+        disposition: "terminal",
+      },
+    });
+    const request = vi.fn(async (_endpoint, operation) => {
+      throw operation.method === "dispatch.context.get" ? unassigned : chat;
+    });
+    const enrollableReceipt = {
+      ...integrationReceipt,
+      capabilities: ["event_cursor_v1", "idempotent_delivery_receipt_v1"],
+    };
+    const call = handleMcpRequest({ jsonrpc: "2.0", method: "tools/call",
+      params: { name: tool, arguments: {} },
+    }, environment, { request, integrationReceipt: enrollableReceipt });
+    await expect(call).rejects.toMatchObject({
+      message: expect.stringMatching(new RegExp(
+        "^orchestration_interaction_profile_unsupported: structured_protocol \\(terminal\\): " +
+        "This agent runs on its Chat runtime.*report your result in this conversation.*" +
+        "create another Run; retrying cannot succeed\\.$")),
+      cause: chat,
+    });
+    await expect(call).rejects.not.toMatchObject({ message: expect.stringMatching(/dure runs resume/) });
+    expect(request.mock.calls.map(([, operation]) => operation.method))
+      .toEqual(["dispatch.context.get", "run.create"]);
+  },
+);
+
 it("explains a destination Session without an inbox instead of a bare generation conflict", async () => {
   const failure = new BackendTransportError("backend_transport_remote_error", {
     details: { code: "orchestration_generation_conflict", reasonCode: "session_dispatch_unassigned", disposition: "terminal" },

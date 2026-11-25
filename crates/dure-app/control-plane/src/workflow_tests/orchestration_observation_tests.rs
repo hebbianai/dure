@@ -222,12 +222,9 @@ async fn orchestration_observation_stale_session_remains_fenced() {
     assert_context_observation(ObservationFault::StaleSession).await;
 }
 
-/// Hmux observes this Session generation as live, but no Agent binds it as
-/// its current Session: for example the new Session of a restart whose
-/// binding is not published yet. Resending the same enrollment cannot help.
-#[tokio::test]
-async fn enrolling_a_live_session_no_agent_binds_is_stale_not_retryable() {
-    let (_root, state, launcher, _) = fixture_with_delivery(Vec::new(), Vec::new()).await;
+/// The enrollment body for a Session that Hmux observes live and no Agent
+/// binds as its current Session.
+async fn live_unbound_session(state: &ServiceState) -> (Value, WorkflowSessionGenerationV1) {
     let mut body = existing_session_run_body();
     body["session"]["sessionId"] = json!("unbound-session");
     body["session"]["runnerInstance"] = json!("unbound-instance");
@@ -256,9 +253,19 @@ async fn enrolling_a_live_session_no_agent_binds_is_stale_not_retryable() {
         .unwrap(),
     )
     .unwrap();
-    verify_exact_orchestration_session(&state, &session)
+    verify_exact_orchestration_session(state, &session)
         .await
         .unwrap();
+    (body, session)
+}
+
+/// Hmux observes this Session generation as live, but no Agent binds it as
+/// its current Session: for example the new Session of a restart whose
+/// binding is not published yet. Resending the same enrollment cannot help.
+#[tokio::test]
+async fn enrolling_a_live_session_no_agent_binds_is_stale_not_retryable() {
+    let (_root, state, launcher, _) = fixture_with_delivery(Vec::new(), Vec::new()).await;
+    let (body, session) = live_unbound_session(&state).await;
 
     let unassigned = dispatch(
         &state,
@@ -299,6 +306,141 @@ async fn enrolling_a_live_session_no_agent_binds_is_stale_not_retryable() {
         );
         let wire = backend_error_body(error);
         assert_eq!(wire["details"]["disposition"], "stale_generation");
+    }
+    assert!(launcher.requests().is_empty());
+    assert!(
+        state
+            .store
+            .inspect_orchestration_dispatch_session(&session)
+            .await
+            .unwrap()
+            .target
+            .is_none()
+    );
+}
+
+/// A Chat runtime that hosts exactly one Hmux Session generation.
+struct HostingChatRuntime {
+    session: WorkflowSessionGenerationV1,
+}
+
+impl structured_provider_runtime::StructuredProviderRuntime for HostingChatRuntime {
+    fn open(
+        &self,
+        _request: structured_provider_runtime::StructuredProviderOpenRequestV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'_, AgentInteractionBindingV1>
+    {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn attach_existing<'a>(
+        &'a self,
+        _selection: &'a AgentRuntimeSelectionV1,
+        _binding: &'a AgentInteractionBindingV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'a, AgentInteractionBindingV1>
+    {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn open_replacement<'a>(
+        &'a self,
+        _request: structured_provider_runtime::StructuredProviderOpenRequestV1,
+        _transition: &'a dure_app::AgentRuntimeTransitionRecordV1,
+        _provider_state_environment: hmux_client::ProviderStateEnvironment,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'a, AgentInteractionBindingV1>
+    {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn stop_replacement_source<'a>(
+        &'a self,
+        _transition: &'a dure_app::AgentRuntimeTransitionRecordV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'a, ()> {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn retire_replacement_source<'a>(
+        &'a self,
+        _transition: &'a dure_app::AgentRuntimeTransitionRecordV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<
+        'a,
+        dure_app::AgentRuntimeReplacementAuthorityV1,
+    > {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn stop_current<'a>(
+        &'a self,
+        _binding: &'a AgentInteractionBindingV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'a, ()> {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn hosts_session<'a>(
+        &'a self,
+        session: &'a WorkflowSessionGenerationV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'a, bool> {
+        Box::pin(async move { Ok(*session == self.session) })
+    }
+}
+
+/// A Chat (structured) runtime runs its provider inside an Hmux Session that no
+/// Agent binds as a terminal Session, so its orchestration tools cannot
+/// enroll. The refusal names the Chat runtime and is terminal: resending, a
+/// restart or another Run cannot give a Chat runtime an orchestration inbox.
+#[tokio::test]
+async fn enrolling_a_chat_runtime_session_is_refused_as_terminal() {
+    let (_root, mut state, launcher, _) = fixture_with_delivery(Vec::new(), Vec::new()).await;
+    let (body, session) = live_unbound_session(&state).await;
+    let hosting = |hosted: WorkflowSessionGenerationV1| {
+        let mut runtimes =
+            structured_provider_runtime::StructuredProviderRuntimeRegistry::default();
+        runtimes
+            .register(
+                hosted.provider_id.clone(),
+                Arc::new(HostingChatRuntime { session: hosted }),
+            )
+            .unwrap();
+        Arc::new(runtimes)
+    };
+
+    // A Chat runtime that hosts another generation leaves this Session's
+    // missing-binding refusal unchanged.
+    let mut elsewhere = session.clone();
+    elsewhere.runner_instance = "elsewhere-instance".into();
+    state.structured_runtimes = hosting(elsewhere);
+    let error = dispatch(
+        &state,
+        &orchestration_backend_request(&state, "chat-enroll-elsewhere", "run.create", body.clone()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        error.details.as_ref().unwrap()["reasonCode"],
+        "session_agent_binding_missing"
+    );
+
+    state.structured_runtimes = hosting(session.clone());
+    for attempt in 0..2 {
+        let error = dispatch(
+            &state,
+            &orchestration_backend_request(
+                &state,
+                &format!("chat-enroll-{attempt}"),
+                "run.create",
+                body.clone(),
+            ),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "orchestration_interaction_profile_unsupported");
+        assert_eq!(
+            error.details.as_ref().unwrap()["reasonCode"],
+            "structured_protocol"
+        );
+        assert_eq!(error.disposition, BackendFailureDispositionV1::Terminal);
+        let wire = backend_error_body(error);
+        assert_eq!(wire["details"]["disposition"], "terminal");
     }
     assert!(launcher.requests().is_empty());
     assert!(

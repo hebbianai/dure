@@ -3026,11 +3026,14 @@ async fn create_existing_session_run(
     }
     let session = neutral_worker_session(&body.session)?;
     verify_exact_orchestration_session(state, &body.session).await?;
-    let run_authority = state
+    let run_authority = match state
         .store
         .orchestration_run_authority_for_exact_session(&body.session)
         .await
-        .map_err(run_authority_error)?;
+    {
+        Ok(run_authority) => run_authority,
+        Err(error) => return Err(run_authority_error(state, &body.session, error).await),
+    };
     if run_authority.runtime_ref != body.runtime_ref {
         return Err("orchestration_generation_conflict".into());
     }
@@ -3061,13 +3064,33 @@ async fn create_existing_session_run(
         .map_err(orchestration_service_error)
 }
 
+/// Refusal for a Session whose Agent runs on a Chat runtime, which has no
+/// orchestration inbox.
+const ORCHESTRATION_INTERACTION_PROFILE_UNSUPPORTED: &str =
+    "orchestration_interaction_profile_unsupported";
+
 /// Hmux observed this Session generation as live, but no Agent binds it as
-/// its current Session: a restart or account switch has not published its
+/// its current Session. When a Chat runtime runs there, its provider reached
+/// the orchestration tools through that runtime's Session: orchestration
+/// enrolls only a native CLI Session, so the refusal is terminal and names the
+/// Chat runtime. Otherwise a restart or account switch has not published its
 /// binding yet, or the provider was started outside a Dure Agent. Resending
 /// the same enrollment cannot succeed until that binding changes.
-fn run_authority_error(error: DomainStoreErrorV1) -> BackendDispatchError {
+async fn run_authority_error(
+    state: &ServiceState,
+    session: &WorkflowSessionGenerationV1,
+    error: DomainStoreErrorV1,
+) -> BackendDispatchError {
     if !matches!(error, DomainStoreErrorV1::IdentityConflict { .. }) {
         return orchestration_store_error(error);
+    }
+    if state.structured_runtimes.hosts_session(session).await {
+        return BackendDispatchError {
+            code: ORCHESTRATION_INTERACTION_PROFILE_UNSUPPORTED.into(),
+            message: "orchestration reaches an agent that runs a native CLI; this agent runs on its Chat runtime".into(),
+            details: Some(json!({ "reasonCode": "structured_protocol" })),
+            disposition: BackendFailureDispositionV1::Terminal,
+        };
     }
     BackendDispatchError {
         code: "orchestration_generation_conflict".into(),
