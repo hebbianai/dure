@@ -20,6 +20,11 @@ pub const MAX_AGENT_TIMELINE_TEXT_BYTES_V1: usize = 256 * 1024;
 pub const MAX_AGENT_TIMELINE_JSON_BYTES_V1: usize = 128 * 1024;
 pub const MAX_AGENT_PENDING_REQUESTS_V1: usize = 32;
 pub const MAX_AGENT_HISTORY_ITEMS_V1: usize = 2_048;
+/// The history boundary reason that opens a provider history at the
+/// provider's compaction. The provider resumes from its summary, which stands
+/// in for the transcript records before the boundary, so the history it opens
+/// is complete; those records stay readable in the provider's transcript.
+pub const PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1: &str = "provider_conversation_compacted";
 
 macro_rules! timeline_id {
     ($name:ident) => {
@@ -671,6 +676,8 @@ pub struct AgentTimelineCommitReceiptV1 {
 
 /// One provider-owned history snapshot for the exact current binding: the
 /// whole bounded history, or its newest window opened by a history boundary.
+/// A whole history that starts at the provider's compaction opens with its
+/// compaction boundary.
 /// The store is the sole durable sequencer: adapters collect the full bounded
 /// snapshot before presenting it here and never advance a live provider cursor.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -684,11 +691,13 @@ pub struct AgentHistorySnapshotV1 {
 
 impl AgentHistorySnapshotV1 {
     /// Whether this is the newest window of a longer history: its first item
-    /// is the boundary that marks where the shown history starts.
+    /// is the boundary that marks where the shown history starts. A
+    /// compaction boundary omits nothing the provider resumes from.
     pub fn omits_older_history(&self) -> bool {
         matches!(
             self.items.first().map(|item| &item.body),
-            Some(AgentTimelineItemBodyV1::HistoryBoundary { .. })
+            Some(AgentTimelineItemBodyV1::HistoryBoundary { reason, .. })
+                if reason != PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1
         )
     }
 

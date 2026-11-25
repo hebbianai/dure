@@ -26,12 +26,19 @@ export interface ProviderHistoryPages {
 	readonly before: number | null;
 }
 
-/** The boundary the Chat runtime seeds before the newest window of a longer
- * provider history; it names the transcript offset where the window starts. */
+/** The boundaries the Chat runtime seeds where the transcript goes on before
+ * its history: before the newest window of a longer history, or at the
+ * provider's compaction, whose summary stands in for the records before it.
+ * Each names the transcript offset of the oldest record the history shows. */
+const PLACED_HISTORY_BOUNDARIES: ReadonlySet<string> = new Set([
+	"provider_transcript_window",
+	"provider_conversation_compacted",
+]);
+
 function seededBoundaryCursor(row: AgentTimelineRowV1): number | undefined {
 	const body = row.item.body;
 	return body.type === "history_boundary" &&
-		body.reason === "provider_transcript_window" &&
+		PLACED_HISTORY_BOUNDARIES.has(body.reason) &&
 		validCursor(body.droppedThroughProviderSequence)
 		? body.droppedThroughProviderSequence
 		: undefined;

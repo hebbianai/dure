@@ -528,3 +528,141 @@ test("a transcript past the store window reads its newest part and marks only a 
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+/** A conversation the provider compacted: two turns, a compaction that keeps
+ * the last reply verbatim (`preserved`), its summary and one turn after it,
+ * laid out as the provider writes them. */
+function compactedTranscript({ preserved }) {
+	const uuid = historyUuid;
+	const message = (index, role, content, parentUuid, extra = {}) => ({
+		...sdkMessage({
+			content,
+			parentUuid,
+			role,
+			sessionId: HISTORY_SESSION_ID,
+			timestamp: "2026-01-02T03:04:05.000Z",
+			uuid: uuid(index),
+		}),
+		...extra,
+	});
+	const records = [
+		message(0, "user", "first prompt", null),
+		message(1, "assistant", [{ text: "first answer", type: "text" }], uuid(0)),
+		message(2, "user", "second prompt", uuid(1)),
+		message(3, "assistant", [{ text: "second answer", type: "text" }], uuid(2)),
+		{ type: "last-prompt" },
+		{
+			compactMetadata: {
+				trigger: "auto",
+				...(preserved
+					? { preservedMessages: { anchorUuid: uuid(5), uuids: [uuid(3)] } }
+					: {}),
+			},
+			content: "Conversation compacted",
+			logicalParentUuid: uuid(3),
+			parentUuid: null,
+			sessionId: HISTORY_SESSION_ID,
+			subtype: "compact_boundary",
+			timestamp: "2026-01-02T03:04:05.000Z",
+			type: "system",
+			uuid: uuid(4),
+		},
+		message(5, "user", "This session is being continued from a previous conversation.", uuid(4), {
+			isCompactSummary: true,
+		}),
+		message(6, "user", "third prompt", uuid(5)),
+		message(7, "assistant", [{ text: "third answer", type: "text" }], uuid(6)),
+	];
+	const lines = records.map((record) => `${JSON.stringify(record)}\n`);
+	const offset = (index) => Buffer.byteLength(lines.slice(0, index).join(""));
+	return { offset, source: lines.join("") };
+}
+
+test("a compacted conversation opens Chat at its compaction, with the history before it still in reach", async () => {
+	const { getSessionMessages } = await loadPinnedClaudeSdkRuntime();
+	const root = await mkdtemp(path.join(os.tmpdir(), "dure-history-compacted-"));
+	const cwd = "/workspace/compacted-history";
+	const file = path.join(root, "projects", "-workspace-compacted-history", `${HISTORY_SESSION_ID}.jsonl`);
+	const read = () =>
+		createClaudeAgentSdkHistoryReader({ getSessionMessages })({
+			cwd,
+			env: { CLAUDE_CONFIG_DIR: root },
+			providerSessionId: HISTORY_SESSION_ID,
+		});
+	try {
+		await mkdir(path.dirname(file), { recursive: true });
+
+		// The provider resumes from its summary, so that is where the seeded
+		// history starts; the boundary places it, so a reader pages the turns
+		// before the compaction in, and the history it opens is complete.
+		const plain = compactedTranscript({ preserved: false });
+		await writeFile(file, plain.source);
+		const summarized = await read();
+		assert.equal(summarized.status, "complete", summarized.reason);
+		assert.deepEqual(summarized.items[0].body, {
+			dropped_through_provider_sequence: plain.offset(6),
+			reason: "provider_conversation_compacted",
+			requested_after_provider_sequence: 0,
+			type: "history_boundary",
+		});
+		assert.deepEqual(
+			summarized.items.slice(1).map((item) => item.body.markdown),
+			[
+				"This session is being continued from a previous conversation.",
+				"third prompt",
+				"third answer",
+			],
+		);
+
+		// A reply the compaction kept follows the summary in the conversation
+		// but precedes it in the transcript. The boundary sits before that
+		// reply, so no older page shows it again.
+		const kept = compactedTranscript({ preserved: true });
+		await writeFile(file, kept.source);
+		const preserved = await read();
+		assert.equal(preserved.status, "complete", preserved.reason);
+		assert.deepEqual(preserved.items[0].body, {
+			dropped_through_provider_sequence: kept.offset(3),
+			reason: "provider_conversation_compacted",
+			requested_after_provider_sequence: 0,
+			type: "history_boundary",
+		});
+		assert.deepEqual(
+			preserved.items.slice(1).map((item) => item.body.markdown),
+			[
+				"This session is being continued from a previous conversation.",
+				"second answer",
+				"third prompt",
+				"third answer",
+			],
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("a window of a compacted conversation starts at the oldest record it shows", () => {
+	// Past the message bound, the window keeps a reply the compaction
+	// preserved, which the transcript recorded before the messages around it.
+	const total = 2_050;
+	const messages = Array.from({ length: total }, (_, index) =>
+		sessionMessage(index, "user", `message ${index}`),
+	);
+	const offsets = new Map(messages.map((message, index) => [message.uuid, 1_000 + index * 10]));
+	offsets.set(messages[10].uuid, 500);
+	const history = normalizeClaudeHistoryMessages(
+		messages,
+		{ cwd: "/workspace/history", providerSessionId: HISTORY_SESSION_ID },
+		new Map(),
+		{ precededBy: "compaction", sourceOffsets: offsets },
+	);
+
+	assert.equal(history.status, "complete", history.reason);
+	assert.deepEqual(history.items[0].body, {
+		dropped_through_provider_sequence: 500,
+		reason: "provider_transcript_window",
+		requested_after_provider_sequence: 0,
+		type: "history_boundary",
+	});
+	assert.equal(history.items[1].body.markdown, `message ${total - history.items.length + 1}`);
+});

@@ -12,8 +12,8 @@ use dure_app::{
     AgentTimelineStore, AgentTimelineStreamIdV1, AgentTimelineTextFragmentV1,
     AgentTimelineTextKindV1, AgentTurnEffectStateV1, AgentTurnIdV1, DomainStore,
     DomainStoreErrorV1, MAX_AGENT_PENDING_REQUESTS_V1, MAX_AGENT_TIMELINE_LIVE_TEXT_HEADS_V1,
-    ProjectIdV1, ProjectRecordV1, ProviderIdV1, RuntimeKindIdV1, SessionBindingRecordV1,
-    WorkspaceIdV1, WorkspaceRecordV1,
+    PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1, ProjectIdV1, ProjectRecordV1, ProviderIdV1,
+    RuntimeKindIdV1, SessionBindingRecordV1, WorkspaceIdV1, WorkspaceRecordV1,
 };
 use serde_json::json;
 use sqlx::{Connection, SqliteConnection};
@@ -940,16 +940,16 @@ async fn empty_exact_history_completes_without_rows_or_live_cursor_movement() {
     );
 }
 
-fn history_boundary_item(omitted_messages: i64) -> AgentTimelineItemDraftV1 {
+fn history_boundary_item(reason: &str, dropped_through: i64) -> AgentTimelineItemDraftV1 {
     AgentTimelineItemDraftV1 {
         item_id: AgentTimelineItemIdV1::new("history-boundary").unwrap(),
         turn_id: None,
         client_message_id: None,
         provider_message_id: None,
         body: AgentTimelineItemBodyV1::HistoryBoundary {
-            reason: "provider_history_truncated".into(),
+            reason: reason.into(),
             requested_after_provider_sequence: 0,
-            dropped_through_provider_sequence: omitted_messages,
+            dropped_through_provider_sequence: dropped_through,
         },
         created_at_ms: 0,
     }
@@ -974,7 +974,7 @@ async fn windowed_history_seeds_behind_its_boundary_as_a_known_gap() {
         schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
         binding: current,
         items: vec![
-            history_boundary_item(40),
+            history_boundary_item("provider_history_truncated", 40),
             history_item("history-user", dure_app::AgentTimelineMessageRoleV1::User),
             history_item(
                 "history-assistant",
@@ -1022,6 +1022,68 @@ async fn windowed_history_seeds_behind_its_boundary_as_a_known_gap() {
     );
 }
 
+/// A conversation the provider compacted seeds from its summary behind the
+/// compaction boundary, which places the transcript records before it. The
+/// provider resumes from exactly these rows, so the history is complete:
+/// automatic turns, goals and provider recovery stay available.
+#[tokio::test]
+async fn compacted_history_seeds_behind_its_compaction_boundary_as_complete() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut binding = interaction_binding();
+    binding.history_complete = false;
+    let store = provision_with_binding(&temp_dir.path().join("domain.sqlite"), binding).await;
+    let interaction_session_id = AgentInteractionSessionIdV1::new("interaction-1").unwrap();
+    let current = store
+        .agent_interaction(&interaction_session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let snapshot = AgentHistorySnapshotV1 {
+        schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+        binding: current,
+        items: vec![
+            history_boundary_item(PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1, 4_096),
+            history_item(
+                "history-summary",
+                dure_app::AgentTimelineMessageRoleV1::User,
+            ),
+            history_item(
+                "history-assistant",
+                dure_app::AgentTimelineMessageRoleV1::Assistant,
+            ),
+        ],
+        observed_at_ms: 120,
+    };
+    assert!(!snapshot.omits_older_history());
+
+    let receipt = store.reconcile_agent_history(&snapshot).await.unwrap();
+    assert!(receipt.binding.history_complete);
+    assert!(receipt.newly_completed);
+    assert!(receipt.timeline_changed);
+    assert_eq!(
+        store
+            .agent_history_hydration_authority(&interaction_session_id)
+            .await
+            .unwrap()
+            .disposition,
+        AgentHistoryHydrationDispositionV1::Complete
+    );
+    let replay = store.reconcile_agent_history(&snapshot).await.unwrap();
+    assert!(!replay.timeline_changed);
+
+    let page = tail(&store).await;
+    assert!(page.binding.history_complete);
+    assert_eq!(page.rows.len(), 3, "each history row is seeded once");
+    assert!(matches!(
+        &page.rows[0].item.body,
+        AgentTimelineItemBodyV1::HistoryBoundary {
+            reason,
+            dropped_through_provider_sequence: 4_096,
+            ..
+        } if reason == PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1
+    ));
+}
+
 #[tokio::test]
 async fn a_history_boundary_can_only_open_a_snapshot() {
     let temp_dir = TempDir::new().unwrap();
@@ -1039,7 +1101,7 @@ async fn a_history_boundary_can_only_open_a_snapshot() {
             binding: current,
             items: vec![
                 history_item("history-user", dure_app::AgentTimelineMessageRoleV1::User),
-                history_boundary_item(1),
+                history_boundary_item("provider_history_truncated", 1),
             ],
             observed_at_ms: 120,
         })

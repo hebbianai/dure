@@ -318,6 +318,81 @@ async fn windowed_history_commits_behind_its_boundary_and_is_never_reseeded() {
     );
 }
 
+/// A conversation the provider compacted arrives from its summary behind the
+/// compaction boundary. The provider resumes from exactly these rows, so the
+/// history commits complete, with the boundary placing the transcript records
+/// before it for Chat to page in.
+#[tokio::test]
+async fn compacted_history_commits_complete_behind_its_compaction_boundary() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = fixture_with_history_state(
+        &temp_dir.path().join("domain.sqlite"),
+        Some("session-claude-1"),
+        false,
+    )
+    .await;
+    let transport = FakeTransport::new(
+        Arc::clone(&store),
+        [json!({
+            "events": [],
+            "gap": null,
+            "hasMore": false,
+            "latestSequence": 0,
+            "nextAfterSequence": 0
+        })],
+        [json!({ "observedThroughSequence": 0, "requests": [] })],
+    )
+    .with_history(json!({
+        "status": "complete",
+        "offset": 0,
+        "nextOffset": 2,
+        "hasMore": false,
+        "items": [
+            {
+                "sourceId": "history-boundary",
+                "createdAtMs": 10,
+                "providerMessageId": null,
+                "body": {
+                    "type": "history_boundary",
+                    "reason": "provider_conversation_compacted",
+                    "requested_after_provider_sequence": 0,
+                    "dropped_through_provider_sequence": 4096
+                }
+            },
+            {
+                "sourceId": "history-summary:message:0",
+                "createdAtMs": 10,
+                "providerMessageId": null,
+                "body": {
+                    "type": "message",
+                    "role": "user",
+                    "markdown": "This session is being continued from a previous conversation."
+                }
+            }
+        ]
+    }));
+    let bridge = ClaudeTimelineBridge::new(
+        Arc::new(AgentConversationService::new(Arc::clone(&store))),
+        transport.clone(),
+        AgentInteractionSessionIdV1::new("interaction-claude").unwrap(),
+        identity(),
+    )
+    .unwrap();
+
+    bridge.reconcile().await.unwrap();
+    let page = tail(&store).await;
+    assert!(page.binding.history_complete);
+    assert_eq!(page.rows.len(), 2);
+    assert!(matches!(
+        &page.rows[0].item.body,
+        AgentTimelineItemBodyV1::HistoryBoundary {
+            reason,
+            dropped_through_provider_sequence: 4096,
+            ..
+        } if reason == dure_app::PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1
+    ));
+}
+
 /// The host packs a window up to the snapshot byte bound as it encodes it. A
 /// started tool call arrives without an output field, so a re-encoding that
 /// writes `"output":null` would grow past the bound the host kept.
