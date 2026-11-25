@@ -434,3 +434,137 @@ fn the_whole_small_transcript_has_no_older_cursor_and_a_stale_one_fails() {
     assert_eq!(older.transcript.entries[0].text, "one");
     assert_eq!(older.older_cursor, None);
 }
+
+fn tool_result(call_id: &str, is_error: bool) -> String {
+    format!(
+        "{}\n",
+        serde_json::json!({"type":"user","message":{"content":[
+            {"type":"tool_result","tool_use_id":call_id,"is_error":is_error,"content":"output"}
+        ]}})
+    )
+}
+
+fn states(window: &TranscriptWindow) -> Vec<(String, ProviderToolState)> {
+    window
+        .tools
+        .iter()
+        .map(|call| (call.call_id.clone(), call.state))
+        .collect()
+}
+
+/// Pages back from the newest read with `limits` and returns them oldest
+/// first.
+fn all_pages(path: &Path, limits: Limits) -> Vec<TranscriptWindow> {
+    let mut pages = vec![page(path, None, limits)];
+    while let Some(before) = pages.last().unwrap().older_cursor {
+        pages.push(page(path, Some(before), limits));
+    }
+    pages.reverse();
+    pages
+}
+
+/// A page that ends between a call and its result shows how the call ended:
+/// the result sits in the newer page, which records no call to give it to.
+#[test]
+fn an_older_page_settles_a_call_whose_result_the_newer_page_holds() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    write!(
+        file,
+        "{}{}{}{}{}{}",
+        record("prompt"),
+        assistant_with_call("reading", "call-read"),
+        tool_result("call-read", false),
+        assistant_with_call("reading again", "call-failed"),
+        tool_result("call-failed", true),
+        assistant_with_call("done", "call-open"),
+    )
+    .unwrap();
+    let limits = Limits {
+        source: 1024 * 1024,
+        output: 1024 * 1024,
+        entries: 1,
+    };
+    let pages = all_pages(file.path(), limits);
+    assert_eq!(
+        pages.iter().map(texts).collect::<Vec<_>>(),
+        [
+            vec!["prompt"],
+            vec!["reading"],
+            vec!["reading again"],
+            vec!["done"]
+        ],
+        "each page ends between a call and its result"
+    );
+    assert_eq!(
+        pages.iter().flat_map(states).collect::<Vec<_>>(),
+        [
+            ("call-read".to_string(), ProviderToolState::Completed),
+            ("call-failed".to_string(), ProviderToolState::Failed),
+            // The newest call has no result yet: it is still running.
+            ("call-open".to_string(), ProviderToolState::Running),
+        ]
+    );
+}
+
+/// An older page looks past its end for the calls its last turn left open,
+/// past a message sent while one ran, but no further than one page's source
+/// bound. It takes nothing else from there: those records are the newer
+/// page's.
+#[test]
+fn an_older_page_settles_its_last_turn_from_past_its_end_within_its_bound() {
+    let steered = assistant_with_call("steered", "call-steered");
+    let sent_while_running = record("sent while it ran");
+    let steered_result = tool_result("call-steered", false);
+    let slow = assistant_with_call("slow", "call-slow");
+    let filler = format!(
+        "{}\n",
+        serde_json::json!({"type":"progress","data":"x".repeat(2048)})
+    );
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    write!(
+        file,
+        "{steered}{sent_while_running}{steered_result}{slow}{filler}{}{}{}",
+        tool_result("call-slow", false),
+        assistant_with_call("answer", "call-newest"),
+        tool_result("call-newest", false),
+    )
+    .unwrap();
+    let limits = Limits {
+        source: 1024,
+        output: 1024 * 1024,
+        entries: 1,
+    };
+    let steered_page = page(file.path(), Some(steered.len() as u64), limits);
+    assert_eq!(texts(&steered_page), ["steered"]);
+    assert_eq!(
+        states(&steered_page),
+        [("call-steered".to_string(), ProviderToolState::Completed)]
+    );
+    // The slow call's result lies past a record longer than the bound; with
+    // a larger bound the page sees it.
+    let slow_end = [&steered, &sent_while_running, &steered_result, &slow]
+        .iter()
+        .map(|record| record.len() as u64)
+        .sum::<u64>();
+    let slow_page = page(file.path(), Some(slow_end), limits);
+    assert_eq!(texts(&slow_page), ["slow"]);
+    assert_eq!(
+        states(&slow_page),
+        [("call-slow".to_string(), ProviderToolState::Running)]
+    );
+    let wider = Limits {
+        source: 4096,
+        ..limits
+    };
+    assert_eq!(
+        states(&page(file.path(), Some(slow_end), wider)),
+        [("call-slow".to_string(), ProviderToolState::Completed)]
+    );
+    // The newest read records its own results and looks no further.
+    let newest = page(file.path(), None, wider);
+    assert_eq!(texts(&newest), ["answer"]);
+    assert_eq!(
+        states(&newest),
+        [("call-newest".to_string(), ProviderToolState::Completed)]
+    );
+}

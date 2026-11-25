@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::{
     collections::VecDeque,
     fs,
-    io::{Read, Seek, SeekFrom},
+    io::{BufRead, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
@@ -317,7 +317,8 @@ pub fn activity_from_file(
 /// One page of [`activity_from_file`]: the newest records, or with `before`
 /// the records that end just before an earlier page's `older_cursor`. Pages
 /// are whole records and never overlap, so an older page joins the newer one
-/// exactly where it stopped.
+/// exactly where it stopped. An older page's calls still say how they ended
+/// when their results fall just past its end.
 pub fn activity_page_from_file(
     path: &Path,
     provider: &str,
@@ -447,7 +448,8 @@ fn read_window(
     file.seek(SeekFrom::Start(start.saturating_sub(1)))
         .map_err(read_error)?;
     let mut bytes = Vec::new();
-    file.take(end - start + u64::from(start > 0))
+    file.by_ref()
+        .take(end - start + u64::from(start > 0))
         .read_to_end(&mut bytes)
         .map_err(read_error)?;
     let (mut offset, bytes) = if start > 0 {
@@ -586,6 +588,18 @@ fn read_window(
             lossless = false;
         }
     }
+    let mut tools = window.finish(0);
+    if let (Some(end), Some(tool_events)) = (before, tool_events) {
+        settle_last_turn(
+            &mut file,
+            end,
+            source_limit,
+            tool_events,
+            &entries,
+            &mut tools,
+        )
+        .map_err(read_error)?;
+    }
     Ok(TranscriptWindow {
         transcript: ProviderConversationTranscript {
             schema_version: 1,
@@ -595,9 +609,62 @@ fn read_window(
             final_response,
             entries,
         },
-        tools: window.finish(0),
+        tools,
         older_cursor,
     })
+}
+
+/// How the calls an older page's last turn left open ended. A page that ends
+/// between a call and its result leaves the result to the newer page, which
+/// holds no call to give it to, so the older page reads past its `end` until
+/// each has ended or `source_limit` bytes, as a read settles a call whose
+/// result follows a message sent while it ran. It takes nothing else from
+/// those records; they stay the newer page's. A call left open in an earlier
+/// turn was cut off, so nothing is read for it.
+fn settle_last_turn(
+    file: &mut fs::File,
+    end: u64,
+    source_limit: u64,
+    tool_events: ToolEventParser,
+    entries: &[ProviderTranscriptEntry],
+    tools: &mut [ProviderToolCall],
+) -> std::io::Result<()> {
+    let last_turn = entries
+        .iter()
+        .rposition(|entry| entry.role == ConversationTurnRole::User)
+        .map_or(0, |index| index + 1);
+    let mut open = tools
+        .iter()
+        .enumerate()
+        .filter(|(_, call)| {
+            call.after_entries >= last_turn && call.state == ProviderToolState::Running
+        })
+        .map(|(index, call)| (call.call_id.clone(), index))
+        .collect::<std::collections::HashMap<_, _>>();
+    if open.is_empty() {
+        return Ok(());
+    }
+    file.seek(SeekFrom::Start(end))?;
+    let mut records = std::io::BufReader::new(file.take(source_limit));
+    let mut raw = Vec::new();
+    while !open.is_empty() {
+        raw.clear();
+        if records.read_until(b'\n', &mut raw)? == 0 {
+            break;
+        }
+        // A record cut by the bound, or one still being written, is not JSON.
+        let Ok(value) = serde_json::from_slice::<Value>(&raw) else {
+            continue;
+        };
+        for event in tool_events(&value) {
+            let (ToolEvent::Call { call_id, state, .. } | ToolEvent::Result { call_id, state }) =
+                event;
+            if let Some(index) = open.remove(&call_id) {
+                tools[index].state = state;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn read_roots(
