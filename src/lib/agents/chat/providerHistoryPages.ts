@@ -4,6 +4,7 @@ import type {
 } from "@/lib/agents/chat/agentConversationContract";
 import { nativeAgentChatPage } from "@/lib/agents/chat/nativeAgentChat";
 import type { ProviderConversationActivity } from "@/lib/ipc/conversations";
+import { nativeTranscriptProvider } from "../../../../cli/lib/agent-transcript.mjs";
 
 /** The older pages of one provider transcript a view loaded on request, above
  * the history it already shows. The one paging owner for every surface that
@@ -62,11 +63,7 @@ export function chatPageWithOlderProviderHistory(
 	const at = page.hasMore
 		? -1
 		: page.rows.findIndex((row) => seededBoundaryCursor(row) === older.anchor);
-	if (
-		at === -1 ||
-		!conversationId ||
-		(provider !== "claude" && provider !== "codex")
-	) {
+	if (at === -1 || !conversationId || !nativeTranscriptProvider(provider)) {
 		return page;
 	}
 	const newest = older.pages[older.pages.length - 1];
