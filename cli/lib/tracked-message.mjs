@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { resolveBackendProfilesPath } from "./backend-profiles.mjs";
-import { backendTransportErrorReport, performBackendProfileRequest } from "./backend-transport.mjs";
+import { BackendTransportError, backendTransportErrorReport, performBackendProfileRequest } from "./backend-transport.mjs";
 import { createOrchestrationRequest, isOrchestrationResponse } from "./contracts/orchestration-envelope.mjs";
 import { orchestrationFailureDetail } from "./orchestration-failure.mjs";
 import { collectSessionQuery } from "./session-query.mjs";
@@ -16,6 +16,26 @@ async function invoke(backend, method, body, { deadlineMs = 2500, signal } = {})
   }, { ...backend.transportOptions, deadlineMs, signal });
   if (!isOrchestrationResponse(response.result, method)) throw new Error("Invalid message observation receipt");
   return response.result.receipt;
+}
+
+/** Typed codes only; backend messages may carry private paths. */
+function refusalReason(error) {
+  const detail = backendTransportErrorReport(error).error;
+  return [detail.remoteCode ?? detail.code, detail.reasonCode].filter(Boolean).join(": ");
+}
+
+export const MESSAGE_NOT_STORED = "message_not_stored";
+
+/** The exact read of a tracked message. The backend commits an interaction with
+ * its Event and answers a missing one as a terminal not-found, so that answer
+ * proves the message was never stored and never will be by reading again. */
+async function readMessageProgress(backend, query, options, request) {
+  try {
+    return await request(backend, "interaction.progress", query, options);
+  } catch (error) {
+    if (backendTransportErrorReport(error).error.remoteCode !== "orchestration_record_not_found") throw error;
+    throw Object.assign(new Error("The backend has no message for this receipt: it was not stored and will not be delivered."), { cause: error, code: MESSAGE_NOT_STORED });
+  }
 }
 
 export function readMessageTracking(file) {
@@ -43,10 +63,9 @@ export async function sendTrackedMessage(target, text, { backend, hmuxCommand, t
     // Nothing is opened before the context resolves. Report typed codes and
     // the guidance derived from them only; backend messages may carry private paths.
     const detail = orchestrationFailureDetail(error);
-    const reason = [detail.remoteCode ?? detail.code, detail.reasonCode].filter(Boolean).join(": ");
     const guided = detail.message !== backendTransportErrorReport(error).error.message;
     const next = guided ? `. ${detail.message}` : "; check the target with dure ls --alive.";
-    throw Object.assign(new Error(`The message context of Session ${session.sessionId} is unavailable (${reason}). Nothing was sent${next}`), { code: "dure_send_context_unavailable", cause: error });
+    throw Object.assign(new Error(`The message context of Session ${session.sessionId} is unavailable (${refusalReason(error)}). Nothing was sent${next}`), { code: "dure_send_context_unavailable", cause: error });
   }
   const interactionId = `message.${randomUUID()}`;
   const query = { schemaVersion: 1, authority: context.target.authority, interactionId,
@@ -56,17 +75,35 @@ export async function sendTrackedMessage(target, text, { backend, hmuxCommand, t
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const receiptPath = path.join(directory, `${interactionId}.json`);
   fs.writeFileSync(receiptPath, JSON.stringify({ apiVersion: "dure.message-tracking/v1", backendId: backend.profile.id, session, query }), { flag: "wx", mode: 0o600 });
+  const accepted = (deliveries) => ({ sessionId: session.sessionId, workspaceId: session.workspaceId,
+    receipt: { kind: "durable_message", interactionId, receiptPath, delivery: "accepted", deliveries } });
+  let failure;
   try {
     const receipt = await request(backend, "interaction.message.open.exact-session", {
       schemaVersion: 1, session, expectedEndpointRef: context.endpointFence.endpointRef,
       idempotencyKey: interactionId, interactionId, title, descriptionMarkdown: text, openedAtMs: Date.now(),
     });
-    return { sessionId: session.sessionId, workspaceId: session.workspaceId,
-      receipt: { kind: "durable_message", interactionId, receiptPath, delivery: "accepted", deliveries: receipt.deliveries } };
+    return accepted(receipt.deliveries);
   } catch (error) {
-    // The request may have committed. Preserve its exact query before the write.
-    throw Object.assign(new Error(`Message submission outcome is unknown. Inspect with dure wait --message ${JSON.stringify(receiptPath)} --json; do not resend.`), { cause: error, code: "message_submission_unknown", receiptPath });
+    failure = error;
   }
+  // The request may have committed, so its exact query was kept before the write.
+  // A backend answer means the request is no longer in flight: the exact read of
+  // that query then settles whether the message was stored. It never resubmits.
+  if (failure instanceof BackendTransportError && failure.code === "backend_transport_remote_error") {
+    try {
+      const progress = await readMessageProgress(backend, query, {}, request);
+      if (progress.interactionId === interactionId && Array.isArray(progress.deliveries)) {
+        return accepted(progress.deliveries.map((entry) => entry.delivery));
+      }
+    } catch (readError) {
+      if (readError.code === MESSAGE_NOT_STORED) {
+        fs.rmSync(receiptPath, { force: true });
+        throw Object.assign(new Error(`The backend refused the message (${refusalReason(failure)}). Nothing was stored, so it is safe to send again once the cause is resolved.`), { cause: failure, code: "message_submission_refused" });
+      }
+    }
+  }
+  throw Object.assign(new Error(`Message submission outcome is unknown (${refusalReason(failure)}). Inspect with dure wait --message ${JSON.stringify(receiptPath)} --json; do not resend.`), { cause: failure, code: "message_submission_unknown", receiptPath });
 }
 
 // A wake prompt names the first 12 characters of its receipt digest
@@ -78,7 +115,7 @@ function namesReceipt(reference, receiptId) {
 
 export async function queryTrackedMessage({ tracking, backend, hmuxCommand, deadlineMs, signal, request = invoke, querySession = collectSessionQuery }) {
   if (backend.profile.id !== tracking.backendId) throw new Error("Message receipt belongs to a different backend.");
-  const receipt = await request(backend, "interaction.progress", tracking.query, { deadlineMs, signal });
+  const receipt = await readMessageProgress(backend, tracking.query, { deadlineMs, signal }, request);
   if (receipt.interactionId !== tracking.query.interactionId || !Array.isArray(receipt.deliveries)) throw new Error("Message progress identity mismatch");
   const observed = receipt.deliveries.length > 0 && receipt.deliveries.every(d => d.observedAtMs !== null && d.observedAtMs !== undefined);
   const acknowledged = receipt.deliveries.length > 0 && receipt.deliveries.every(d => d.acknowledgedAtMs !== null && d.acknowledgedAtMs !== undefined);
