@@ -39,11 +39,62 @@ function writtenRecord(entry) {
 	);
 }
 
-/** Text the person wrote, which a user message shows: not a record Claude
- * Code wrote, nor its marker where the person interrupted a turn
- * (`[Request interrupted by user]`, or its `… for tool use]` form). */
+const SLASH_COMMAND_TAGS = ["command-name", "command-message", "command-args"];
+const SHELL_INPUT_TAGS = ["bash-input"];
+const COMMAND_OUTPUT_TAGS = [
+	"local-command-stdout",
+	"local-command-stderr",
+	"bash-stdout",
+	"bash-stderr",
+];
+
+/** `text` as `<tag>…</tag>` elements with nothing but whitespace around
+ * them, each tag from `tags` and at most once (tag → body), or null. */
+function envelope(text, tags) {
+	const elements = new Map();
+	let rest = text.trimStart();
+	while (rest.length > 0) {
+		const tag = tags.find((name) => rest.startsWith(`<${name}>`));
+		if (tag === undefined || elements.has(tag)) return null;
+		const close = `</${tag}>`;
+		const end = rest.indexOf(close, tag.length + 2);
+		if (end === -1) return null;
+		elements.set(tag, rest.slice(tag.length + 2, end));
+		rest = rest.slice(end + close.length).trimStart();
+	}
+	return elements.size > 0 ? elements : null;
+}
+
+/** Input the person ran in Claude Code itself instead of sending it as a
+ * prompt, and what that input printed. Claude Code records both as user
+ * records whose whole text is one envelope of tags. `{ input }` is the
+ * command line the person ran (`/effort max`, or `! git status` for shell
+ * input), `{ output: true }` what it printed, which Claude Code wrote, and
+ * null any other text, including the person's own text that only mentions
+ * one of these tags. The shared transcript reader
+ * (`dure-provider-transcript`, `claude_local_command`) follows the same rule. */
+function localCommand(text) {
+	const slash = envelope(text, SLASH_COMMAND_TAGS);
+	if (slash !== null) {
+		const name = slash.get("command-name")?.trim();
+		if (!name) return null;
+		const args = slash.get("command-args")?.trim();
+		return { input: args ? `${name} ${args}` : name };
+	}
+	const shell = envelope(text, SHELL_INPUT_TAGS);
+	if (shell !== null) return { input: `! ${shell.get("bash-input").trim()}` };
+	return envelope(text, COMMAND_OUTPUT_TAGS) === null ? null : { output: true };
+}
+
+/** What a user message shows for `text`: the person's words, or the command
+ * line they ran in Claude Code itself. Null for a record Claude Code wrote,
+ * its marker where the person interrupted a turn (`[Request interrupted by
+ * user]`, or its `… for tool use]` form), and what a command printed. */
 function personText(text, written) {
-	return !written && text.length > 0 && !INTERRUPT_MARKER.test(text.trim());
+	if (written || text.length === 0 || INTERRUPT_MARKER.test(text.trim())) return null;
+	const command = localCommand(text);
+	if (command === null) return text;
+	return command.output ? null : command.input;
 }
 
 function incomplete(reason) {
@@ -311,15 +362,16 @@ export function normalizeClaudeHistoryMessages(
 				// What Claude Code wrote stays evidence under the same id.
 				const written = writtenRecords.has(sourceId);
 				if (typeof source.message.content === "string") {
-					const markdown = source.message.content;
-					if (personText(markdown, written)) {
+					const content = source.message.content;
+					const markdown = personText(content, written);
+					if (markdown !== null) {
 						push(`${sourceId}:message:0`, sourceId, {
 							markdown,
 							role: "user",
 							type: "message",
 						});
 					} else {
-						push(`${sourceId}:evidence:0`, sourceId, evidence("user", { content: markdown }));
+						push(`${sourceId}:evidence:0`, sourceId, evidence("user", { content }));
 					}
 					continue;
 				}
@@ -331,13 +383,13 @@ export function normalizeClaudeHistoryMessages(
 				for (let index = 0; index < blocks.length; index += 1) {
 					const block = jsonValue(blocks[index]);
 					if (!plainObject(block)) return incomplete("history_payload_invalid");
-					if (
-						block.type === "text" &&
-						typeof block.text === "string" &&
-						personText(block.text, written)
-					) {
+					const markdown =
+						block.type === "text" && typeof block.text === "string"
+							? personText(block.text, written)
+							: null;
+					if (markdown !== null) {
 						push(`${sourceId}:message:${index}`, sourceId, {
-							markdown: block.text,
+							markdown,
 							role: "user",
 							type: "message",
 						});
