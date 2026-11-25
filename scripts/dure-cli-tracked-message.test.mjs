@@ -130,3 +130,62 @@ test("a tracked send names a held wake in its JSON output as in its text", () =>
   expect(JSON.parse(formatDelivery(agent, woken, { json: true }))).not.toHaveProperty("diagnostic");
   expect(formatDelivery(agent, woken, { json: false })).not.toContain(note.message);
 });
+
+const refusal = (code, reasonCode, disposition = "terminal") =>
+  new BackendTransportError("backend_transport_remote_error", { details: { code, ...(reasonCode ? { reasonCode } : {}), disposition } });
+
+test("a backend refusal that stored nothing is a definite failure and leaves no receipt", async () => {
+  const options = fixture();
+  const request = vi.fn(async (_, method) => {
+    if (method.startsWith("dispatch.context")) return context;
+    if (method === "interaction.progress") throw refusal("orchestration_record_not_found");
+    throw refusal("orchestration_request_invalid", "control_character");
+  });
+  const error = await sendTrackedMessage({ sessionId: "session", workspaceId: "workspace" }, "hello", { ...options, request }).catch((caught) => caught);
+  expect(error.code).toBe("message_submission_refused");
+  expect(error.message).toContain("orchestration_request_invalid: control_character");
+  expect(error.message).toContain("Nothing was stored");
+  expect(error.message).not.toContain("do not resend");
+  // One open, settled by the exact read of the query it retained; never a second open.
+  expect(request.mock.calls.map(([, method]) => method)).toEqual(["dispatch.context.get.exact-session", "interaction.message.open.exact-session", "interaction.progress"]);
+  expect(request.mock.calls[2][2].interactionId).toBe(request.mock.calls[1][2].interactionId);
+  expect(fs.readdirSync(path.join(options.environment.DURE_HOME, "message-receipts"))).toEqual([]);
+});
+
+test("a backend refusal after the message was stored reports the accepted message", async () => {
+  const options = fixture();
+  const delivery = { receiptId: "delivery", wake: { state: "uncertain" } };
+  const request = vi.fn(async (_, method, body) => {
+    if (method.startsWith("dispatch.context")) return context;
+    if (method === "interaction.progress") return { interactionId: body.interactionId, deliveries: [{ delivery, observedAtMs: null, acknowledgedAtMs: null }] };
+    throw refusal("orchestration_wake_receipt_missing", undefined, "retry_same");
+  });
+  const result = await sendTrackedMessage({ sessionId: "session", workspaceId: "workspace" }, "hello", { ...options, request });
+  expect(result.receipt).toMatchObject({ kind: "durable_message", delivery: "accepted", deliveries: [delivery] });
+  expect(readMessageTracking(result.receipt.receiptPath).query.interactionId).toBe(result.receipt.interactionId);
+});
+
+test("a refusal whose stored state cannot be read stays unknown and keeps its receipt", async () => {
+  const options = fixture();
+  const request = vi.fn(async (_, method) => {
+    if (method.startsWith("dispatch.context")) return context;
+    if (method === "interaction.progress") throw new BackendTransportError("backend_transport_timeout");
+    throw refusal("orchestration_store_unavailable", "adapter_busy", "retry_same");
+  });
+  const error = await sendTrackedMessage({ sessionId: "session", workspaceId: "workspace" }, "hello", { ...options, request }).catch((caught) => caught);
+  expect(error.code).toBe("message_submission_unknown");
+  expect(error.message).toContain("orchestration_store_unavailable: adapter_busy");
+  expect(readMessageTracking(error.receiptPath).backendId).toBe("local");
+});
+
+test("a message the backend never stored ends its wait as failed instead of unknown", async () => {
+  const tracking = { session: { ...generation, sessionId: "session", workspaceId: "workspace" }, backendId: "local", query: { interactionId: "message" } };
+  const querySession = vi.fn();
+  const error = await queryTrackedMessage({ tracking, backend, querySession, request: async () => { throw refusal("orchestration_record_not_found"); } }).catch((caught) => caught);
+  expect(error.code).toBe("message_not_stored");
+  expect(querySession).not.toHaveBeenCalled();
+  const options = parseWaitArguments(["--message", "/private/receipt.json", "--timeout", "5"]);
+  const result = await collectWait(options, { backend, tracking, now: () => 0, pause: async () => {}, queryMessage: async () => { throw error; } });
+  expect(result).toMatchObject({ state: "failed", exitCode: 1, error: { code: "wait_message_not_stored" } });
+  expect(result.error.message).toContain("was not stored");
+});
