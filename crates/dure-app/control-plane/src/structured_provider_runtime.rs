@@ -7,7 +7,7 @@ use dure_app::{
     AgentExecutionProfileV1, AgentIdV1, AgentInteractionBindingV1, AgentRuntimeBindingAuthorityV1,
     AgentRuntimeReplacementAuthorityV1, AgentRuntimeSelectionV1, AgentRuntimeTransitionRecordV1,
     AgentSpawnEffortSelectionV1, AgentSpawnModelSelectionV1, ProviderIdV1,
-    ProviderPermissionModeV1,
+    ProviderPermissionModeV1, WorkflowSessionGenerationV1,
 };
 
 use crate::claude_structured_runtime::{
@@ -261,6 +261,18 @@ pub(crate) trait StructuredProviderRuntime: Send + Sync {
         Box::pin(async { Ok(None) })
     }
 
+    /// Whether this Hmux Session runs one of this adapter's live Chat
+    /// runtimes. A provider there, and every tool it starts, carries that
+    /// Session's `HMUX_*` identity, yet no Agent binds it as a terminal
+    /// Session. Orchestration uses this answer to name the Chat runtime
+    /// instead of a missing binding. `false` when the adapter cannot say.
+    fn hosts_session<'a>(
+        &'a self,
+        _session: &'a WorkflowSessionGenerationV1,
+    ) -> StructuredProviderRuntimeFuture<'a, bool> {
+        Box::pin(async { Ok(false) })
+    }
+
     /// Retires the exact failed structured target moved into a corrected
     /// successor before that successor starts a non-structured target.
     fn retire_replacement_source<'a>(
@@ -316,6 +328,14 @@ impl StructuredProviderRuntimeRegistry {
                 )
             })?
             .new_session_availability()
+    }
+
+    /// Whether the Chat runtime of this Session's provider hosts it.
+    pub(crate) async fn hosts_session(&self, session: &WorkflowSessionGenerationV1) -> bool {
+        match self.runtimes.get(&session.provider_id) {
+            Some(runtime) => runtime.hosts_session(session).await.unwrap_or(false),
+            None => false,
+        }
     }
 
     pub(crate) fn providers(&self) -> BTreeSet<ProviderIdV1> {

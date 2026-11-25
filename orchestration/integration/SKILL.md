@@ -24,6 +24,12 @@ client and canonical service as Dure desktop, CLI, SDK, and remote workers.
   last acknowledged cursor.
 - Report completion through the interaction service so dispatch state, the
   completion Message, and audit Event commit together.
+- The inbox belongs to an agent that runs a native CLI (a provider terminal).
+  An agent on its Chat runtime, a structured conversation such as the app's
+  chat, has none: `orchestration_context_get_current` and
+  `orchestration_events_read` refuse it with
+  `orchestration_interaction_profile_unsupported` (terminal). Report the result
+  in the conversation instead; resending, a restart or another Run cannot help.
 
 ## Choose a message destination
 

@@ -114,4 +114,11 @@ impl StructuredProviderRuntime for ManagedStructuredRuntimeManager<SqliteDomainS
     ) -> StructuredProviderRuntimeFuture<'a, ()> {
         Box::pin(async move { self.stop_binding(binding, false).await.map(|_| ()) })
     }
+
+    fn hosts_session<'a>(
+        &'a self,
+        session: &'a WorkflowSessionGenerationV1,
+    ) -> StructuredProviderRuntimeFuture<'a, bool> {
+        Box::pin(async move { Ok(self.hosts_session_generation(session).await) })
+    }
 }
