@@ -150,13 +150,12 @@ pub(crate) async fn attach<S: AgentTimelineStore + 'static>(
         .await
         .map_err(|_| unavailable())?,
     );
-    let thread = response.get("thread").unwrap_or(&serde_json::Value::Null);
-    bridge
-        .reconcile_history(thread)
+    let history = bridge
+        .reconcile_history(&response)
         .await
         .map_err(|_| unavailable())?;
     bridge
-        .hydrate_active_turn(thread)
+        .hydrate_active_turn(history.newest_turn())
         .await
         .map_err(|_| unavailable())?;
     bridge
