@@ -23,6 +23,29 @@ const SDK_HISTORY_ENTRY_TYPES = new Set([
 	"user",
 ]);
 
+const INTERRUPT_MARKER = /^\[Request interrupted by user[^\]\n]*\]$/u;
+
+/** A user record Claude Code wrote itself, which is not the person's message:
+ * what its own view leaves out (`isMeta`, such as a scheduled prompt, a
+ * skill's instructions or hook feedback) and a background task's
+ * notification. The SDK passes on neither mark, so it is read from the
+ * transcript record. The shared transcript reader (`dure-provider-transcript`,
+ * `claude_turn`) follows the same rule. */
+function writtenRecord(entry) {
+	return (
+		entry.type === "user" &&
+		(entry.isMeta === true ||
+			(plainObject(entry.origin) && entry.origin.kind === "task-notification"))
+	);
+}
+
+/** Text the person wrote, which a user message shows: not a record Claude
+ * Code wrote, nor its marker where the person interrupted a turn
+ * (`[Request interrupted by user]`, or its `… for tool use]` form). */
+function personText(text, written) {
+	return !written && text.length > 0 && !INTERRUPT_MARKER.test(text.trim());
+}
+
 function incomplete(reason) {
 	return Object.freeze({ reason, status: "incomplete" });
 }
@@ -243,12 +266,13 @@ function contentBlocks(message) {
  * `precededBy` says what comes before the messages themselves: `"window"` when
  * they are such a window, `"compaction"` when they start at the provider's
  * compaction, or null. `sourceOffsets` (message uuid → byte offset) places the
- * boundary in the transcript. */
+ * boundary in the transcript. `writtenRecords` names the user messages Claude
+ * Code wrote itself, which stay evidence. */
 export function normalizeClaudeHistoryMessages(
 	messages,
 	{ cwd, providerSessionId },
 	timestamps = new Map(),
-	{ precededBy = null, sourceOffsets = new Map() } = {},
+	{ precededBy = null, sourceOffsets = new Map(), writtenRecords = new Set() } = {},
 ) {
 	if (!Array.isArray(messages)) return incomplete("history_unavailable");
 	if (typeof cwd !== "string" || !path.isAbsolute(cwd) || cwd.includes("\0")) {
@@ -284,15 +308,19 @@ export function normalizeClaudeHistoryMessages(
 				if (source.message.role !== "user") return incomplete("history_payload_invalid");
 				// A user message's provider id is its uuid: the one Dure sent a
 				// Chat prompt with, so the timeline can tell the prompt it holds.
+				// What Claude Code wrote stays evidence under the same id.
+				const written = writtenRecords.has(sourceId);
 				if (typeof source.message.content === "string") {
 					const markdown = source.message.content;
-					push(
-						`${sourceId}:message:0`,
-						sourceId,
-						markdown.length > 0
-							? { markdown, role: "user", type: "message" }
-							: evidence("user", { content: "" }),
-					);
+					if (personText(markdown, written)) {
+						push(`${sourceId}:message:0`, sourceId, {
+							markdown,
+							role: "user",
+							type: "message",
+						});
+					} else {
+						push(`${sourceId}:evidence:0`, sourceId, evidence("user", { content: markdown }));
+					}
 					continue;
 				}
 				const blocks = contentBlocks(source.message);
@@ -303,7 +331,11 @@ export function normalizeClaudeHistoryMessages(
 				for (let index = 0; index < blocks.length; index += 1) {
 					const block = jsonValue(blocks[index]);
 					if (!plainObject(block)) return incomplete("history_payload_invalid");
-					if (block.type === "text" && typeof block.text === "string" && block.text.length > 0) {
+					if (
+						block.type === "text" &&
+						typeof block.text === "string" &&
+						personText(block.text, written)
+					) {
 						push(`${sourceId}:message:${index}`, sourceId, {
 							markdown: block.text,
 							role: "user",
@@ -523,9 +555,11 @@ function readOnlySessionStore(
 				const parents = new Map();
 				const offsets = new Map();
 				const compactions = new Set();
+				const written = new Set();
 				sourceState.parents = parents;
 				sourceState.offsets = offsets;
 				sourceState.compactions = compactions;
+				sourceState.written = written;
 				let entries = [];
 				const keepNewestEntries = () => {
 					const dropped = entries.length - MAX_STORE_ENTRIES;
@@ -534,6 +568,7 @@ function readOnlySessionStore(
 						parents.delete(entry.uuid);
 						offsets.delete(entry.uuid);
 						compactions.delete(entry.uuid);
+						written.delete(entry.uuid);
 					}
 					entries = entries.slice(dropped);
 					sourceState.windowed = true;
@@ -581,6 +616,7 @@ function readOnlySessionStore(
 					) {
 						compactions.add(entry.uuid);
 					}
+					if (writtenRecord(entry)) written.add(entry.uuid);
 					offsets.set(entry.uuid, offset);
 					// Trim in batches so a long transcript stays linear.
 					if (entries.length >= 2 * MAX_STORE_ENTRIES) keepNewestEntries();
@@ -644,6 +680,7 @@ export function createClaudeAgentSdkHistoryReader({
 			parents: new Map(),
 			present: false,
 			windowed: false,
+			written: new Set(),
 		};
 		try {
 			const messages = await getSessionMessages(binding.providerSessionId, {
@@ -659,6 +696,7 @@ export function createClaudeAgentSdkHistoryReader({
 			return normalizeClaudeHistoryMessages(messages, binding, timestamps, {
 				precededBy: chainContinuation(messages, sourceState),
 				sourceOffsets: sourceState.offsets,
+				writtenRecords: sourceState.written,
 			});
 		} catch {
 			return incomplete("history_reader_failed");

@@ -160,6 +160,25 @@ pub fn claude_context_injection(text: &str) -> bool {
     provider_context_injection(text) || text.trim_start().starts_with("Caveat:")
 }
 
+/// A user record Claude Code wrote itself, which is not the person's message:
+/// what its own view leaves out (`isMeta`, such as a scheduled prompt, a
+/// skill's instructions or hook feedback), a background task's notification,
+/// and the marker where the person interrupted a turn. Chat's seeded history
+/// (`agent-sdk-history.mjs`) follows the same rule.
+fn claude_written_record(value: &Value, text: &str) -> bool {
+    value.get("isMeta").and_then(Value::as_bool) == Some(true)
+        || value.pointer("/origin/kind").and_then(Value::as_str) == Some("task-notification")
+        || claude_interrupt_marker(text)
+}
+
+/// `[Request interrupted by user]`, or its `… for tool use]` form.
+fn claude_interrupt_marker(text: &str) -> bool {
+    text.trim()
+        .strip_prefix("[Request interrupted by user")
+        .and_then(|rest| rest.strip_suffix(']'))
+        .is_some_and(|rest| !rest.contains([']', '\n']))
+}
+
 pub fn claude_turn(value: &Value) -> Option<(ConversationTurnRole, String)> {
     let role = match value.get("type").and_then(Value::as_str) {
         Some("user") => ConversationTurnRole::User,
@@ -167,7 +186,9 @@ pub fn claude_turn(value: &Value) -> Option<(ConversationTurnRole, String)> {
         _ => return None,
     };
     let text = value.pointer("/message/content").and_then(text_content)?;
-    if role == ConversationTurnRole::User && claude_context_injection(&text) {
+    if role == ConversationTurnRole::User
+        && (claude_context_injection(&text) || claude_written_record(value, &text))
+    {
         return None;
     }
     Some((role, text))

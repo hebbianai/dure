@@ -702,3 +702,99 @@ test("a window of a compacted conversation starts at the oldest record it shows"
 	});
 	assert.equal(history.items[1].body.markdown, `message ${total - history.items.length + 1}`);
 });
+
+test("records Claude Code writes on the person's side are not the person's messages", async () => {
+	const { getSessionMessages } = await loadPinnedClaudeSdkRuntime();
+	const root = await mkdtemp(path.join(os.tmpdir(), "dure-history-written-"));
+	const cwd = "/workspace/written-history";
+	const file = path.join(root, "projects", "-workspace-written-history", `${HISTORY_SESSION_ID}.jsonl`);
+	const uuid = historyUuid;
+	const record = (index, role, content, extra = {}) => ({
+		...sdkMessage({
+			content,
+			parentUuid: index === 0 ? null : uuid(index - 1),
+			role,
+			sessionId: HISTORY_SESSION_ID,
+			timestamp: "2026-01-02T03:04:05.000Z",
+			uuid: uuid(index),
+		}),
+		...extra,
+	});
+	// What its own view leaves out (`isMeta`), the marker where the person
+	// interrupted a turn, and a background task's notification.
+	const records = [
+		record(0, "user", "typed prompt", { origin: { kind: "human" }, promptSource: "typed" }),
+		record(1, "user", "Scheduled check (every 30 minutes): read the inbox", { isMeta: true }),
+		record(2, "assistant", [
+			{ text: "reading the file", type: "text" },
+			{ id: "call-1", input: { file_path: "a" }, name: "Read", type: "tool_use" },
+		]),
+		record(3, "user", [
+			{
+				content: "The user doesn't want to proceed with this tool use.",
+				is_error: true,
+				tool_use_id: "call-1",
+				type: "tool_result",
+			},
+			{ text: "[Request interrupted by user for tool use]", type: "text" },
+		]),
+		record(4, "user", [{ text: "[Request interrupted by user]", type: "text" }]),
+		record(
+			5,
+			"user",
+			"<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>",
+			{ origin: { kind: "task-notification", producer: "session-task" }, promptSource: "system" },
+		),
+		record(6, "assistant", [{ text: "the review finished", type: "text" }]),
+		record(7, "user", "why did it say [Request interrupted by user]?", {
+			origin: { kind: "human" },
+		}),
+	];
+	try {
+		await mkdir(path.dirname(file), { recursive: true });
+		await writeFile(file, records.map((value) => `${JSON.stringify(value)}\n`).join(""));
+		const history = await createClaudeAgentSdkHistoryReader({ getSessionMessages })({
+			cwd,
+			env: { CLAUDE_CONFIG_DIR: root },
+			providerSessionId: HISTORY_SESSION_ID,
+		});
+
+		assert.equal(history.status, "complete", history.reason);
+		assert.deepEqual(
+			history.items
+				.filter(({ body }) => body.type === "message")
+				.map(({ body }) => [body.role, body.markdown]),
+			[
+				["user", "typed prompt"],
+				["assistant", "reading the file"],
+				["assistant", "the review finished"],
+				["user", "why did it say [Request interrupted by user]?"],
+			],
+		);
+		// The call the interrupt ended still shows how it ended.
+		assert.deepEqual(
+			history.items
+				.filter(({ body }) => body.type === "tool")
+				.map(({ body }) => [body.tool_call_id, body.state]),
+			[
+				["call-1", "running"],
+				["call-1", "failed"],
+			],
+		);
+		// Each one stays durable, hidden evidence under its record's provider
+		// id, where a continued timeline can still meet it.
+		const kept = (block) => ({ block, sourceType: "user" });
+		assert.deepEqual(
+			history.items
+				.filter(({ body }) => body.type === "provider_evidence")
+				.map(({ body, providerMessageId }) => [providerMessageId, body.value]),
+			[
+				[uuid(3), kept({ text: "[Request interrupted by user for tool use]", type: "text" })],
+				[uuid(4), kept({ text: "[Request interrupted by user]", type: "text" })],
+				[uuid(5), kept({ content: records[5].message.content })],
+			],
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});

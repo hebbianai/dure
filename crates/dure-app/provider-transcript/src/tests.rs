@@ -733,3 +733,72 @@ fn a_codex_turn_the_rollout_does_not_name_has_no_start() {
     );
     assert!(codex_turn_start_cursor(&sessions, id, "").is_err());
 }
+
+/// Claude Code records some user entries itself: what its own view leaves out
+/// (`isMeta`), a background task's notification, and the marker where the
+/// person interrupted a turn. None of them is the person's message, on the
+/// conversation view's read or on an older page, while the tool call an
+/// interrupt ended still shows how it ended.
+#[test]
+fn records_claude_code_writes_on_the_person_side_are_not_their_messages() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    let records = [
+        serde_json::json!({"type":"user","origin":{"kind":"human"},"promptSource":"typed",
+            "message":{"content":"typed prompt"}}),
+        serde_json::json!({"type":"user","isMeta":true,
+            "message":{"content":"Scheduled check (every 30 minutes): read the inbox"}}),
+        serde_json::json!({"type":"user","isMeta":true,
+            "message":{"content":[{"type":"text","text":"Base directory for this skill: /skills/x"}]}}),
+        serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"text","text":"reading the file"},
+            {"type":"tool_use","id":"call-1","name":"Read","input":{"file_path":"a"}}
+        ]}}),
+        serde_json::json!({"type":"user","message":{"content":[
+            {"type":"tool_result","tool_use_id":"call-1","is_error":true,
+                "content":"The user doesn't want to proceed with this tool use."},
+            {"type":"text","text":"[Request interrupted by user for tool use]"}
+        ]}}),
+        serde_json::json!({"type":"user","message":{"content":[
+            {"type":"text","text":"[Request interrupted by user]"}
+        ]}}),
+        serde_json::json!({"type":"user","promptSource":"system",
+            "origin":{"kind":"task-notification","producer":"session-task"},
+            "message":{"content":"<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>"}}),
+        serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"text","text":"the review finished"}
+        ],"stop_reason":"end_turn"}}),
+        serde_json::json!({"type":"user","origin":{"kind":"human"},
+            "message":{"content":"why did it say [Request interrupted by user]?"}}),
+    ];
+    for record in &records {
+        writeln!(file, "{record}").unwrap();
+    }
+    let expected = [
+        (ConversationTurnRole::User, "typed prompt"),
+        (ConversationTurnRole::Agent, "reading the file"),
+        (ConversationTurnRole::Agent, "the review finished"),
+        (
+            ConversationTurnRole::User,
+            "why did it say [Request interrupted by user]?",
+        ),
+    ];
+    let shown = |entries: &[ProviderTranscriptEntry]| {
+        entries
+            .iter()
+            .map(|entry| (entry.role, entry.text.clone()))
+            .collect::<Vec<_>>()
+    };
+    let expected = expected
+        .map(|(role, text)| (role, text.to_string()))
+        .to_vec();
+
+    let read = transcript_from_file(file.path(), "claude", "test", claude_turn).unwrap();
+    assert_eq!(shown(&read.entries), expected);
+
+    let older = page(file.path(), None, Limits::PAGE);
+    assert_eq!(shown(&older.transcript.entries), expected);
+    assert_eq!(
+        states(&older),
+        [("call-1".to_string(), ProviderToolState::Failed)]
+    );
+}
