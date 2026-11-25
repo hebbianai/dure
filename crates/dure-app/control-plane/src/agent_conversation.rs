@@ -308,8 +308,29 @@ where
         snapshot: &AgentHistorySnapshotV1,
     ) -> Result<AgentHistorySnapshotReceiptV1, AgentConversationErrorV1> {
         let receipt = self.store.reconcile_agent_history(snapshot).await?;
-        // A windowed history adds rows without completing; open views still
-        // need to read them.
+        self.publish_history(snapshot, &receipt);
+        Ok(receipt)
+    }
+
+    /// Continues a timeline that already holds part of the conversation with
+    /// the provider history recorded after it (see
+    /// [`AgentTimelineStore::continue_agent_history`]).
+    pub async fn continue_history(
+        &self,
+        snapshot: &AgentHistorySnapshotV1,
+    ) -> Result<AgentHistorySnapshotReceiptV1, AgentConversationErrorV1> {
+        let receipt = self.store.continue_agent_history(snapshot).await?;
+        self.publish_history(snapshot, &receipt);
+        Ok(receipt)
+    }
+
+    fn publish_history(
+        &self,
+        snapshot: &AgentHistorySnapshotV1,
+        receipt: &AgentHistorySnapshotReceiptV1,
+    ) {
+        // A windowed or continued history adds rows without completing; open
+        // views still need to read them.
         if receipt.newly_completed || receipt.timeline_changed {
             self.publish_after_commit(
                 snapshot.binding.interaction_session_id.clone(),
@@ -317,7 +338,6 @@ where
                 vec![AgentConversationNotificationKindV1::Timeline],
             );
         }
-        Ok(receipt)
     }
 
     pub async fn history_hydration_authority(

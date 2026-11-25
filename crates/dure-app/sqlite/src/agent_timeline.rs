@@ -15,7 +15,7 @@ use dure_app::{
     AgentTimelineReadV1, AgentTimelineRowV1, AgentTimelineStreamIdV1, AgentTimelineTextFragmentV1,
     AgentTimelineTextKindV1, AgentTurnEffectReceiptV1, AgentTurnEffectStateV1, AgentTurnIdV1,
     DomainStoreErrorV1, MAX_AGENT_PENDING_REQUESTS_V1, MAX_AGENT_TIMELINE_LIVE_TEXT_HEADS_V1,
-    MAX_AGENT_TIMELINE_TEXT_BYTES_V1, ProviderIdV1,
+    MAX_AGENT_TIMELINE_TEXT_BYTES_V1, PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1, ProviderIdV1,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -950,7 +950,7 @@ pub(crate) async fn reconcile_history(
     pool: &SqlitePool,
     snapshot: &AgentHistorySnapshotV1,
 ) -> Result<AgentHistorySnapshotReceiptV1, DomainStoreErrorV1> {
-    snapshot.validate()?;
+    snapshot.validate_seed()?;
     let mut connection = pool
         .begin_with("BEGIN IMMEDIATE")
         .await
@@ -984,20 +984,25 @@ pub(crate) async fn history_hydration_authority_on(
     interaction_session_id: &AgentInteractionSessionIdV1,
 ) -> Result<AgentHistoryHydrationAuthorityV1, DomainStoreErrorV1> {
     let binding = required_binding(connection, interaction_session_id).await?;
-    let disposition = if binding.history_complete {
+    let has_boundary = has_history_boundary(connection, &binding).await?;
+    let disposition = if binding.provider_conversation_ref.is_none() {
+        if binding.history_complete {
+            AgentHistoryHydrationDispositionV1::Complete
+        } else if has_boundary {
+            AgentHistoryHydrationDispositionV1::KnownGap
+        } else {
+            return Err(identity_conflict(
+                "agent_history_hydration",
+                interaction_session_id.as_str(),
+                "an incomplete timeline has no provider conversation authority",
+            ));
+        }
+    } else if has_boundary || has_canonical_history_content(connection, &binding).await? {
+        // Older history is never inserted ahead of what the timeline holds,
+        // but another runtime may have continued the conversation since.
+        AgentHistoryHydrationDispositionV1::Continuable
+    } else if binding.history_complete {
         AgentHistoryHydrationDispositionV1::Complete
-    } else if has_history_boundary(connection, &binding).await? {
-        AgentHistoryHydrationDispositionV1::KnownGap
-    } else if binding.provider_conversation_ref.is_none() {
-        return Err(identity_conflict(
-            "agent_history_hydration",
-            interaction_session_id.as_str(),
-            "an incomplete timeline has no provider conversation authority",
-        ));
-    } else if has_canonical_history_content(connection, &binding).await? {
-        // Live content after an unavailable provider snapshot makes the gap
-        // durable. Never attempt to insert older history ahead of it later.
-        AgentHistoryHydrationDispositionV1::KnownGap
     } else {
         AgentHistoryHydrationDispositionV1::Seedable
     };
@@ -1091,6 +1096,231 @@ async fn reconcile_history_on(
         newly_completed: true,
         timeline_changed,
     })
+}
+
+pub(crate) async fn continue_history(
+    pool: &SqlitePool,
+    snapshot: &AgentHistorySnapshotV1,
+) -> Result<AgentHistorySnapshotReceiptV1, DomainStoreErrorV1> {
+    snapshot.validate()?;
+    let mut connection = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|error| map_sqlx("continue_agent_history", error))?;
+    let result = continue_history_on(&mut connection, snapshot).await?;
+    connection
+        .commit()
+        .await
+        .map_err(|error| map_sqlx("continue_agent_history", error))?;
+    Ok(result)
+}
+
+/// Continues a timeline that already holds part of the provider conversation
+/// with what the provider recorded after it, for example in a Terminal between
+/// two Chat sessions. The newest snapshot item whose provider message the
+/// timeline holds is where the two meet, and only what follows it is
+/// appended, each item once. A snapshot that reaches no held provider message
+/// but opens at a window or a compaction starts after everything the timeline
+/// holds: it follows the held rows behind a boundary that marks the provider
+/// history between them. Any other snapshot cannot be placed after the held
+/// rows, and older history is never inserted ahead of them, so nothing is
+/// appended. Neither is anything while a turn is in flight.
+async fn continue_history_on(
+    connection: &mut SqliteConnection,
+    snapshot: &AgentHistorySnapshotV1,
+) -> Result<AgentHistorySnapshotReceiptV1, DomainStoreErrorV1> {
+    let current = required_binding(connection, &snapshot.binding.interaction_session_id).await?;
+    if !current.same_history_authority(&snapshot.binding) {
+        return Err(identity_conflict(
+            "agent_history_snapshot",
+            snapshot.binding.interaction_session_id.as_str(),
+            "snapshot binding does not match the current interaction authority",
+        ));
+    }
+    let history = snapshot.history_items();
+    let continued = if timeline_in_flight(connection, &current).await? {
+        None
+    } else if let Some(meeting) = newest_held_history_item(connection, &current, history).await? {
+        Some((false, &history[meeting + 1..]))
+    } else if snapshot.opening_boundary().is_some()
+        && holds_provider_messages(connection, &current).await?
+    {
+        Some((true, history))
+    } else {
+        None
+    };
+    let mut timeline_changed = false;
+    if let Some((behind_gap, continued)) = continued.filter(|(_, items)| !items.is_empty()) {
+        if behind_gap {
+            timeline_changed |=
+                append_item_on(connection, &current, &history_gap(&current, &continued[0])?)
+                    .await?;
+        }
+        for item in continued {
+            if !has_timeline_item(connection, &current, &item.item_id).await? {
+                timeline_changed |= append_item_on(connection, &current, item).await?;
+            }
+        }
+        // A window leaves out history the provider resumes from; the summary
+        // a compaction opens with stands in for the records before it.
+        if behind_gap && snapshot.omits_older_history() && current.history_complete {
+            sqlx::query(
+                r#"
+                UPDATE agent_interaction_sessions
+                SET history_complete = 0, updated_at_ms = MAX(updated_at_ms, ?2)
+                WHERE interaction_session_id = ?1
+                "#,
+            )
+            .bind(current.interaction_session_id.as_str())
+            .bind(snapshot.observed_at_ms)
+            .execute(&mut *connection)
+            .await
+            .map_err(|error| map_sqlx("continue_agent_history", error))?;
+        }
+    }
+    let binding = required_binding(connection, &current.interaction_session_id).await?;
+    Ok(AgentHistorySnapshotReceiptV1 {
+        timeline_cursor: timeline_cursor_on(connection, &binding).await?,
+        binding,
+        newly_completed: false,
+        timeline_changed,
+    })
+}
+
+/// The boundary a continued timeline shows where it skips provider history:
+/// at no place in the transcript a reader could page, so no view loads older
+/// pages into the middle of the timeline.
+fn history_gap(
+    binding: &AgentInteractionBindingV1,
+    first: &AgentTimelineItemDraftV1,
+) -> Result<AgentTimelineItemDraftV1, DomainStoreErrorV1> {
+    Ok(AgentTimelineItemDraftV1 {
+        item_id: stable_item_id(
+            "history-gap",
+            &(
+                binding.interaction_session_id.clone(),
+                first.item_id.clone(),
+            ),
+        )?,
+        turn_id: None,
+        client_message_id: None,
+        provider_message_id: None,
+        body: AgentTimelineItemBodyV1::HistoryBoundary {
+            reason: PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1.into(),
+            requested_after_provider_sequence: 0,
+            dropped_through_provider_sequence: 1,
+        },
+        created_at_ms: first.created_at_ms,
+    })
+}
+
+/// The index of the newest history item whose provider message the timeline
+/// holds, from a live row or an earlier history.
+async fn newest_held_history_item(
+    connection: &mut SqliteConnection,
+    binding: &AgentInteractionBindingV1,
+    history: &[AgentTimelineItemDraftV1],
+) -> Result<Option<usize>, DomainStoreErrorV1> {
+    let candidates = history
+        .iter()
+        .filter_map(|item| item.provider_message_id.as_ref())
+        .map(AgentProviderMessageIdV1::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    let held = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT DISTINCT provider_message_id FROM agent_timeline_rows
+        WHERE interaction_session_id = ?1
+          AND timeline_epoch = ?2
+          AND provider_message_id IN (SELECT value FROM json_each(?3))
+        "#,
+    )
+    .bind(binding.interaction_session_id.as_str())
+    .bind(binding.timeline_epoch.as_str())
+    .bind(encode("agent_history_provider_messages", &candidates)?)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|error| map_sqlx("continue_agent_history", error))?
+    .into_iter()
+    .collect::<std::collections::BTreeSet<_>>();
+    Ok(history.iter().rposition(|item| {
+        item.provider_message_id
+            .as_ref()
+            .is_some_and(|id| held.contains(id.as_str()))
+    }))
+}
+
+async fn holds_provider_messages(
+    connection: &mut SqliteConnection,
+    binding: &AgentInteractionBindingV1,
+) -> Result<bool, DomainStoreErrorV1> {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM agent_timeline_rows
+            WHERE interaction_session_id = ?1
+              AND timeline_epoch = ?2
+              AND provider_message_id IS NOT NULL
+        )
+        "#,
+    )
+    .bind(binding.interaction_session_id.as_str())
+    .bind(binding.timeline_epoch.as_str())
+    .fetch_one(&mut *connection)
+    .await
+    .map(|found| found > 0)
+    .map_err(|error| map_sqlx("continue_agent_history", error))
+}
+
+async fn has_timeline_item(
+    connection: &mut SqliteConnection,
+    binding: &AgentInteractionBindingV1,
+    item_id: &AgentTimelineItemIdV1,
+) -> Result<bool, DomainStoreErrorV1> {
+    sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM agent_timeline_rows
+            WHERE interaction_session_id = ?1 AND item_id = ?2
+        )
+        "#,
+    )
+    .bind(binding.interaction_session_id.as_str())
+    .bind(item_id.as_str())
+    .fetch_one(&mut *connection)
+    .await
+    .map(|found| found > 0)
+    .map_err(|error| map_sqlx("continue_agent_history", error))
+}
+
+/// A running turn, an open request or streaming text owns the timeline's tail.
+async fn timeline_in_flight(
+    connection: &mut SqliteConnection,
+    binding: &AgentInteractionBindingV1,
+) -> Result<bool, DomainStoreErrorV1> {
+    if active_turn_for_session(connection, binding)
+        .await?
+        .is_some()
+        || !pending_for_runtime(
+            connection,
+            &binding.interaction_session_id,
+            &binding.runtime,
+        )
+        .await?
+        .is_empty()
+    {
+        return Ok(true);
+    }
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM agent_timeline_live_text WHERE interaction_session_id = ?1",
+    )
+    .bind(binding.interaction_session_id.as_str())
+    .fetch_one(&mut *connection)
+    .await
+    .map(|count| count > 0)
+    .map_err(|error| map_sqlx("continue_agent_history", error))
 }
 
 async fn has_canonical_history_content(

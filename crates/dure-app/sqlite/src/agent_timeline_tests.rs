@@ -28,6 +28,8 @@ mod continuation;
 mod failure;
 #[path = "agent_goal_tests.rs"]
 mod goals;
+#[path = "agent_history_continuation_tests.rs"]
+mod history_continuation;
 #[path = "agent_queue_tests.rs"]
 mod queue;
 #[path = "agent_recovery_tests.rs"]
@@ -956,10 +958,10 @@ fn history_boundary_item(reason: &str, dropped_through: i64) -> AgentTimelineIte
 }
 
 /// A conversation past the snapshot bounds seeds its newest window: the rows
-/// show behind their boundary, the history stays a known gap, and a replay
-/// never seeds it twice.
+/// show behind their boundary, the history stays incomplete, and a replay
+/// never seeds it twice. A later runtime continues the timeline instead.
 #[tokio::test]
-async fn windowed_history_seeds_behind_its_boundary_as_a_known_gap() {
+async fn windowed_history_seeds_behind_its_boundary_and_stays_incomplete() {
     let temp_dir = TempDir::new().unwrap();
     let mut binding = interaction_binding();
     binding.history_complete = false;
@@ -995,7 +997,7 @@ async fn windowed_history_seeds_behind_its_boundary_as_a_known_gap() {
             .await
             .unwrap()
             .disposition,
-        AgentHistoryHydrationDispositionV1::KnownGap
+        AgentHistoryHydrationDispositionV1::Continuable
     );
     let replay = store.reconcile_agent_history(&snapshot).await.unwrap();
     assert!(!replay.timeline_changed);
@@ -1025,7 +1027,8 @@ async fn windowed_history_seeds_behind_its_boundary_as_a_known_gap() {
 /// A conversation the provider compacted seeds from its summary behind the
 /// compaction boundary, which places the transcript records before it. The
 /// provider resumes from exactly these rows, so the history is complete:
-/// automatic turns, goals and provider recovery stay available.
+/// automatic turns, goals and provider recovery stay available. A later
+/// runtime continues the timeline after them.
 #[tokio::test]
 async fn compacted_history_seeds_behind_its_compaction_boundary_as_complete() {
     let temp_dir = TempDir::new().unwrap();
@@ -1066,7 +1069,7 @@ async fn compacted_history_seeds_behind_its_compaction_boundary_as_complete() {
             .await
             .unwrap()
             .disposition,
-        AgentHistoryHydrationDispositionV1::Complete
+        AgentHistoryHydrationDispositionV1::Continuable
     );
     let replay = store.reconcile_agent_history(&snapshot).await.unwrap();
     assert!(!replay.timeline_changed);
@@ -1169,7 +1172,7 @@ async fn history_hydration_authority_never_mixes_pre_and_post_commit_rows() {
     assert!(post_commit.binding.history_complete);
     assert_eq!(
         post_commit.disposition,
-        AgentHistoryHydrationDispositionV1::Complete
+        AgentHistoryHydrationDispositionV1::Continuable
     );
     assert!(
         !store
@@ -1198,8 +1201,10 @@ async fn incomplete_history_without_a_provider_conversation_fails_closed() {
     ));
 }
 
+/// Live content after an unavailable provider snapshot is never preceded by
+/// older history; a later runtime continues the timeline after it.
 #[tokio::test]
-async fn incomplete_history_with_live_content_converges_as_a_known_gap() {
+async fn incomplete_history_with_live_content_is_continued_not_seeded() {
     let temp_dir = TempDir::new().unwrap();
     let mut binding = interaction_binding();
     binding.history_complete = false;
@@ -1232,7 +1237,7 @@ async fn incomplete_history_with_live_content_converges_as_a_known_gap() {
         .unwrap();
     assert_eq!(
         authority.disposition,
-        AgentHistoryHydrationDispositionV1::KnownGap
+        AgentHistoryHydrationDispositionV1::Continuable
     );
     assert!(!authority.binding.history_complete);
 }
