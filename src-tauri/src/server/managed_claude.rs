@@ -117,6 +117,11 @@ pub(super) fn normalize_hook_report(
             .and_then(Value::as_array)
             .is_some_and(Vec::is_empty)
     });
+    // Claude names the subagent whose work fired a hook.
+    let subagent = object
+        .get("agent_id")
+        .and_then(Value::as_str)
+        .is_some_and(|agent| !agent.is_empty());
     let state = match event {
         "SessionStart" => "waiting",
         // UserPromptSubmit opens the turn and PreToolUse re-reports it so the
@@ -138,15 +143,18 @@ pub(super) fn normalize_hook_report(
             "blocked"
         }
         "Notification" => "informational",
-        // A turn its login could not authenticate ends in StopFailure, never
-        // Stop, and nothing runs until a person signs in again. Other API
-        // failures carry no new fact; the Host keeps its last one.
+        // A turn that failed on an API error ends in StopFailure, never Stop,
+        // and Claude does not retry it: nothing runs until someone sends input
+        // again. A missing or expired login asks a person to sign in; any
+        // other failure (the API unreachable, rate limits, server errors, ...)
+        // is the turn's error. A subagent's failure ends only its own work.
+        "StopFailure" if subagent => "informational",
         "StopFailure"
             if object.get("error").and_then(Value::as_str) == Some("authentication_failed") =>
         {
             "sign_in_required"
         }
-        "StopFailure" => "informational",
+        "StopFailure" => "failed",
         // The prompt itself, with what it asks. The person still answers it,
         // in the terminal or from a chat that shows the request.
         "PermissionRequest" => "blocked",
@@ -162,10 +170,7 @@ pub(super) fn normalize_hook_report(
     // whose tool call fires a hook; that call is background work too.
     let background_work = match event {
         "Stop" => state == "working" && !registries_empty,
-        "PreToolUse" => object
-            .get("agent_id")
-            .and_then(Value::as_str)
-            .is_some_and(|agent| !agent.is_empty()),
+        "PreToolUse" => subagent,
         _ => false,
     };
     let turn_completion_id = if state == "done" {
@@ -241,6 +246,12 @@ pub(super) fn normalize_hook_report(
         "sign_in_required" => (
             crate::hmux::ReportedAgentActivity::Waiting,
             crate::hmux::ReportedAgentAttention::InputRequired,
+            false,
+            None,
+        ),
+        "failed" => (
+            crate::hmux::ReportedAgentActivity::Waiting,
+            crate::hmux::ReportedAgentAttention::Error,
             false,
             None,
         ),
@@ -325,38 +336,65 @@ mod tests {
         }
     }
 
+    /// Claude ends a turn that failed on an API error with StopFailure and no
+    /// Stop (Claude Code 2.1.331 with the API unreachable reports
+    /// `server_error`). The turn is over and its prompt is idle, so the
+    /// session must leave `working`: a failed sign-in asks a person to sign
+    /// in, any other failure is the turn's error.
     #[test]
-    fn a_turn_failed_at_sign_in_asks_for_a_person_and_other_failures_add_nothing() {
+    fn a_failed_turn_ends_with_sign_in_or_its_error() {
         let header = |name: &str| {
-            (name != "X-Hebbian-Hmux-Source-Sequence").then(|| "fixture-id".to_string())
-        };
-        let failure = |error: &str| {
-            serde_json::json!({
-                "hook_event_name": "StopFailure", "session_id": "fixture-conversation",
-                "prompt_id": "fixture-parent-turn", "error": error,
-                "last_assistant_message": "Not logged in · Please run /login",
+            Some(if name == "X-Hebbian-Hmux-Source-Sequence" {
+                "42".to_string()
+            } else {
+                "fixture-id".to_string()
             })
         };
-        let report = normalize_hook_report(failure("authentication_failed"), header)
-            .unwrap()
-            .expect("a failed sign-in is reported")
-            .host_request;
-        assert_eq!(report.activity, crate::hmux::ReportedAgentActivity::Waiting);
-        assert_eq!(
-            report.attention,
-            crate::hmux::ReportedAgentAttention::InputRequired
-        );
-        assert!(!report.turn_completed);
-        assert_eq!(report.turn_completion_id, None);
-        assert_eq!(report.working_ttl_ms, None);
-        for error in ["rate_limit", "server_error", "billing_error"] {
-            assert!(
-                normalize_hook_report(failure(error), header)
-                    .unwrap()
-                    .is_none(),
-                "{error}"
+        let failure = |error: Option<&str>| {
+            let mut input = serde_json::json!({
+                "hook_event_name": "StopFailure", "session_id": "fixture-conversation",
+                "prompt_id": "fixture-parent-turn",
+                "last_assistant_message": "API Error: Can't reach the API server",
+            });
+            if let Some(error) = error {
+                input["error"] = error.into();
+            }
+            input
+        };
+        use crate::hmux::ReportedAgentAttention::{Error, InputRequired};
+        for (error, attention) in [
+            (Some("authentication_failed"), InputRequired),
+            (Some("server_error"), Error),
+            (Some("rate_limit"), Error),
+            (Some("billing_error"), Error),
+            (Some("unknown"), Error),
+            (None, Error),
+        ] {
+            let report = normalize_hook_report(failure(error), header)
+                .unwrap()
+                .expect("a failed turn is reported")
+                .host_request;
+            assert_eq!(
+                report.activity,
+                crate::hmux::ReportedAgentActivity::Waiting,
+                "{error:?}"
+            );
+            assert_eq!(report.attention, attention, "{error:?}");
+            assert!(!report.turn_completed);
+            assert_eq!(report.turn_completion_id, None);
+            assert_eq!(report.working_ttl_ms, None);
+            assert!(!report.background_work);
+            assert_eq!(
+                report.causality,
+                Some(hmux_client::AgentStateReportCausality {
+                    sequence: 42,
+                    work_id: Some("fixture-parent-turn".into()),
+                })
             );
         }
+        let mut subagent = failure(Some("server_error"));
+        subagent["agent_id"] = "fixture-subagent".into();
+        assert!(normalize_hook_report(subagent, header).unwrap().is_none());
     }
 
     #[test]

@@ -714,14 +714,21 @@ def claude_report(native, fence):
             False,
             None,
         )
-    elif event == "StopFailure" and native.get("error") == "authentication_failed":
-        # Claude ends a turn its login could not authenticate with StopFailure,
-        # never Stop: the selected account's login is missing or expired, and
-        # nothing runs until a person signs in again with /login. Other API
-        # failures keep the reports they had before.
+    elif event == "StopFailure" and not claude_subagent(native):
+        # Claude ends a turn that failed on an API error with StopFailure,
+        # never Stop, and does not retry it: the prompt is idle and nothing
+        # runs until someone sends input again. A missing or expired login
+        # asks a person to sign in with /login; any other failure (the API
+        # unreachable, rate limits, server errors, ...) is the turn's error.
+        # A subagent's failure ends only its own work; the parent's turn
+        # reports its own end.
         activity, attention, completed, working_ttl_ms = (
             "waiting",
-            "input_required",
+            (
+                "input_required"
+                if native.get("error") == "authentication_failed"
+                else "error"
+            ),
             False,
             None,
         )
