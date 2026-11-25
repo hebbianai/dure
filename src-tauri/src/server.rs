@@ -735,6 +735,311 @@ pub fn start(
 
     let channel = app_channel.name.clone();
     let remote_receipt_waiters = Arc::new(tokio::sync::Semaphore::new(8));
+    // Control routes can wait on the WebView for seconds, a pane operation for
+    // minutes. They run one at a time, in arrival order, on their own thread.
+    // The accept loop below only authenticates, rate-limits and answers the
+    // reporting routes, none of which waits on the WebView, so an agent's hook
+    // report or liveness check is never queued behind a pane request. While
+    // both shared one thread, a busy WebView made the managed Claude hooks of
+    // every session overrun their 2.4 s budget.
+    let (control_sender, control_requests) = mpsc::channel::<tiny_http::Request>();
+    let control_app = app.clone();
+    let control_broker = Arc::clone(&broker);
+    let control_waiters = Arc::clone(&remote_receipt_waiters);
+    let control_thread = std::thread::Builder::new()
+        .name("dure-cli-control".into())
+        .spawn(move || {
+            let (app, broker, remote_receipt_waiters) =
+                (control_app, control_broker, control_waiters);
+            for mut req in control_requests {
+                let url = req.url().to_string();
+                let method = req.method().clone();
+                if method == Method::Post && url == "/transcript" {
+                    let body = match read_json_body(&mut req) {
+                        Ok(body) => body,
+                        Err(error) => {
+                            let _ = req.respond(json_response(
+                                400,
+                                serde_json::json!({
+                                    "ok": false,
+                                    "error": { "code": "invalid_request", "message": error }
+                                }),
+                            ));
+                            continue;
+                        }
+                    };
+                    let provider = body.get("provider").and_then(Value::as_str);
+                    let conversation_id = body.get("conversationId").and_then(Value::as_str);
+                    let response = match (provider, conversation_id) {
+                        (Some(provider), Some(conversation_id)) => {
+                            match crate::conv::transcript_global(provider, conversation_id) {
+                                Ok(transcript) => json_response(
+                                    200,
+                                    serde_json::json!({ "ok": true, "transcript": transcript }),
+                                ),
+                                Err(error) => json_response(
+                                    409,
+                                    serde_json::json!({
+                                        "ok": false,
+                                        "error": {
+                                            "code": "provider_transcript_unavailable",
+                                            "message": error
+                                        }
+                                    }),
+                                ),
+                            }
+                        }
+                        _ => json_response(
+                            400,
+                            serde_json::json!({
+                                "ok": false,
+                                "error": {
+                                    "code": "invalid_request",
+                                    "message": "provider and conversationId are required"
+                                }
+                            }),
+                        ),
+                    };
+                    let _ = req.respond(response);
+                    continue;
+                }
+
+                // 배포 체인의 웹뷰 리로드 — 재기동 직후 웹뷰가 옛 번들(캐시·
+                // 재시작 경합)로 붙는 version-skew를 backend에서 직접 푼다.
+                // eval 주입이라 프론트가 half-boot 상태여도 동작한다.
+                if method == Method::Post && url == "/webview/reload" {
+                    let mut reloaded: Vec<String> = Vec::new();
+                    for (label, window) in app.webview_windows() {
+                        if window.eval("window.location.reload()").is_ok() {
+                            reloaded.push(label);
+                        }
+                    }
+                    let _ = req.respond(json_response(
+                        200,
+                        serde_json::json!({ "ok": true, "reloaded": reloaded }),
+                    ));
+                    continue;
+                }
+
+                // Spawn saga 조회 — 디스크 직독이라 webview 생존과 무관하게 동작한다.
+                if method == Method::Get && url.starts_with("/spawn/") {
+                    let rest = &url["/spawn/".len()..];
+                    let response = if let Some(id) = rest.strip_suffix("/journal") {
+                        match crate::spawn::journal_for_server(id) {
+                            Ok(raw) => Response::from_data(raw.into_bytes())
+                                .with_status_code(200)
+                                .with_header(
+                                    Header::from_bytes(&b"Content-Type"[..], &b"application/jsonl"[..])
+                                        .expect("static response header is valid"),
+                                ),
+                            Err(error) => json_response(
+                                404,
+                                serde_json::json!({
+                                    "ok": false,
+                                    "error": { "code": "not_found", "message": error }
+                                }),
+                            ),
+                        }
+                    } else {
+                        match crate::spawn::receipt_for_server(rest) {
+                            Ok(receipt) => json_response(
+                                200,
+                                serde_json::json!({ "ok": true, "receipt": receipt }),
+                            ),
+                            Err(error) => json_response(
+                                404,
+                                serde_json::json!({
+                                    "ok": false,
+                                    "error": { "code": "not_found", "message": error }
+                                }),
+                            ),
+                        }
+                    };
+                    let _ = req.respond(response);
+                    continue;
+                }
+
+                // POST /spawn/v2 — saga를 journal에 먼저 만들고(또는 재개 대상을 확인하고)
+                // 실행은 프론트 오케스트레이터에 위임한다. 응답은 202 {receiptId} 즉시.
+                if method == Method::Post && url == "/spawn/v2" {
+                    let params = match read_json_body(&mut req) {
+                        Ok(params) => params,
+                        Err(error) => {
+                            let _ = req.respond(json_response(
+                                400,
+                                serde_json::json!({
+                                    "ok": false,
+                                    "error": { "code": "invalid_request", "message": error }
+                                }),
+                            ));
+                            continue;
+                        }
+                    };
+                    let resume_id = params
+                        .get("receiptId")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                    let receipt_id = if let Some(id) = resume_id {
+                        // 명시적 재개: 기존 receipt가 있어야 하고, terminal이면 재개 불가
+                        match crate::spawn::receipt_for_server(&id) {
+                            Ok(receipt) => {
+                                let state = receipt
+                                    .get("state")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default();
+                                if state == "succeeded" || state == "compensated" {
+                                    let _ = req.respond(json_response(
+                                        409,
+                                        serde_json::json!({
+                                            "ok": false,
+                                            "error": {
+                                                "code": "saga_terminal",
+                                                "message": format!("saga is already {state}")
+                                            },
+                                            "receipt": receipt
+                                        }),
+                                    ));
+                                    continue;
+                                }
+                                id
+                            }
+                            Err(error) => {
+                                let _ = req.respond(json_response(
+                                    404,
+                                    serde_json::json!({
+                                        "ok": false,
+                                        "error": { "code": "not_found", "message": error }
+                                    }),
+                                ));
+                                continue;
+                            }
+                        }
+                    } else {
+                        let idempotency_key = params
+                            .get("idempotencyKey")
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+                        match crate::spawn::spawn_saga_create(params.clone(), idempotency_key) {
+                            Ok(created) => {
+                                if created["existing"] == Value::Bool(true) {
+                                    // 같은 idempotencyKey — 기존 saga를 중복 실행하지 않는다
+                                    let _ = req.respond(json_response(
+                                        200,
+                                        serde_json::json!({
+                                            "ok": true,
+                                            "existing": true,
+                                            "receiptId": created["receiptId"],
+                                            "receipt": created["receipt"]
+                                        }),
+                                    ));
+                                    continue;
+                                }
+                                created
+                                    .get("receiptId")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string()
+                            }
+                            Err(error) => {
+                                let _ = req.respond(json_response(
+                                    500,
+                                    serde_json::json!({
+                                        "ok": false,
+                                        "error": { "code": "journal_unavailable", "message": error }
+                                    }),
+                                ));
+                                continue;
+                            }
+                        }
+                    };
+                    let Some(window) = app.get_webview_window("main") else {
+                        // journal은 남아 있으므로 나중에 receiptId로 재개 가능하다
+                        let _ = req.respond(json_response(
+                            503,
+                            serde_json::json!({
+                                "ok": false,
+                                "receiptId": receipt_id,
+                                "error": {
+                                    "code": "frontend_unavailable",
+                                    "message": "Dure window is unavailable; resume later with receiptId"
+                                }
+                            }),
+                        ));
+                        continue;
+                    };
+                    let mut forwarded = params.clone();
+                    if let Some(object) = forwarded.as_object_mut() {
+                        object.insert("receiptId".into(), serde_json::json!(receipt_id));
+                    }
+                    let req_id = receipt_id.clone();
+                    if let Err(error) = window.emit(
+                        "cli:request",
+                        serde_json::json!({
+                            "reqId": req_id,
+                            "action": "spawn.v2",
+                            "params": forwarded
+                        }),
+                    ) {
+                        let _ = req.respond(json_response(
+                            503,
+                            serde_json::json!({
+                                "ok": false,
+                                "receiptId": receipt_id,
+                                "error": {
+                                    "code": "frontend_unavailable",
+                                    "message": format!(
+                                        "could not deliver spawn to frontend: {error}; resume later with receiptId"
+                                    )
+                                }
+                            }),
+                        ));
+                        continue;
+                    }
+                    let _ = req.respond(json_response(
+                        202,
+                        serde_json::json!({ "ok": true, "receiptId": receipt_id }),
+                    ));
+                    continue;
+                }
+
+                #[cfg(debug_assertions)]
+                if let Some(response) = handle_qa_request(&app, &method, &url, &mut req) {
+                    let (status, value) = match response {
+                        Ok(value) => (200, value),
+                        Err(error) => (
+                            409,
+                            serde_json::json!({
+                                "ok": false,
+                                "error": { "code": "qa_request_failed", "message": error }
+                            }),
+                        ),
+                    };
+                    let _ = req.respond(json_response(status, value));
+                    continue;
+                }
+
+                // POST actions are handled by the frontend, where DockView and the
+                // application store live.
+                // (/spawn = 에이전트 생성, /comment = 체크포인트 갱신,
+                //  /activity = herdr식 훅이 보고하는 "지금 하는 작업")
+                if let Some(route) = frontend_route(&method, &url) {
+                    serve_frontend_route(req, route, &url, &app, &broker, &remote_receipt_waiters);
+                    continue;
+                }
+
+                let _ = req.respond(json_response(
+                    404,
+                    serde_json::json!({
+                        "ok": false,
+                        "error": { "code": "not_found", "message": "route not found" }
+                    }),
+                ));
+            }
+        });
+    if let Err(error) = control_thread {
+        eprintln!("could not start the Dure CLI control thread: {error}");
+        return;
+    }
     std::thread::spawn(move || {
         // Report 라우트 rate limit — 폭주한 훅이 서버 스레드와 웹뷰 이벤트를
         // 도배하지 못하게 Rust 계층에서 자른다. 한도는 소켓·이벤트 채널
@@ -747,7 +1052,7 @@ pub fn start(
         const REPORT_RATE_MAX: u32 = 60;
         let mut report_window_start = std::time::Instant::now();
         let mut report_window_count = 0u32;
-        for mut req in server {
+        for req in server {
             let control_header = format!("Bearer {token}");
             let report_header = format!("Bearer {report_token}");
             let presented = req.headers().iter().find_map(|h| {
@@ -775,7 +1080,8 @@ pub fn start(
             let url = req.url().to_string();
             let method = req.method().clone();
 
-            match required_scope(&method, url.split('?').next().unwrap_or(&url)) {
+            let scope = required_scope(&method, url.split('?').next().unwrap_or(&url));
+            match scope {
                 // fail-closed: 미분류 라우트는 어떤 핸들러에도 닿기 전에
                 // 404다 — 분류 없이 추가된 직접 핸들러가 report 토큰으로
                 // 열리는 사고를 소스 스캔 테스트에만 의존하지 않고 막는다.
@@ -836,6 +1142,22 @@ pub fn start(
                 Some(_) => {}
             }
 
+            if scope == Some(RouteScope::Control) {
+                if let Err(mpsc::SendError(req)) = control_sender.send(req) {
+                    let _ = req.respond(json_response(
+                        503,
+                        serde_json::json!({
+                            "ok": false,
+                            "error": {
+                                "code": "control_unavailable",
+                                "message": "Dure is not accepting control requests"
+                            }
+                        }),
+                    ));
+                }
+                continue;
+            }
+
             if method == Method::Get && url == "/ping" {
                 let _ = req.respond(json_response(
                     200,
@@ -854,533 +1176,13 @@ pub fn start(
                 continue;
             }
 
-            if method == Method::Post && url == "/transcript" {
-                let body = match read_json_body(&mut req) {
-                    Ok(body) => body,
-                    Err(error) => {
-                        let _ = req.respond(json_response(
-                            400,
-                            serde_json::json!({
-                                "ok": false,
-                                "error": { "code": "invalid_request", "message": error }
-                            }),
-                        ));
-                        continue;
-                    }
-                };
-                let provider = body.get("provider").and_then(Value::as_str);
-                let conversation_id = body.get("conversationId").and_then(Value::as_str);
-                let response = match (provider, conversation_id) {
-                    (Some(provider), Some(conversation_id)) => {
-                        match crate::conv::transcript_global(provider, conversation_id) {
-                            Ok(transcript) => json_response(
-                                200,
-                                serde_json::json!({ "ok": true, "transcript": transcript }),
-                            ),
-                            Err(error) => json_response(
-                                409,
-                                serde_json::json!({
-                                    "ok": false,
-                                    "error": {
-                                        "code": "provider_transcript_unavailable",
-                                        "message": error
-                                    }
-                                }),
-                            ),
-                        }
-                    }
-                    _ => json_response(
-                        400,
-                        serde_json::json!({
-                            "ok": false,
-                            "error": {
-                                "code": "invalid_request",
-                                "message": "provider and conversationId are required"
-                            }
-                        }),
-                    ),
-                };
-                let _ = req.respond(response);
-                continue;
-            }
-
-            // Managed Claude command hook — exact channel/generation을 ping으로
-            // 확인한 bridge만 들어오며, backend가 WebView 없이 Host에 직접
-            // 적용한다. 성공 후 prompt text projection만 frontend에 best-effort.
             if method == Method::Post && url == "/hooks/claude" {
-                let body = match read_json_body(&mut req) {
-                    Ok(body) => body,
-                    Err(error) => {
-                        let _ = req.respond(json_response(
-                            400,
-                            serde_json::json!({
-                                "ok": false,
-                                "error": { "code": "invalid_request", "message": error }
-                            }),
-                        ));
-                        continue;
-                    }
-                };
-                let report = match normalize_claude_hook_report(&req, body) {
-                    Ok(Some(report)) => report,
-                    Ok(None) => {
-                        let _ = req.respond(json_response(200, serde_json::json!({})));
-                        continue;
-                    }
-                    Err(error) => {
-                        let _ = req.respond(json_response(
-                            400,
-                            serde_json::json!({
-                                "ok": false,
-                                "error": { "code": "invalid_hook_report", "message": error }
-                            }),
-                        ));
-                        continue;
-                    }
-                };
-                let presentation = report.presentation;
-                let (status, value) = dispatch_claude_hook_request(
-                    &app,
-                    report.host_request,
-                    report.transcript_path,
-                    report.cleared_conversation_id,
-                );
-                if (200..300).contains(&status) {
-                    emit_claude_activity_projection(&app, &presentation);
-                    let _ = req.respond(json_response(status, serde_json::json!({})));
-                } else {
-                    let _ = req.respond(json_response(status, value));
-                }
+                serve_claude_hook(req, &app);
                 continue;
             }
 
-            // 배포 체인의 웹뷰 리로드 — 재기동 직후 웹뷰가 옛 번들(캐시·
-            // 재시작 경합)로 붙는 version-skew를 backend에서 직접 푼다.
-            // eval 주입이라 프론트가 half-boot 상태여도 동작한다.
-            if method == Method::Post && url == "/webview/reload" {
-                let mut reloaded: Vec<String> = Vec::new();
-                for (label, window) in app.webview_windows() {
-                    if window.eval("window.location.reload()").is_ok() {
-                        reloaded.push(label);
-                    }
-                }
-                let _ = req.respond(json_response(
-                    200,
-                    serde_json::json!({ "ok": true, "reloaded": reloaded }),
-                ));
-                continue;
-            }
-
-            // Spawn saga 조회 — 디스크 직독이라 webview 생존과 무관하게 동작한다.
-            if method == Method::Get && url.starts_with("/spawn/") {
-                let rest = &url["/spawn/".len()..];
-                let response = if let Some(id) = rest.strip_suffix("/journal") {
-                    match crate::spawn::journal_for_server(id) {
-                        Ok(raw) => Response::from_data(raw.into_bytes())
-                            .with_status_code(200)
-                            .with_header(
-                                Header::from_bytes(&b"Content-Type"[..], &b"application/jsonl"[..])
-                                    .expect("static response header is valid"),
-                            ),
-                        Err(error) => json_response(
-                            404,
-                            serde_json::json!({
-                                "ok": false,
-                                "error": { "code": "not_found", "message": error }
-                            }),
-                        ),
-                    }
-                } else {
-                    match crate::spawn::receipt_for_server(rest) {
-                        Ok(receipt) => json_response(
-                            200,
-                            serde_json::json!({ "ok": true, "receipt": receipt }),
-                        ),
-                        Err(error) => json_response(
-                            404,
-                            serde_json::json!({
-                                "ok": false,
-                                "error": { "code": "not_found", "message": error }
-                            }),
-                        ),
-                    }
-                };
-                let _ = req.respond(response);
-                continue;
-            }
-
-            // POST /spawn/v2 — saga를 journal에 먼저 만들고(또는 재개 대상을 확인하고)
-            // 실행은 프론트 오케스트레이터에 위임한다. 응답은 202 {receiptId} 즉시.
-            if method == Method::Post && url == "/spawn/v2" {
-                let params = match read_json_body(&mut req) {
-                    Ok(params) => params,
-                    Err(error) => {
-                        let _ = req.respond(json_response(
-                            400,
-                            serde_json::json!({
-                                "ok": false,
-                                "error": { "code": "invalid_request", "message": error }
-                            }),
-                        ));
-                        continue;
-                    }
-                };
-                let resume_id = params
-                    .get("receiptId")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-                let receipt_id = if let Some(id) = resume_id {
-                    // 명시적 재개: 기존 receipt가 있어야 하고, terminal이면 재개 불가
-                    match crate::spawn::receipt_for_server(&id) {
-                        Ok(receipt) => {
-                            let state = receipt
-                                .get("state")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default();
-                            if state == "succeeded" || state == "compensated" {
-                                let _ = req.respond(json_response(
-                                    409,
-                                    serde_json::json!({
-                                        "ok": false,
-                                        "error": {
-                                            "code": "saga_terminal",
-                                            "message": format!("saga is already {state}")
-                                        },
-                                        "receipt": receipt
-                                    }),
-                                ));
-                                continue;
-                            }
-                            id
-                        }
-                        Err(error) => {
-                            let _ = req.respond(json_response(
-                                404,
-                                serde_json::json!({
-                                    "ok": false,
-                                    "error": { "code": "not_found", "message": error }
-                                }),
-                            ));
-                            continue;
-                        }
-                    }
-                } else {
-                    let idempotency_key = params
-                        .get("idempotencyKey")
-                        .and_then(Value::as_str)
-                        .map(str::to_string);
-                    match crate::spawn::spawn_saga_create(params.clone(), idempotency_key) {
-                        Ok(created) => {
-                            if created["existing"] == Value::Bool(true) {
-                                // 같은 idempotencyKey — 기존 saga를 중복 실행하지 않는다
-                                let _ = req.respond(json_response(
-                                    200,
-                                    serde_json::json!({
-                                        "ok": true,
-                                        "existing": true,
-                                        "receiptId": created["receiptId"],
-                                        "receipt": created["receipt"]
-                                    }),
-                                ));
-                                continue;
-                            }
-                            created
-                                .get("receiptId")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_string()
-                        }
-                        Err(error) => {
-                            let _ = req.respond(json_response(
-                                500,
-                                serde_json::json!({
-                                    "ok": false,
-                                    "error": { "code": "journal_unavailable", "message": error }
-                                }),
-                            ));
-                            continue;
-                        }
-                    }
-                };
-                let Some(window) = app.get_webview_window("main") else {
-                    // journal은 남아 있으므로 나중에 receiptId로 재개 가능하다
-                    let _ = req.respond(json_response(
-                        503,
-                        serde_json::json!({
-                            "ok": false,
-                            "receiptId": receipt_id,
-                            "error": {
-                                "code": "frontend_unavailable",
-                                "message": "Dure window is unavailable; resume later with receiptId"
-                            }
-                        }),
-                    ));
-                    continue;
-                };
-                let mut forwarded = params.clone();
-                if let Some(object) = forwarded.as_object_mut() {
-                    object.insert("receiptId".into(), serde_json::json!(receipt_id));
-                }
-                let req_id = receipt_id.clone();
-                if let Err(error) = window.emit(
-                    "cli:request",
-                    serde_json::json!({
-                        "reqId": req_id,
-                        "action": "spawn.v2",
-                        "params": forwarded
-                    }),
-                ) {
-                    let _ = req.respond(json_response(
-                        503,
-                        serde_json::json!({
-                            "ok": false,
-                            "receiptId": receipt_id,
-                            "error": {
-                                "code": "frontend_unavailable",
-                                "message": format!(
-                                    "could not deliver spawn to frontend: {error}; resume later with receiptId"
-                                )
-                            }
-                        }),
-                    ));
-                    continue;
-                }
-                let _ = req.respond(json_response(
-                    202,
-                    serde_json::json!({ "ok": true, "receiptId": receipt_id }),
-                ));
-                continue;
-            }
-
-            #[cfg(debug_assertions)]
-            if let Some(response) = handle_qa_request(&app, &method, &url, &mut req) {
-                let (status, value) = match response {
-                    Ok(value) => (200, value),
-                    Err(error) => (
-                        409,
-                        serde_json::json!({
-                            "ok": false,
-                            "error": { "code": "qa_request_failed", "message": error }
-                        }),
-                    ),
-                };
-                let _ = req.respond(json_response(status, value));
-                continue;
-            }
-
-            // POST actions are handled by the frontend, where DockView and the
-            // application store live.
-            // (/spawn = 에이전트 생성, /comment = 체크포인트 갱신,
-            //  /activity = herdr식 훅이 보고하는 "지금 하는 작업")
             if let Some(route) = frontend_route(&method, &url) {
-                let (action, waits_for_receipt) = (route.action, route.waits_for_receipt);
-                let remote_receipt_permit = if waits_on_remote_host(action) {
-                    match remote_receipt_waiters.clone().try_acquire_owned() {
-                        Ok(permit) => Some(permit),
-                        Err(_) => {
-                            let _ = req.respond(json_response(503, remote_receipt_busy(action)));
-                            continue;
-                        }
-                    }
-                } else {
-                    None
-                };
-                let params = match read_json_body(&mut req) {
-                    Ok(params) => params,
-                    Err(error) => {
-                        let _ = req.respond(json_response(
-                            400,
-                            serde_json::json!({
-                                "ok": false,
-                                "error": { "code": "invalid_request", "message": error }
-                            }),
-                        ));
-                        continue;
-                    }
-                };
-                if route.destructive
-                    && params.get("confirm").and_then(Value::as_bool) != Some(true)
-                {
-                    let _ = req.respond(json_response(
-                        428,
-                        serde_json::json!({
-                            "ok": false,
-                            "error": {
-                                "code": "confirmation_required",
-                                "message": format!(
-                                    "{url} is destructive; pass \"confirm\": true to proceed"
-                                )
-                            }
-                        }),
-                    ));
-                    continue;
-                }
-                let replayable_request = match replayable_frontend_request(action, &params) {
-                    Ok(request) => request,
-                    Err(error) => {
-                        let _ = req.respond(json_response(
-                            400,
-                            serde_json::json!({
-                                "ok": false,
-                                "error": {
-                                    "code": "invalid_request",
-                                    "message": error
-                                }
-                            }),
-                        ));
-                        continue;
-                    }
-                };
-                let replayable = replayable_request.is_some();
-                let req_id = match replayable_request.as_ref() {
-                    Some((request_id, _)) => request_id.clone(),
-                    None => match gen_token() {
-                        Ok(request_id) => request_id,
-                        Err(error) => {
-                            let _ = req.respond(json_response(
-                                500,
-                                serde_json::json!({
-                                    "ok": false,
-                                    "error": {
-                                        "code": "request_id_unavailable",
-                                        "message": format!("could not generate request id: {error}")
-                                    }
-                                }),
-                            ));
-                            continue;
-                        }
-                    },
-                };
-                let (receiver, dispatch) = if waits_for_receipt {
-                    let registration = match replayable_request {
-                        Some((_, identity)) => {
-                            broker.register_with_identity(req_id.clone(), Some(identity))
-                        }
-                        None if action == "hmux.remote-shell" => {
-                            broker.register_remote_shell(req_id.clone())
-                        }
-                        None => broker.register(req_id.clone()).map(|receiver| {
-                            CliRequestRegistration {
-                                receiver,
-                                dispatch: true,
-                            }
-                        }),
-                    };
-                    match registration {
-                        Ok(registration) => (Some(registration.receiver), registration.dispatch),
-                        Err(error) => {
-                            let conflict =
-                                error == CliRequestRegistrationError::IdentityConflict;
-                            let _ = req.respond(json_response(
-                                if conflict { 409 } else { 500 },
-                                serde_json::json!({
-                                    "ok": false,
-                                    "error": {
-                                        "code": if conflict {
-                                            "idempotency_conflict"
-                                        } else {
-                                            "broker_unavailable"
-                                        },
-                                        "message": error.to_string()
-                                    }
-                                }),
-                            ));
-                            continue;
-                        }
-                    }
-                } else {
-                    (None, true)
-                };
-                // Every frontend route uses the same explicit WebView target.
-                // Keeping a second action allowlist here made valid targets
-                // silently fall back to `main` when a route was omitted.
-                let window_label = match frontend_window_label(&params) {
-                    Ok(label) => label,
-                    Err(()) => {
-                        broker.cancel(&req_id);
-                        let _ = req.respond(json_response(
-                            400,
-                            serde_json::json!({
-                                "ok": false,
-                                "error": {
-                                    "code": "invalid_request",
-                                    "message": "windowLabel is invalid"
-                                }
-                            }),
-                        ));
-                        continue;
-                    }
-                };
-                if dispatch {
-                    let Some(layout_coordinator) = app.get_webview_window(window_label) else {
-                        broker.cancel(&req_id);
-                        let _ = req.respond(json_response(
-                            503,
-                            serde_json::json!({
-                                "ok": false,
-                                "error": {
-                                    "code": "frontend_unavailable",
-                                    "message": format!(
-                                        "Dure window {window_label} is unavailable"
-                                    )
-                                }
-                            }),
-                        ));
-                        continue;
-                    };
-                    if let Err(error) = layout_coordinator.emit(
-                        "cli:request",
-                        serde_json::json!({
-                            "reqId": req_id,
-                            "action": action,
-                            "params": params
-                        }),
-                    ) {
-                        broker.cancel(&req_id);
-                        let _ = req.respond(json_response(
-                            500,
-                            serde_json::json!({
-                                "ok": false,
-                                "error": {
-                                    "code": "frontend_unavailable",
-                                    "message": format!(
-                                        "could not deliver request to Dure frontend: {error}"
-                                    )
-                                }
-                            }),
-                        ));
-                        continue;
-                    }
-                }
-                if let Some(receiver) = receiver {
-                    if let Some(permit) = remote_receipt_permit {
-                        if let Err(error) = dispatch_frontend_receipt(
-                            req,
-                            broker.clone(),
-                            req_id.clone(),
-                            action,
-                            receiver,
-                            permit,
-                        ) {
-                            broker.cancel(&req_id);
-                            eprintln!("could not start remote receipt worker: {error}");
-                        }
-                    } else {
-                        let response = wait_for_frontend_receipt(
-                            &broker,
-                            &req_id,
-                            action,
-                            replayable,
-                            receiver,
-                        );
-                        let _ = req.respond(response);
-                    }
-                } else {
-                    let _ = req.respond(json_response(
-                        202,
-                        serde_json::json!({ "accepted": true, "reqId": req_id }),
-                    ));
-                }
+                serve_frontend_route(req, route, &url, &app, &broker, &remote_receipt_waiters);
                 continue;
             }
 
@@ -1393,6 +1195,272 @@ pub fn start(
             ));
         }
     });
+}
+
+/// Managed Claude command hook. Only a bridge that confirmed the exact
+/// channel and generation with `/ping` arrives here, and the backend applies
+/// the report to the Host without the WebView; only the prompt text
+/// projection reaches the frontend, best effort.
+///
+/// The Host report and its bounded answer wait run on a blocking worker. On
+/// the accept loop each report held every later report and liveness check for
+/// up to that 1.5 s wait, so concurrent agents overran their hooks' budget. A
+/// report that missed the wait already went on after the 202 answer, so
+/// reports reached the Host concurrently before this change too.
+fn serve_claude_hook(mut req: tiny_http::Request, app: &AppHandle) {
+    let body = match read_json_body(&mut req) {
+        Ok(body) => body,
+        Err(error) => {
+            let _ = req.respond(json_response(
+                400,
+                serde_json::json!({
+                    "ok": false,
+                    "error": { "code": "invalid_request", "message": error }
+                }),
+            ));
+            return;
+        }
+    };
+    let report = match normalize_claude_hook_report(&req, body) {
+        Ok(Some(report)) => report,
+        Ok(None) => {
+            let _ = req.respond(json_response(200, serde_json::json!({})));
+            return;
+        }
+        Err(error) => {
+            let _ = req.respond(json_response(
+                400,
+                serde_json::json!({
+                    "ok": false,
+                    "error": { "code": "invalid_hook_report", "message": error }
+                }),
+            ));
+            return;
+        }
+    };
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let presentation = report.presentation;
+        let (status, value) = dispatch_claude_hook_request(
+            &app,
+            report.host_request,
+            report.transcript_path,
+            report.cleared_conversation_id,
+        );
+        if (200..300).contains(&status) {
+            emit_claude_activity_projection(&app, &presentation);
+            let _ = req.respond(json_response(status, serde_json::json!({})));
+        } else {
+            let _ = req.respond(json_response(status, value));
+        }
+    });
+}
+
+/// Delegates one route to the frontend, where DockView and the application
+/// store live, and answers with its receipt when the route waits for one.
+fn serve_frontend_route(
+    mut req: tiny_http::Request,
+    route: &'static FrontendRoute,
+    url: &str,
+    app: &AppHandle,
+    broker: &Arc<CliRequestBroker>,
+    remote_receipt_waiters: &Arc<tokio::sync::Semaphore>,
+) {
+    let (action, waits_for_receipt) = (route.action, route.waits_for_receipt);
+    let remote_receipt_permit = if waits_on_remote_host(action) {
+        match remote_receipt_waiters.clone().try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(_) => {
+                let _ = req.respond(json_response(503, remote_receipt_busy(action)));
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    let params = match read_json_body(&mut req) {
+        Ok(params) => params,
+        Err(error) => {
+            let _ = req.respond(json_response(
+                400,
+                serde_json::json!({
+                    "ok": false,
+                    "error": { "code": "invalid_request", "message": error }
+                }),
+            ));
+            return;
+        }
+    };
+    if route.destructive && params.get("confirm").and_then(Value::as_bool) != Some(true) {
+        let _ = req.respond(json_response(
+            428,
+            serde_json::json!({
+                "ok": false,
+                "error": {
+                    "code": "confirmation_required",
+                    "message": format!(
+                        "{url} is destructive; pass \"confirm\": true to proceed"
+                    )
+                }
+            }),
+        ));
+        return;
+    }
+    let replayable_request = match replayable_frontend_request(action, &params) {
+        Ok(request) => request,
+        Err(error) => {
+            let _ = req.respond(json_response(
+                400,
+                serde_json::json!({
+                    "ok": false,
+                    "error": {
+                        "code": "invalid_request",
+                        "message": error
+                    }
+                }),
+            ));
+            return;
+        }
+    };
+    let replayable = replayable_request.is_some();
+    let req_id = match replayable_request.as_ref() {
+        Some((request_id, _)) => request_id.clone(),
+        None => match gen_token() {
+            Ok(request_id) => request_id,
+            Err(error) => {
+                let _ = req.respond(json_response(
+                    500,
+                    serde_json::json!({
+                        "ok": false,
+                        "error": {
+                            "code": "request_id_unavailable",
+                            "message": format!("could not generate request id: {error}")
+                        }
+                    }),
+                ));
+                return;
+            }
+        },
+    };
+    let (receiver, dispatch) = if waits_for_receipt {
+        let registration = match replayable_request {
+            Some((_, identity)) => broker.register_with_identity(req_id.clone(), Some(identity)),
+            None if action == "hmux.remote-shell" => broker.register_remote_shell(req_id.clone()),
+            None => broker
+                .register(req_id.clone())
+                .map(|receiver| CliRequestRegistration {
+                    receiver,
+                    dispatch: true,
+                }),
+        };
+        match registration {
+            Ok(registration) => (Some(registration.receiver), registration.dispatch),
+            Err(error) => {
+                let conflict = error == CliRequestRegistrationError::IdentityConflict;
+                let _ = req.respond(json_response(
+                    if conflict { 409 } else { 500 },
+                    serde_json::json!({
+                        "ok": false,
+                        "error": {
+                            "code": if conflict {
+                                "idempotency_conflict"
+                            } else {
+                                "broker_unavailable"
+                            },
+                            "message": error.to_string()
+                        }
+                    }),
+                ));
+                return;
+            }
+        }
+    } else {
+        (None, true)
+    };
+    // Every frontend route uses the same explicit WebView target.
+    // Keeping a second action allowlist here made valid targets
+    // silently fall back to `main` when a route was omitted.
+    let window_label = match frontend_window_label(&params) {
+        Ok(label) => label,
+        Err(()) => {
+            broker.cancel(&req_id);
+            let _ = req.respond(json_response(
+                400,
+                serde_json::json!({
+                    "ok": false,
+                    "error": {
+                        "code": "invalid_request",
+                        "message": "windowLabel is invalid"
+                    }
+                }),
+            ));
+            return;
+        }
+    };
+    if dispatch {
+        let Some(layout_coordinator) = app.get_webview_window(window_label) else {
+            broker.cancel(&req_id);
+            let _ = req.respond(json_response(
+                503,
+                serde_json::json!({
+                    "ok": false,
+                    "error": {
+                        "code": "frontend_unavailable",
+                        "message": format!(
+                            "Dure window {window_label} is unavailable"
+                        )
+                    }
+                }),
+            ));
+            return;
+        };
+        if let Err(error) = layout_coordinator.emit(
+            "cli:request",
+            serde_json::json!({
+                "reqId": req_id,
+                "action": action,
+                "params": params
+            }),
+        ) {
+            broker.cancel(&req_id);
+            let _ = req.respond(json_response(
+                500,
+                serde_json::json!({
+                    "ok": false,
+                    "error": {
+                        "code": "frontend_unavailable",
+                        "message": format!(
+                            "could not deliver request to Dure frontend: {error}"
+                        )
+                    }
+                }),
+            ));
+            return;
+        }
+    }
+    if let Some(receiver) = receiver {
+        if let Some(permit) = remote_receipt_permit {
+            if let Err(error) = dispatch_frontend_receipt(
+                req,
+                broker.clone(),
+                req_id.clone(),
+                action,
+                receiver,
+                permit,
+            ) {
+                broker.cancel(&req_id);
+                eprintln!("could not start remote receipt worker: {error}");
+            }
+        } else {
+            let response = wait_for_frontend_receipt(broker, &req_id, action, replayable, receiver);
+            let _ = req.respond(response);
+        }
+    } else {
+        let _ = req.respond(json_response(
+            202,
+            serde_json::json!({ "accepted": true, "reqId": req_id }),
+        ));
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -1409,9 +1477,7 @@ fn handle_qa_request(
 
     let state = app.state::<WindowFocusQa>();
     match (method, url.split('?').next().unwrap_or(url)) {
-        (&Method::Post, "/qa/hmux/runtime/prepare") => {
-            Some(state.prepare_runtime(app))
-        }
+        (&Method::Post, "/qa/hmux/runtime/prepare") => Some(state.prepare_runtime(app)),
         (&Method::Get, "/qa/hmux/window-focus/controller-ready") => {
             Some(state.controller_page_status(app))
         }
@@ -1468,9 +1534,7 @@ fn handle_qa_request(
                 .ok_or_else(|| "snapshot requires a proof query parameter".to_string());
             Some(proof.and_then(|proof| state.snapshot_evidence(app, proof)))
         }
-        (&Method::Post, "/qa/hmux/window-focus/step") => {
-            Some(window_focus_qa::step(app, req))
-        }
+        (&Method::Post, "/qa/hmux/window-focus/step") => Some(window_focus_qa::step(app, req)),
         (&Method::Post, "/qa/hmux/window-focus/scroll-rows") => {
             Some(window_focus_qa::scroll_rows(app, req))
         }
@@ -1712,7 +1776,10 @@ fn dispatch_claude_hook_request(
             // dev 관측성 — 훅 ingress가 Host까지 닿았는지 콘솔로 확인 가능.
             #[cfg(debug_assertions)]
             eprintln!("managed Claude hook applied: outcome={}", receipt.outcome);
-            (200, serde_json::json!({ "ok": true, "outcome": receipt.outcome }))
+            (
+                200,
+                serde_json::json!({ "ok": true, "outcome": receipt.outcome }),
+            )
         }
         Ok(Err(failure)) => (
             502,
@@ -1721,10 +1788,7 @@ fn dispatch_claude_hook_request(
                 "error": { "code": failure.code, "message": failure.message }
             }),
         ),
-        Err(_) => (
-            202,
-            serde_json::json!({ "ok": true, "accepted": true }),
-        ),
+        Err(_) => (202, serde_json::json!({ "ok": true, "accepted": true })),
     }
 }
 
@@ -1810,10 +1874,7 @@ mod tests {
             }
         });
         let first = broker
-            .register_with_identity(
-                "input_send-after-disconnect".into(),
-                Some(identity.clone()),
-            )
+            .register_with_identity("input_send-after-disconnect".into(), Some(identity.clone()))
             .unwrap();
         assert!(broker.claim("input_send-after-disconnect").unwrap());
         drop(first.receiver);
@@ -1858,10 +1919,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(
-            request_id,
-            "input_8d42e80a-7b15-4ef6-a624-5d58f6d5d463"
-        );
+        assert_eq!(request_id, "input_8d42e80a-7b15-4ef6-a624-5d58f6d5d463");
         assert_eq!(identity["action"], "hmux.input");
         assert_eq!(identity["params"], params);
         let reuse = serde_json::json!({
@@ -2039,7 +2097,10 @@ mod tests {
         assert!(route.waits_for_receipt);
         assert_eq!(route.scope, RouteScope::Control);
         assert!(!route.destructive);
-        assert_eq!(frontend_action(&Method::Get, "/agents/unopened/visibility"), None);
+        assert_eq!(
+            frontend_action(&Method::Get, "/agents/unopened/visibility"),
+            None
+        );
         assert!(SERVER_CAPABILITIES.contains(&"unopened_agents.visibility_v1"));
     }
 
@@ -2294,8 +2355,7 @@ mod tests {
                 "{label} must not project a conversation id"
             );
             assert_eq!(
-                report.presentation["sessionFence"]["terminalEpoch"],
-                "terminal-1",
+                report.presentation["sessionFence"]["terminalEpoch"], "terminal-1",
                 "{label}"
             );
             assert!(
@@ -2523,7 +2583,10 @@ mod tests {
             required_scope(&Method::Post, "/worktree/presentation/export"),
             Some(RouteScope::Control)
         );
-        assert_eq!(required_scope(&Method::Get, "/worktree/presentation/export"), None);
+        assert_eq!(
+            required_scope(&Method::Get, "/worktree/presentation/export"),
+            None
+        );
         // GET으로 frontend 라우트를 치면 미지 라우트다(404 경로).
         assert_eq!(required_scope(&Method::Get, "/hmux/stop"), None);
         // 웹뷰 리로드는 Control 스코프의 직접 처리 라우트다 — report 토큰으로
@@ -2533,6 +2596,22 @@ mod tests {
             Some(RouteScope::Control)
         );
         assert_eq!(required_scope(&Method::Get, "/webview/reload"), None);
+    }
+
+    /// Reporting routes are answered on the accept loop, so none may wait on
+    /// the WebView: a receipt wait there would again hold every hook report
+    /// and liveness check behind it.
+    #[test]
+    fn no_reporting_route_waits_for_a_frontend_receipt() {
+        for route in FRONTEND_ROUTES {
+            if route.scope == RouteScope::Report {
+                assert!(
+                    !route.waits_for_receipt,
+                    "{} is a reporting route and must answer without a receipt",
+                    route.path
+                );
+            }
+        }
     }
 
     /// orca식 allowlist 소스 스캔 — server.rs(테스트 모듈 제외)의 경로형

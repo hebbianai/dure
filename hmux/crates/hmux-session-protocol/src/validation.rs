@@ -668,6 +668,11 @@ fn validate_agent_runtime_state_projection(
     }) {
         return Err(inconsistent("agent_runtime_state.approval_request"));
     }
+    if projection.held_prompts.is_some_and(|held| {
+        projection.lifecycle != AgentRuntimeLifecycle::Running || held.count == 0
+    }) {
+        return Err(inconsistent("agent_runtime_state.held_prompts"));
+    }
     Ok(())
 }
 
@@ -1856,9 +1861,22 @@ mod tests {
             turn_completed_count: 0,
             program_status: None,
             background_work: false,
+            held_prompts: None,
         };
         let state = frame(FrameBody::AgentRuntimeState(valid.clone()));
         assert!(state.validate(&FrameLimits::default()).is_ok());
+        let held = AgentRuntimeStateProjection {
+            held_prompts: Some(crate::HeldAgentPromptsProjection {
+                count: 3,
+                since_unix_ms: 1_700_000_000_000,
+            }),
+            ..valid.clone()
+        };
+        assert!(
+            frame(FrameBody::AgentRuntimeState(held.clone()))
+                .validate(&FrameLimits::default())
+                .is_ok()
+        );
         let with_request = AgentRuntimeStateProjection {
             approval_request: Some(Box::new(crate::AgentApprovalRequest {
                 tool_name: "Bash".into(),
@@ -1883,6 +1901,25 @@ mod tests {
                     ..with_request
                 },
                 "agent_runtime_state.approval_request",
+            ),
+            (
+                AgentRuntimeStateProjection {
+                    lifecycle: AgentRuntimeLifecycle::Exited,
+                    attention: AgentRuntimeAttention::None,
+                    attention_id: None,
+                    ..held.clone()
+                },
+                "agent_runtime_state.held_prompts",
+            ),
+            (
+                AgentRuntimeStateProjection {
+                    held_prompts: Some(crate::HeldAgentPromptsProjection {
+                        count: 0,
+                        since_unix_ms: 1_700_000_000_000,
+                    }),
+                    ..valid.clone()
+                },
+                "agent_runtime_state.held_prompts",
             ),
             (
                 AgentRuntimeStateProjection {
@@ -1979,6 +2016,7 @@ mod tests {
                 turn_completed_count: 1,
                 program_status: None,
                 background_work: false,
+                held_prompts: None,
             }),
             provider_conversation_identity: None,
             recovered_presentation: None,
@@ -2153,6 +2191,7 @@ mod tests {
             turn_completed_count: 0,
             program_status: None,
             background_work: true,
+            held_prompts: None,
         };
         assert!(
             frame(FrameBody::AgentRuntimeState(busy.clone()))

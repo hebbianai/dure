@@ -8,7 +8,7 @@ use dure_app::{
     AgentInteractionSessionIdV1, AgentProviderRuntimeFenceV1, AgentRuntimeBindingAuthorityV1,
     AgentRuntimeReplacementAuthorityV1, AgentRuntimeReplacementV1, AgentRuntimeTransitionRecordV1,
     AgentRuntimeTransitionStateV1, AgentRuntimeTransitionStore, AgentTimelineStore, DomainStore,
-    ProviderCredentialProfileStore, ProviderIdV1,
+    ProviderCredentialProfileStore, ProviderIdV1, WorkflowSessionGenerationV1,
 };
 use dure_app_sqlite::SqliteDomainStore;
 use hmux_client::{PresentationCheckpointPredecessor, ProviderStateEnvironment, SessionDescriptor};
@@ -1197,6 +1197,34 @@ where
             slots.remove(&binding.interaction_session_id);
         }
     }
+
+    /// Whether a live runtime of this manager runs in this exact Hmux Session
+    /// generation. A slot that is busy launching or stopping cannot say, so
+    /// it does not count.
+    async fn hosts_session_generation(&self, session: &WorkflowSessionGenerationV1) -> bool {
+        let slots: Vec<RuntimeSlot> = self.slots.lock().await.values().cloned().collect();
+        slots.iter().any(|slot| {
+            slot.try_lock().is_ok_and(|active| {
+                active
+                    .as_ref()
+                    .is_some_and(|runtime| runs_session_generation(&runtime.descriptor, session))
+            })
+        })
+    }
+}
+
+fn runs_session_generation(
+    descriptor: &SessionDescriptor,
+    session: &WorkflowSessionGenerationV1,
+) -> bool {
+    descriptor.session_id == session.session_id
+        && descriptor.workspace_id == session.workspace_id
+        && descriptor.provider_id == session.provider_id.as_str()
+        && descriptor.runner_principal == session.runner_principal
+        && descriptor.runner_instance == session.runner_instance
+        && descriptor.channel_epoch == session.channel_epoch
+        && descriptor.host_instance_id == session.host_instance_id
+        && descriptor.terminal_epoch == session.terminal_epoch
 }
 
 fn presentation_predecessor(

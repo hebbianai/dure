@@ -377,6 +377,46 @@ export function nativeTranscriptToolCalls(
 	return calls.sort((left, right) => left.afterEntries - right.afterEntries);
 }
 
+/** Transcript reads joined oldest first, as one read: each is checked on its
+ * own and its calls are placed after the messages of the reads before it. A
+ * call a newer read records again keeps its place and takes the newer state,
+ * as the reader does within one read. */
+function joinedTranscriptReads(
+	source: NativeAgentTranscriptSource,
+	reads: readonly ProviderConversationActivity[],
+) {
+	const entries: ReturnType<typeof agentTranscriptFromProvider>["entries"] = [];
+	const tools: ProviderToolCall[] = [];
+	const position = new Map<string, number>();
+	for (const read of reads) {
+		const before = entries.length;
+		for (const entry of agentTranscriptFromProvider({
+			source,
+			transcript: read,
+			entryLimit: null,
+		}).entries) {
+			entries.push(entry);
+		}
+		for (const call of nativeTranscriptToolCalls(
+			read.tools,
+			entries.length - before,
+		)) {
+			const earlier = position.get(call.callId);
+			if (earlier === undefined) {
+				position.set(call.callId, tools.length);
+				tools.push({ ...call, afterEntries: before + call.afterEntries });
+			} else {
+				tools[earlier] = {
+					...(tools[earlier] as ProviderToolCall),
+					state: call.state,
+					input: call.input,
+				};
+			}
+		}
+	}
+	return { entries, tools };
+}
+
 function row(
 	sequence: number,
 	item: Omit<AgentTimelineRowV1["item"], "providerMessageId">,
@@ -398,25 +438,32 @@ function row(
  * them into one burst line; a call without a recorded result reads as
  * running only in the newest turn and as canceled in an earlier one. Provider
  * entries carry no timestamps, so durations stay unset rather than
- * invented. */
+ * invented.
+ *
+ * `older` are the older pages loaded above the newest read (oldest first; see
+ * `providerHistoryPages`). While older records remain, a view that can read
+ * them offers them (`hasMore`); only one that cannot marks the history as
+ * partly unavailable. */
 export function nativeAgentChatPage({
 	source,
 	transcript,
+	older = [],
+	canLoadOlder = false,
 	terminalEpoch,
 	working,
 	pending,
 }: {
 	source: NativeAgentTranscriptSource;
 	transcript: ProviderConversationActivity;
+	older?: readonly ProviderConversationActivity[];
+	canLoadOlder?: boolean;
 	terminalEpoch: string;
 	working: boolean;
 	pending?: NativeAgentChatPendingPrompt;
 }): AgentTimelinePageV1 {
-	const { entries } = agentTranscriptFromProvider({
-		source,
-		transcript,
-		entryLimit: null,
-	});
+	const reads = [...older, transcript];
+	const { entries, tools } = joinedTranscriptReads(source, reads);
+	const olderCursor = reads[0]?.olderCursor;
 	const rows: AgentTimelineRowV1[] = [];
 	let turnId: string | null = null;
 	const push = (item: Omit<AgentTimelineRowV1["item"], "providerMessageId">) =>
@@ -446,7 +493,7 @@ export function nativeAgentChatPage({
 		});
 	};
 
-	if (!transcript.historyComplete) {
+	if (olderCursor !== undefined && !canLoadOlder) {
 		push({
 			itemId: "native-history-boundary",
 			turnId: null,
@@ -460,7 +507,6 @@ export function nativeAgentChatPage({
 			createdAtMs: 0,
 		});
 	}
-	const tools = nativeTranscriptToolCalls(transcript.tools, entries.length);
 	// Only the newest turn can still have a call running in it (or waiting on
 	// an approval); an earlier turn's call without a result was cut off.
 	let newestTurnStart = 0;
@@ -533,7 +579,10 @@ export function nativeAgentChatPage({
 			runtime: { runtimeGeneration: terminalEpoch, providerEpoch: "native" },
 			timelineEpoch: TIMELINE_EPOCH,
 			bindingRevision: 1,
-			historyComplete: transcript.historyComplete,
+			// A newer read with an older cursor is never whole on its own; the
+			// joined history is when its oldest read reaches the start whole.
+			historyComplete:
+				olderCursor === undefined && reads[0]?.historyComplete === true,
 			createdAtMs: 0,
 			updatedAtMs: 0,
 		},
@@ -545,6 +594,6 @@ export function nativeAgentChatPage({
 		recovery: null,
 		goal: null,
 		finalCursor: { epoch: TIMELINE_EPOCH, sequence: rows.length },
-		hasMore: false,
+		hasMore: olderCursor !== undefined && canLoadOlder,
 	};
 }

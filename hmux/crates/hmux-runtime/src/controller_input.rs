@@ -98,14 +98,47 @@ fn pasted_byte_edit(byte: u8) -> Option<ControllerDraftEdit> {
     (!matches!(byte, 0x80..=0xbf)).then_some(ControllerDraftEdit::Inserted(1))
 }
 
+/// The length of the complete terminal report `bytes` starts with: a focus
+/// report (`CSI I`, `CSI O`) or an SGR mouse report (`CSI < b ; x ; y M` or
+/// `m`). A terminal sends these on its own once the application turns on
+/// focus or SGR mouse reporting, and a terminal attached with `hmux attach`
+/// forwards them as raw bytes. Structured clients send the same facts as
+/// focus and pointer intents, which never edit the line either. No key
+/// encodes as either report, so they put nothing into the line. X10
+/// and urxvt mouse reports are not recognized: `CSI M` is also a function key
+/// in SCO keyboard mode and their fields cannot be told from typed text.
+fn terminal_report_len(bytes: &[u8]) -> Option<usize> {
+    const CSI_LEN: usize = 2;
+    match bytes {
+        [0x1b, b'[', b'I' | b'O', ..] => Some(CSI_LEN + 1),
+        [0x1b, b'[', b'<', fields @ ..] => {
+            let mut length = 0;
+            for final_bytes in [b";".as_slice(), b";", b"Mm"] {
+                let digits = fields[length..]
+                    .iter()
+                    .take_while(|byte| byte.is_ascii_digit())
+                    .count();
+                if digits == 0 || !final_bytes.contains(fields.get(length + digits)?) {
+                    return None;
+                }
+                length += digits + 1;
+            }
+            Some(CSI_LEN + 1 + length)
+        }
+        _ => None,
+    }
+}
+
 /// Streaming classifier for controller input: reports whether a chunk carries
 /// a submit keystroke and which edits its accepted bytes make to the line
 /// after the last submit. Typed characters and Backspaces are counted;
 /// completion, history recall and other control sequences are input the Host
-/// cannot count. A bare CR/LF outside bracketed paste (and not the newline
+/// cannot count, while complete focus and SGR mouse reports outside a paste
+/// edit nothing. A bare CR/LF outside bracketed paste (and not the newline
 /// half of Alt+Enter) submits input. Paste envelopes and Alt+Enter pairs may
 /// split across input frames, so the scanner keeps the unfinished marker
-/// prefix between calls.
+/// prefix between calls. A report split across writes is not reassembled and
+/// stays input the Host cannot count.
 #[derive(Default)]
 pub(crate) struct SubmitScanner {
     in_bracketed_paste: bool,
@@ -137,6 +170,12 @@ impl SubmitScanner {
                 continue;
             }
             if rest[0] == 0x1b {
+                if !self.in_bracketed_paste {
+                    if let Some(length) = terminal_report_len(rest) {
+                        index += length;
+                        continue;
+                    }
+                }
                 // The frame may end inside a paste envelope marker; defer
                 // those bytes to the next chunk instead of misreading them
                 // byte-wise.
@@ -217,23 +256,32 @@ pub(crate) fn fold_written_input_prefix(
     // partial write of a longer sequence is not such a key and is scanned.
     if !continues_frame && completes_frame {
         if let Some(fold) = scanner.non_inserting_key_fold(bytes) {
-            match fold {
-                DraftFold::Edit(edit) => host.record_controller_draft_edit(fence, edit)?,
-                DraftFold::InterruptRequest => host.record_controller_interrupt_request(fence)?,
-                DraftFold::Bytes | DraftFold::WriteOnly => host.record_controller_write(fence)?,
-            }
-            return Ok(None);
+            return match fold {
+                DraftFold::Edit(edit) => host.record_controller_draft_edit(fence, edit),
+                DraftFold::InterruptRequest => {
+                    host.record_controller_interrupt_request(fence)?;
+                    Ok(None)
+                }
+                DraftFold::Bytes | DraftFold::WriteOnly => {
+                    host.record_controller_write(fence)?;
+                    Ok(None)
+                }
+            };
         }
     }
     let scan = scanner.observe_chunk(bytes, continues_frame);
-    let runtime_state = if scan.submitted {
+    let mut runtime_state = if scan.submitted {
         host.record_controller_submit(fence)?
     } else {
         host.record_controller_write(fence)?;
         None
     };
+    // Each projection is the Host's whole current state, so the newest one
+    // supersedes any earlier one from the same chunk.
     for edit in scan.edits {
-        host.record_controller_draft_edit(fence, edit)?;
+        if let Some(projection) = host.record_controller_draft_edit(fence, edit)? {
+            runtime_state = Some(projection);
+        }
     }
     Ok(runtime_state)
 }
@@ -412,6 +460,71 @@ mod tests {
         let mut scanner = SubmitScanner::default();
         assert!(!scanner.observe(b"\x1b[").submitted);
         assert!(scanner.observe(b"A\r").submitted);
+    }
+
+    // A terminal attached with `hmux attach` reports focus changes and mouse
+    // events on its own once the repaint turns those modes on. They are not
+    // typing, so they leave the line as it was.
+    #[test]
+    fn focus_and_sgr_mouse_reports_are_not_typed_text() {
+        for report in [
+            b"\x1b[I".as_slice(),
+            b"\x1b[O",
+            b"\x1b[<0;10;5M",
+            b"\x1b[<0;10;5m",
+            b"\x1b[<35;120;48M",
+            // A wheel turned quickly batches reports into one read.
+            b"\x1b[<64;1;1M\x1b[<64;1;1M\x1b[<65;1;1M",
+            b"\x1b[O\x1b[<0;3;4M\x1b[I",
+        ] {
+            let scan = SubmitScanner::default().observe(report);
+            assert!(!scan.submitted, "{}", report.escape_ascii());
+            assert_eq!(scan.edits, Vec::new(), "{}", report.escape_ascii());
+        }
+    }
+
+    #[test]
+    fn text_around_a_terminal_report_is_still_counted() {
+        let mut scanner = SubmitScanner::default();
+        assert_eq!(scanner.observe(b"\x1b[Iab").edits, vec![Inserted(2)]);
+        assert_eq!(
+            scanner.observe(b"a\x1b[<0;1;1Mb\x7f").edits,
+            vec![Inserted(2), Erased(1)]
+        );
+        let scan = scanner.observe(b"run\x1b[O\r");
+        assert!(scan.submitted);
+        assert_eq!(scan.edits, Vec::new());
+    }
+
+    #[test]
+    fn report_shaped_bytes_inside_a_paste_are_pasted_text() {
+        let mut scanner = SubmitScanner::default();
+        assert_eq!(
+            scanner.observe(b"\x1b[200~\x1b[I\x1b[201~").edits,
+            vec![Inserted(3)]
+        );
+    }
+
+    // Only complete reports are recognized. X10 and urxvt mouse encodings
+    // cannot be told from a key or typed text, so they stay input the Host
+    // cannot count.
+    #[test]
+    fn incomplete_or_ambiguous_reports_stay_uncounted_input() {
+        for bytes in [
+            b"\x1b[<0;10M".as_slice(),
+            b"\x1b[<;1;1M",
+            b"\x1b[<0;1;1;1M",
+            b"\x1b[<0;1;1X",
+            b"\x1b[M !!",
+            b"\x1b[0;1;1M",
+        ] {
+            assert_eq!(
+                SubmitScanner::default().observe(bytes).edits.first(),
+                Some(&InsertedUncounted),
+                "{}",
+                bytes.escape_ascii()
+            );
+        }
     }
 
     // A writer can vanish mid-paste (crash, network drop); without a reset the

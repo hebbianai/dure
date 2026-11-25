@@ -136,6 +136,7 @@ function fixtureConversation(
 		inspectInput: async () => null,
 		cancelQueuedTurn: refuse,
 		readQueue: refuse,
+		readProviderHistory: refuse,
 		enqueueTurn: refuse,
 		continueTurn: refuse,
 		startTurn: async (request) => {

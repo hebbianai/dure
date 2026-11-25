@@ -479,6 +479,7 @@ mod launch_prompt_tests {
             turn_completed_count: turns.into(),
             program_status: None,
             background_work: false,
+            held_prompts: None,
         }
     }
 

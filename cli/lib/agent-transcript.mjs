@@ -329,12 +329,20 @@ function transcriptResult(bindingValue, entries, entryLimit) {
   };
 }
 
+/** The providers whose native CLI transcript this module reads. */
+const NATIVE_TRANSCRIPT_PROVIDERS = Object.freeze(["claude", "codex"]);
+
+/** Whether `provider` keeps a native CLI transcript this module reads. */
+export function nativeTranscriptProvider(provider) {
+  return NATIVE_TRANSCRIPT_PROVIDERS.includes(provider);
+}
+
 /** Resolves the one exact native provider record shared by pane copy and CLI. */
 export function nativeAgentTranscriptSource(agent, runtimeBinding) {
   if (
     !record(agent) ||
     !domainId(agent.id) ||
-    !["claude", "codex"].includes(agent.provider)
+    !nativeTranscriptProvider(agent.provider)
   ) {
     return { kind: "unsupported" };
   }
@@ -370,7 +378,7 @@ export function agentTranscriptFromProvider({
     !record(source) ||
     source.kind !== "local" ||
     !domainId(source.agentId) ||
-    !["claude", "codex"].includes(source.provider) ||
+    !nativeTranscriptProvider(source.provider) ||
     !domainId(source.conversationId) ||
     !validLimit(entryLimit) ||
     !record(transcript) ||

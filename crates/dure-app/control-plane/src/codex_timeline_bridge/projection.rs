@@ -88,6 +88,27 @@ impl CodexTimelineProjection {
     /// Adopts a provider-reported conversation title. Returns true when the
     /// title actually changed, i.e. a new evidence row is worth appending.
     /// Empty and cleared titles never regress an already-shown one.
+    /// The client message and the timeline turn a provider history turn
+    /// reconciles to: the Dure turn that sent its user message, or the turn
+    /// named after the provider's own turn ID.
+    pub(super) fn history_turn_identity(
+        &self,
+        turn: &Value,
+    ) -> Result<(AgentClientMessageIdV1, AgentTurnIdV1), AgentProviderCommandErrorV1> {
+        let client_message_id = turn_client_message_id(turn)?;
+        let turn_id = match self.turn_by_client_message.get(client_message_id.as_str()) {
+            Some(turn_id) => turn_id.clone(),
+            None => codex_turn_id(field_string(turn, "id")?)?,
+        };
+        Ok((client_message_id, turn_id))
+    }
+
+    /// Whether the timeline already holds this provider history turn.
+    pub(super) fn holds_turn(&self, turn: &Value) -> Result<bool, AgentProviderCommandErrorV1> {
+        let (_, turn_id) = self.history_turn_identity(turn)?;
+        Ok(self.turn_lifecycle.contains_key(turn_id.as_str()))
+    }
+
     pub(super) fn adopt_conversation_title(&mut self, title: &str) -> bool {
         let title = title.trim();
         if title.is_empty() || self.conversation_title.as_deref() == Some(title) {
@@ -531,6 +552,11 @@ pub(super) fn tool_output(item: &Value) -> Value {
         }),
         64 * 1024,
     )
+}
+
+/// The bytes a provider value encodes to.
+pub(super) fn encoded_len(value: &Value) -> usize {
+    serde_json::to_vec(value).map_or(usize::MAX, |encoded| encoded.len())
 }
 
 pub(super) fn compact_value(value: &Value, limit: usize) -> Value {

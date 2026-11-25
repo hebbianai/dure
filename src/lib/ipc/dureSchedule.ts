@@ -7,8 +7,8 @@ import {
 	withScheduleInteractionPreference,
 } from "@/lib/automations/scheduleContract";
 import {
+	dureBackendCapabilityMissing as capabilityMissing,
 	createDureBackendRequester,
-	DureBackendRequestError,
 	type DureBackendInvoke,
 } from "@/lib/ipc/dureBackend";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
@@ -27,17 +27,6 @@ export interface SchedulePutIntent extends ScheduleDraft {
 	scheduleId: string;
 	expectedRevision: number;
 	idempotencyKey: string;
-}
-
-function capabilityMissing(error: unknown, capability: string): boolean {
-	return (
-		error instanceof DureBackendRequestError &&
-		[
-			"backend_transport_capability_missing",
-			"backend_transport_profile_capability_missing",
-		].includes(error.code) &&
-		error.details?.capability === capability
-	);
 }
 
 export function createScheduleClient(

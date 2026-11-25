@@ -5,6 +5,7 @@ import type {
 	AgentQueuedInputV1,
 	AgentTimelinePageV1,
 } from "@/lib/agents/chat/agentConversationContract";
+import type { ProviderConversationActivity } from "@/lib/ipc/conversations";
 
 type AgentChatSessionPhase = "detached" | "connecting" | "ready" | "error";
 
@@ -38,6 +39,12 @@ interface AgentChatSessionActions {
 	putGoal(update: AgentGoalUpdateV1): Promise<boolean>;
 	retryConnection(): void;
 	loadOlder(): Promise<void>;
+	/** The provider history page that ends `before` a transcript cursor,
+	 * older than the seeded timeline; null when this session cannot read
+	 * it. */
+	readProviderHistory(
+		before: number,
+	): Promise<ProviderConversationActivity | null>;
 	send(input: string): Promise<void>;
 	queueMessage(input: string): Promise<void>;
 	steerOrQueue(input: string): Promise<"steered" | "queued">;

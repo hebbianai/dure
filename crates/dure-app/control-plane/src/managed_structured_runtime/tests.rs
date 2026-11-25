@@ -522,6 +522,7 @@ async fn disconnected_runtime_slot_is_released_when_exact_stop_fails() {
             binding.clone(),
             client,
             "thread-disconnected".into(),
+            None,
             settings.clone(),
             Arc::clone(&conversation_service),
         )
@@ -532,48 +533,7 @@ async fn disconnected_runtime_slot_is_released_when_exact_stop_fails() {
     let slot = Arc::new(Mutex::new(Some(ActiveManagedRuntime {
         binding: binding.clone(),
         cwd: exact_directory(&root.path().join("workspace-0")).unwrap(),
-        descriptor: SessionDescriptor {
-            schema_version: 1,
-            session_id: "session-disconnected".into(),
-            session_name: None,
-            workspace_id: agent.workspace_id.as_str().into(),
-            session_class: SessionClass::Managed,
-            lifecycle: SessionLifecycle::Ready,
-            provider_id: CODEX_PROVIDER_ID.into(),
-            runtime_host: None,
-            worktree_alias: None,
-            branch: None,
-            launch_program: None,
-            runner_principal: "principal-test".into(),
-            runner_instance: "runner-test".into(),
-            channel_epoch: "1".into(),
-            host_instance_id: "host-test".into(),
-            terminal_epoch: "terminal-test".into(),
-            output_seq: "0".into(),
-            host_build_version: "build-test".into(),
-            supported_protocol: VersionRange {
-                minimum: ProtocolVersion { major: 1, minor: 0 },
-                maximum: ProtocolVersion { major: 1, minor: 0 },
-            },
-            capabilities: Vec::new(),
-            retirement_policy: None,
-            host_process: ProcessDescriptor {
-                process_id: 1,
-                start_marker: "host-process-test".into(),
-            },
-            provider_process: ProcessDescriptor {
-                process_id: 2,
-                start_marker: "provider-process-test".into(),
-            },
-            endpoint: EndpointDescriptor {
-                kind: EndpointKind::UnixSocket,
-                address: "unused.sock".into(),
-            },
-            created_unix_ms: "1".into(),
-            lifecycle_changed_unix_ms: "1".into(),
-            exit: None,
-            failure: None,
-        },
+        descriptor: live_descriptor("session-disconnected", agent.workspace_id.as_str()),
         files,
         settings,
         bridge: bridge.clone(),
@@ -600,6 +560,132 @@ async fn disconnected_runtime_slot_is_released_when_exact_stop_fails() {
         slot.lock().await.is_none(),
         "a disconnected in-process runtime must not remain the recovery authority"
     );
+}
+
+/// A Chat runtime's provider reaches the orchestration tools with the
+/// `HMUX_*` identity of the Session it runs in. The manager names only that
+/// exact live generation as its own; any other generation, and a slot that is
+/// busy launching or stopping, is not claimed.
+#[tokio::test]
+async fn a_live_chat_runtime_hosts_only_its_exact_session_generation() {
+    let root = tempfile::Builder::new()
+        .prefix("dcr-hosts-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let discovery_root = root.path().join("discovery");
+    let state_root = root.path().join("state");
+    let credential_home = root.path().join("credentials");
+    owner_directory(&discovery_root);
+    owner_directory(&state_root);
+    owner_directory(&credential_home);
+    let executable = root.path().join("fixture-executable");
+    fs::write(&executable, "#!/bin/sh\nexit 64\n").unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let store = Arc::new(
+        SqliteDomainStore::open(root.path().join("domain.sqlite"))
+            .await
+            .unwrap(),
+    );
+    seed(&store, root.path(), 1).await;
+    let agent = store
+        .agent(&AgentIdV1::new("agent-codex-scale-0").unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let request = StructuredProviderOpenRequestV1 {
+        agent_id: agent.agent_id.clone(),
+        execution_profile: AgentExecutionProfileV1::ProviderDefault,
+        provider_conversation_ref: Some("thread-hosted".into()),
+        permission_mode: ProviderPermissionModeV1::Default,
+        model: None,
+        effort: None,
+    };
+    let binding = initial_binding(&agent, &request, "generation-1").unwrap();
+    let conversation_service = Arc::new(AgentConversationService::new(Arc::clone(&store)));
+    conversation_service.create(&binding).await.unwrap();
+    let manager = ManagedStructuredRuntimeManager::new(
+        ManagedStructuredRuntimeConfiguration::new(
+            "generation-1",
+            ManagedProviderExecutable::new(ManagedProviderKind::Codex, Some(executable.clone())),
+            executable.clone(),
+            executable,
+            discovery_root,
+            state_root.clone(),
+            state_root,
+        )
+        .unwrap(),
+        Arc::new(ProviderCredentialProfileRegistry::new(
+            credential_home,
+            Arc::clone(&store),
+        )),
+        Arc::clone(&conversation_service),
+        Arc::new(AgentConversationRuntimeRegistry::default()),
+        Arc::clone(&store),
+    );
+    let session = WorkflowSessionGenerationV1 {
+        session_id: "codex-chat-hosted".into(),
+        workspace_id: agent.workspace_id.as_str().into(),
+        provider_id: ProviderIdV1::new(CODEX_PROVIDER_ID).unwrap(),
+        runner_principal: "principal-test".into(),
+        runner_instance: "runner-test".into(),
+        channel_epoch: "1".into(),
+        host_instance_id: "host-test".into(),
+        terminal_epoch: "terminal-test".into(),
+    };
+    assert!(
+        !manager.hosts_session(&session).await.unwrap(),
+        "no runtime is live yet"
+    );
+
+    let socket_path = root.path().join("bridge.sock");
+    let listener = UnixListener::bind(&socket_path).unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let _socket = accept_async(stream).await.unwrap();
+    });
+    let (client, _incoming) = JsonRpcSocketClient::connect(&socket_path).await.unwrap();
+    let settings = ProviderTurnSettings::new(ProviderPermissionModeV1::Default, None, None);
+    let bridge = Arc::new(
+        CodexTimelineBridge::new(
+            binding.clone(),
+            client,
+            "thread-hosted".into(),
+            None,
+            settings.clone(),
+            Arc::clone(&conversation_service),
+        )
+        .await
+        .unwrap(),
+    );
+    let slot = Arc::new(Mutex::new(Some(ActiveManagedRuntime {
+        binding: binding.clone(),
+        cwd: exact_directory(&root.path().join("workspace-0")).unwrap(),
+        descriptor: live_descriptor(&session.session_id, &session.workspace_id),
+        files: runtime_files(&manager.configuration, &binding).unwrap(),
+        settings,
+        bridge,
+    })));
+    manager
+        .slots
+        .lock()
+        .await
+        .insert(binding.interaction_session_id.clone(), Arc::clone(&slot));
+
+    assert!(manager.hosts_session(&session).await.unwrap());
+    let mut successor = session.clone();
+    successor.terminal_epoch = "terminal-successor".into();
+    assert!(!manager.hosts_session(&successor).await.unwrap());
+    let mut elsewhere = session.clone();
+    elsewhere.workspace_id = "workspace-elsewhere".into();
+    assert!(!manager.hosts_session(&elsewhere).await.unwrap());
+    let busy = slot.lock().await;
+    assert!(
+        !manager.hosts_session(&session).await.unwrap(),
+        "a slot busy launching or stopping cannot say"
+    );
+    drop(busy);
+    server.await.unwrap();
 }
 
 #[tokio::test]
@@ -976,6 +1062,52 @@ fn explicit_real_profile(name: &str, ambient_name: &str) {
     .canonicalize()
     .unwrap();
     assert_eq!(ambient, expected, "real Codex QA profile mismatch");
+}
+
+/// A ready descriptor for a runtime slot that no Hmux Host backs.
+fn live_descriptor(session_id: &str, workspace_id: &str) -> SessionDescriptor {
+    SessionDescriptor {
+        schema_version: 1,
+        session_id: session_id.into(),
+        session_name: None,
+        workspace_id: workspace_id.into(),
+        session_class: SessionClass::Managed,
+        lifecycle: SessionLifecycle::Ready,
+        provider_id: CODEX_PROVIDER_ID.into(),
+        runtime_host: None,
+        worktree_alias: None,
+        branch: None,
+        launch_program: None,
+        runner_principal: "principal-test".into(),
+        runner_instance: "runner-test".into(),
+        channel_epoch: "1".into(),
+        host_instance_id: "host-test".into(),
+        terminal_epoch: "terminal-test".into(),
+        output_seq: "0".into(),
+        host_build_version: "build-test".into(),
+        supported_protocol: VersionRange {
+            minimum: ProtocolVersion { major: 1, minor: 0 },
+            maximum: ProtocolVersion { major: 1, minor: 0 },
+        },
+        capabilities: Vec::new(),
+        retirement_policy: None,
+        host_process: ProcessDescriptor {
+            process_id: 1,
+            start_marker: "host-process-test".into(),
+        },
+        provider_process: ProcessDescriptor {
+            process_id: 2,
+            start_marker: "provider-process-test".into(),
+        },
+        endpoint: EndpointDescriptor {
+            kind: EndpointKind::UnixSocket,
+            address: "unused.sock".into(),
+        },
+        created_unix_ms: "1".into(),
+        lifecycle_changed_unix_ms: "1".into(),
+        exit: None,
+        failure: None,
+    }
 }
 
 pub(super) fn owner_directory(path: &Path) {

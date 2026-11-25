@@ -201,10 +201,11 @@ The fields that matter, under `session.` in `inspect` and `sessions[].` in `ls`:
 | --- | --- |
 | `liveness.state` | `alive`, `exited` or `unknown`; unknown is a census problem, not an exit |
 | `runtime.agentRuntimeState.activity` | `working`, `waiting` (idle: finished, or asking) or `exited` |
-| `runtime.agentRuntimeState.attention` | `none`, or `input_required` / an approval attention: read the screen |
+| `runtime.agentRuntimeState.attention` | `none`, or `input_required` / an approval attention / `error` (its turn failed): read the screen |
 | `runtime.agentRuntimeState.turnCompletedCount` | rises once per finished turn; an autonomous worker usually needs one or two |
 | `runtime.agentRuntimeState.progress` | may say `progress_unconfirmed` after five quiet minutes of thinking: attention, not failure |
 | `idleSinceMs` | when a waiting worker went quiet (Unix ms); null while it works, needs input, or the Host cannot say |
+| `heldPrompts` | `{count, sinceMs}` while unsent text at the worker's prompt holds messages back, such as your inbox wakes: it is not idle and reads nothing until that text is sent or cleared (`HELD` in the table) |
 | `failure` | a Host-reported failure code, when there is one |
 | `cwd` | must be the worker's worktree |
 
@@ -285,6 +286,10 @@ the tracking issue still shows that item as in progress.
   `needs:founder`, put the question in a comment, and continue with other
   items. Product decisions, scope changes and anything that spends money or
   touches users' data are never yours to decide.
+- **Worker's turn failed** (`attention: error`, such as the provider's API
+  being unreachable, a rate limit or a server error). The provider does not
+  retry that turn. Read the screen; once the cause has passed, send one
+  message telling it to continue. Report a failure that keeps returning.
 - **Everything parked on the trust prompt.** §3. Report and wait; do not work
   around it with another account or provider on your own.
 - **The CLI is not what this guide says.** `dure skills status` reports

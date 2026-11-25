@@ -1,5 +1,6 @@
 import { parseAgentProgress } from "@/lib/agents/agentProgress";
 import { parseAgentApprovalRequest } from "@/lib/agents/approvalRequest";
+import { parseHeldPrompts } from "@/lib/agents/heldPrompts";
 import { parseProgramStatus } from "@/lib/agents/programStatus";
 import { PROVIDER_IDS } from "@/lib/agents/providers";
 import { isRetryDirective } from "@/lib/hmux/failure/structuredTerminalAttachFailure";
@@ -541,6 +542,10 @@ function validateAgentRuntimeState(value: unknown): HmuxAgentRuntimeState {
 		value.attention === "approval_required"
 			? parseAgentApprovalRequest(value.approvalRequest)
 			: undefined;
+	const heldPrompts =
+		value.lifecycle === "running"
+			? parseHeldPrompts(value.heldPrompts)
+			: undefined;
 	return {
 		terminalEpoch: value.terminalEpoch,
 		revision: value.revision,
@@ -561,6 +566,7 @@ function validateAgentRuntimeState(value: unknown): HmuxAgentRuntimeState {
 			? { backgroundWork: true as const }
 			: {}),
 		...(approvalRequest ? { approvalRequest } : {}),
+		...(heldPrompts ? { heldPrompts } : {}),
 	};
 }
 

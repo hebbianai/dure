@@ -55,6 +55,37 @@ pub(super) fn provider_catalog_from_model_list(response: &Value) -> Option<Value
     (!models.is_empty()).then(|| json!({ "models": models }))
 }
 
+/// Turns one page of a resumed thread's history holds. Codex answers whole
+/// turns: on a 2 GB local thread, the largest page of eight was 13.5 MB, far
+/// below the bound of one socket message.
+const HISTORY_PAGE_TURNS: u64 = 8;
+
+/// Whether a thread's reply leaves its history to pages of turns: the server
+/// pages turns (it names where they continue backwards) and answered none. A
+/// server without turn pages ignores `excludeTurns` and answers the whole
+/// thread, so its reply carries every turn as before.
+pub(crate) fn thread_turns_paged(response: &Value) -> bool {
+    response.get("turnsBackwardsCursor").is_some()
+        && response
+            .pointer("/thread/turns")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty)
+}
+
+/// The page of a thread's turns that continues at `cursor`, newest first, or
+/// its newest page without one. A history always pages from the newest turn,
+/// so a reply refreshed after its thread went on never anchors a page on a
+/// turn that is no longer the newest.
+pub(super) fn thread_turns_page_params(thread_id: &str, cursor: Option<&str>) -> Value {
+    json!({
+        "threadId": thread_id,
+        "cursor": cursor,
+        "limit": HISTORY_PAGE_TURNS,
+        "sortDirection": "desc",
+        "itemsView": "full",
+    })
+}
+
 use crate::provider_turn_settings::ProviderTurnSettings;
 
 impl ProviderTurnSettings {
@@ -74,6 +105,10 @@ impl ProviderTurnSettings {
                 "cwd".into(),
                 Value::String(cwd.to_string_lossy().into_owned()),
             ),
+            // The history pages back from the newest turn instead of riding
+            // in this reply, which one long thread would carry past a socket
+            // message (see `thread_turns_paged`).
+            ("excludeTurns".into(), Value::Bool(true)),
         ]);
         self.apply_thread_overrides(&mut params);
         Value::Object(params)
@@ -249,6 +284,7 @@ mod tests {
             json!({
                 "threadId": "thread-1",
                 "cwd": "/workspace",
+                "excludeTurns": true,
                 "model": "gpt-5.6-sol",
                 "approvalPolicy": "never",
                 "sandbox": "danger-full-access",
@@ -270,6 +306,29 @@ mod tests {
                 "sandboxPolicy": { "type": "dangerFullAccess" },
             })
         );
+    }
+
+    #[test]
+    fn a_reply_leaves_its_turns_to_pages_only_when_the_server_pages_and_answered_none() {
+        let thread = |turns: Value| json!({ "id": "thread-1", "turns": turns });
+        assert!(thread_turns_paged(
+            &json!({ "thread": thread(json!([])), "turnsBackwardsCursor": "turn-9" })
+        ));
+        // An empty thread on a server that pages turns has no cursor.
+        assert!(thread_turns_paged(
+            &json!({ "thread": thread(json!([])), "turnsBackwardsCursor": null })
+        ));
+        // A server without turn pages answers the whole thread, an empty one
+        // included.
+        assert!(!thread_turns_paged(
+            &json!({ "thread": thread(json!([{ "id": "turn-1" }])) })
+        ));
+        assert!(!thread_turns_paged(&json!({ "thread": thread(json!([])) })));
+        // A reply that reads the whole thread again carries it whole.
+        assert!(!thread_turns_paged(&json!({
+            "thread": thread(json!([{ "id": "turn-1" }])),
+            "turnsBackwardsCursor": "turn-1",
+        })));
     }
 
     #[test]

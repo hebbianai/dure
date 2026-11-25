@@ -107,6 +107,7 @@ beforeEach(() => {
 		putGoal: vi.fn(),
 		retryConnection: vi.fn(),
 		loadOlder: vi.fn(),
+		readProviderHistory: vi.fn(async () => null),
 		send: vi.fn().mockResolvedValue(undefined),
 		queueMessage: vi.fn(),
 		steerOrQueue: vi.fn(),

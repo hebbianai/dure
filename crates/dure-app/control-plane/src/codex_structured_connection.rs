@@ -9,6 +9,7 @@ use crate::codex_timeline_bridge::CodexTimelineBridge;
 use crate::json_rpc_socket_client::JsonRpcSocketClient;
 use crate::managed_provider_connection::{AttachedProviderConnection, ManagedProviderConnection};
 use crate::managed_structured_runtime::{conflict, error, launch_failed, safe_token, unavailable};
+use crate::provider_credential_profile::provider_state_directory;
 use crate::provider_turn_settings::ProviderTurnSettings;
 use crate::structured_provider_runtime::{
     StructuredProviderRuntimeErrorKindV1 as ErrorKind, StructuredProviderRuntimeErrorV1 as Error,
@@ -139,24 +140,29 @@ pub(crate) async fn attach<S: AgentTimelineStore + 'static>(
     {
         return Err(conflict());
     }
+    // The backend pages this thread's older history from the same home: the
+    // credential profile's, or the provider's default.
+    let provider_home = expected_codex_home
+        .map(Path::to_path_buf)
+        .or_else(|| provider_state_directory(&binding.provider_id, None));
     let bridge = Arc::new(
         CodexTimelineBridge::new(
             binding.clone(),
             client,
             thread_id,
+            provider_home,
             settings.clone(),
             Arc::clone(&conversation_service),
         )
         .await
         .map_err(|_| unavailable())?,
     );
-    let thread = response.get("thread").unwrap_or(&serde_json::Value::Null);
-    bridge
-        .reconcile_history(thread)
+    let history = bridge
+        .reconcile_history(response)
         .await
         .map_err(|_| unavailable())?;
     bridge
-        .hydrate_active_turn(thread)
+        .hydrate_active_turn(history.newest_turn())
         .await
         .map_err(|_| unavailable())?;
     bridge

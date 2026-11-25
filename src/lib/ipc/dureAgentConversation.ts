@@ -24,12 +24,14 @@ import {
 	parseAgentTimelineReadV1,
 } from "@/lib/agents/chat/agentConversationContract";
 import { t } from "@/lib/i18n";
+import type { ProviderConversationActivity } from "@/lib/ipc/conversations";
 import {
 	createDureBackendRequester,
 	DureBackendAuthorityFence,
 	type DureBackendIdentity,
 	type DureBackendInvoke,
 	DureBackendRequestError,
+	dureBackendCapabilityMissing,
 	dureBackendInvokeFailure,
 	parseDureBackendEnvelope,
 } from "@/lib/ipc/dureBackend";
@@ -46,6 +48,8 @@ import {
 const DOMAIN_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$/;
 const MAX_QUEUED_EVENTS = 64;
+const READ_PROVIDER_HISTORY_OPERATION =
+	"agent_conversation.read_provider_history";
 
 type AgentConversationReadRequestV1 = AgentTimelineReadRequestV1;
 
@@ -67,6 +71,18 @@ export interface AgentConversationAnswerPendingV1 {
 	idempotencyKey: string;
 	answer: unknown;
 	requestedAtMs: number;
+}
+
+/** One older page of the provider history a Chat session's timeline was
+ * seeded from, ending `before` a transcript cursor: where the seeded history
+ * starts, or an earlier page's `olderCursor`. */
+interface AgentProviderHistoryReadRequestV1 {
+	schemaVersion: 1;
+	interactionSessionId: string;
+	/** The conversation being paged; a session that moved to another one
+	 * refuses the read. */
+	providerConversationRef: string;
+	before: number;
 }
 
 export interface AgentConversationInterruptTurnV1 {
@@ -119,6 +135,17 @@ export interface DureAgentConversationClient {
 		request: AgentQueueReadRequestV1,
 		routeAuthority: DureBackendRouteAuthorityV1,
 	): Promise<AgentQueuedInputPageV1>;
+	/** The page of the session's provider history that ends `before` a
+	 * transcript cursor, older than its seeded timeline. The backend that owns
+	 * the session reads it, on the session's exact route, from the
+	 * conversation the binding names, so a remote project's history is read
+	 * where its transcript is. Null when there is no conversation yet or that
+	 * backend predates the read. */
+	readProviderHistory(
+		binding: AgentInteractionBindingV1,
+		before: number,
+		routeAuthority: DureBackendRouteAuthorityV1,
+	): Promise<ProviderConversationActivity | null>;
 	enqueueTurn(
 		request: AgentConversationStartTurnV1,
 		routeAuthority: DureBackendRouteAuthorityV1,
@@ -193,6 +220,44 @@ function contractError(code = "agent_conversation_response_invalid") {
 		t("ipc.agentConversation.invalidResponse"),
 		{ kind: "contract" },
 	);
+}
+
+/** A provider history page as the shared transcript reader answers it: the
+ * conversation that was asked for, whole messages, and a cursor that moves
+ * back. Tool calls are checked one by one where they are shown. */
+function parseProviderHistoryPage(
+	value: unknown,
+	request: AgentProviderHistoryReadRequestV1,
+): ProviderConversationActivity | null {
+	const activity = record(value);
+	if (
+		activity?.schemaVersion !== 1 ||
+		!domainId(activity.provider) ||
+		activity.conversationId !== request.providerConversationRef ||
+		typeof activity.historyComplete !== "boolean" ||
+		!(
+			activity.finalResponse === null ||
+			typeof activity.finalResponse === "string"
+		) ||
+		!Array.isArray(activity.entries) ||
+		!activity.entries.every((entry) => {
+			const candidate = record(entry);
+			return (
+				candidate !== undefined &&
+				(candidate.role === "user" || candidate.role === "agent") &&
+				typeof candidate.text === "string"
+			);
+		}) ||
+		!(activity.tools === undefined || Array.isArray(activity.tools)) ||
+		!(
+			activity.olderCursor === undefined ||
+			(nonNegativeInteger(activity.olderCursor) &&
+				activity.olderCursor < request.before)
+		)
+	) {
+		return null;
+	}
+	return activity as unknown as ProviderConversationActivity;
 }
 
 function sameRuntime(
@@ -507,6 +572,36 @@ export function createDureAgentConversationClient(options?: {
 					| "failed"
 					| "uncertain",
 			};
+		},
+		async readProviderHistory(binding, before, routeAuthority) {
+			const providerConversationRef = binding.providerConversationRef;
+			if (!providerConversationRef) return null;
+			const request: AgentProviderHistoryReadRequestV1 = {
+				schemaVersion: 1,
+				interactionSessionId: binding.interactionSessionId,
+				providerConversationRef,
+				before,
+			};
+			let response: Awaited<ReturnType<typeof requestEffect>>;
+			try {
+				response = await requestEffect(
+					READ_PROVIDER_HISTORY_OPERATION,
+					{ ...request },
+					routeAuthority,
+				);
+			} catch (error) {
+				if (
+					dureBackendCapabilityMissing(error, READ_PROVIDER_HISTORY_OPERATION)
+				)
+					return null;
+				throw error;
+			}
+			const activity = parseProviderHistoryPage(
+				response.result.activity,
+				request,
+			);
+			if (!activity) throw contractError();
+			return activity;
 		},
 		async readQueue(request, routeAuthority) {
 			const response = await requestEffect(

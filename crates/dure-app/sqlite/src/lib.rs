@@ -608,6 +608,13 @@ impl AgentTimelineStore for SqliteDomainStore {
         Box::pin(agent_timeline::reconcile_history(&self.pool, snapshot))
     }
 
+    fn continue_agent_history<'a>(
+        &'a self,
+        snapshot: &'a dure_app::AgentHistorySnapshotV1,
+    ) -> DomainStoreFuture<'a, dure_app::AgentHistorySnapshotReceiptV1> {
+        Box::pin(agent_timeline::continue_history(&self.pool, snapshot))
+    }
+
     fn reconcile_agent_pending_snapshot<'a>(
         &'a self,
         snapshot: &'a dure_app::AgentPendingSnapshotV1,

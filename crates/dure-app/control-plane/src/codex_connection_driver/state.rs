@@ -35,6 +35,19 @@ pub(super) struct AttachedThread {
     pub(super) materialized: bool,
 }
 
+impl AttachedThread {
+    /// The `thread/read` that refreshes this thread for a new connection. It
+    /// carries the turns the way the launch reply did: a reply that left them
+    /// to pages is refreshed without them, since its client pages the history
+    /// back from the newest turn and a long thread never fits one message.
+    pub(super) fn refresh_params(&self) -> Value {
+        json!({
+            "threadId": self.thread_id,
+            "includeTurns": !crate::codex_app_server_protocol::thread_turns_paged(&self.result),
+        })
+    }
+}
+
 pub(super) struct PendingServerRequest {
     pub(super) message: Value,
     encoded_bytes: usize,
@@ -457,6 +470,77 @@ mod tests {
         .unwrap();
         assert_eq!(response["result"]["cwd"], "/workspace");
         assert_eq!(response["result"]["thread"]["turns"][0]["id"], "turn-1");
+    }
+
+    #[test]
+    fn a_launch_that_left_its_turns_to_pages_refreshes_without_them() {
+        let mut state = DriverState::new(json!({}));
+        let launch = ThreadAttachIntent {
+            method: "thread/resume".into(),
+            params: json!({ "threadId": "thread-1", "excludeTurns": true }),
+        };
+        let mut request = json!({ "id": 7, "method": "thread/resume", "params": launch.params });
+        state
+            .route_client_request(1, &mut request, ClientRequestKind::ThreadLaunch(launch))
+            .unwrap();
+        complete_client_request(
+            &mut state,
+            &json!({
+                "id": request["id"],
+                "result": {
+                    "cwd": "/workspace",
+                    "thread": { "id": "thread-1", "turns": [] },
+                    "turnsBackwardsCursor": "turn-9",
+                },
+            }),
+        )
+        .unwrap()
+        .unwrap();
+        let attached = state.attached_thread.as_ref().unwrap();
+        assert_eq!(
+            attached.refresh_params(),
+            json!({ "threadId": "thread-1", "includeTurns": false })
+        );
+
+        let base_result = attached.result.clone();
+        let mut read = json!({ "id": 8, "method": "thread/read", "params": {} });
+        state
+            .route_client_request(
+                2,
+                &mut read,
+                ClientRequestKind::ThreadRefresh { base_result },
+            )
+            .unwrap();
+        let (_, response) = complete_client_request(
+            &mut state,
+            &json!({
+                "id": read["id"],
+                "result": { "thread": { "id": "thread-1", "name": "Renamed", "turns": [] } },
+            }),
+        )
+        .unwrap()
+        .unwrap();
+        // The refreshed reply still leaves its turns to pages.
+        assert_eq!(response["result"]["thread"]["name"], "Renamed");
+        assert!(crate::codex_app_server_protocol::thread_turns_paged(
+            &response["result"]
+        ));
+
+        // A server without turn pages answered the whole thread, so a
+        // refresh reads it whole again.
+        let whole = AttachedThread {
+            launch: ThreadAttachIntent {
+                method: "thread/resume".into(),
+                params: json!({ "threadId": "thread-1", "excludeTurns": true }),
+            },
+            thread_id: "thread-1".into(),
+            result: json!({ "thread": { "id": "thread-1", "turns": [{ "id": "turn-1" }] } }),
+            materialized: true,
+        };
+        assert_eq!(
+            whole.refresh_params(),
+            json!({ "threadId": "thread-1", "includeTurns": true })
+        );
     }
 
     #[test]

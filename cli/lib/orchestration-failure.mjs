@@ -2,20 +2,23 @@ import { backendTransportErrorReport } from "./backend-transport.mjs";
 
 // Only derive guidance from known codes. Backend messages may contain private
 // paths or provider output and must not be copied into CLI/MCP responses.
-// A goal continues a structured conversation. Neither refusal below changes by
-// resending the same request, so the hint is terminal even when an older
-// backend still reports retry_same.
-const GOAL_REFUSALS = Object.freeze({
+// A goal continues a structured conversation, and the orchestration inbox
+// belongs to a native CLI Session. No refusal below changes by resending the
+// same request, so the hint is terminal even when an older backend still
+// reports retry_same.
+const TERMINAL_REFUSALS = Object.freeze({
   agent_goal_interaction_profile_unsupported:
     "This agent runs a native CLI (for example a provider terminal started by dure run or a pane), and Dure goals continue only a structured conversation such as the app's chat. Goals are unavailable for this agent: tell the user, keep the work in this conversation, and do not resend agent_goal_put; retrying cannot succeed.",
   agent_goal_conversation_not_found:
     "The backend has no conversation for this agentId, so it cannot store a goal for it. Use the agent ID from the Dure conversation context or run receipt; retrying the same request cannot succeed.",
+  orchestration_interaction_profile_unsupported:
+    "This agent runs on its Chat runtime (a structured conversation such as the app's chat), and the Dure orchestration inbox and completion reports reach only an agent that runs a native CLI (a provider terminal). Orchestration is unavailable for this agent: report your result in this conversation, and do not resend the lookup, restart the agent, or create another Run; retrying cannot succeed.",
 });
 
 export function orchestrationFailureDetail(error) {
   const detail = backendTransportErrorReport(error).error;
-  if (Object.hasOwn(GOAL_REFUSALS, detail.remoteCode)) {
-    return { ...detail, disposition: "terminal", message: GOAL_REFUSALS[detail.remoteCode] };
+  if (Object.hasOwn(TERMINAL_REFUSALS, detail.remoteCode)) {
+    return { ...detail, disposition: "terminal", message: TERMINAL_REFUSALS[detail.remoteCode] };
   }
   if (detail.remoteCode === "orchestration_request_invalid") {
     return { ...detail, disposition: "terminal", message:
@@ -47,6 +50,17 @@ export function orchestrationFailureDetail(error) {
       "the command that finishes it. Otherwise the provider was started outside a Dure Agent; " +
       "`dure runs show <agent>` names the Agent's current Session. Retrying the same lookup " +
       "cannot succeed until that binding changes; do not create another Run." };
+  }
+  if (detail.remoteCode === "orchestration_generation_conflict" &&
+      detail.reasonCode === "session_dispatch_unassigned") {
+    return { ...detail, message:
+      "This managed Session is live, but no Dispatch binds its current generation, so it has " +
+      "no durable inbox to receive a message yet. The agent in that Session opens one when it " +
+      "resolves its own orchestration context (its session-start hook or " +
+      "orchestration_context_get_current). If it was just restarted or switched accounts, " +
+      "`dure runs resume <agent>` shows whether that restart's binding is still unpublished and " +
+      "prints the command that finishes it. Until the inbox opens, reach the agent without it, " +
+      "for example with `dure send` without --track; resending the same message cannot succeed." };
   }
   if (detail.remoteCode !== "orchestration_session_unavailable") return detail;
   let message;

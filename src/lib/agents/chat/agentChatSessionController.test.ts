@@ -155,6 +155,7 @@ function client(
 				: null;
 		}),
 		readQueue: vi.fn(async (request) => queuePage(request.afterSequence)),
+		readProviderHistory: vi.fn(async () => null),
 		enqueueTurn: vi.fn(async (intent) => {
 			const prior = queued.get(intent.clientMessageId);
 			if (prior) return prior;
@@ -899,6 +900,38 @@ describe("AgentChatSessionController", () => {
 		await settle();
 		expect(fixture.close).toHaveBeenCalledTimes(1);
 		expect(controller.getSnapshot().phase).toBe("detached");
+	});
+
+	it("reads older provider history for its own conversation from its own backend", async () => {
+		const initial = read();
+		if (initial.type !== "page") throw new Error("expected page fixture");
+		initial.page.binding.providerConversationRef = "conversation-1";
+		const fixture = client(initial);
+		const activity = {
+			schemaVersion: 1 as const,
+			provider: "claude",
+			conversationId: "conversation-1",
+			historyComplete: true,
+			finalResponse: null,
+			entries: [{ role: "user" as const, text: "earlier" }],
+		};
+		vi.mocked(fixture.transport.readProviderHistory).mockResolvedValueOnce(
+			activity,
+		);
+		const controller = new AgentChatSessionController({
+			agentId: "agent-1",
+			interactionSessionId: "interaction-1",
+			client: fixture.transport,
+		});
+		controller.start();
+		await settle();
+
+		expect(await controller.readProviderHistory(900)).toEqual(activity);
+		expect(fixture.transport.readProviderHistory).toHaveBeenCalledWith(
+			initial.page.binding,
+			900,
+			ROUTE_AUTHORITY,
+		);
 	});
 
 	it("loads every older page from the retained oldest cursor", async () => {

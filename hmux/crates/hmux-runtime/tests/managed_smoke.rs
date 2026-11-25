@@ -5435,16 +5435,42 @@ fn existing_conversation_agent_prompt_names_an_unsubmitted_person_draft() {
 
     let expected = ProviderConversationIdentitySeed::new("codex", conversation_id).unwrap();
     let mut agent = fixture.surface();
-    let error = agent
-        .send_existing_idle_agent_prompt_confirmed(
-            "must not merge".into(),
-            &expected,
-            Duration::from_secs(3),
-        )
-        .expect_err("a person's unsubmitted draft must refuse the agent prompt");
-    assert_eq!(error.code(), "hmux_input_draft_pending");
-    assert_eq!(error.delivery_state(), "not_written");
+    // The Backend retries an inbox wake with the same text until it lands.
+    for _attempt in 0..2 {
+        let error = agent
+            .send_existing_idle_agent_prompt_confirmed(
+                "must not merge".into(),
+                &expected,
+                Duration::from_secs(3),
+            )
+            .expect_err("a person's unsubmitted draft must refuse the agent prompt");
+        assert_eq!(error.code(), "hmux_input_draft_pending");
+        assert_eq!(error.delivery_state(), "not_written");
+    }
     agent.detach().unwrap();
+
+    // Observers see that the draft holds one message back, so the pane does
+    // not read as idle while that message waits.
+    let descriptor = fixture.created.session().descriptor();
+    let observer = LocalSessionObserver::connect(
+        &LocalSessionCatalog::new(&fixture.discovery_root),
+        &SessionSelector::new(
+            descriptor.session_id.clone(),
+            Some(descriptor.workspace_id.clone()),
+        ),
+        ObserverAttachOptions::default(),
+    )
+    .unwrap();
+    let held = observer
+        .attachment()
+        .initial_snapshot
+        .agent_runtime_state
+        .as_ref()
+        .unwrap()
+        .held_prompts
+        .expect("the Host publishes the message the draft holds");
+    assert_eq!(held.count, 1, "a retried message counts once");
+    observer.detach().unwrap();
     person.detach().unwrap();
     assert!(!fixture.received_prompt.exists());
 

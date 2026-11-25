@@ -32,6 +32,9 @@ use crate::claude_sdk_host_client::{
 const MAX_REPLAY_PAGES: usize = 1024;
 const MAX_HISTORY_PAGES: usize = 64;
 const MAX_HISTORY_BYTES: usize = 4 * 1024 * 1024;
+/// How the host answers a history page of a Query whose history an earlier
+/// attachment already reconciled and acknowledged.
+const HISTORY_RELEASED: &str = "remote_history_page_released";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClaudeTimelineBridgeError {
@@ -274,19 +277,70 @@ where
         {
             return Err(ClaudeTimelineBridgeError::new("history_binding_stale"));
         }
-        match authority.disposition {
+        let continuing = match authority.disposition {
             AgentHistoryHydrationDispositionV1::Complete
             | AgentHistoryHydrationDispositionV1::KnownGap => {
                 self.release_history().await?;
                 return Ok(());
             }
-            AgentHistoryHydrationDispositionV1::Seedable => {}
-        }
+            AgentHistoryHydrationDispositionV1::Seedable => false,
+            AgentHistoryHydrationDispositionV1::Continuable => true,
+        };
         let provider_conversation_ref = binding
             .provider_conversation_ref
             .as_deref()
             .ok_or_else(|| ClaudeTimelineBridgeError::new("history_identity_missing"))?;
+        let items = match self.read_history(provider_conversation_ref).await {
+            Ok(Some(items)) => items,
+            // Provider history is a replaceable projection, not an admission
+            // requirement for the live Query. Preserve the binding's history
+            // state and continue from live replay.
+            Ok(None) => return self.release_history().await,
+            // The host lets a Query's history go once an attachment
+            // reconciled it; a later attachment of the same Query has nothing
+            // left to read.
+            Err(error) if error.reason() == HISTORY_RELEASED => {
+                self.history_released.store(true, Ordering::Release);
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
 
+        let snapshot = AgentHistorySnapshotV1 {
+            schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+            binding,
+            items,
+            observed_at_ms: now_ms()?,
+        };
+        if continuing {
+            // The provider may have continued the conversation outside this
+            // timeline, as a Terminal does between two Chat sessions.
+            self.service
+                .continue_history(&snapshot)
+                .await
+                .map_err(conversation_error)?;
+        } else {
+            let receipt = self
+                .service
+                .reconcile_history(&snapshot)
+                .await
+                .map_err(conversation_error)?;
+            // The newest window of a longer history commits behind its
+            // boundary and leaves the history incomplete; anything else must
+            // complete it.
+            if !receipt.binding.history_complete && !snapshot.omits_older_history() {
+                return Err(ClaudeTimelineBridgeError::new("history_commit_incomplete"));
+            }
+        }
+        self.release_history().await
+    }
+
+    /// The provider history the host read when it bound this Query, or `None`
+    /// when the host could not read it.
+    async fn read_history(
+        &self,
+        provider_conversation_ref: &str,
+    ) -> Result<Option<Vec<AgentTimelineItemDraftV1>>, ClaudeTimelineBridgeError> {
         let mut offset = 0_usize;
         let mut pages = 0_usize;
         let mut bytes = 0_usize;
@@ -303,15 +357,8 @@ where
                     json!({ "identity": self.identity, "offset": offset }),
                 )
                 .await?;
-            let page = history_page(&response, offset)?;
-            match page {
-                HistoryPage::Incomplete => {
-                    // Provider history is a replaceable projection, not an
-                    // admission requirement for the live Query. Preserve the
-                    // binding's incomplete bit and continue from live replay.
-                    self.release_history().await?;
-                    return Ok(());
-                }
+            match history_page(&response, offset)? {
+                HistoryPage::Incomplete => return Ok(None),
                 HistoryPage::Complete {
                     page_items,
                     next_offset,
@@ -338,28 +385,10 @@ where
                             "history_snapshot_incomplete",
                         ));
                     }
-                    break;
+                    return Ok(Some(items));
                 }
             }
         }
-
-        let snapshot = AgentHistorySnapshotV1 {
-            schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
-            binding,
-            items,
-            observed_at_ms: now_ms()?,
-        };
-        let receipt = self
-            .service
-            .reconcile_history(&snapshot)
-            .await
-            .map_err(conversation_error)?;
-        // The newest window of a longer history commits behind its boundary
-        // and leaves the history incomplete; anything else must complete it.
-        if !receipt.binding.history_complete && !snapshot.omits_older_history() {
-            return Err(ClaudeTimelineBridgeError::new("history_commit_incomplete"));
-        }
-        self.release_history().await
     }
 
     async fn release_history(&self) -> Result<(), ClaudeTimelineBridgeError> {
@@ -886,7 +915,28 @@ fn map_event(
                     observed_at_ms,
                 )?,
             });
-            mutations.push(provider_evidence(identity, event, observed_at_ms)?);
+            mutations.push(provider_evidence(
+                identity,
+                event,
+                None,
+                None,
+                observed_at_ms,
+            )?);
+        }
+        "provider_user_message" => {
+            // The provider records a prompt under the id the driver sent it
+            // with. Holding that id lets a later provider history meet the
+            // prompt in this timeline, also one that got no reply.
+            let reason = "provider_user_message_invalid";
+            let prompt = client_message_id(string(payload, "clientMessageId", reason)?)?;
+            let recorded = provider_message_id(string(payload, "providerMessageId", reason)?)?;
+            mutations.push(provider_evidence(
+                identity,
+                event,
+                Some(prompt),
+                Some(recorded),
+                observed_at_ms,
+            )?);
         }
         "assistant_delta" | "reasoning_delta" | "tool_input_delta" => {
             let provider_message_id = provider_message_id(string(
@@ -1078,7 +1128,13 @@ fn map_event(
                 canceled_at_ms: observed_at_ms,
             });
         }
-        _ => mutations.push(provider_evidence(identity, event, observed_at_ms)?),
+        _ => mutations.push(provider_evidence(
+            identity,
+            event,
+            None,
+            None,
+            observed_at_ms,
+        )?),
     }
     Ok(AgentProviderEventCommitV1 {
         schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
@@ -1096,9 +1152,12 @@ fn map_event(
     })
 }
 
+/// An event kept as provider evidence, with the messages it concerns.
 fn provider_evidence(
     identity: &ClaudeDch1QueryIdentity,
     event: &ClaudeDch1ProviderEvent,
+    client_message_id: Option<AgentClientMessageIdV1>,
+    provider_message_id: Option<AgentProviderMessageIdV1>,
     observed_at_ms: i64,
 ) -> Result<AgentTimelineMutationV1, ClaudeTimelineBridgeError> {
     Ok(AgentTimelineMutationV1::Append {
@@ -1111,8 +1170,8 @@ fn provider_evidence(
                 kind: event.kind.clone(),
                 value: event.payload.clone(),
             },
-            None,
-            None,
+            client_message_id,
+            provider_message_id,
             observed_at_ms,
         )?,
     })

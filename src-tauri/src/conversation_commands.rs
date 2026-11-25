@@ -140,21 +140,27 @@ pub(crate) async fn list_provider_conversations() -> Vec<conv::ProviderConversat
 /// Read one exact provider-owned transcript into the provider-neutral entry
 /// shape shared by pane copy and the local CLI server. `include_tools` adds
 /// the tool calls between the messages (`tools`) for the conversation view;
-/// the entries are the same either way.
+/// the entries are the same either way. With tools, the answer names where
+/// older records begin (`olderCursor`), and `before` reads the older page that
+/// ends there.
 #[tauri::command(async)]
 pub(crate) async fn read_provider_conversation_transcript(
     provider: String,
     conversation_id: String,
     include_tools: Option<bool>,
+    before: Option<u64>,
 ) -> Result<conv::ProviderConversationActivity, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if include_tools == Some(true) {
-            conv::transcript_activity_any_account(&provider, &conversation_id)
+            conv::transcript_activity_any_account(&provider, &conversation_id, before)
+        } else if before.is_some() {
+            Err("an older transcript page needs the tool read".to_string())
         } else {
             conv::transcript_any_account(&provider, &conversation_id).map(|transcript| {
                 conv::ProviderConversationActivity {
                     transcript,
                     tools: Vec::new(),
+                    older_cursor: None,
                 }
             })
         }

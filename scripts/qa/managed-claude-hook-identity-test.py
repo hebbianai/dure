@@ -235,25 +235,43 @@ class ClaudeConversationIdentityTest(unittest.TestCase):
                 {"provider_id": "claude", "conversation_id": "fixture-conversation"},
             )
 
-    def test_other_turn_failures_end_the_turn_at_its_prompt(self):
-        # Claude Code fires StopFailure instead of Stop when an API error
-        # ended the turn, and is back at its prompt. Keeping the turn's
-        # working lease refused every inbox wake until another turn ran.
-        for error in ("rate_limit", "overloaded", "server_error", "billing_error", None, 7):
+    def test_any_other_turn_failure_ends_the_turn_with_its_error(self):
+        # Claude Code 2.1.331 with the API unreachable prints "API Error:
+        # Can't reach the API server ... (ENOTFOUND)" and fires SessionStart,
+        # UserPromptSubmit, then StopFailure with `server_error` and no Stop.
+        # The prompt is idle; the session must not stay working.
+        for error in ("server_error", "rate_limit", "billing_error", "unknown", None, 7):
             native = {
                 "hook_event_name": "StopFailure",
                 "session_id": "fixture-conversation",
                 "prompt_id": "fixture-parent-turn",
+                "last_assistant_message": "API Error: Can't reach the API server",
             }
             if error is not None:
                 native["error"] = error
             for body in (native, json.loads(hook.slim_body(native))):
-                result = report(body)
+                request = hook.claude_report(body, FENCE)
+                result = request["report"]
                 self.assertEqual(result["activity"], "waiting", repr(error))
-                self.assertEqual(result["attention"], "none", repr(error))
-                self.assertTrue(result["background_work"], repr(error))
-                self.assertFalse(result["turn_completed"], repr(error))
-                self.assertEqual(result["causality"]["work_id"], "fixture-parent-turn")
+                self.assertEqual(result["attention"], "error", repr(error))
+                self.assertFalse(result["turn_completed"])
+                self.assertNotIn("working_ttl_ms", result)
+                self.assertNotIn("turn_completion_id", result)
+                self.assertNotIn("background_work", result)
+                self.assertEqual(result["causality"], {
+                    "sequence": str(hook.HOOK_SOURCE_SEQUENCE),
+                    "work_id": "fixture-parent-turn",
+                })
+
+    def test_a_subagent_failure_leaves_the_parent_turn_alone(self):
+        for error in ("server_error", "authentication_failed"):
+            self.assertIsNone(report({
+                "hook_event_name": "StopFailure",
+                "session_id": "fixture-conversation",
+                "prompt_id": "fixture-parent-turn",
+                "agent_id": "fixture-subagent",
+                "error": error,
+            }), error)
 
     def test_missing_work_identity_cannot_establish_quiescence(self):
         for prompt_id in (None, "", "invalid id", "short", 7):

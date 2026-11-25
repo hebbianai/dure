@@ -1,6 +1,7 @@
 mod agent_checkpoint_binding;
 pub mod agent_conversation;
 pub mod agent_conversation_api;
+mod agent_conversation_history;
 #[cfg(unix)]
 mod agent_conversation_recover;
 #[cfg(unix)]
@@ -3026,11 +3027,14 @@ async fn create_existing_session_run(
     }
     let session = neutral_worker_session(&body.session)?;
     verify_exact_orchestration_session(state, &body.session).await?;
-    let run_authority = state
+    let run_authority = match state
         .store
         .orchestration_run_authority_for_exact_session(&body.session)
         .await
-        .map_err(run_authority_error)?;
+    {
+        Ok(run_authority) => run_authority,
+        Err(error) => return Err(run_authority_error(state, &body.session, error).await),
+    };
     if run_authority.runtime_ref != body.runtime_ref {
         return Err("orchestration_generation_conflict".into());
     }
@@ -3061,13 +3065,33 @@ async fn create_existing_session_run(
         .map_err(orchestration_service_error)
 }
 
+/// Refusal for a Session whose Agent runs on a Chat runtime, which has no
+/// orchestration inbox.
+const ORCHESTRATION_INTERACTION_PROFILE_UNSUPPORTED: &str =
+    "orchestration_interaction_profile_unsupported";
+
 /// Hmux observed this Session generation as live, but no Agent binds it as
-/// its current Session: a restart or account switch has not published its
+/// its current Session. When a Chat runtime runs there, its provider reached
+/// the orchestration tools through that runtime's Session: orchestration
+/// enrolls only a native CLI Session, so the refusal is terminal and names the
+/// Chat runtime. Otherwise a restart or account switch has not published its
 /// binding yet, or the provider was started outside a Dure Agent. Resending
 /// the same enrollment cannot succeed until that binding changes.
-fn run_authority_error(error: DomainStoreErrorV1) -> BackendDispatchError {
+async fn run_authority_error(
+    state: &ServiceState,
+    session: &WorkflowSessionGenerationV1,
+    error: DomainStoreErrorV1,
+) -> BackendDispatchError {
     if !matches!(error, DomainStoreErrorV1::IdentityConflict { .. }) {
         return orchestration_store_error(error);
+    }
+    if state.structured_runtimes.hosts_session(session).await {
+        return BackendDispatchError {
+            code: ORCHESTRATION_INTERACTION_PROFILE_UNSUPPORTED.into(),
+            message: "orchestration reaches an agent that runs a native CLI; this agent runs on its Chat runtime".into(),
+            details: Some(json!({ "reasonCode": "structured_protocol" })),
+            disposition: BackendFailureDispositionV1::Terminal,
+        };
     }
     BackendDispatchError {
         code: "orchestration_generation_conflict".into(),
@@ -3300,11 +3324,7 @@ async fn exact_orchestration_context(
     session: &WorkflowSessionGenerationV1,
 ) -> Result<DispatchContextReceipt, BackendDispatchError> {
     verify_exact_orchestration_session(state, session).await?;
-    let target = state
-        .store
-        .orchestration_target_for_exact_session(session)
-        .await
-        .map_err(exact_context_error)?;
+    let target = dispatch_context_target(state, session).await?;
     let task_id = TaskIdV1::new(target.task_id.as_str())
         .map_err(|_| BackendDispatchError::from("orchestration_context_invalid"))?;
     let dispatch_id = DispatchIdV1::new(target.dispatch_id.as_str())
@@ -3663,13 +3683,25 @@ async fn dispatch_context_target(
         .inspect_orchestration_dispatch_session(session)
         .await
         .map_err(dispatch_context_error)?;
-    let disposition = if inspection.target.is_none() {
+    if inspection.target.is_none() {
         verify_exact_orchestration_session(state, session).await?;
-        BackendFailureDispositionV1::Unassigned
-    } else {
-        BackendFailureDispositionV1::StaleGeneration
-    };
-    Err(orchestration_store_error(error).with_disposition(disposition))
+        return Err(session_dispatch_unassigned());
+    }
+    Err(orchestration_store_error(error)
+        .with_disposition(BackendFailureDispositionV1::StaleGeneration))
+}
+
+/// Hmux observed this Session generation as live, but no Dispatch binds it,
+/// so it has no durable inbox yet. Only the Session's own context lookup can
+/// enroll it; a message to it cannot be delivered until then. Exact-session
+/// methods report this as terminal.
+fn session_dispatch_unassigned() -> BackendDispatchError {
+    BackendDispatchError {
+        code: "orchestration_generation_conflict".into(),
+        message: "No Dispatch binds this live Session generation, so it has no durable inbox yet. The Session opens one when it resolves its own orchestration context.".into(),
+        details: Some(json!({ "reasonCode": "session_dispatch_unassigned" })),
+        disposition: BackendFailureDispositionV1::Unassigned,
+    }
 }
 
 fn exact_message_error(error: ServiceError) -> BackendDispatchError {
@@ -3859,6 +3891,11 @@ async fn dispatch_authorized(
         }
         "agent_goal.get" | "agent_goal.put" => {
             boxed_operation(|| agent_goal::invoke(state, &request.operation, &request.body)).await
+        }
+        agent_conversation_history::OPERATION => {
+            boxed_operation(|| agent_conversation_history::read(state, &request.body))
+                .await
+                .map_err(agent_conversation_api_error)
         }
         "work_claim.put" | "work_claim.list" | "work_claim.release" => {
             boxed_operation(|| work_claim::invoke(state, &request.operation, &request.body)).await
@@ -4294,7 +4331,8 @@ fn agent_conversation_api_error(
         AgentConversationApiErrorV1::RequestInvalid
         | AgentConversationApiErrorV1::NotFound
         | AgentConversationApiErrorV1::SteerUnsupported
-        | AgentConversationApiErrorV1::ProviderFailed(_) => BackendFailureDispositionV1::Terminal,
+        | AgentConversationApiErrorV1::ProviderFailed(_)
+        | AgentConversationApiErrorV1::HistoryUnavailable => BackendFailureDispositionV1::Terminal,
         AgentConversationApiErrorV1::Conflict => BackendFailureDispositionV1::StaleGeneration,
         AgentConversationApiErrorV1::RuntimeUnavailable
         | AgentConversationApiErrorV1::StoreFailed => BackendFailureDispositionV1::RetrySame,

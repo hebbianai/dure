@@ -374,6 +374,7 @@ describe("ChatComposer queueing", () => {
 				state: canceled ? "canceled" : "queued",
 			}),
 			readQueue: vi.fn(),
+			readProviderHistory: vi.fn(),
 			enqueueTurn: vi.fn(),
 			cancelQueuedTurn: vi.fn(async () => {
 				canceled = true;
@@ -493,6 +494,7 @@ describe("ChatComposer queueing", () => {
 		const client: DureAgentConversationClient = {
 			inspectInput: vi.fn(async () => null),
 			readQueue: vi.fn(),
+			readProviderHistory: vi.fn(),
 			enqueueTurn: vi.fn(),
 			cancelQueuedTurn: vi.fn(),
 			inspect: async () => ({ backend, routeAuthority, binding: page.binding }),
@@ -642,6 +644,7 @@ describe("ChatComposer uncertain send recovery", () => {
 		const client: DureAgentConversationClient = {
 			inspectInput: async () => null,
 			readQueue: vi.fn(),
+			readProviderHistory: vi.fn(),
 			enqueueTurn: vi.fn(),
 			cancelQueuedTurn: vi.fn(),
 			inspect: async () => ({

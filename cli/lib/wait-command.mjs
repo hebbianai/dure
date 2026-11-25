@@ -1,5 +1,5 @@
 import { deferredWake } from "./deferred-wake.mjs";
-import { queryTrackedMessage, readMessageTracking } from "./tracked-message.mjs";
+import { MESSAGE_NOT_STORED, queryTrackedMessage, readMessageTracking } from "./tracked-message.mjs";
 import { parseArgs } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
 import { matchingAgents } from "./client-registry.mjs";
@@ -39,6 +39,7 @@ Response end does not prove a particular prompt was accepted or a task succeeded
 Operation: reads the same dure run/spawn request; success means execution setup and
 prompt delivery completed, not provider response or task completion. Never retries execution.
 Message: reads the private tracking file from 'dure send --track'. Default: inbox observed.
+A message the backend never stored fails with wait_message_not_stored; send it again.
 Turn started proves the wake prompt began a provider turn, not inbox read or comprehension.
 Unsupported or unavailable provider evidence remains unknown; no messages are resent.
 Task: reads the exact delegated task/dispatch generation completed by 'dure workflow done'.
@@ -260,6 +261,7 @@ export async function collectWait(options, {
           await pause(Math.min(500, Math.max(1, options.timeoutMs - (now() - startedAt))));
           continue;
         }
+        if (lastError.code === MESSAGE_NOT_STORED) return result("failed", 1, "wait_message_not_stored", lastError.message);
         return result("unknown", 2, lastError.code, "Completion observation is unavailable. Query the same target; no execution or prompt was retried.");
       }
       if (subject === "message") {

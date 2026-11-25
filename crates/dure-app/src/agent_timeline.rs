@@ -20,6 +20,22 @@ pub const MAX_AGENT_TIMELINE_TEXT_BYTES_V1: usize = 256 * 1024;
 pub const MAX_AGENT_TIMELINE_JSON_BYTES_V1: usize = 128 * 1024;
 pub const MAX_AGENT_PENDING_REQUESTS_V1: usize = 32;
 pub const MAX_AGENT_HISTORY_ITEMS_V1: usize = 2_048;
+/// The history boundary reason that opens a provider history at the
+/// provider's compaction. The provider resumes from its summary, which stands
+/// in for the transcript records before the boundary, so the history it opens
+/// is complete; those records stay readable in the provider's transcript.
+pub const PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1: &str = "provider_conversation_compacted";
+/// The history boundary reason that opens the newest window of a longer
+/// provider history at its place in the provider's transcript:
+/// `droppedThroughProviderSequence` is the transcript offset where the window
+/// starts, which a transcript reader pages the older history before.
+pub const PROVIDER_TRANSCRIPT_WINDOW_HISTORY_BOUNDARY_V1: &str = "provider_transcript_window";
+/// The history boundary reason that opens the newest window of a longer
+/// provider history at no known place in the provider's transcript: older
+/// history precedes it, at least `droppedThroughProviderSequence` messages or
+/// turns of it. It also marks where a continued timeline skips provider
+/// history that falls between the rows it already held and the newest window.
+pub const PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1: &str = "provider_history_truncated";
 
 macro_rules! timeline_id {
     ($name:ident) => {
@@ -671,8 +687,12 @@ pub struct AgentTimelineCommitReceiptV1 {
 
 /// One provider-owned history snapshot for the exact current binding: the
 /// whole bounded history, or its newest window opened by a history boundary.
+/// A whole history that starts at the provider's compaction opens with its
+/// compaction boundary.
 /// The store is the sole durable sequencer: adapters collect the full bounded
 /// snapshot before presenting it here and never advance a live provider cursor.
+/// It seeds an empty timeline, or continues one that already holds part of
+/// the conversation (see [`AgentHistoryHydrationDispositionV1`]).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentHistorySnapshotV1 {
@@ -684,23 +704,45 @@ pub struct AgentHistorySnapshotV1 {
 
 impl AgentHistorySnapshotV1 {
     /// Whether this is the newest window of a longer history: its first item
-    /// is the boundary that marks where the shown history starts.
+    /// is the boundary that marks where the shown history starts. A
+    /// compaction boundary omits nothing the provider resumes from.
     pub fn omits_older_history(&self) -> bool {
         matches!(
             self.items.first().map(|item| &item.body),
-            Some(AgentTimelineItemBodyV1::HistoryBoundary { .. })
+            Some(AgentTimelineItemBodyV1::HistoryBoundary { reason, .. })
+                if reason != PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1
         )
     }
 
-    pub fn validate(&self) -> Result<(), DomainStoreErrorV1> {
-        validate_schema(self.schema_version)?;
-        self.binding.validate()?;
+    /// The history boundary that opens this snapshot, if any.
+    pub fn opening_boundary(&self) -> Option<&AgentTimelineItemDraftV1> {
+        self.items
+            .first()
+            .filter(|item| matches!(item.body, AgentTimelineItemBodyV1::HistoryBoundary { .. }))
+    }
+
+    /// The snapshot's own history, after any boundary that opens it.
+    pub fn history_items(&self) -> &[AgentTimelineItemDraftV1] {
+        let opened = usize::from(self.opening_boundary().is_some());
+        &self.items[opened..]
+    }
+
+    /// Whether this snapshot can seed an empty timeline: a seed completes an
+    /// incomplete history, so it never targets a complete one.
+    pub fn validate_seed(&self) -> Result<(), DomainStoreErrorV1> {
+        self.validate()?;
         if self.binding.history_complete {
             return invalid(
                 "binding.historyComplete",
                 "history snapshot must target an incomplete binding",
             );
         }
+        Ok(())
+    }
+
+    pub fn validate(&self) -> Result<(), DomainStoreErrorV1> {
+        validate_schema(self.schema_version)?;
+        self.binding.validate()?;
         if self.binding.provider_conversation_ref.is_none() {
             return invalid(
                 "binding.providerConversationRef",
@@ -739,11 +781,24 @@ pub struct AgentHistorySnapshotReceiptV1 {
     pub timeline_changed: bool,
 }
 
+/// What a structured runtime does with its provider's history when it
+/// attaches to a timeline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentHistoryHydrationDispositionV1 {
+    /// The timeline holds nothing the provider history could follow, and the
+    /// history is complete: there is nothing to read.
     Complete,
+    /// The timeline is empty: the provider history seeds it.
     Seedable,
+    /// The timeline has a known gap and no provider conversation to read
+    /// history from.
     KnownGap,
+    /// The timeline already holds part of the provider conversation. Another
+    /// runtime may have continued that conversation since, for example a
+    /// Terminal between two Chat sessions, so the provider history continues
+    /// the timeline after the newest provider message it holds. Older history
+    /// is never inserted ahead of what the timeline holds.
+    Continuable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1119,6 +1174,15 @@ pub trait AgentTimelineStore: Send + Sync {
     ) -> DomainStoreFuture<'a, AgentHistoryHydrationAuthorityV1>;
 
     fn reconcile_agent_history<'a>(
+        &'a self,
+        snapshot: &'a AgentHistorySnapshotV1,
+    ) -> DomainStoreFuture<'a, AgentHistorySnapshotReceiptV1>;
+
+    /// Appends the part of `snapshot` that follows the newest provider message
+    /// the timeline already holds, for a [`AgentHistoryHydrationDispositionV1::Continuable`]
+    /// timeline. A snapshot that does not reach back to the held conversation
+    /// continues it only after a history boundary that marks the gap.
+    fn continue_agent_history<'a>(
         &'a self,
         snapshot: &'a AgentHistorySnapshotV1,
     ) -> DomainStoreFuture<'a, AgentHistorySnapshotReceiptV1>;

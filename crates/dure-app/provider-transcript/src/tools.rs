@@ -2,11 +2,14 @@
 //! provider transcript as the messages.
 //!
 //! This is an opt-in read for a view on the machine that owns the transcript
-//! (the desktop's conversation view of a native terminal agent). The text-only
-//! read stays the default, so the CLI, the desktop hub and `hmux
-//! mobile-gateway` answer exactly what they answered before: tool inputs carry
-//! commands and file paths, and nothing here decides that they may leave the
-//! machine.
+//! (the desktop's conversation view of a native terminal agent), and for the
+//! backend that owns a Chat session, which answers that session's own client
+//! with the older history of the session's own conversation: its Chat
+//! timeline already carries that conversation's tool calls to the same
+//! client. The text-only read stays the default, so the CLI, the desktop hub
+//! and `hmux mobile-gateway` answer exactly what they answered before: tool
+//! inputs carry commands and file paths, and nothing here decides that they
+//! may leave the machine.
 //!
 //! Each call keeps its position between the messages (`after_entries`), the
 //! provider's tool name, how it ended and a bounded copy of its input. Tool
@@ -84,6 +87,10 @@ pub struct ProviderConversationActivity {
     /// exactly as [`ProviderConversationTranscript`] does.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ProviderToolCall>,
+    /// Where older records begin: the byte offset an older page reads up to
+    /// (`before`). Absent once the read reaches the transcript's start.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub older_cursor: Option<u64>,
 }
 
 /// What one transcript record says about tool calls.
@@ -320,6 +327,24 @@ fn call_bytes(call: &ProviderToolCall) -> usize {
     call.call_id.len()
         + call.name.len()
         + serde_json::to_vec(&call.input).map_or(0, |encoded| encoded.len())
+}
+
+/// The bytes one event adds to a read's tool budget, counted as
+/// [`ToolWindow`] counts the call it records.
+pub(crate) fn event_bytes(event: &ToolEvent) -> usize {
+    match event {
+        ToolEvent::Call {
+            call_id,
+            name,
+            input,
+            ..
+        } => {
+            call_id.len()
+                + name.len()
+                + serde_json::to_vec(input).map_or(0, |encoded| encoded.len())
+        }
+        ToolEvent::Result { .. } => 0,
+    }
 }
 
 impl ToolWindow {
