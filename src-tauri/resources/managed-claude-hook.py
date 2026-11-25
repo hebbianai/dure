@@ -691,11 +691,24 @@ def claude_report(native, fence):
             False,
             AGENT_STATE_REPORT_MAX_WORKING_TTL_MS,
         )
-    elif event == "Stop":
+    elif event == "StopFailure" and native.get("error") == "authentication_failed":
+        # Claude ends a turn its login could not authenticate with StopFailure,
+        # never Stop: the selected account's login is missing or expired, and
+        # nothing runs until a person signs in again with /login.
+        activity, attention, completed, working_ttl_ms = (
+            "waiting",
+            "input_required",
+            False,
+            None,
+        )
+    elif event in ("Stop", "StopFailure"):
         # Stop belongs to the parent, not necessarily its background work.
         # The provider registry must prove both no in-flight tasks and no
         # scheduled wakeups; absent/malformed evidence stays protected. The
-        # parent's turn still ended, so its prompt accepts input.
+        # parent's turn still ended, so its prompt accepts input. Any other
+        # API error (rate limit, overload, server error) fires StopFailure
+        # instead of Stop and ends the turn the same way, back at the prompt.
+        # Its body carries no registry, so it cannot prove quiescence.
         registries_empty = all(
             native.get(field) == [] for field in ("background_tasks", "session_crons")
         )
@@ -711,17 +724,6 @@ def claude_report(native, fence):
         activity, attention, completed, working_ttl_ms = (
             "waiting",
             "approval_required",
-            False,
-            None,
-        )
-    elif event == "StopFailure" and native.get("error") == "authentication_failed":
-        # Claude ends a turn its login could not authenticate with StopFailure,
-        # never Stop: the selected account's login is missing or expired, and
-        # nothing runs until a person signs in again with /login. Other API
-        # failures keep the reports they had before.
-        activity, attention, completed, working_ttl_ms = (
-            "waiting",
-            "input_required",
             False,
             None,
         )

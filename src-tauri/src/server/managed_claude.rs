@@ -117,6 +117,13 @@ pub(super) fn normalize_hook_report(
             .and_then(Value::as_array)
             .is_some_and(Vec::is_empty)
     });
+    // Claude fires StopFailure instead of Stop when an API error ended the
+    // turn. A failed sign-in needs a person; any other error (rate limit,
+    // overload, server error) leaves Claude back at its prompt, so it ends the
+    // turn exactly as the Stop it replaces. Its body carries no registry.
+    let sign_in_failed = event == "StopFailure"
+        && object.get("error").and_then(Value::as_str) == Some("authentication_failed");
+    let turn_ended = event == "Stop" || (event == "StopFailure" && !sign_in_failed);
     let state = match event {
         "SessionStart" => "waiting",
         // UserPromptSubmit opens the turn and PreToolUse re-reports it so the
@@ -129,8 +136,10 @@ pub(super) fn normalize_hook_report(
         // Parent Stop can precede background child, shell or MCP completion.
         // Only the provider's complete empty registry proves whole-session
         // quiescence. Missing fields are unknown, never an empty snapshot.
-        "Stop" if (source_sequence.is_none() || work_id.is_some()) && registries_empty => "done",
-        "Stop" => "working",
+        _ if turn_ended && (source_sequence.is_none() || work_id.is_some()) && registries_empty => {
+            "done"
+        }
+        _ if turn_ended => "working",
         "Notification"
             if object.get("notification_type").and_then(Value::as_str)
                 == Some("permission_prompt") =>
@@ -139,14 +148,8 @@ pub(super) fn normalize_hook_report(
         }
         "Notification" => "informational",
         // A turn its login could not authenticate ends in StopFailure, never
-        // Stop, and nothing runs until a person signs in again. Other API
-        // failures carry no new fact; the Host keeps its last one.
-        "StopFailure"
-            if object.get("error").and_then(Value::as_str) == Some("authentication_failed") =>
-        {
-            "sign_in_required"
-        }
-        "StopFailure" => "informational",
+        // Stop, and nothing runs until a person signs in again.
+        "StopFailure" => "sign_in_required",
         // The prompt itself, with what it asks. The person still answers it,
         // in the terminal or from a chat that shows the request.
         "PermissionRequest" => "blocked",
@@ -161,7 +164,7 @@ pub(super) fn normalize_hook_report(
     // parent's turn, so its prompt accepts input. Claude names the subagent
     // whose tool call fires a hook; that call is background work too.
     let background_work = match event {
-        "Stop" => state == "working" && !registries_empty,
+        _ if turn_ended => state == "working" && !registries_empty,
         "PreToolUse" => object
             .get("agent_id")
             .and_then(Value::as_str)
@@ -220,7 +223,7 @@ pub(super) fn normalize_hook_report(
         }
     }
     let (activity, attention, turn_completed, working_ttl_ms) = match state {
-        "working" if background_work && event == "Stop" => (
+        "working" if background_work && turn_ended => (
             crate::hmux::ReportedAgentActivity::Waiting,
             crate::hmux::ReportedAgentAttention::None,
             false,
@@ -326,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn a_turn_failed_at_sign_in_asks_for_a_person_and_other_failures_add_nothing() {
+    fn a_turn_failed_at_sign_in_asks_for_a_person_and_other_failures_end_the_turn() {
         let header = |name: &str| {
             (name != "X-Hebbian-Hmux-Source-Sequence").then(|| "fixture-id".to_string())
         };
@@ -349,13 +352,25 @@ mod tests {
         assert!(!report.turn_completed);
         assert_eq!(report.turn_completion_id, None);
         assert_eq!(report.working_ttl_ms, None);
-        for error in ["rate_limit", "server_error", "billing_error"] {
-            assert!(
-                normalize_hook_report(failure(error), header)
-                    .unwrap()
-                    .is_none(),
+        // Claude is back at its prompt after any other API error; the turn's
+        // working lease must not keep refusing prompts sent to it.
+        for error in ["rate_limit", "overloaded", "server_error", "billing_error"] {
+            let report = normalize_hook_report(failure(error), header)
+                .unwrap()
+                .expect("an ended turn is reported")
+                .host_request;
+            assert_eq!(
+                report.activity,
+                crate::hmux::ReportedAgentActivity::Waiting,
                 "{error}"
             );
+            assert_eq!(
+                report.attention,
+                crate::hmux::ReportedAgentAttention::None,
+                "{error}"
+            );
+            assert!(report.background_work, "{error}");
+            assert!(!report.turn_completed, "{error}");
         }
     }
 

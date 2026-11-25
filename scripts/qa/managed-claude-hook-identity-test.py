@@ -235,8 +235,11 @@ class ClaudeConversationIdentityTest(unittest.TestCase):
                 {"provider_id": "claude", "conversation_id": "fixture-conversation"},
             )
 
-    def test_other_turn_failures_keep_their_previous_reports(self):
-        for error in ("rate_limit", "server_error", "billing_error", None, 7):
+    def test_other_turn_failures_end_the_turn_at_its_prompt(self):
+        # Claude Code fires StopFailure instead of Stop when an API error
+        # ended the turn, and is back at its prompt. Keeping the turn's
+        # working lease refused every inbox wake until another turn ran.
+        for error in ("rate_limit", "overloaded", "server_error", "billing_error", None, 7):
             native = {
                 "hook_event_name": "StopFailure",
                 "session_id": "fixture-conversation",
@@ -244,7 +247,13 @@ class ClaudeConversationIdentityTest(unittest.TestCase):
             }
             if error is not None:
                 native["error"] = error
-            self.assertIsNone(report(native), repr(error))
+            for body in (native, json.loads(hook.slim_body(native))):
+                result = report(body)
+                self.assertEqual(result["activity"], "waiting", repr(error))
+                self.assertEqual(result["attention"], "none", repr(error))
+                self.assertTrue(result["background_work"], repr(error))
+                self.assertFalse(result["turn_completed"], repr(error))
+                self.assertEqual(result["causality"]["work_id"], "fixture-parent-turn")
 
     def test_missing_work_identity_cannot_establish_quiescence(self):
         for prompt_id in (None, "", "invalid id", "short", 7):
