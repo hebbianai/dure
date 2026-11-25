@@ -13,10 +13,12 @@ use std::{
     time::UNIX_EPOCH,
 };
 mod accounts;
+mod claude_local_command;
 mod tools;
 pub use accounts::{
     ProviderStateRoots, account_profile_directories, newest_conversation_file, read_newest,
 };
+use claude_local_command::{ClaudeLocalCommand, claude_local_command};
 pub use tools::{
     MAX_TOOL_CALLS, MAX_TOOL_INPUT_BYTES, MAX_TOOL_OUTPUT_BYTES, ProviderConversationActivity,
     ProviderToolCall, ProviderToolState, ToolEvent, ToolEventParser, bounded_input,
@@ -186,12 +188,19 @@ pub fn claude_turn(value: &Value) -> Option<(ConversationTurnRole, String)> {
         _ => return None,
     };
     let text = value.pointer("/message/content").and_then(text_content)?;
-    if role == ConversationTurnRole::User
-        && (claude_context_injection(&text) || claude_written_record(value, &text))
-    {
+    if role == ConversationTurnRole::Agent {
+        return Some((role, text));
+    }
+    if claude_context_injection(&text) || claude_written_record(value, &text) {
         return None;
     }
-    Some((role, text))
+    match claude_local_command(&text) {
+        // A command the person ran in Claude Code reads as they typed it.
+        Some(ClaudeLocalCommand::Input(line)) => Some((role, line)),
+        // What it printed, Claude Code wrote, like the records above.
+        Some(ClaudeLocalCommand::Output) => None,
+        None => Some((role, text)),
+    }
 }
 
 pub fn codex_turn(value: &Value) -> Option<(ConversationTurnRole, String)> {

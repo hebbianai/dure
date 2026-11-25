@@ -802,3 +802,69 @@ fn records_claude_code_writes_on_the_person_side_are_not_their_messages() {
         [("call-1".to_string(), ProviderToolState::Failed)]
     );
 }
+
+#[test]
+fn input_the_person_ran_in_claude_code_reads_as_the_command_line() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    let records = [
+        // Both tag orders Claude Code writes, with and without arguments.
+        serde_json::json!({"type":"user","message":{"content":
+            "<command-message>loop</command-message>\n<command-name>/loop</command-name>\n<command-args>check the open lanes\nthen report</command-args>"}}),
+        serde_json::json!({"type":"user","isMeta":true,"message":{"content":
+            "<local-command-caveat>The command below was run directly in Claude Code, not sent to you as a request.</local-command-caveat>"}}),
+        serde_json::json!({"type":"user","message":{"content":
+            "<command-name>/effort</command-name>\n            <command-message>effort</command-message>\n            <command-args>max</command-args>"}}),
+        serde_json::json!({"type":"user","message":{"content":
+            "<local-command-stdout>Set effort level to max</local-command-stdout>"}}),
+        serde_json::json!({"type":"user","message":{"content":
+            "<command-name>/clear</command-name>\n            <command-message>clear</command-message>\n            <command-args></command-args>"}}),
+        serde_json::json!({"type":"user","message":{"content":[
+            {"type":"text","text":"<local-command-stderr>Unknown model</local-command-stderr>"}
+        ]}}),
+        serde_json::json!({"type":"user","message":{"content":"<bash-input>git status --short</bash-input>"}}),
+        serde_json::json!({"type":"user","message":{"content":
+            "<bash-stdout> M src/lib.rs</bash-stdout><bash-stderr></bash-stderr>"}}),
+        serde_json::json!({"type":"assistant","message":{"content":[
+            {"type":"text","text":"lib.rs has changes"}
+        ],"stop_reason":"end_turn"}}),
+        // The person's own text that only mentions a tag stays as written.
+        serde_json::json!({"type":"user","origin":{"kind":"human"},"message":{"content":
+            "why is <command-name>/loop</command-name> in the history?"}}),
+        serde_json::json!({"type":"user","origin":{"kind":"human"},"message":{"content":
+            "<bash-stdout>pasted output</bash-stdout> what does this mean?"}}),
+    ];
+    for record in &records {
+        writeln!(file, "{record}").unwrap();
+    }
+    let expected = [
+        (
+            ConversationTurnRole::User,
+            "/loop check the open lanes\nthen report",
+        ),
+        (ConversationTurnRole::User, "/effort max"),
+        (ConversationTurnRole::User, "/clear"),
+        (ConversationTurnRole::User, "! git status --short"),
+        (ConversationTurnRole::Agent, "lib.rs has changes"),
+        (
+            ConversationTurnRole::User,
+            "why is <command-name>/loop</command-name> in the history?",
+        ),
+        (
+            ConversationTurnRole::User,
+            "<bash-stdout>pasted output</bash-stdout> what does this mean?",
+        ),
+    ]
+    .map(|(role, text)| (role, text.to_string()))
+    .to_vec();
+    let shown = |entries: &[ProviderTranscriptEntry]| {
+        entries
+            .iter()
+            .map(|entry| (entry.role, entry.text.clone()))
+            .collect::<Vec<_>>()
+    };
+
+    let read = transcript_from_file(file.path(), "claude", "test", claude_turn).unwrap();
+    assert_eq!(shown(&read.entries), expected);
+    let older = page(file.path(), None, Limits::PAGE);
+    assert_eq!(shown(&older.transcript.entries), expected);
+}

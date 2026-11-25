@@ -798,3 +798,101 @@ test("records Claude Code writes on the person's side are not the person's messa
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+test("input the person ran in Claude Code reads as the command line", async () => {
+	const { getSessionMessages } = await loadPinnedClaudeSdkRuntime();
+	const root = await mkdtemp(path.join(os.tmpdir(), "dure-history-command-"));
+	const cwd = "/workspace/command-history";
+	const file = path.join(root, "projects", "-workspace-command-history", `${HISTORY_SESSION_ID}.jsonl`);
+	const uuid = historyUuid;
+	const record = (index, role, content, extra = {}) => ({
+		...sdkMessage({
+			content,
+			parentUuid: index === 0 ? null : uuid(index - 1),
+			role,
+			sessionId: HISTORY_SESSION_ID,
+			timestamp: "2026-01-02T03:04:05.000Z",
+			uuid: uuid(index),
+		}),
+		...extra,
+	});
+	// Both tag orders Claude Code writes, with and without arguments, `!`
+	// shell input, and what each printed.
+	const records = [
+		record(
+			0,
+			"user",
+			"<command-message>loop</command-message>\n<command-name>/loop</command-name>\n<command-args>check the open lanes\nthen report</command-args>",
+		),
+		record(
+			1,
+			"user",
+			"<local-command-caveat>The command below was run directly in Claude Code, not sent to you as a request.</local-command-caveat>",
+			{ isMeta: true },
+		),
+		record(
+			2,
+			"user",
+			"<command-name>/effort</command-name>\n            <command-message>effort</command-message>\n            <command-args>max</command-args>",
+		),
+		record(3, "user", "<local-command-stdout>Set effort level to max</local-command-stdout>"),
+		record(
+			4,
+			"user",
+			"<command-name>/clear</command-name>\n            <command-message>clear</command-message>\n            <command-args></command-args>",
+		),
+		record(5, "user", [
+			{ text: "<local-command-stderr>Unknown model</local-command-stderr>", type: "text" },
+		]),
+		record(6, "user", "<bash-input>git status --short</bash-input>"),
+		record(7, "user", "<bash-stdout> M src/lib.rs</bash-stdout><bash-stderr></bash-stderr>"),
+		record(8, "assistant", [{ text: "lib.rs has changes", type: "text" }]),
+		// The person's own text that only mentions a tag stays as written.
+		record(9, "user", "why is <command-name>/loop</command-name> in the history?", {
+			origin: { kind: "human" },
+		}),
+		record(10, "user", "<bash-stdout>pasted output</bash-stdout> what does this mean?", {
+			origin: { kind: "human" },
+		}),
+	];
+	try {
+		await mkdir(path.dirname(file), { recursive: true });
+		await writeFile(file, records.map((value) => `${JSON.stringify(value)}\n`).join(""));
+		const history = await createClaudeAgentSdkHistoryReader({ getSessionMessages })({
+			cwd,
+			env: { CLAUDE_CONFIG_DIR: root },
+			providerSessionId: HISTORY_SESSION_ID,
+		});
+
+		assert.equal(history.status, "complete", history.reason);
+		assert.deepEqual(
+			history.items
+				.filter(({ body }) => body.type === "message")
+				.map(({ body, providerMessageId }) => [providerMessageId, body.role, body.markdown]),
+			[
+				[uuid(0), "user", "/loop check the open lanes\nthen report"],
+				[uuid(2), "user", "/effort max"],
+				[uuid(4), "user", "/clear"],
+				[uuid(6), "user", "! git status --short"],
+				["msg-" + uuid(8), "assistant", "lib.rs has changes"],
+				[uuid(9), "user", "why is <command-name>/loop</command-name> in the history?"],
+				[uuid(10), "user", "<bash-stdout>pasted output</bash-stdout> what does this mean?"],
+			],
+		);
+		// What each command printed stays durable, hidden evidence under its
+		// record's provider id, where a continued timeline can still meet it.
+		const kept = (block) => ({ block, sourceType: "user" });
+		assert.deepEqual(
+			history.items
+				.filter(({ body }) => body.type === "provider_evidence")
+				.map(({ body, providerMessageId }) => [providerMessageId, body.value]),
+			[
+				[uuid(3), kept({ content: records[3].message.content })],
+				[uuid(5), kept(records[5].message.content[0])],
+				[uuid(7), kept({ content: records[7].message.content })],
+			],
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
