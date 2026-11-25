@@ -646,6 +646,11 @@ export function createClaudeAgentSdkQueryFactory({
 				});
 			}
 		};
+		// The provider records a prompt under the uuid it was sent with. The
+		// timeline keeps that id beside the prompt, so a provider history read
+		// later meets the prompt instead of showing it twice.
+		const emitUserMessage = (clientMessageId, providerMessageId) =>
+			emit("provider_user_message", { clientMessageId, providerMessageId });
 		const handleStreamEvent = (message) => {
 			const event = object(message.event, "stream_event_invalid");
 			switch (event.type) {
@@ -1197,6 +1202,7 @@ export function createClaudeAgentSdkQueryFactory({
 				// The CLI reads the same streaming input the turns ride; a user
 				// message pushed mid-turn is queued by the provider itself and
 				// applied at its next tool boundary.
+				const sdkUserMessageId = sdkPromptUuid(binding.identity, clientMessageId);
 				input.push(
 					Object.freeze({
 						message: Object.freeze({
@@ -1208,9 +1214,10 @@ export function createClaudeAgentSdkQueryFactory({
 						parent_tool_use_id: null,
 						session_id: providerSessionId ?? "",
 						type: "user",
-						uuid: sdkPromptUuid(binding.identity, clientMessageId),
+						uuid: sdkUserMessageId,
 					}),
 				);
+				emitUserMessage(clientMessageId, sdkUserMessageId);
 			},
 			startTurn({ clientMessageId, input: turnInput }) {
 				if (closing || terminalDelivered) throw adapterError("query_closed");
@@ -1245,6 +1252,7 @@ export function createClaudeAgentSdkQueryFactory({
 					activeTurn = undefined;
 					throw error;
 				}
+				emitUserMessage(clientMessageId, sdkUserMessageId);
 				return completion.promise;
 			},
 		});

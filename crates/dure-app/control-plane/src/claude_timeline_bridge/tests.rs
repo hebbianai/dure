@@ -1346,33 +1346,7 @@ async fn a_second_chat_session_continues_with_the_terminal_turns_between() {
         .unwrap();
 
     // The Terminal runs, then a new Chat runtime replaces the stopped one.
-    let current = store
-        .agent_interaction(&interaction)
-        .await
-        .unwrap()
-        .unwrap();
-    let second_identity = ClaudeDch1QueryIdentity {
-        runtime_generation: "runtime-claude-2".into(),
-        query_epoch: "query-claude-2".into(),
-        relay_id: "relay-claude-2".into(),
-    };
-    store
-        .replace_agent_interaction_runtime(&dure_app::AgentRuntimeReplacementV1 {
-            schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
-            interaction_session_id: interaction.clone(),
-            expected_binding_revision: current.binding_revision,
-            source: runtime(),
-            source_execution_profile: current.execution_profile.clone(),
-            target: AgentProviderRuntimeFenceV1 {
-                runtime_generation: second_identity.runtime_generation.clone(),
-                provider_epoch: second_identity.query_epoch.clone(),
-            },
-            target_execution_profile: current.execution_profile.clone(),
-            provider_conversation_ref: current.provider_conversation_ref.clone(),
-            replaced_at_ms: 30,
-        })
-        .await
-        .unwrap();
+    let second_identity = replace_with_second_chat_runtime(&store, &interaction).await;
 
     // The provider's history now holds all of it, the Terminal turn last.
     let second = FakeTransport::new(Arc::clone(&store), [empty_replay()], [no_pending()])
@@ -1442,4 +1416,181 @@ async fn a_second_chat_session_continues_with_the_terminal_turns_between() {
             "pending_snapshot",
         ]
     );
+}
+
+/// A new Chat runtime replaces the stopped first one, as a second move into
+/// Chat does after the Agent ran in its Terminal. It keeps the interaction
+/// binding and its timeline.
+async fn replace_with_second_chat_runtime(
+    store: &SqliteDomainStore,
+    interaction: &AgentInteractionSessionIdV1,
+) -> ClaudeDch1QueryIdentity {
+    let current = store.agent_interaction(interaction).await.unwrap().unwrap();
+    let second_identity = ClaudeDch1QueryIdentity {
+        runtime_generation: "runtime-claude-2".into(),
+        query_epoch: "query-claude-2".into(),
+        relay_id: "relay-claude-2".into(),
+    };
+    store
+        .replace_agent_interaction_runtime(&dure_app::AgentRuntimeReplacementV1 {
+            schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+            interaction_session_id: interaction.clone(),
+            expected_binding_revision: current.binding_revision,
+            source: runtime(),
+            source_execution_profile: current.execution_profile.clone(),
+            target: AgentProviderRuntimeFenceV1 {
+                runtime_generation: second_identity.runtime_generation.clone(),
+                provider_epoch: second_identity.query_epoch.clone(),
+            },
+            target_execution_profile: current.execution_profile.clone(),
+            provider_conversation_ref: current.provider_conversation_ref.clone(),
+            replaced_at_ms: 30,
+        })
+        .await
+        .unwrap();
+    second_identity
+}
+
+/// A Chat prompt that got no reply before the Agent moved back to its
+/// Terminal, for example one interrupted before any output, shows once after
+/// the next move into Chat. The provider recorded it under the id the driver
+/// sent it with, and the timeline holds that id from the driver's report, so
+/// the history after the prompt is all that is appended.
+#[tokio::test]
+async fn an_unanswered_chat_prompt_shows_once_after_a_terminal_round_trip() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = fixture_with_history_state(
+        &temp_dir.path().join("domain.sqlite"),
+        Some("session-claude-1"),
+        false,
+    )
+    .await;
+    let interaction = AgentInteractionSessionIdV1::new("interaction-claude").unwrap();
+    let service = Arc::new(AgentConversationService::new(Arc::clone(&store)));
+
+    // The first Chat session seeds the history from before it...
+    let first = FakeTransport::new(
+        Arc::clone(&store),
+        [
+            empty_replay(),
+            json!({
+                "events": [
+                    {
+                        "sequence": 1,
+                        "kind": "user_message_accepted",
+                        "payload": { "clientMessageId": "client-claude-1" }
+                    },
+                    {
+                        "sequence": 2,
+                        "kind": "provider_user_message",
+                        "payload": {
+                            "clientMessageId": "client-claude-1",
+                            "providerMessageId": "prompt-chat-1"
+                        }
+                    },
+                    {
+                        "sequence": 3,
+                        "kind": "turn_failed",
+                        "payload": { "clientMessageId": "client-claude-1" }
+                    }
+                ],
+                "gap": null,
+                "hasMore": false,
+                "latestSequence": 3,
+                "nextAfterSequence": 3
+            }),
+        ],
+        [
+            no_pending(),
+            json!({ "observedThroughSequence": 3, "requests": [] }),
+        ],
+    )
+    .with_history(history_snapshot(vec![
+        history_message("terminal-1", Some("prompt-terminal-1"), "user"),
+        history_message("terminal-2", Some("msg_terminal_2"), "assistant"),
+    ]));
+    let first_bridge = ClaudeTimelineBridge::new(
+        Arc::clone(&service),
+        first.clone(),
+        interaction.clone(),
+        identity(),
+    )
+    .unwrap();
+    first_bridge.reconcile().await.unwrap();
+    // ...and sends a prompt that ends before any reply.
+    service
+        .start_turn(
+            &first_bridge,
+            &AgentStartTurnIntentV1 {
+                schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+                interaction_session_id: interaction.clone(),
+                runtime: runtime(),
+                turn_id: dure_app::AgentTurnIdV1::new("turn-chat-1").unwrap(),
+                client_message_id: AgentClientMessageIdV1::new("client-claude-1").unwrap(),
+                input: "chat question".into(),
+                requested_at_ms: 20,
+            },
+        )
+        .await
+        .unwrap();
+    first_bridge.reconcile().await.unwrap();
+    let prompt_record = tail(&store)
+        .await
+        .rows
+        .into_iter()
+        .find(|row| {
+            matches!(
+                &row.item.body,
+                AgentTimelineItemBodyV1::ProviderEvidence { kind, .. }
+                    if kind == "provider_user_message"
+            )
+        })
+        .expect("the driver's report of the prompt is kept");
+    assert_eq!(
+        prompt_record
+            .item
+            .provider_message_id
+            .as_ref()
+            .map(AgentProviderMessageIdV1::as_str),
+        Some("prompt-chat-1")
+    );
+    assert_eq!(
+        prompt_record
+            .item
+            .client_message_id
+            .as_ref()
+            .map(AgentClientMessageIdV1::as_str),
+        Some("client-claude-1")
+    );
+
+    // The Terminal continues the conversation, then the Agent moves into
+    // Chat again. The provider's history holds the unanswered prompt before
+    // the Terminal's turn.
+    let second_identity = replace_with_second_chat_runtime(&store, &interaction).await;
+    let second = FakeTransport::new(Arc::clone(&store), [empty_replay()], [no_pending()])
+        .with_history(history_snapshot(vec![
+            history_message("terminal-1", Some("prompt-terminal-1"), "user"),
+            history_message("terminal-2", Some("msg_terminal_2"), "assistant"),
+            history_message("chat-1", Some("prompt-chat-1"), "user"),
+            history_message("terminal-3", Some("prompt-terminal-3"), "user"),
+            history_message("terminal-4", Some("msg_terminal_4"), "assistant"),
+        ]));
+    ClaudeTimelineBridge::new(Arc::clone(&service), second, interaction, second_identity)
+        .unwrap()
+        .reconcile()
+        .await
+        .unwrap();
+
+    let page = tail(&store).await;
+    assert_eq!(
+        markdown(&page),
+        [
+            "user terminal-1",
+            "assistant terminal-2",
+            "chat question",
+            "user terminal-3",
+            "assistant terminal-4",
+        ]
+    );
+    assert!(page.binding.history_complete);
 }

@@ -915,7 +915,28 @@ fn map_event(
                     observed_at_ms,
                 )?,
             });
-            mutations.push(provider_evidence(identity, event, observed_at_ms)?);
+            mutations.push(provider_evidence(
+                identity,
+                event,
+                None,
+                None,
+                observed_at_ms,
+            )?);
+        }
+        "provider_user_message" => {
+            // The provider records a prompt under the id the driver sent it
+            // with. Holding that id lets a later provider history meet the
+            // prompt in this timeline, also one that got no reply.
+            let reason = "provider_user_message_invalid";
+            let prompt = client_message_id(string(payload, "clientMessageId", reason)?)?;
+            let recorded = provider_message_id(string(payload, "providerMessageId", reason)?)?;
+            mutations.push(provider_evidence(
+                identity,
+                event,
+                Some(prompt),
+                Some(recorded),
+                observed_at_ms,
+            )?);
         }
         "assistant_delta" | "reasoning_delta" | "tool_input_delta" => {
             let provider_message_id = provider_message_id(string(
@@ -1107,7 +1128,13 @@ fn map_event(
                 canceled_at_ms: observed_at_ms,
             });
         }
-        _ => mutations.push(provider_evidence(identity, event, observed_at_ms)?),
+        _ => mutations.push(provider_evidence(
+            identity,
+            event,
+            None,
+            None,
+            observed_at_ms,
+        )?),
     }
     Ok(AgentProviderEventCommitV1 {
         schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
@@ -1125,9 +1152,12 @@ fn map_event(
     })
 }
 
+/// An event kept as provider evidence, with the messages it concerns.
 fn provider_evidence(
     identity: &ClaudeDch1QueryIdentity,
     event: &ClaudeDch1ProviderEvent,
+    client_message_id: Option<AgentClientMessageIdV1>,
+    provider_message_id: Option<AgentProviderMessageIdV1>,
     observed_at_ms: i64,
 ) -> Result<AgentTimelineMutationV1, ClaudeTimelineBridgeError> {
     Ok(AgentTimelineMutationV1::Append {
@@ -1140,8 +1170,8 @@ fn provider_evidence(
                 kind: event.kind.clone(),
                 value: event.payload.clone(),
             },
-            None,
-            None,
+            client_message_id,
+            provider_message_id,
             observed_at_ms,
         )?,
     })

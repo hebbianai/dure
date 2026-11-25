@@ -148,6 +148,42 @@ test("normalization preserves provider IDs and canonical tool wire fields", () =
 		tool_call_id: "tool-call-1",
 		type: "tool",
 	});
+	// A tool result belongs to its call's message.
+	assert.equal(history.items[2].providerMessageId, "provider-message-1");
+});
+
+test("a user message carries its uuid, the id a Chat prompt was sent with", () => {
+	const sessionId = "11111111-1111-4111-8111-111111111111";
+	// Dure sends each Chat prompt with a uuid of its own; the provider keeps it.
+	const chatPrompt = "6e7839e3-5e66-8e8a-ad32-08edae9412ab";
+	const user = (uuid, content) => ({
+		type: "user",
+		uuid,
+		session_id: sessionId,
+		parent_tool_use_id: null,
+		message: { role: "user", content },
+	});
+	const history = normalizeClaudeHistoryMessages(
+		[
+			user("22222222-2222-4222-8222-222222222222", "typed in the terminal"),
+			user(chatPrompt, [
+				{ type: "text", text: "sent from Chat" },
+				{ type: "image", source: { type: "base64", media_type: "image/png", data: "" } },
+			]),
+			user("33333333-3333-4333-8333-333333333333", []),
+		],
+		{ cwd: "/workspace/history", providerSessionId: sessionId },
+	);
+	assert.equal(history.status, "complete");
+	assert.deepEqual(
+		history.items.map(({ body, providerMessageId }) => [body.type, providerMessageId]),
+		[
+			["message", "22222222-2222-4222-8222-222222222222"],
+			["message", chatPrompt],
+			["provider_evidence", chatPrompt],
+			["provider_evidence", "33333333-3333-4333-8333-333333333333"],
+		],
+	);
 });
 
 test("the pinned SDK reads concurrent exact profiles without ambient credential state", async () => {
