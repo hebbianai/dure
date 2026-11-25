@@ -72,6 +72,10 @@ fn live_pi_preserves_conversation_across_settings_busy_turns_and_reconnect() {
     assert_eq!(descriptor.session_id, observed.session_id);
 }
 
+/// The file the fixture model asks Pi to write: more than one timeline item
+/// holds. `scripts/qa/pi-provider-conformance.mjs` writes the same size.
+const LARGE_WRITE_BYTES: u64 = 200_000;
+
 fn settings(model: &str, effort: &str) -> ProviderTurnSettings {
     ProviderTurnSettings::new(
         ProviderPermissionModeV1::Default,
@@ -323,6 +327,26 @@ async fn exercise(
             .unwrap();
         wait_completed(&service, &binding, &question.turn_id).await;
         assert!(page(&service, &binding).await.pending_requests.is_empty());
+        // Pi writes a file larger than one timeline item. Its tool call
+        // fits without its input, so the turn completes on the same live
+        // connection, and the reconnect below seeds it again from Pi.
+        let large = turn_intent(&binding, "pi-large-write", "DURE_PI_LARGE_WRITE");
+        service.start_turn(commands.as_ref(), &large).await.unwrap();
+        wait_completed(&service, &binding, &large.turn_id).await;
+        assert!(commands.is_connected());
+        assert_eq!(
+            std::fs::metadata(root.join("workspace-0/large-write.txt"))
+                .unwrap()
+                .len(),
+            LARGE_WRITE_BYTES
+        );
+        assert!(page(&service, &binding).await.rows.iter().any(|row| {
+            row.item.turn_id.as_ref() == Some(&large.turn_id)
+                && matches!(
+                    &row.item.body,
+                    AgentTimelineItemBodyV1::Tool { name, input: None, .. } if name == "write"
+                )
+        }));
         let offline = turn_intent(&binding, "pi-offline", "DURE_PI_BLOCK_3");
         service
             .start_turn(bridge(&manager, &binding).await.as_ref(), &offline)
@@ -352,7 +376,7 @@ async fn exercise(
                     }
                 ))
                 .count(),
-            6
+            7
         );
         assert!(!observed.rows.iter().any(|row| matches!(&row.item.body, AgentTimelineItemBodyV1::Message { markdown, .. } if markdown.contains("DURE_PI_DECOY"))));
     }

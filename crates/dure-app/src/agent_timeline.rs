@@ -455,6 +455,81 @@ impl AgentTimelineItemBodyV1 {
             })?,
         )
     }
+
+    /// This body, or its largest smaller form within the timeline's bounds
+    /// when it is over them. A tool keeps its call and drops its input, then
+    /// its output, then both. A message or reasoning keeps the beginning of
+    /// its text, marked as clipped. Claude's history and live tool events
+    /// fit by the same rule. A body with no smaller form that fits, or one
+    /// that fails validation for another reason, comes back unchanged, so its
+    /// validation still names what is wrong.
+    pub fn fitted(self) -> Self {
+        if self.validate().is_ok() {
+            return self;
+        }
+        let fitted = self.smaller_forms().find(|body| body.validate().is_ok());
+        fitted.unwrap_or(self)
+    }
+
+    /// The smaller forms `fitted` tries, largest first.
+    fn smaller_forms(&self) -> Box<dyn Iterator<Item = Self> + '_> {
+        match self {
+            Self::Tool {
+                tool_call_id,
+                name,
+                state,
+                input,
+                output,
+            } => {
+                let tool = |input: Option<&Value>, output: Option<&Value>| Self::Tool {
+                    tool_call_id: tool_call_id.clone(),
+                    name: name.clone(),
+                    state: state.clone(),
+                    input: input.cloned(),
+                    output: output.cloned(),
+                };
+                Box::new(
+                    [
+                        (None, output.as_ref()),
+                        (input.as_ref(), None),
+                        (None, None),
+                    ]
+                    .into_iter()
+                    .map(move |(input, output)| tool(input, output)),
+                )
+            }
+            Self::Message { role, markdown } => {
+                Box::new(clipped_texts(markdown).map(|markdown| Self::Message {
+                    role: role.clone(),
+                    markdown,
+                }))
+            }
+            Self::Reasoning { text } => {
+                Box::new(clipped_texts(text).map(|text| Self::Reasoning { text }))
+            }
+            _ => Box::new(std::iter::empty()),
+        }
+    }
+}
+
+/// The shortest beginning of a text that a clipped body keeps.
+const MIN_CLIPPED_TEXT_BYTES: usize = 1024;
+
+/// Ever shorter beginnings of `text`, marked as clipped and never splitting a
+/// character: just under one item's bound first, then half as long each
+/// time. The shortest fits one item however its text encodes in JSON.
+fn clipped_texts(text: &str) -> impl Iterator<Item = String> + '_ {
+    std::iter::successors(
+        Some(MAX_AGENT_TIMELINE_JSON_BYTES_V1 - MIN_CLIPPED_TEXT_BYTES),
+        |bytes| Some(bytes / 2).filter(|bytes| *bytes >= MIN_CLIPPED_TEXT_BYTES),
+    )
+    .map(|bytes| {
+        let mut end = bytes.min(text.len());
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &text[..end])
+    })
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -1341,6 +1416,72 @@ mod tests {
             .validate()
             .is_err()
         );
+    }
+
+    #[test]
+    fn an_oversized_body_fits_by_dropping_tool_payloads_and_clipping_text() {
+        let large = "x".repeat(MAX_AGENT_TIMELINE_JSON_BYTES_V1);
+        let half = "x".repeat(MAX_AGENT_TIMELINE_JSON_BYTES_V1 / 2);
+        let tool = |input: Option<&str>, output: Option<&str>| AgentTimelineItemBodyV1::Tool {
+            tool_call_id: "call-1".into(),
+            name: "write".into(),
+            state: AgentTimelineToolStateV1::Completed,
+            input: input.map(Value::from),
+            output: output.map(Value::from),
+        };
+        let fits = tool(Some("small"), Some("small"));
+        assert_eq!(fits.clone().fitted(), fits);
+        // A tool keeps its call and drops its input, then its output, then
+        // both, also when each fits alone but not together.
+        for (body, expected) in [
+            (tool(Some(&large), Some("small")), tool(None, Some("small"))),
+            (tool(Some("small"), Some(&large)), tool(Some("small"), None)),
+            (tool(Some(&large), Some(&large)), tool(None, None)),
+            (tool(Some(&half), Some(&half)), tool(None, Some(&half))),
+            (tool(Some(&large), None), tool(None, None)),
+        ] {
+            assert!(body.validate().is_err());
+            assert_eq!(body.fitted(), expected);
+        }
+        // Text keeps its beginning, marked as clipped, on a character
+        // boundary, however much its JSON encoding grows.
+        for text in [
+            "한".repeat(MAX_AGENT_TIMELINE_TEXT_BYTES_V1 / 3),
+            "\"".repeat(MAX_AGENT_TIMELINE_JSON_BYTES_V1 - 1024),
+            "\u{1}".repeat(MAX_AGENT_TIMELINE_JSON_BYTES_V1),
+        ] {
+            for body in [
+                AgentTimelineItemBodyV1::Message {
+                    role: AgentTimelineMessageRoleV1::User,
+                    markdown: text.clone(),
+                },
+                AgentTimelineItemBodyV1::Reasoning { text: text.clone() },
+            ] {
+                assert!(body.validate().is_err());
+                let fitted = body.fitted();
+                fitted.validate().unwrap();
+                let (AgentTimelineItemBodyV1::Message { markdown: kept, .. }
+                | AgentTimelineItemBodyV1::Reasoning { text: kept }) = &fitted
+                else {
+                    panic!("text body changed kind: {fitted:?}");
+                };
+                let kept = kept.strip_suffix('…').unwrap();
+                assert!(kept.len() >= 1024 && text.starts_with(kept));
+            }
+        }
+        // What clipping can't fix comes back unchanged, still invalid.
+        for body in [
+            AgentTimelineItemBodyV1::Message {
+                role: AgentTimelineMessageRoleV1::Assistant,
+                markdown: "\0".into(),
+            },
+            AgentTimelineItemBodyV1::Plan {
+                value: Value::from(large.clone()),
+            },
+        ] {
+            assert_eq!(body.clone().fitted(), body);
+            assert!(body.validate().is_err());
+        }
     }
 
     #[test]
