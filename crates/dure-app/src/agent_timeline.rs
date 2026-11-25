@@ -25,6 +25,11 @@ pub const MAX_AGENT_HISTORY_ITEMS_V1: usize = 2_048;
 /// in for the transcript records before the boundary, so the history it opens
 /// is complete; those records stay readable in the provider's transcript.
 pub const PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1: &str = "provider_conversation_compacted";
+/// The history boundary reason that opens the newest window of a longer
+/// provider history at no known place in the provider's transcript: older
+/// history precedes it, at least `droppedThroughProviderSequence` messages or
+/// turns of it.
+pub const PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1: &str = "provider_history_truncated";
 
 macro_rules! timeline_id {
     ($name:ident) => {

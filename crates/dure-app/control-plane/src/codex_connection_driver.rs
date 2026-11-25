@@ -374,16 +374,13 @@ async fn handle_thread_attach(
             )
             .await;
         }
-        let thread_id = attached.thread_id.clone();
+        let refresh = attached.refresh_params();
         let base_result = attached.result.clone();
         let request = message
             .as_object_mut()
             .ok_or_else(|| CodexConnectionDriverError::new("thread_attach_invalid"))?;
         request.insert("method".into(), Value::String("thread/read".into()));
-        request.insert(
-            "params".into(),
-            json!({ "threadId": thread_id, "includeTurns": true }),
-        );
+        request.insert("params".into(), refresh);
         state.route_client_request(
             connection_id,
             &mut message,
