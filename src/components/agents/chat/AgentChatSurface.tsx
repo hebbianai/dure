@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useMemo, useRef } from "react";
 import type { IDockviewPanelProps } from "dockview-react";
 import { AgentGoalBar } from "@/components/agents/chat/AgentGoalBar";
 import { TranscriptContents } from "@/components/agents/chat/AgentChatTimelineRows";
@@ -6,6 +6,7 @@ import {
 	ChatComposer,
 	type ChatTurnFailureRecovery,
 } from "@/components/agents/chat/ChatComposer";
+import { useOlderProviderHistory } from "@/components/agents/chat/useOlderProviderHistory";
 import { PanelStatus } from "@/components/common/PanelStatus";
 import { LoadingRow } from "@/components/common/StatusBlocks";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,10 @@ import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeL
 import type { ProviderCatalogSource } from "@/lib/agents/providerModelCatalogSource";
 import type { AgentChatSessionView } from "@/lib/agents/chat/agentChatSessionView";
 import type { AgentPendingRequestV1 } from "@/lib/agents/chat/agentConversationContract";
+import {
+	chatPageWithOlderProviderHistory,
+	seededProviderHistoryCursor,
+} from "@/lib/agents/chat/providerHistoryPages";
 import { t } from "@/lib/i18n";
 
 export function AgentChatSurface({
@@ -27,6 +32,7 @@ export function AgentChatSurface({
 	onReady,
 	recovery,
 	onNewConversation,
+	providerTranscriptReadable = false,
 }: {
 	session: AgentChatSessionView;
 	paneApi?: IDockviewPanelProps["api"];
@@ -47,9 +53,34 @@ export function AgentChatSurface({
 	recovery?: ChatTurnFailureRecovery;
 	/** The pane's "new conversation" control, run by `/clear`. */
 	onNewConversation?: () => void;
+	/** The provider transcript is on this machine, so history older than the
+	 * seeded window loads from it on request. */
+	providerTranscriptReadable?: boolean;
 }) {
 	const readyReported = useRef(false);
-	const page = session.page;
+	const storePage = session.page;
+	const olderAnchor =
+		storePage && providerTranscriptReadable
+			? seededProviderHistoryCursor(storePage)
+			: undefined;
+	const conversationRef = storePage?.binding.providerConversationRef;
+	const older = useOlderProviderHistory(
+		storePage && conversationRef
+			? {
+					provider: storePage.binding.providerId,
+					conversationId: conversationRef,
+				}
+			: undefined,
+		olderAnchor,
+	);
+	const olderPages = older.pages;
+	const page = useMemo(
+		() =>
+			storePage && olderPages
+				? chatPageWithOlderProviderHistory(storePage, olderPages)
+				: storePage,
+		[storePage, olderPages],
+	);
 	useEffect(() => {
 		if (session.phase !== "ready" || !page || readyReported.current) return;
 		readyReported.current = true;
@@ -118,9 +149,14 @@ export function AgentChatSurface({
 				shimmerTurn={
 					shimmerOwner === "transcript" ? session.activeTurn : undefined
 				}
-				loadingOlder={session.loadingOlder}
-				olderHistoryError={session.olderHistoryError}
-				onLoadOlder={session.loadOlder}
+				loadingOlder={session.loadingOlder || older.loading}
+				olderHistoryError={
+					session.olderHistoryError ??
+					(older.failed ? t("agents.chat.historyBoundary") : undefined)
+				}
+				// The store's own older rows come first; past them, the
+				// provider transcript's.
+				onLoadOlder={storePage?.hasMore ? session.loadOlder : older.loadOlder}
 				renderPending={renderPending}
 			/>
 			<AgentGoalBar

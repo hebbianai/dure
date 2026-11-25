@@ -27,6 +27,10 @@ const MAX_SESSION_BYTES: u64 = 1024 * 1024;
 pub const MAX_TRANSCRIPT_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_TRANSCRIPT_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_TRANSCRIPT_ENTRIES: usize = 10_000;
+/// The bounds of one older page (see [`activity_page_from_file`]).
+pub const MAX_TRANSCRIPT_PAGE_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_TRANSCRIPT_PAGE_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_TRANSCRIPT_PAGE_ENTRIES: usize = 2_000;
 pub const MAX_TRANSCRIPT_DISCOVERY_ENTRIES: usize = 131_072;
 #[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -307,16 +311,38 @@ pub fn activity_from_file(
     provider: &str,
     conversation_id: &str,
 ) -> Result<ProviderConversationActivity, String> {
+    activity_page_from_file(path, provider, conversation_id, None)
+}
+
+/// One page of [`activity_from_file`]: the newest records, or with `before`
+/// the records that end just before an earlier page's `older_cursor`. Pages
+/// are whole records and never overlap, so an older page joins the newer one
+/// exactly where it stopped.
+pub fn activity_page_from_file(
+    path: &Path,
+    provider: &str,
+    conversation_id: &str,
+    before: Option<u64>,
+) -> Result<ProviderConversationActivity, String> {
     let (parse, tool_events) = provider_parsers(provider)?;
-    let (transcript, tools) = read_window(
+    let window = read_window(
         path,
         provider,
         conversation_id,
         parse,
         Some(tool_events),
-        Limits::DEFAULT,
+        if before.is_some() {
+            Limits::PAGE
+        } else {
+            Limits::DEFAULT
+        },
+        before,
     )?;
-    Ok(ProviderConversationActivity { transcript, tools })
+    Ok(ProviderConversationActivity {
+        transcript: window.transcript,
+        tools: window.tools,
+        older_cursor: window.older_cursor,
+    })
 }
 
 type TurnParser = fn(&Value) -> Option<(ConversationTurnRole, String)>;
@@ -342,6 +368,13 @@ impl Limits {
         output: MAX_TRANSCRIPT_OUTPUT_BYTES,
         entries: MAX_TRANSCRIPT_ENTRIES,
     };
+    /// One older page a reader asks for on demand: small enough to answer
+    /// quickly, large enough that a long conversation takes few pages.
+    const PAGE: Self = Self {
+        source: MAX_TRANSCRIPT_PAGE_SOURCE_BYTES,
+        output: MAX_TRANSCRIPT_PAGE_OUTPUT_BYTES,
+        entries: MAX_TRANSCRIPT_PAGE_ENTRIES,
+    };
 }
 
 fn transcript_window(
@@ -364,8 +397,25 @@ fn transcript_window(
             output: output_limit,
             entries: entry_limit,
         },
+        None,
     )
-    .map(|(transcript, _)| transcript)
+    .map(|window| window.transcript)
+}
+
+/// One transcript record that says something a reader shows: its own message
+/// and the tool events it records, at its byte offset in the file.
+struct WindowRecord {
+    offset: u64,
+    entry: Option<ProviderTranscriptEntry>,
+    tool_events: Vec<ToolEvent>,
+    tool_bytes: usize,
+    tool_calls: usize,
+}
+
+struct TranscriptWindow {
+    transcript: ProviderConversationTranscript,
+    tools: Vec<ProviderToolCall>,
+    older_cursor: Option<u64>,
 }
 
 fn read_window(
@@ -379,48 +429,66 @@ fn read_window(
         output: output_limit,
         entries: entry_limit,
     }: Limits,
-) -> Result<(ProviderConversationTranscript, Vec<ProviderToolCall>), String> {
+    before: Option<u64>,
+) -> Result<TranscriptWindow, String> {
     let read_error = |error| format!("read provider transcript: {error}");
     let mut file = fs::File::open(path).map_err(read_error)?;
-    let before = file.metadata().map_err(read_error)?;
-    if !before.is_file() {
+    let metadata = file.metadata().map_err(read_error)?;
+    if !metadata.is_file() {
         return Err("provider transcript is not a regular file".to_string());
     }
-    // Snapshot a bounded suffix, even while the provider continues appending.
+    let end = before.unwrap_or(metadata.len());
+    if end > metadata.len() {
+        return Err("provider transcript changed since the newer page was read".to_string());
+    }
+    // Snapshot a bounded range, even while the provider continues appending.
     // Start one byte earlier so a record exactly on the boundary is retained.
-    let start = before.len().saturating_sub(source_limit);
+    let start = end.saturating_sub(source_limit);
     file.seek(SeekFrom::Start(start.saturating_sub(1)))
         .map_err(read_error)?;
     let mut bytes = Vec::new();
-    file.take(before.len().min(source_limit + u64::from(start > 0)))
+    file.take(end - start + u64::from(start > 0))
         .read_to_end(&mut bytes)
         .map_err(read_error)?;
-    let bytes = if start > 0 {
+    let (mut offset, bytes) = if start > 0 {
         // Never decode a partial JSON record or split UTF-8 code point.
         let boundary = bytes
             .iter()
             .position(|byte| *byte == b'\n')
             .map_or(bytes.len(), |index| index + 1);
-        &bytes[boundary..]
+        (start - 1 + boundary as u64, &bytes[boundary..])
     } else {
-        &bytes[..]
+        (0, &bytes[..])
     };
-    let utf8_complete = std::str::from_utf8(bytes).is_ok();
-    let content = String::from_utf8_lossy(bytes);
-    let mut entries = VecDeque::new();
-    let mut output_bytes = 0usize;
-    let mut history_complete = start == 0 && utf8_complete;
+    let records_start = offset;
+    let mut lossless = true;
     let mut final_response = None;
-    let mut tools = tools::ToolWindow::default();
-    // Messages pushed and messages left out at the front, so a tool call's
-    // position can be rebased on the messages that were kept.
-    let mut entries_seen = 0usize;
-    let mut entries_dropped = 0usize;
-    for line in content.lines().filter(|line| !line.trim().is_empty()) {
-        let value = match serde_json::from_str::<Value>(line) {
+    let mut records = VecDeque::<WindowRecord>::new();
+    let (mut output_bytes, mut entry_count) = (0usize, 0usize);
+    let (mut tool_bytes, mut tool_calls) = (0usize, 0usize);
+    // Records left out at the front stay for an older page, which starts
+    // where the kept ones do.
+    let mut trimmed = false;
+    let mut cut = records_start;
+    for raw in bytes.split_inclusive(|byte| *byte == b'\n') {
+        let record_offset = offset;
+        offset += raw.len() as u64;
+        let raw = raw.strip_suffix(b"\n").unwrap_or(raw);
+        let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
+        if raw.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        let line = match std::str::from_utf8(raw) {
+            Ok(line) => std::borrow::Cow::Borrowed(line),
+            Err(_) => {
+                lossless = false;
+                String::from_utf8_lossy(raw)
+            }
+        };
+        let value = match serde_json::from_str::<Value>(&line) {
             Ok(value) => value,
             Err(_) => {
-                history_complete = false;
+                lossless = false;
                 continue;
             }
         };
@@ -432,45 +500,104 @@ fn read_window(
             }
             final_response = Some(text);
         }
+        let mut entry = None;
         if let Some((role, text)) = parse(&value) {
             if role == ConversationTurnRole::User {
                 final_response = None;
             }
             if !text.trim().is_empty() {
-                let entry = ProviderTranscriptEntry { role, text };
-                output_bytes = output_bytes.saturating_add(entry.text.len());
-                entries.push_back(entry);
-                entries_seen += 1;
-                while output_bytes > output_limit || entries.len() > entry_limit {
-                    if let Some(oldest) = entries.pop_front() {
-                        output_bytes -= oldest.text.len();
-                        entries_dropped += 1;
-                        history_complete = false;
-                    }
-                }
+                entry = Some(ProviderTranscriptEntry { role, text });
             }
         }
-        // A record's own text comes before the calls it makes.
-        if let Some(tool_events) = tool_events {
-            if !tools.apply(tool_events(&value), entries_seen) {
-                history_complete = false;
+        let events = tool_events.map_or_else(Vec::new, |tool_events| tool_events(&value));
+        if entry.is_none() && events.is_empty() {
+            continue;
+        }
+        let record = WindowRecord {
+            offset: record_offset,
+            tool_bytes: events.iter().map(tools::event_bytes).sum(),
+            tool_calls: events
+                .iter()
+                .filter(|event| matches!(event, ToolEvent::Call { .. }))
+                .count(),
+            entry,
+            tool_events: events,
+        };
+        if let Some(entry) = &record.entry {
+            output_bytes += entry.text.len();
+            entry_count += 1;
+        }
+        tool_bytes += record.tool_bytes;
+        tool_calls += record.tool_calls;
+        records.push_back(record);
+        while output_bytes > output_limit
+            || entry_count > entry_limit
+            || tool_bytes > MAX_TOOL_OUTPUT_BYTES
+            || tool_calls > MAX_TOOL_CALLS
+        {
+            let Some(oldest) = records.pop_front() else {
+                break;
+            };
+            if let Some(entry) = &oldest.entry {
+                output_bytes -= entry.text.len();
+                entry_count -= 1;
             }
+            tool_bytes -= oldest.tool_bytes;
+            tool_calls -= oldest.tool_calls;
+            trimmed = true;
+            cut = match records.front() {
+                Some(next) => next.offset,
+                None => {
+                    // One record larger than a whole page: no page can show
+                    // it, so the next older page starts before it.
+                    lossless = false;
+                    oldest.offset
+                }
+            };
         }
     }
-    let unchanged = fs::metadata(path).ok().is_some_and(|after| {
-        after.len() == before.len() && after.modified().ok() == before.modified().ok()
+    if !trimmed {
+        cut = records
+            .front()
+            .map_or(records_start, |record| record.offset);
+    }
+    let older_cursor = (start > 0 || trimmed).then(|| {
+        // A record longer than the read window leaves no whole record in it;
+        // the older page then starts inside that record.
+        if cut >= end {
+            lossless = false;
+            start
+        } else {
+            cut
+        }
     });
-    Ok((
-        ProviderConversationTranscript {
+    let unchanged = before.is_some()
+        || fs::metadata(path).ok().is_some_and(|after| {
+            after.len() == metadata.len() && after.modified().ok() == metadata.modified().ok()
+        });
+    let mut entries = Vec::with_capacity(entry_count);
+    let mut window = tools::ToolWindow::default();
+    for record in records {
+        if let Some(entry) = record.entry {
+            entries.push(entry);
+        }
+        // A record's own text comes before the calls it makes.
+        if !window.apply(record.tool_events, entries.len()) {
+            lossless = false;
+        }
+    }
+    Ok(TranscriptWindow {
+        transcript: ProviderConversationTranscript {
             schema_version: 1,
             provider: provider.to_string(),
             conversation_id: conversation_id.to_string(),
-            history_complete: history_complete && unchanged,
+            history_complete: older_cursor.is_none() && lossless && unchanged,
             final_response,
-            entries: entries.into(),
+            entries,
         },
-        tools.finish(entries_dropped),
-    ))
+        tools: window.finish(0),
+        older_cursor,
+    })
 }
 
 pub fn read_roots(

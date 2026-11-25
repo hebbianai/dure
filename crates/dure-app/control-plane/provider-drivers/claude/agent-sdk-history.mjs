@@ -125,16 +125,20 @@ function pushItem(items, sourceId, providerMessageId, body, createdAtMs) {
 	items.push(item);
 }
 
-/** Marks where a windowed history starts. At least `omittedMessages` provider
- * messages precede it; a read that started inside the transcript cannot count
- * the rest. */
-function historyBoundary(omittedMessages, createdAtMs) {
+/** Marks where a windowed history starts. Placed in its transcript, it names
+ * the byte offset of the window's oldest record: everything before it stays
+ * in the transcript, where a reader pages it in (`provider_transcript_window`).
+ * Unplaced, it only says that at least `omittedMessages` messages precede it. */
+function historyBoundary(omittedMessages, windowStart, createdAtMs) {
+	const placed = Number.isSafeInteger(windowStart) && windowStart > 0;
 	return historyItem(
 		HISTORY_BOUNDARY_SOURCE_ID,
 		null,
 		{
-			dropped_through_provider_sequence: Math.max(1, omittedMessages),
-			reason: "provider_history_truncated",
+			dropped_through_provider_sequence: placed
+				? windowStart
+				: Math.max(1, omittedMessages),
+			reason: placed ? "provider_transcript_window" : "provider_history_truncated",
 			requested_after_provider_sequence: 0,
 			type: "history_boundary",
 		},
@@ -142,8 +146,12 @@ function historyBoundary(omittedMessages, createdAtMs) {
 	);
 }
 
-const HISTORY_BOUNDARY_BYTES = jsonBytes(
-	historyBoundary(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
+const HISTORY_BOUNDARY_BYTES = Math.max(
+	...[Number.MAX_SAFE_INTEGER, null].map((windowStart) =>
+		jsonBytes(
+			historyBoundary(Number.MAX_SAFE_INTEGER, windowStart, Number.MAX_SAFE_INTEGER),
+		),
+	),
 );
 
 function sourceOf(item) {
@@ -153,7 +161,12 @@ function sourceOf(item) {
 
 /** The newest items that fit one snapshot, whole source messages at a time,
  * behind a history boundary when anything older is left out. */
-function newestHistoryWindow(items, omittedMessages, precededByOmittedHistory) {
+function newestHistoryWindow(
+	items,
+	omittedMessages,
+	precededByOmittedHistory,
+	sourceOffsets,
+) {
 	// The byte bound covers the encoded array: brackets and separators too.
 	let bytes = 1 + items.reduce((total, item) => total + jsonBytes(item) + 1, 0);
 	let start = 0;
@@ -176,7 +189,12 @@ function newestHistoryWindow(items, omittedMessages, precededByOmittedHistory) {
 	}
 	const kept = items.slice(start);
 	if (!windowed()) return kept;
-	return [historyBoundary(omitted, kept[0]?.createdAtMs ?? 0), ...kept];
+	const windowStart =
+		kept.length > 0 ? sourceOffsets.get(sourceOf(kept[0])) : undefined;
+	return [
+		historyBoundary(omitted, windowStart, kept[0]?.createdAtMs ?? 0),
+		...kept,
+	];
 }
 
 function contentBlocks(message) {
@@ -187,12 +205,13 @@ function contentBlocks(message) {
 /** Normalize the pinned SDK's provider-owned history into bounded canonical bodies.
  * Every source block is represented either by a visible body or durable evidence.
  * History past the bounds keeps its newest window behind a history boundary;
- * `precededByOmittedHistory` says the messages themselves are such a window. */
+ * `precededByOmittedHistory` says the messages themselves are such a window,
+ * and `sourceOffsets` (message uuid → byte offset) places it in the transcript. */
 export function normalizeClaudeHistoryMessages(
 	messages,
 	{ cwd, providerSessionId },
 	timestamps = new Map(),
-	{ precededByOmittedHistory = false } = {},
+	{ precededByOmittedHistory = false, sourceOffsets = new Map() } = {},
 ) {
 	if (!Array.isArray(messages)) return incomplete("history_unavailable");
 	if (typeof cwd !== "string" || !path.isAbsolute(cwd) || cwd.includes("\0")) {
@@ -333,7 +352,12 @@ export function normalizeClaudeHistoryMessages(
 
 	return Object.freeze({
 		items: Object.freeze(
-			newestHistoryWindow(items, omittedMessages, precededByOmittedHistory),
+			newestHistoryWindow(
+				items,
+				omittedMessages,
+				precededByOmittedHistory,
+				sourceOffsets,
+			),
 		),
 		status: "complete",
 	});
@@ -444,30 +468,52 @@ function readOnlySessionStore(
 					throw new Error("dure_claude_history_store_not_file");
 				}
 				sourceState.present = true;
-				// A transcript past the byte bound is read from its newest bytes;
-				// the first line there is a fragment of an older entry.
+				// A transcript past the byte bound is read from its newest bytes.
+				// Read one byte earlier so a record exactly on the boundary is
+				// kept; the bytes up to the first newline belong to an older one.
 				const start = Math.max(0, metadata.size - MAX_STORE_BYTES);
+				const readFrom = Math.max(0, start - 1);
+				const buffer = Buffer.alloc(metadata.size - readFrom);
+				let filled = 0;
+				while (filled < buffer.length) {
+					const { bytesRead } = await handle.read(
+						buffer,
+						filled,
+						buffer.length - filled,
+						readFrom + filled,
+					);
+					if (bytesRead === 0) break;
+					filled += bytesRead;
+				}
 				sourceState.windowed = start > 0;
 				const parents = new Map();
+				const offsets = new Map();
 				sourceState.parents = parents;
+				sourceState.offsets = offsets;
 				let entries = [];
 				const keepNewestEntries = () => {
 					const dropped = entries.length - MAX_STORE_ENTRIES;
 					if (dropped <= 0) return;
-					for (const entry of entries.slice(0, dropped)) parents.delete(entry.uuid);
+					for (const entry of entries.slice(0, dropped)) {
+						parents.delete(entry.uuid);
+						offsets.delete(entry.uuid);
+					}
 					entries = entries.slice(dropped);
 					sourceState.windowed = true;
 				};
-				let fragment = start > 0;
-				let bytes = 0;
-				for await (const line of handle.readLines({ start })) {
-					if (fragment) {
-						fragment = false;
-						continue;
-					}
-					bytes += Buffer.byteLength(line, "utf8") + 1;
-					if (bytes > MAX_STORE_BYTES)
-						throw new Error("dure_claude_history_store_bounds_exceeded");
+				let position = 0;
+				if (start > 0) {
+					const newline = buffer.indexOf(10);
+					position = newline === -1 || newline >= filled ? filled : newline + 1;
+				}
+				while (position < filled) {
+					let newline = buffer.indexOf(10, position);
+					if (newline === -1 || newline >= filled) newline = filled;
+					const offset = readFrom + position;
+					const end =
+						newline > position && buffer[newline - 1] === 13 ? newline - 1 : newline;
+					const line = buffer.toString("utf8", position, end);
+					position = newline + 1;
 					if (line.length === 0) continue;
 					const entry = JSON.parse(line);
 					if (!plainObject(entry) || typeof entry.type !== "string") {
@@ -490,6 +536,7 @@ function readOnlySessionStore(
 						entry.uuid,
 						typeof entry.parentUuid === "string" ? entry.parentUuid : null,
 					);
+					offsets.set(entry.uuid, offset);
 					// Trim in batches so a long transcript stays linear.
 					if (entries.length >= 2 * MAX_STORE_ENTRIES) keepNewestEntries();
 					const sourceId = token(entry.uuid);
@@ -541,7 +588,12 @@ export function createClaudeAgentSdkHistoryReader({
 			return incomplete("history_identity_invalid");
 		}
 		const timestamps = new Map();
-		const sourceState = { parents: new Map(), present: false, windowed: false };
+		const sourceState = {
+			offsets: new Map(),
+			parents: new Map(),
+			present: false,
+			windowed: false,
+		};
 		try {
 			const messages = await getSessionMessages(binding.providerSessionId, {
 				dir: binding.cwd,
@@ -556,6 +608,7 @@ export function createClaudeAgentSdkHistoryReader({
 			return normalizeClaudeHistoryMessages(messages, binding, timestamps, {
 				precededByOmittedHistory:
 					sourceState.windowed && chainLeavesWindow(messages, sourceState.parents),
+				sourceOffsets: sourceState.offsets,
 			});
 		} catch {
 			return incomplete("history_reader_failed");

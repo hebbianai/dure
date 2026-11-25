@@ -1625,23 +1625,33 @@ pub fn transcript_global(
 pub fn transcript_activity_any_account(
     provider: &str,
     conversation_id: &str,
+    before: Option<u64>,
 ) -> Result<ProviderConversationActivity, String> {
     activity_for_roots_and_profiles(
         &DiscoveryRoots::from_environment(),
         &home_account_profiles(provider),
         provider,
         conversation_id,
+        before,
     )
 }
 
+/// The newest page, or with `before` the older page that ends where a newer
+/// page's `older_cursor` points.
 fn activity_for_roots_and_profiles(
     roots: &DiscoveryRoots,
     profiles: &[PathBuf],
     provider: &str,
     conversation_id: &str,
+    before: Option<u64>,
 ) -> Result<ProviderConversationActivity, String> {
     let path = newest_conversation_file(roots, profiles, provider, conversation_id)?;
-    dure_provider_profile::transcript::activity_from_file(&path, provider, conversation_id)
+    dure_provider_profile::transcript::activity_page_from_file(
+        &path,
+        provider,
+        conversation_id,
+        before,
+    )
 }
 
 /// The most entries of Dure's account root one read looks through, and the
@@ -3652,12 +3662,12 @@ mod tests {
         );
 
         assert!(
-            activity_for_roots_and_profiles(&roots, &[], "claude", conversation_id).is_err(),
+            activity_for_roots_and_profiles(&roots, &[], "claude", conversation_id, None).is_err(),
             "the default state root alone misses the profile"
         );
         let profiles = account_profile_directories(temporary.path(), "claude");
         let activity =
-            activity_for_roots_and_profiles(&roots, &profiles, "claude", conversation_id)
+            activity_for_roots_and_profiles(&roots, &profiles, "claude", conversation_id, None)
                 .unwrap();
         assert_eq!(activity.transcript.entries.len(), 2);
         assert_eq!(
@@ -3665,8 +3675,27 @@ mod tests {
             Some("Earlier answer")
         );
         assert!(
-            activity_for_roots_and_profiles(&roots, &profiles, "claude", "../escape").is_err()
+            activity_for_roots_and_profiles(&roots, &profiles, "claude", "../escape", None)
+                .is_err()
         );
+        // An older page reads the same profile copy up to the cursor a newer
+        // read named; the whole small transcript names none.
+        assert_eq!(activity.older_cursor, None);
+        let source =
+            fs::read_to_string(profile.join(format!("projects/-repo/{conversation_id}.jsonl")))
+                .unwrap();
+        let second_record = source.find('\n').unwrap() as u64 + 1;
+        let older = activity_for_roots_and_profiles(
+            &roots,
+            &profiles,
+            "claude",
+            conversation_id,
+            Some(second_record),
+        )
+        .unwrap();
+        assert_eq!(older.transcript.entries.len(), 1);
+        assert_eq!(older.transcript.entries[0].text, "Earlier request");
+        assert_eq!(older.older_cursor, None);
     }
 
     /// A conversation moved between accounts can leave an older copy behind;

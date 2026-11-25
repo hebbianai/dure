@@ -125,6 +125,7 @@ fn the_text_only_read_is_unchanged_by_tool_records() {
     let without_tools = ProviderConversationActivity {
         transcript: read.clone(),
         tools: Vec::new(),
+        older_cursor: None,
     };
     assert_eq!(serde_json::to_value(&without_tools).unwrap(), encoded);
     assert_eq!(
@@ -161,7 +162,11 @@ fn calls_before_a_left_out_message_are_left_out_and_the_rest_rebased() {
         user("three"),
         tool_use("toolu_3", "Read", json!({"file_path":"c"})),
     ]);
-    let (transcript, tools) = read_window(
+    let crate::TranscriptWindow {
+        transcript,
+        tools,
+        older_cursor,
+    } = read_window(
         file.path(),
         "claude",
         "c",
@@ -172,10 +177,20 @@ fn calls_before_a_left_out_message_are_left_out_and_the_rest_rebased() {
             output: 1024,
             entries: 2,
         },
+        None,
     )
     .unwrap();
     assert!(!transcript.history_complete);
     assert_eq!(transcript.entries[0].text, "two");
+    // The calls before "two" left with "one"; an older page starts at the
+    // first kept record.
+    let source = std::fs::read_to_string(file.path()).unwrap();
+    assert_eq!(
+        older_cursor,
+        source
+            .find("toolu_1")
+            .map(|at| source[..at].rfind('\n').unwrap() as u64 + 1)
+    );
     assert_eq!(
         summary(&tools),
         [

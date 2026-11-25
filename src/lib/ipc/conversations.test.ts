@@ -69,6 +69,23 @@ describe("conversation credential profile IPC", () => {
 		);
 	});
 
+	it("asks for the older page that ends at an earlier read's cursor", async () => {
+		await readProviderConversationTranscript("claude", "conversation-1", {
+			includeTools: true,
+			before: 4096,
+		});
+
+		expect(invokeMock).toHaveBeenCalledWith(
+			"read_provider_conversation_transcript",
+			{
+				provider: "claude",
+				conversationId: "conversation-1",
+				includeTools: true,
+				before: 4096,
+			},
+		);
+	});
+
 	it("passes the selected local profile as one typed value", async () => {
 		await listConversations("/workspace", "codex", credentialProfile);
 
