@@ -372,6 +372,8 @@ Session and its orchestration context. The receipt contains `receiptPath`; keep 
 private local file, which holds the exact read capability but no message text.
 When the target's wake is held, the JSON adds `diagnostic` with the same note
 the text output prints; the message stays in the inbox, so do not resend.
+A refusal naming `session_dispatch_unassigned` means the target is live but has
+not opened its durable inbox yet; nothing was sent, so reach it without `--track`.
 A send the backend refused without storing the message fails with
 `message_submission_refused` and its refusal code, keeps no tracking file, and can
 be sent again once the cause is fixed. Only `message_submission_unknown` means the

@@ -48,6 +48,17 @@ export function orchestrationFailureDetail(error) {
       "`dure runs show <agent>` names the Agent's current Session. Retrying the same lookup " +
       "cannot succeed until that binding changes; do not create another Run." };
   }
+  if (detail.remoteCode === "orchestration_generation_conflict" &&
+      detail.reasonCode === "session_dispatch_unassigned") {
+    return { ...detail, message:
+      "This managed Session is live, but no Dispatch binds its current generation, so it has " +
+      "no durable inbox to receive a message yet. The agent in that Session opens one when it " +
+      "resolves its own orchestration context (its session-start hook or " +
+      "orchestration_context_get_current). If it was just restarted or switched accounts, " +
+      "`dure runs resume <agent>` shows whether that restart's binding is still unpublished and " +
+      "prints the command that finishes it. Until the inbox opens, reach the agent without it, " +
+      "for example with `dure send` without --track; resending the same message cannot succeed." };
+  }
   if (detail.remoteCode !== "orchestration_session_unavailable") return detail;
   let message;
   switch (detail.reasonCode) {

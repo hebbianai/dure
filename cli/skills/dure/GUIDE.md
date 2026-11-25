@@ -812,7 +812,11 @@ exact-session operation) and require resolving the current session again.
 as its current Session, so it cannot report yet: a restart that has not
 published its binding (`dure runs resume <agent>` shows it and how to finish
 it), or a provider started outside a Dure Agent. Resending the same lookup
-cannot help.
+cannot help. `session_dispatch_unassigned` on a message to another Session (for
+example `dure send --track`) means that Session is live but has not opened its
+durable inbox for its current generation; its agent opens one when it resolves
+its own orchestration context. Reach it without `--track` meanwhile; resending
+the same message cannot help.
 
 ## Delegated workflows are not orchestration Dispatches
 
