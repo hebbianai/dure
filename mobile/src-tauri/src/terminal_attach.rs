@@ -495,6 +495,7 @@ mod tests {
             turn_completed_count: "3".into(),
             program_status: None,
             background_work: false,
+            held_prompts: None,
         }
     }
 
@@ -522,6 +523,7 @@ mod tests {
             turn_completed_count: 3,
             program_status: None,
             background_work: false,
+            held_prompts: None,
         });
         serde_json::to_value(AdapterRecord::Control { body: &body }).unwrap()
     }

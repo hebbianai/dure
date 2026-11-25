@@ -44,9 +44,10 @@ use crate::local_protocol::{
 };
 pub use agent_identity::AgentIdentityObservation;
 pub use agent_runtime::{
-    AgentRuntimeObservation, AgentStateReportFold, AgentStateReportObservation, ControllerDraftEdit,
+    AgentPromptKey, AgentRuntimeObservation, AgentStateReportFold, AgentStateReportObservation,
+    ControllerDraftEdit,
 };
-use agent_runtime::{ControllerDraft, PendingControllerInput};
+use agent_runtime::{ControllerDraft, HeldAgentPrompts, PendingControllerInput};
 pub use canonical_snapshot::TerminalProjections;
 pub use execution_location::ExecutionLocationObservation;
 use std::time::{Duration, Instant};
@@ -439,6 +440,9 @@ pub struct TerminalReplay {
     // submit, so a draft-guarded write can tell a person's unsubmitted text
     // from a turn that is merely awaiting its provider report.
     unsubmitted_controller_draft: ControllerDraft,
+    // Agent prompts that unsent input refused. Presentation-only: it never
+    // admits or refuses anything itself, and the draft above releases it.
+    held_agent_prompts: HeldAgentPrompts,
     // A fresh prompt is one-shot within a terminal epoch. The first actual
     // non-empty PTY prefix consumes it through the common controller-input
     // fold; read-only preparation never changes this fact.
@@ -779,6 +783,7 @@ impl TerminalReplay {
             recovered_history_boundary: None,
             pending_controller_input: PendingControllerInput::None,
             unsubmitted_controller_draft: ControllerDraft::Empty,
+            held_agent_prompts: HeldAgentPrompts::default(),
             fresh_agent_prompt_consumed: false,
             interrupt_requested: false,
             agent_startup_gate: None,
@@ -828,6 +833,7 @@ impl TerminalReplay {
             recovered_presentation: None,
             pending_controller_input: PendingControllerInput::None,
             unsubmitted_controller_draft: ControllerDraft::Empty,
+            held_agent_prompts: HeldAgentPrompts::default(),
             fresh_agent_prompt_consumed: false,
             interrupt_requested: false,
             agent_startup_gate: None,
@@ -985,7 +991,7 @@ impl TerminalReplay {
         self.output_seq = output_seq;
         self.retained.push(delta.clone());
         let agent_runtime_state = if program_status.records_changed {
-            self.republish_program_status()?
+            self.republish_presentation()?
         } else {
             None
         };
@@ -1914,6 +1920,7 @@ impl TerminalReplay {
             program_status: self.program_status_projection(observation.lifecycle),
             background_work: observation.background_work,
             approval_request,
+            held_prompts: self.held_prompts_projection(observation.lifecycle),
         };
         self.agent_runtime_state = Some(projection.clone());
         self.agent_runtime_changed_at = Some(now);

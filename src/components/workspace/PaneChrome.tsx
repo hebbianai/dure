@@ -29,6 +29,7 @@ import { useConversationTitle } from "@/components/agents/chat/useConversationTi
 import { t } from "@/lib/i18n";
 import { fileTargetFromPane } from "@/lib/files/fileTarget";
 import { AgentActivityGlyph } from "@/components/agents/AgentActivityGlyph";
+import { HeldPromptsBadge } from "@/components/agents/HeldPromptsBadge";
 import { ProgramStatusBadge } from "@/components/agents/ProgramStatusBadge";
 import { OverflowRevealText } from "@/components/ui/overflow-reveal-text";
 import { StatusDot } from "@/components/ui/status-dot";
@@ -624,6 +625,7 @@ export function PaneChrome(props: IDockviewPanelHeaderProps) {
             description={t("agents.progress.unconfirmedDescription")} />
         )}
       <ProgramStatusBadge runtime={sessionAgentRuntimeState} />
+      <HeldPromptsBadge runtime={sessionAgentRuntimeState} />
       {gitError && (
         <Titled title={t("workspace.pane.gitStatusRefreshFailed", { error: gitError })}>
           <span
