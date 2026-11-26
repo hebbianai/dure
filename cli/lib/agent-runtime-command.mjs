@@ -255,6 +255,7 @@ export function formatAgentRuntimeCommand(report) {
   return [
     `${report.agentId}: ${wakeTarget ? "dormant" : report.result.state ?? "stable"}${profile ? ` (${profile})` : ""}`,
     ...(report.result.stage ? [`Stage: ${report.result.stage}`] : []),
+    ...(report.result.closedBy ? [`Closed by: ${report.result.closedBy}`] : []),
     ...(report.result.operationId
       ? [`Operation: ${report.result.operationId}`]
       : []),

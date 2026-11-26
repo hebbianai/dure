@@ -321,7 +321,7 @@ impl RecoveryObservation {
                 RecoverySubject::DispatchStop(stop.plan().operation_id().clone())
             }
             Self::Runtime(AgentRuntimeObservedV1::Unmanaged) => RecoverySubject::Unmanaged,
-            Self::Runtime(AgentRuntimeObservedV1::Closed(close)) => {
+            Self::Runtime(AgentRuntimeObservedV1::Closed { close, .. }) => {
                 RecoverySubject::Close(close.intent.operation_id.clone(), close.state)
             }
             Self::Runtime(AgentRuntimeObservedV1::Transitioning { transition, .. }) => {
@@ -413,7 +413,7 @@ async fn drive_observed(
             }
             Ok(RecoveryStep::Complete)
         }
-        AgentRuntimeObservedV1::Closed(close) => {
+        AgentRuntimeObservedV1::Closed { close, .. } => {
             if close.state == AgentRuntimeCloseStateV1::Stopped {
                 super::agent_runtime_remove_apply::finish_locked(state, &close)
                     .await

@@ -14,7 +14,9 @@ export const AGENT_STOP_HELP = `Usage:
   dure hmux stop --name <agent-name-or-id> [--target-panel-id ID] --yes [--json]
 
 Stop one Agent and remove its registration and panes. Workspaces, worktrees and
-conversation history are preserved. Use project/name for ambiguous names.
+conversation history are preserved, but the Agent cannot restart in place;
+dure runs resume AGENT_ID names its conversation to continue in a new Agent.
+Use project/name for ambiguous names.
 The Dure app selected by DURE_APP_CHANNEL routes each Agent it presents to its
 owning backend. --backend is not supported by this client-scoped command.
 A Run the app has not opened, such as a schedule occurrence, or any Run on a

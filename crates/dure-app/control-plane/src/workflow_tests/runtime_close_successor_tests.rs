@@ -124,3 +124,97 @@ async fn stopped_close_successors_remain_visible_and_replay_without_launching_ag
         agent_runtime_transition_apply::AgentRuntimeInspectObservationV1::Stable { .. }
     ));
 }
+
+/// `dure stop` retires a Run through Agent removal, whose close is a permanent
+/// fence. The observation says so before any restart is offered, and every
+/// restart is refused as terminal instead of as a conflict to retry.
+#[tokio::test]
+async fn removed_close_is_observed_as_removal_and_refuses_an_in_place_restart() {
+    let (_root, mut state, launcher, _) = fixture(Vec::new()).await;
+    state.agent_providers = Arc::new(provider_extension::test_structured_agent_provider_registry(
+        "provider.codex",
+    ));
+    let (agent_id, _, close_id) = admit_structured_close(&state).await;
+    let stopped = state
+        .store
+        .advance_agent_runtime_close(&AgentRuntimeCloseAdvanceRequestV1 {
+            schema_version: 1,
+            operation_id: close_id.clone(),
+            expected_journal_revision: 1,
+            advance: AgentRuntimeCloseAdvanceV1::Stopped,
+            advanced_at_ms: 25,
+        })
+        .await
+        .unwrap();
+    let restartable = observe_projection(&state, &agent_id).await;
+    assert_eq!(restartable["state"], "closed");
+    assert_eq!(restartable["stage"], "stopped");
+    assert_eq!(restartable["closedBy"], "runtime_stop");
+    assert_eq!(
+        restartable["providerConversationRef"],
+        "conversation-retained"
+    );
+
+    state
+        .store
+        .admit_agent_runtime_removal(
+            &stopped.intent,
+            &dure_app::AgentRuntimeRemovalPlanV1 {
+                checkout: None,
+                managed_roots: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let removed = observe_projection(&state, &agent_id).await;
+    assert_eq!(removed["stage"], "stopped");
+    assert_eq!(removed["closedBy"], "agent_removal");
+    assert_eq!(removed["source"], restartable["source"]);
+
+    let body = agent_runtime_transition_apply::AgentRuntimeTransitionApplyBodyV1 {
+        schema_version: 1,
+        agent_id: agent_id.clone(),
+        target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
+        expected_source_revision: Some(1),
+        expected_operation_id: None,
+        source_stop_policy: dure_app::AgentRuntimeSourceStopPolicyV1::Preserve,
+        target_execution_profile: None,
+        target_launch_selection: None,
+    };
+    for attempt in 0..2 {
+        let refused =
+            agent_runtime_transition_apply::apply(&state, "restart-removed", body.clone())
+                .await
+                .unwrap_err();
+        assert_eq!(
+            refused.code, "agent_runtime_source_removed",
+            "attempt {attempt}"
+        );
+        assert_eq!(refused.disposition, BackendFailureDispositionV1::Terminal);
+    }
+    assert!(launcher.requests().is_empty());
+    assert!(
+        state
+            .store
+            .active_agent_runtime_transition(&agent_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(observe_projection(&state, &agent_id).await, removed);
+}
+
+async fn observe_projection(state: &ServiceState, agent_id: &AgentIdV1) -> Value {
+    serde_json::to_value(
+        agent_runtime_transition_apply::inspect_projection(
+            state,
+            agent_runtime_transition_apply::AgentRuntimeInspectBodyV1 {
+                schema_version: 1,
+                agent_id: agent_id.clone(),
+            },
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap()
+}

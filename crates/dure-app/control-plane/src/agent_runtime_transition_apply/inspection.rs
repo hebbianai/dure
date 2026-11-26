@@ -17,6 +17,11 @@ pub(crate) enum AgentRuntimeInspectObservationV1 {
         operation_id: OperationIdV1,
         stage: dure_app::AgentRuntimeCloseStateV1,
         source: AgentRuntimeSourceSnapshotV1,
+        /// Whether an explicit successor may restart this source in place.
+        closed_by: dure_app::AgentRuntimeCloseOwnerV1,
+        /// The conversation the stopped source retained, if it started one.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider_conversation_ref: Option<String>,
     },
     Transitioning {
         schema_version: u16,
@@ -56,6 +61,9 @@ pub(crate) enum AgentRuntimeProjectionInspectObservationV1 {
         operation_id: OperationIdV1,
         stage: dure_app::AgentRuntimeCloseStateV1,
         source: AgentRuntimeSourceSnapshotV1,
+        closed_by: dure_app::AgentRuntimeCloseOwnerV1,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider_conversation_ref: Option<String>,
     },
     Transitioning {
         schema_version: u16,
@@ -105,13 +113,19 @@ async fn inspect_locked(
                 agent_id,
             })
         }
-        crate::agent_runtime_projection::AgentRuntimeObservedV1::Closed(close) => {
+        crate::agent_runtime_projection::AgentRuntimeObservedV1::Closed { close, owner } => {
             Ok(AgentRuntimeInspectObservationV1::Closed {
                 schema_version: AGENT_RUNTIME_TRANSITION_SCHEMA_VERSION_V1,
                 agent_id,
                 operation_id: close.intent.operation_id.clone(),
                 stage: close.state,
                 source: AgentRuntimeSourceSnapshotV1::from(&close.intent.source),
+                closed_by: owner,
+                provider_conversation_ref: close
+                    .intent
+                    .source_authority
+                    .provider_conversation_ref()
+                    .map(str::to_owned),
             })
         }
         crate::agent_runtime_projection::AgentRuntimeObservedV1::Transitioning {
@@ -167,6 +181,8 @@ pub(super) async fn inspect_projection_locked(
             operation_id,
             stage,
             source,
+            closed_by,
+            provider_conversation_ref,
         } => Ok(AgentRuntimeProjectionInspectObservationV1::Closed {
             schema_version,
             projection_context: Box::new(
@@ -176,6 +192,8 @@ pub(super) async fn inspect_projection_locked(
             operation_id,
             stage,
             source,
+            closed_by,
+            provider_conversation_ref,
         }),
         AgentRuntimeInspectObservationV1::Transitioning {
             schema_version,

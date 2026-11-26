@@ -268,7 +268,7 @@ async fn observe_child(
         read_locked(state, agent_id).await?
     };
     let (selection, authority) = match observed {
-        AgentRuntimeObservedV1::Closed(close) => {
+        AgentRuntimeObservedV1::Closed { close, .. } => {
             return Ok((close.state == AgentRuntimeCloseStateV1::Stopped).then(|| {
                 ObservedOutcome {
                     outcome: ChildOutcome::Stopped,

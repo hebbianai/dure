@@ -363,7 +363,9 @@ async fn observe_runtime_for_stop_locked(
             selection,
             authority,
         }),
-        AgentRuntimeObservedV1::Closed(close) => Ok(DispatchStopRuntimeObservation::Closed(close)),
+        AgentRuntimeObservedV1::Closed { close, .. } => {
+            Ok(DispatchStopRuntimeObservation::Closed(close))
+        }
         AgentRuntimeObservedV1::Transitioning { transition, .. } => {
             Ok(DispatchStopRuntimeObservation::Transitioning(transition))
         }

@@ -154,11 +154,13 @@ export function agentRuntimeWakeTarget(value) {
 }
 
 /** A stopped close retains its source selection. The backend admits it as the
- * source of an explicit successor transition, as the app's restart does. */
+ * source of an explicit successor transition, as the app's restart does,
+ * unless Agent removal owns the close: `dure stop` and Agent removal keep it
+ * as a permanent fence. Older backends omit `closedBy`. */
 export function agentRuntimeRestartableClosedSource(value) {
   const source = value?.source;
   return record(value) && value.schemaVersion === 1 && value.state === "closed" &&
-    value.stage === "stopped" && record(source) &&
+    value.stage === "stopped" && value.closedBy !== "agent_removal" && record(source) &&
     Number.isSafeInteger(source.selectionRevision) && source.selectionRevision > 0 &&
     ["native_cli", "structured_protocol"].includes(source.interactionProfile)
     ? { selectionRevision: source.selectionRevision, interactionProfile: source.interactionProfile }
@@ -174,12 +176,28 @@ export function agentRuntimeSourceUnavailableReason(value) {
       if (value.stage !== "stopped") {
         return `Its runtime close is still in progress (operation ${value.operationId}, stage ${value.stage}). Inspect again with dure runtime get ${value.agentId}.`;
       }
+      if (value.closedBy === "agent_removal") return removedSourceReason(value);
       return "This backend did not return the stopped source selection; update the backend to restart a closed Agent.";
     case "transitioning":
       return `A runtime transition is in progress (operation ${value.operationId}, stage ${value.stage}). Inspect it with dure runtime get ${value.agentId} before another action.`;
     default:
       return "Inspect the Agent's current runtime with dure runtime get before choosing recovery.";
   }
+}
+
+/** Removal retains the conversation but never the Agent, so a new Agent is
+ * the only way to continue it. */
+function removedSourceReason(value) {
+  const conversationId = value.providerConversationRef;
+  const providerId = value.projectionContext?.agent?.providerId;
+  const projectId = value.projectionContext?.project?.projectId;
+  const removed = "This Agent was stopped and removed, for example by dure stop, so it cannot restart in place. Nothing was started.";
+  if (![conversationId, providerId, projectId].every((id) => typeof id === "string" && id.length > 0)) {
+    return `${removed} It retained no provider conversation to continue.`;
+  }
+  return `${removed} To continue its conversation in a new Agent, preview ` +
+    `dure runs resume --conversation ${conversationId} --provider ${providerId} --project ${projectId}. ` +
+    "That Agent runs in the project's root folder, which must be the folder the conversation started in.";
 }
 
 /** Parse destructive lifecycle input once, shared by CLI and desktop. Only

@@ -82,7 +82,10 @@ dure stop <agent-id> --yes --json
 
 This stops the selected Agent through its owning runtime, then removes its
 registration and panes. Workspaces, worktrees and conversation history are
-preserved. Use the exact Agent ID for retries or `project/name` when names repeat.
+preserved, but the Agent cannot be restarted in place afterwards: `dure runs
+resume <agent-id>` names its conversation for `dure runs resume --conversation`,
+which continues it in a new Agent. Use the exact Agent ID for retries or
+`project/name` when names repeat.
 The selected Dure app, chosen by `DURE_APP_CHANNEL`, routes each Agent it presents
 to its own backend. `--backend` is not accepted here.
 A Run the app has not opened, such as a schedule occurrence, or any Run on a host
