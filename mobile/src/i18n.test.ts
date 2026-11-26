@@ -36,9 +36,24 @@ describe("mobile message resolution", () => {
 			"approval.biometricCancelled",
 			"approval.biometricUnavailable",
 			"approval.biometricFailedToSend",
+			"home.needsYou.error",
+			"home.needsYou.unexpectedExit",
+			"home.needsYou.signInExit",
+			"home.row.manages",
+			"home.row.managedNeedYou",
+			"home.row.managedWorking",
 		]) {
 			expect(t(id)).not.toBe(id);
 		}
 		},
 	);
+
+	/** A finished turn is all Dure knows, so a result never reads as "done". */
+	it.each([
+		["en", "Has a result"],
+		["ko", "결과 있음"],
+	] as const)("names a finished turn as a result in %s", (language, result) => {
+		saveSettingsPreferences({ ...DEFAULT_SETTINGS_PREFERENCES, language });
+		expect(t("home.finished.title")).toBe(result);
+	});
 });

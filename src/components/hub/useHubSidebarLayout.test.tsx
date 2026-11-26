@@ -183,6 +183,43 @@ describe("useHubSidebarLayout — mobile presentation", () => {
 		expect(muted("terminal-1")).toBe(true);
 	});
 
+	/** #732 S8: the phone builds who manages whom from each row's Agent and
+	 * the display manager the relation owner picked, open or unopened, and
+	 * hears when a Run parent appears. */
+	it("publishes each row's Agent and its display manager", () => {
+		const worker = managedAgentFixture({
+			id: "agent-2",
+			name: "codex-15",
+			provider: "claude",
+			projectId: project.id,
+			worktreePath: "/repo/.worktrees/codex-15",
+			runtimeBinding: managedBindingFixture({ sessionId: "hmux-2" }),
+		});
+		useStore.setState({ agents: [agent, worker] });
+		const send = vi.fn();
+		renderHook(() => useHubSidebarLayout(send));
+		const presented = (key: string) => lastSent(send).placements[key].presentation;
+		expect(presented("hmux-1")).toMatchObject({ agentId: "agent-1" });
+		expect(presented("hmux-2")).toMatchObject({ agentId: "agent-2" });
+		expect(presented("hmux-2")?.managerAgentId).toBeUndefined();
+
+		// The worker turns out to be a Run started from the lead's Session.
+		const parent = agent.runtimeBinding as { sessionId: string; workspaceId: string };
+		act(() => useStore.setState({
+			agents: [agent, { ...worker, runParent: { sessionId: parent.sessionId, workspaceId: parent.workspaceId } }],
+		}));
+		expect(presented("hmux-2")).toMatchObject({ agentId: "agent-2", managerAgentId: "agent-1" });
+		expect(presented("hmux-1")?.managerAgentId).toBeUndefined();
+
+		// An open pane names the same relation.
+		mocks.spaces = [{
+			key: "agent:two", kind: "term", desktopId: "work", projectName: "Dure",
+			title: "Open worker", hmuxSessionId: "hmux-2", agentId: "agent-2",
+		} as (typeof mocks.spaces)[number]];
+		act(() => useStore.setState({ desktops: [{ id: "work", name: "Work" }] }));
+		expect(presented("hmux-2")).toMatchObject({ agentId: "agent-2", managerAgentId: "agent-1" });
+	});
+
 	/**
 	 * The sidebar names this row by its conversation; the phone must get the
 	 * same name, not the worktree slug the agent is registered under.

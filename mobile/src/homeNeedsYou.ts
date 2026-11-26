@@ -1,6 +1,7 @@
 /**
- * Home's Needs you section: every agent waiting for an approval or an answer,
- * above the list, with the approval answered in place.
+ * Home's Needs you section: every agent only a person can move forward — an
+ * approval, an answer, an error or an unexpected exit — above the list, with
+ * the approval answered in place.
  *
  * What waits is decided in `homeProjection.needsYou`; this file only draws it.
  * The answers go through the same approval request the chat card sends, past
@@ -12,7 +13,8 @@ import {
 	type AgentApprovalChoice,
 	approvalShown,
 } from "@/lib/agents/approvalRequest";
-import type { UnifiedSource } from "./allSessions";
+import type { UnifiedRow, UnifiedSource } from "./allSessions";
+import { needsPersonText } from "./agentRowText";
 import type { ApprovalAnswer } from "./chat";
 import { element } from "./dom";
 import { homeCardHead, homeCardSection } from "./homeCard";
@@ -25,6 +27,12 @@ const CARD_CHOICES: readonly AgentApprovalChoice[] = ["deny", "approve"];
 
 export interface NeedsYouActions {
 	readonly open: (source: UnifiedSource) => void;
+	/**
+	 * Show what the phone knows about a session without attaching: an agent
+	 * that exited cannot be opened, so its card leads here. Without it the
+	 * card only says why.
+	 */
+	readonly info?: (row: UnifiedRow) => void;
 	/** Without it the card only opens the agent. */
 	readonly answerApproval?: (
 		card: NeedsYouCard,
@@ -63,6 +71,37 @@ export function renderNeedsYou(
 	);
 }
 
+/**
+ * The way from the card to the agent. A running agent opens, on Reply for a
+ * question. An agent that exited has no session to attach to, so its card
+ * shows the session's details, which say where it ran.
+ */
+function cardAction(
+	card: NeedsYouCard,
+	actions: NeedsYouActions,
+): HTMLButtonElement | undefined {
+	const row = card.view.row;
+	const { info } = actions;
+	const exited =
+		card.status === "unexpected_exit" || card.status === "sign_in_exit";
+	const run = exited
+		? info && (() => info(row))
+		: () => actions.open(row.source);
+	if (!run) return undefined;
+	const button = element(
+		"button",
+		"needs-you__action",
+		exited
+			? t("sessionInfo.action")
+			: card.status === "input"
+				? t("home.needsYou.reply")
+				: t("home.needsYou.open"),
+	);
+	button.type = "button";
+	button.addEventListener("click", run);
+	return button;
+}
+
 function renderCard(
 	card: NeedsYouCard,
 	answers: Readonly<Record<string, ApprovalAnswer>>,
@@ -82,24 +121,15 @@ function renderCard(
 	const ask = element("p", "needs-you__ask");
 	ask.textContent = approval
 		? t("chat.approval.title", { tool: approval.request.toolName })
-		: card.wait === "approval"
-			? t("home.needsYou.approval")
-			: t("home.needsYou.input");
-	const open = element(
-		"button",
-		"needs-you__action",
-		card.wait === "input"
-			? t("home.needsYou.reply")
-			: t("home.needsYou.open"),
-	);
-	open.type = "button";
-	open.addEventListener("click", () => actions.open(row.source));
+		: needsPersonText(card.status);
+	const open = cardAction(card, actions);
 
 	// A card the person answers elsewhere is one line: what it waits for, and
 	// the way to the agent. Many waiting agents must not push the list away.
-	if (!approval || !answerApproval) {
+	if (!approval || !answerApproval || !open) {
 		const line = element("div", "needs-you__line");
-		line.append(ask, open);
+		line.append(ask);
+		if (open) line.append(open);
 		item.append(line);
 		return item;
 	}

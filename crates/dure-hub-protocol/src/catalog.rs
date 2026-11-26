@@ -78,6 +78,14 @@ pub struct HubCatalogEntry {
     /// never sends the answer to a desktop that predates it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub approval_answer: bool,
+    /// What the Host recorded when this session's provider exited on its
+    /// own, copied from the session descriptor in `entry_from`. It is an
+    /// Hmux fact, so it reaches the phone whether or not the desktop's
+    /// screen is running. A stop someone asked for leaves none. Absent from
+    /// older desktops and from remote sessions; an older phone ignores it,
+    /// so the catalog version stays.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<SessionFailureSummary>,
     /// 이 세션이 어느 상자에 있는지. 허브가 여러 상자를 합쳐 보여주므로, 폰은
     /// 같은 목록에서 노트북 세션과 서버 세션을 구별할 수 있어야 한다.
     pub box_id: String,
@@ -137,6 +145,29 @@ pub struct SessionPresentation {
     /// desktops, which never mute; an older phone ignores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notifications_muted: Option<bool>,
+    /// The desktop's Agent this row shows. The phone keys who manages whom
+    /// by it, so it never rebuilds the desktop's row-key rule. Absent for a
+    /// row that is not an Agent, and from older desktops.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// The Agent that manages it, as the desktop's relation owner displays
+    /// it (`agentRelations.ts`). Absent when no fact names one, and from
+    /// older desktops: the phone then lists the agent at the top level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manager_agent_id: Option<String>,
+}
+
+/// What the Host recorded about a provider that exited on its own: only
+/// what the phone's shared needs-person authority reads. The code picks the
+/// words (`provider_exited_at_sign_in` means sign in again), the terminal
+/// epoch says whether it describes the session's current process, and the
+/// time orders it. The summary prose and exit details stay on the desktop.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionFailureSummary {
+    pub code: String,
+    pub terminal_epoch: String,
+    /// Unix milliseconds, as the Host's decimal string.
+    pub occurred_unix_ms: String,
 }
 
 /// A pending approval as the desktop's runtime state names it: the Host's
@@ -508,6 +539,65 @@ mod tests {
         assert!(!older.approval_answer);
     }
 
+    /// Who manages whom travels as two Agent ids under the names the phone's
+    /// shared presentation type reads, and an older desktop's presentation
+    /// reads as "no relation known".
+    #[test]
+    fn the_agent_and_manager_ids_are_optional_in_both_directions() {
+        let mut current = catalog();
+        current.sessions[0].presentation = Some(SessionPresentation {
+            agent_id: Some("agent-worker".into()),
+            manager_agent_id: Some("agent-lead".into()),
+            ..Default::default()
+        });
+        let encoded = encode(&current).unwrap();
+        assert_eq!(read(&mut encoded.as_slice()).unwrap(), current);
+        let wire = serde_json::to_value(&current.sessions[0].presentation).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({ "agentId": "agent-worker", "managerAgentId": "agent-lead" })
+        );
+
+        let older: SessionPresentation =
+            serde_json::from_str(r#"{"displayState":"working"}"#).unwrap();
+        assert_eq!(
+            (older.agent_id.as_deref(), older.manager_agent_id.as_deref()),
+            (None, None)
+        );
+        let written = serde_json::to_value(older).unwrap();
+        assert!(written.get("agentId").is_none());
+        assert!(written.get("managerAgentId").is_none());
+    }
+
+    /// The failure summary is optional both ways: an older desktop sends
+    /// none, which a newer phone reads as "no exit recorded", and an entry
+    /// without one writes nothing an older phone could trip on.
+    #[test]
+    fn the_failure_summary_is_optional_both_ways() {
+        let mut served = catalog();
+        served.sessions[0].failure = Some(SessionFailureSummary {
+            code: "provider_exited_at_sign_in".into(),
+            terminal_epoch: "terminal-1".into(),
+            occurred_unix_ms: "1700000000000".into(),
+        });
+        let encoded = encode(&served).unwrap();
+        assert_eq!(read(&mut encoded.as_slice()).unwrap(), served);
+        let wire = serde_json::to_value(&served.sessions[0]).unwrap();
+        assert_eq!(
+            wire["failure"],
+            serde_json::json!({
+                "code": "provider_exited_at_sign_in",
+                "terminal_epoch": "terminal-1",
+                "occurred_unix_ms": "1700000000000",
+            })
+        );
+
+        let without = serde_json::to_value(entry()).unwrap();
+        assert!(without.get("failure").is_none());
+        let older: HubCatalogEntry = serde_json::from_value(without).unwrap();
+        assert_eq!(older.failure, None);
+    }
+
     /// Like `chat_sessions`: a phone that predates the field reads a
     /// catalog that carries it, and a desktop that predates it sends none,
     /// which a newer phone reads as "send V1 here".
@@ -557,6 +647,7 @@ mod tests {
             conversation: false,
             background_work: false,
             approval_answer: false,
+            failure: None,
             box_id: "box-1".to_string(),
             box_label: "노트북".to_string(),
         }

@@ -1,5 +1,6 @@
 import { visibleSpacesRowMetadata } from "@/lib/spaces/spacesViewProjection";
 import type { SpacesViewOptions } from "@/lib/spaces/spacesViewOptions";
+import { agentPathText, managedText } from "./agentRowText";
 import { element, loader } from "./dom";
 import type { CensusActions } from "./censusView";
 import type { HomeRow } from "./homeProjection";
@@ -44,6 +45,11 @@ export function renderHomeSessionRow(
 		lead.append(providerGlyph(view.provider ?? row.source.session.provider_id));
 	open.append(lead);
 	const body = element("span", "session-row__body");
+	// The shared agent row's lines: the agents above this one over its title,
+	// and what it manages under its details. A row with no relation has none.
+	const path = view.agent?.path;
+	if (path)
+		body.append(element("span", "session-row__path", agentPathText(path)));
 	body.append(element("span", "session-row__title", row.title));
 	const metadata = element("span", "session-row__meta");
 	for (const field of visibleSpacesRowMetadata(
@@ -79,7 +85,10 @@ export function renderHomeSessionRow(
 			element("span", "session-row__field session-row__mono", row.source.session.lifecycle),
 		);
 	if (metadata.childElementCount) body.append(metadata);
-	else item.classList.add("session-row--single");
+	const managed = view.agent?.managed;
+	if (managed)
+		body.append(element("span", "session-row__managed", managedText(managed)));
+	if (body.childElementCount === 1) item.classList.add("session-row--single");
 	if (current) {
 		open.disabled = true;
 		open.setAttribute("aria-current", "true");

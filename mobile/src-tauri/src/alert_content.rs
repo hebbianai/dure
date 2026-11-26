@@ -294,6 +294,7 @@ mod tests {
             conversation: true,
             background_work: false,
             approval_answer: true,
+            failure: None,
             box_id: "this-laptop".into(),
             box_label: "Laptop".into(),
         }

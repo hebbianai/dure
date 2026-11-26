@@ -87,6 +87,11 @@ export interface CensusActions {
    * so by the time the menu is drawn the row this came from is gone.
    */
   readonly hold: (row: UnifiedRow, anchor: MenuAnchor) => void;
+  /**
+   * Show a row's session details without attaching: where a Needs you card
+   * leads for an agent that exited, which cannot be opened.
+   */
+  readonly info?: (row: UnifiedRow) => void;
   /** Answer a Needs you card's approval on its computer, past the approval sheet. */
   readonly answerApproval?: (card: NeedsYouCard, choice: AgentApprovalChoice) => void;
   /**

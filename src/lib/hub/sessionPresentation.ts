@@ -32,6 +32,20 @@ export interface SessionPresentation
 	 * (`agentNotificationMute.ts`). The phone sends no local alert for it;
 	 * the desktop already sends it no push. Absent means not muted. */
 	readonly notificationsMuted?: boolean;
+	/** The Agent the row shows. The phone keys who manages whom by it, so it
+	 * never rebuilds this desktop's row keys. Absent for a row that is no
+	 * Agent. */
+	readonly agentId?: string;
+	/** Its display manager, from the one relation owner
+	 * (`agentRelations.ts`). Absent when no fact names one: the phone then
+	 * lists the agent at the top level. */
+	readonly managerAgentId?: string;
+}
+
+/** The Agent a row shows and who manages it, as the relation owner says. */
+export interface SessionAgentRelation {
+	readonly agentId: string;
+	readonly managerAgentId?: string;
 }
 
 export function sessionPresentation(
@@ -48,6 +62,7 @@ export function sessionPresentation(
 		readonly worktree: { readonly files: number };
 	},
 	account?: SessionAccountSummary,
+	relation?: SessionAgentRelation,
 ): SessionPresentation {
 	return {
 		pinned: row.pinned,
@@ -74,5 +89,7 @@ export function sessionPresentation(
 		...(account ? { account } : {}),
 		...(row.approval ? { approval: row.approval } : {}),
 		...(row.notificationsMuted ? { notificationsMuted: true } : {}),
+		...(relation ? { agentId: relation.agentId } : {}),
+		...(relation?.managerAgentId ? { managerAgentId: relation.managerAgentId } : {}),
 	};
 }

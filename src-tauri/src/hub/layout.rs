@@ -301,6 +301,45 @@ mod tests {
         assert_eq!(state.chat_agent("agent-unknown"), None);
     }
 
+    /// The screen names a row's Agent and its manager in the presentation it
+    /// sends; the hub puts them on the session's catalog entry unchanged, and
+    /// a seat without them stays without them.
+    #[test]
+    fn a_rows_agent_and_manager_reach_its_catalog_entry() {
+        let layout: SidebarLayout = serde_json::from_value(serde_json::json!({
+            "placements": {
+                "session-worker": {
+                    "desktop": "Workspace", "project": "dure", "title": "Worker", "order": 0,
+                    "presentation": { "agentId": "agent-worker", "managerAgentId": "agent-lead" },
+                },
+                "session-plain": {
+                    "desktop": "Workspace", "project": "dure", "title": "Shell", "order": 1,
+                    "presentation": { "kind": "term" },
+                },
+            },
+            "desktop_order": ["Workspace"],
+        }))
+        .expect("reads");
+        let entry = |session_id: &str| {
+            let mut entry: dure_hub_protocol::catalog::HubCatalogEntry =
+                serde_json::from_value(serde_json::json!({
+                    "session_id": session_id, "session_name": null, "workspace_id": "ws",
+                    "session_class": "managed", "lifecycle": "ready", "provider_id": "claude",
+                    "runner_principal": "me", "runner_instance": "r", "channel_epoch": "1",
+                    "host_instance_id": "h", "terminal_epoch": "t", "capabilities": [],
+                    "box_id": "this-laptop", "box_label": "Laptop",
+                }))
+                .expect("entry");
+            layout.present(&mut entry);
+            entry.presentation.expect("presented")
+        };
+        let worker = entry("session-worker");
+        assert_eq!(worker.agent_id.as_deref(), Some("agent-worker"));
+        assert_eq!(worker.manager_agent_id.as_deref(), Some("agent-lead"));
+        let plain = entry("session-plain");
+        assert_eq!((plain.agent_id, plain.manager_agent_id), (None, None));
+    }
+
     /// An older screen sends no chat agents; its layout still reads.
     #[test]
     fn a_layout_without_chat_agents_still_reads() {

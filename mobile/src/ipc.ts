@@ -638,8 +638,26 @@ export interface HubLayout {
   desktop_order: string[];
 }
 
+/**
+ * What the Host recorded when a session's provider exited on its own
+ * (`HubCatalogEntry::failure`): only what the shared needs-person authority
+ * reads. A stop someone asked for leaves none.
+ */
+export interface HubSessionFailure {
+  code: string;
+  /** The process it describes; an earlier epoch's record says nothing now. */
+  terminal_epoch: string;
+  /** Unix milliseconds, as the Host's decimal string. */
+  occurred_unix_ms: string;
+}
+
 export interface HubProbeSession extends RemoteSession {
   presentation?: SessionPresentation | null;
+  /**
+   * The Host's record of an unexpected exit. Missing from older computers,
+   * phones' older Rust halves, remote sessions and chat-owned agents.
+   */
+  failure?: HubSessionFailure | null;
   /**
    * The session's own hmux name. `session_name` carries the laptop's sidebar
    * title when it sent one, so this is the only place the name the computer's

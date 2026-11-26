@@ -98,18 +98,56 @@ const cardsOf = (sessions: HubProbeSession[], reachable = true) =>
 	needsYou(homeRows(model(sessions, reachable)).rows);
 
 describe("needsYou", () => {
-	it("lists every waiting agent across Spaces, newest wait first, and nothing else", () => {
+	it("lists every agent only a person can move forward, across Spaces, newest wait first, and nothing else", () => {
 		const cards = cardsOf([
 			session("older-approval", "blocked", { presentation: { activityAt: now - 60_000 } }),
 			session("working", "working"),
 			session("idle", "waiting"),
-			session("question", "input"),
+			session("question", "input", { presentation: { activityAt: now - 1_000 } }),
 			session("errored", "error"),
 		]);
-		expect(cards.map((card) => [card.view.row.sessionId, card.wait])).toEqual([
+		expect(cards.map((card) => [card.view.row.sessionId, card.status])).toEqual([
+			["errored", "error"],
 			["question", "input"],
 			["older-approval", "approval"],
 		]);
+	});
+
+	/** The Host's exit record, as the computer copies it to the catalog. */
+	const exitOf = (id: string, code = "provider_exited", epoch = `epoch-${id}`) => ({
+		code,
+		terminal_epoch: epoch,
+		occurred_unix_ms: String(now - 5_000),
+	});
+
+	it("lists an agent that exited on its own even though its session cannot be opened", () => {
+		const cards = cardsOf([
+			session("crashed", "exited", { ready: false, lifecycle: "exited", failure: exitOf("crashed") }),
+			session("signed-out", "exited", {
+				ready: false,
+				lifecycle: "exited",
+				failure: exitOf("signed-out", "provider_exited_at_sign_in"),
+			}),
+			// The record wins over what the screen last showed: that process is gone.
+			session("was-asking", "blocked", { ready: false, failure: exitOf("was-asking") }),
+			session("asking", "input"),
+		]);
+		expect(cards.map((card) => [card.view.row.sessionId, card.status])).toEqual([
+			["asking", "input"],
+			["crashed", "unexpected_exit"],
+			["signed-out", "sign_in_exit"],
+			["was-asking", "unexpected_exit"],
+		]);
+	});
+
+	it("leaves out a stop someone asked for, an exit from an earlier process, and an offline computer", () => {
+		expect(cardsOf([session("stopped", "exited", { ready: false, lifecycle: "exited" })])).toEqual([]);
+		expect(
+			cardsOf([
+				session("restarted", "working", { failure: exitOf("restarted", "provider_exited", "epoch-old") }),
+			]),
+		).toEqual([]);
+		expect(cardsOf([session("crashed", "exited", { ready: false, failure: exitOf("crashed") })], false)).toEqual([]);
 	});
 
 	it("leaves out agents that cannot be opened now", () => {
@@ -132,7 +170,7 @@ describe("needsYou", () => {
 			{},
 		] as Partial<HubProbeSession>[]) {
 			const [card] = cardsOf([session("b", "blocked", patch)]);
-			expect(card.wait).toBe("approval");
+			expect(card.status).toBe("approval");
 			expect(card.approval).toBeUndefined();
 		}
 		// An approval rides only on the wait it names.
@@ -147,12 +185,14 @@ describe("the Needs you section on home", () => {
 		approvalAnswers: CensusModel["approvalAnswers"] = {},
 	) {
 		const open = vi.fn();
+		const info = vi.fn();
 		const answerApproval = vi.fn<(card: NeedsYouCard, choice: AgentApprovalChoice) => void>();
 		document.body.replaceChildren(
 			renderHomeScreen(
 				{ ...model(sessions), approvalAnswers },
 				{
 					open,
+					info,
 					answerApproval,
 					selectDesktop: () => {},
 					pair: () => {},
@@ -162,7 +202,7 @@ describe("the Needs you section on home", () => {
 				},
 			),
 		);
-		return { open, answerApproval };
+		return { open, info, answerApproval };
 	}
 	const section = () => document.querySelector(".needs-you");
 	const buttonIn = (card: Element, label: string) => {
@@ -220,6 +260,36 @@ describe("the Needs you section on home", () => {
 		expect([...card.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
 			t("home.needsYou.open"),
 		]);
+	});
+
+	it("says why an agent stopped, and leads an exited one to its details instead of attaching", () => {
+		const exit = (code: string) => ({ code, terminal_epoch: "epoch-gone", occurred_unix_ms: String(now) });
+		const { open, info } = draw([
+			session("broke", "error"),
+			session("gone", "exited", { ready: false, terminal_epoch: "epoch-gone", failure: exit("provider_exited") }),
+		]);
+		const broke = document.querySelector('[data-needs-you="broke"]')!;
+		expect(broke.querySelector(".needs-you__ask")?.textContent).toBe(t("home.needsYou.error"));
+		buttonIn(broke, t("home.needsYou.open")).click();
+		expect(open.mock.calls[0][0].session.session_id).toBe("broke");
+
+		const gone = document.querySelector('[data-needs-you="gone"]')!;
+		expect(gone.querySelector(".needs-you__ask")?.textContent).toBe(t("home.needsYou.unexpectedExit"));
+		expect([...gone.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
+			t("sessionInfo.action"),
+		]);
+		buttonIn(gone, t("sessionInfo.action")).click();
+		expect(info).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "gone" }));
+		expect(open).toHaveBeenCalledTimes(1);
+
+		draw([
+			session("signed-out", "exited", {
+				ready: false,
+				terminal_epoch: "epoch-gone",
+				failure: exit("provider_exited_at_sign_in"),
+			}),
+		]);
+		expect(document.querySelector(".needs-you__ask")?.textContent).toBe(t("home.needsYou.signInExit"));
 	});
 
 	it("holds the buttons while an answer is out, names a refusal, and leaves once one landed", () => {

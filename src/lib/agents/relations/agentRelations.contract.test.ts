@@ -50,5 +50,12 @@ describe("relation coverage", () => {
 		expect(teamLine).toContain("useAgentManagedSummary(agentId)");
 		expect(teamLine).toContain("useAgentRelations()");
 		expect(teamLine).toContain("agentTeamMembers(");
+		// The manager the phone is told about, and the forest it builds from it.
+		expect(source("components/hub/useHubSidebarLayout.ts")).toContain(
+			"relations.managerOf(agentId)",
+		);
+		expect(source("../mobile/src/homeRelations.ts")).toContain(
+			"buildAgentRelations(nodes, edges)",
+		);
 	});
 });
