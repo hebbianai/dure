@@ -648,6 +648,23 @@ def approval_request(native):
     return request
 
 
+# Claude's StopFailure error classes that say why a turn failed, in the
+# provider-neutral vocabulary the structured drivers use. A capacity refusal
+# Claude reports as rate_limit counts as one; every other class, and a missing
+# or malformed one, is a provider error.
+TURN_FAILURES = {
+    "rate_limit": "rate_limit",
+    "billing_error": "usage_limit",
+}
+
+
+def turn_failure(native):
+    error = native.get("error")
+    if not isinstance(error, str):
+        return "provider_error"
+    return TURN_FAILURES.get(error, "provider_error")
+
+
 def claude_subagent(native):
     """Claude names the subagent whose tool call fired a hook."""
     agent_id = native.get("agent_id")
@@ -672,6 +689,7 @@ def claude_report(native, fence):
     )
     background = False
     request = None
+    failure = None
     if event == "SessionStart":
         activity, attention, completed, working_ttl_ms = (
             "waiting",
@@ -721,17 +739,16 @@ def claude_report(native, fence):
         # asks a person to sign in with /login; any other failure (the API
         # unreachable, rate limits, server errors, ...) is the turn's error.
         # A subagent's failure ends only its own work; the parent's turn
-        # reports its own end.
+        # reports its own end. The error carries why the turn failed, so a
+        # usage limit can move the conversation to another account.
+        sign_in = native.get("error") == "authentication_failed"
         activity, attention, completed, working_ttl_ms = (
             "waiting",
-            (
-                "input_required"
-                if native.get("error") == "authentication_failed"
-                else "error"
-            ),
+            "input_required" if sign_in else "error",
             False,
             None,
         )
+        failure = None if sign_in else turn_failure(native)
     elif event == "PermissionRequest":
         question = native.get("tool_name") == "AskUserQuestion"
         activity, attention, completed, working_ttl_ms = (
@@ -773,6 +790,8 @@ def claude_report(native, fence):
         report["background_work"] = True
     if request is not None:
         report["approval_request"] = request
+    if failure is not None:
+        report["turn_failure"] = failure
     return {
         "schema": HMUX_AGENT_STATE_REPORT_SCHEMA,
         "schemaVersion": (

@@ -173,6 +173,16 @@ pub(super) fn normalize_hook_report(
         "PreToolUse" => subagent,
         _ => false,
     };
+    // Why a failed turn failed, in the provider-neutral vocabulary of the
+    // structured drivers. A capacity refusal Claude reports as `rate_limit`
+    // counts as one; any other class, or none, is a provider error.
+    let turn_failure = (state == "failed").then(|| {
+        match object.get("error").and_then(Value::as_str) {
+            Some("rate_limit") => hmux_client::AgentTurnFailure::RateLimit,
+            Some("billing_error") => hmux_client::AgentTurnFailure::UsageLimit,
+            _ => hmux_client::AgentTurnFailure::ProviderError,
+        }
+    });
     let turn_completion_id = if state == "done" {
         work_id.clone()
     } else {
@@ -300,6 +310,7 @@ pub(super) fn normalize_hook_report(
             expected_observation: None,
             background_work,
             approval_request,
+            turn_failure,
         },
     }))
 }
@@ -362,13 +373,14 @@ mod tests {
             input
         };
         use crate::hmux::ReportedAgentAttention::{Error, InputRequired};
-        for (error, attention) in [
-            (Some("authentication_failed"), InputRequired),
-            (Some("server_error"), Error),
-            (Some("rate_limit"), Error),
-            (Some("billing_error"), Error),
-            (Some("unknown"), Error),
-            (None, Error),
+        use hmux_client::AgentTurnFailure::{ProviderError, RateLimit, UsageLimit};
+        for (error, attention, turn_failure) in [
+            (Some("authentication_failed"), InputRequired, None),
+            (Some("server_error"), Error, Some(ProviderError)),
+            (Some("rate_limit"), Error, Some(RateLimit)),
+            (Some("billing_error"), Error, Some(UsageLimit)),
+            (Some("unknown"), Error, Some(ProviderError)),
+            (None, Error, Some(ProviderError)),
         ] {
             let report = normalize_hook_report(failure(error), header)
                 .unwrap()
@@ -380,6 +392,7 @@ mod tests {
                 "{error:?}"
             );
             assert_eq!(report.attention, attention, "{error:?}");
+            assert_eq!(report.turn_failure, turn_failure, "{error:?}");
             assert!(!report.turn_completed);
             assert_eq!(report.turn_completion_id, None);
             assert_eq!(report.working_ttl_ms, None);

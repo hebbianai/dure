@@ -1152,6 +1152,7 @@ mod tests {
             background_work: false,
             approval_request: None,
             held_prompts: None,
+            turn_failure: None,
         }
     }
 
