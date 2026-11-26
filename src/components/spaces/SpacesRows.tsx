@@ -17,6 +17,7 @@ import { DureLoader } from "@/components/ui/dure-loader";
 import { AgentDiffBadge } from "@/components/agents/AgentDiffBadge";
 import { ProgramStatusNoticeBadge } from "@/components/agents/ProgramStatusBadge";
 import { AgentActivityGlyph } from "@/components/agents/AgentActivityGlyph";
+import { AgentNotificationsMutedMarker } from "@/components/agents/AgentNotificationsMutedMarker";
 import { OverflowRevealText } from "@/components/ui/overflow-reveal-text";
 import { UnopenedAgentDetails } from "@/components/spaces/UnopenedAgentDetails";
 import { spacesEnvironmentLabel } from "@/components/spaces/spacesFacetLabels";
@@ -42,6 +43,7 @@ import {
   useOpenSpaceRowState,
   useUnopenedAgentRowState,
 } from "@/components/spaces/useSpacesRowsState";
+import { agentNotificationsMuted } from "@/lib/agents/agentNotificationMute";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
 import type { ProviderConversationRecord } from "@/lib/agents/providerConversationDiscovery";
 import { t } from "@/lib/i18n";
@@ -249,7 +251,7 @@ export const OpenSpaceRow = memo(function OpenSpaceRow({
   ]
     .filter(Boolean)
     .join(" · ");
-  const hasInfoLine = Boolean(detail || space.hidden);
+  const hasInfoLine = Boolean(detail || space.hidden || space.notificationsMuted);
   const activityLabel = lastActivity && (
     <span className="shrink-0 font-mono text-meta text-muted-foreground">
       {lastActivity}
@@ -416,6 +418,7 @@ export const OpenSpaceRow = memo(function OpenSpaceRow({
                   {space.hidden && (
                     <EyeOff className="size-3 shrink-0 text-muted-foreground" />
                   )}
+                  {space.notificationsMuted && <AgentNotificationsMutedMarker />}
                   {/* 559:31535 — 브랜치·경로는 muted-foreground가 아니라
                       foreground 70%다. 옆의 12px 프로바이더 글리프가 더 옅어서
                       글자가 아이콘보다 앞으로 나온다(시안의 대비 순서). */}
@@ -573,6 +576,8 @@ export const UnopenedAgentRow = memo(function UnopenedAgentRow({
     </span>
   );
   const toggleDetails = () => setDetailsOpen((open) => !open);
+  const notificationsMuted = agentNotificationsMuted(agent);
+  const hasInfoLine = Boolean(visibleDetail) || notificationsMuted;
   return (
     <>
       <ContextMenu>
@@ -635,12 +640,13 @@ export const UnopenedAgentRow = memo(function UnopenedAgentRow({
                   className="flex-1 text-xs font-normal text-sidebar-foreground"
                 />
               </span>
-              {visibleDetail && (
+              {hasInfoLine && (
                 <span className="flex h-[15px] min-w-0 items-center gap-[2px] font-mono text-meta text-sidebar-foreground/70">
+                  {notificationsMuted && <AgentNotificationsMutedMarker />}
                   {/* The branch glyph labels a branch name; with nothing to name
                       (an agent at its repository root writes no path) it would
                       stand alone — owner report 2026-09-03. */}
-                  {!recentActivity && (
+                  {visibleDetail && !recentActivity && (
                     <GitBranch className="size-[10px] shrink-0" />
                   )}
                   <OverflowRevealText text={visibleDetail} className="flex-1" />
@@ -658,7 +664,7 @@ export const UnopenedAgentRow = memo(function UnopenedAgentRow({
               ) : undefined
             }
             activity={activityLabel}
-            hasInfoLine={Boolean(visibleDetail)}
+            hasInfoLine={hasInfoLine}
           />
           {detailsOpen && (
             <UnopenedAgentDetails

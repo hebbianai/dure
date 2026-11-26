@@ -10,10 +10,11 @@ import { managedAgentFixture, managedBindingFixture } from "@/test/agentFixtures
 import type { Project } from "@/types";
 import { useHubSidebarLayout } from "@/components/hub/useHubSidebarLayout";
 import { useDiffBadges } from "@/lib/scm/status/diffBadgesStore";
+import { setAgentNotificationsMuted } from "@/lib/agents/agentNotificationMute";
 
 const mocks = vi.hoisted(() => ({
 	history: { entries: [] as ProviderConversationRecord[], loadState: "ready" },
-	spaces: [] as (LayoutSpace & { key: string; kind: "term" })[],
+	spaces: [] as (LayoutSpace & { key: string; kind: "term"; notificationsMuted?: true })[],
 }));
 
 // Most fixtures have no open panes, so agent rows use unopened presentation.
@@ -159,6 +160,27 @@ describe("useHubSidebarLayout — mobile presentation", () => {
 			},
 		}));
 		expect(approval()).toBeUndefined();
+	});
+
+	/** #729: the phone honours the computer's mute for its own alerts, so the
+	 * row carries it while muted and drops it once unmuted. */
+	it("publishes the agent's notification mute for open and unopened rows", () => {
+		const send = vi.fn();
+		renderHook(() => useHubSidebarLayout(send));
+		const muted = (key: string) => lastSent(send).placements[key].presentation?.notificationsMuted;
+		expect(muted("hmux-1")).toBeUndefined();
+		act(() => setAgentNotificationsMuted(agent.id, true));
+		expect(muted("hmux-1")).toBe(true);
+		act(() => setAgentNotificationsMuted(agent.id, false));
+		expect(muted("hmux-1")).toBeUndefined();
+
+		// An open row carries the flag its sidebar row was given.
+		mocks.spaces = [{
+			key: "term:one", kind: "term", desktopId: "work", projectName: "Dure",
+			title: "Open agent", hmuxSessionId: "terminal-1", notificationsMuted: true,
+		}];
+		act(() => useStore.setState({ desktops: [{ id: "work", name: "Work" }] }));
+		expect(muted("terminal-1")).toBe(true);
 	});
 
 	/**

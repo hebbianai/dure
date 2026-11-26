@@ -37,3 +37,12 @@ it("carries desktop patch file counts independently of line counts", () => {
 		git: { committed: 2, worktree: 51, ahead: 1, behind: 6 },
 	});
 });
+
+it("carries a muted agent's mute and nothing for an unmuted one", () => {
+	expect(sessionPresentation({ kind: "agent", notificationsMuted: true })).toMatchObject({
+		notificationsMuted: true,
+	});
+	expect(
+		JSON.stringify(sessionPresentation({ kind: "agent", notificationsMuted: false })),
+	).not.toContain("notificationsMuted");
+});

@@ -31,6 +31,8 @@ export interface SpaceMenuContext {
   count: number;
   /** Existing desktop-scoped pin state for the single pane target. */
   pinned?: boolean;
+  /** The single registered agent's notification mute; absent for other rows. */
+  notificationsMuted?: boolean;
   /** 이 행이 지금 속한 데스크탑 — 이동 대상에서 뺀다 */
   currentDesktopId?: string;
   /** 전체 데스크탑 목록 — popout·현재 데스크탑 필터는 메뉴가 소유한다 */
@@ -74,6 +76,7 @@ export type SpaceMenuEntry =
       disabled?: boolean;
       action:
         | { type: "pin" | "unpin" }
+        | { type: "mute" | "unmute" }
         | { type: "view-diff" }
         | { type: "move-to-desktop"; desktopId: string }
         | { type: "move-to-new-desktop" }
@@ -104,6 +107,16 @@ export function buildSpaceMenu(context: SpaceMenuContext): SpaceMenuEntry[] {
       id: "pin",
       label: context.pinned ? t("workspace.paneMenu.unpin") : t("workspace.paneMenu.pin"),
       action: { type: context.pinned ? "unpin" : "pin" },
+    });
+  }
+  if (context.count === 1 && context.notificationsMuted !== undefined) {
+    entries.push({
+      kind: "item",
+      id: "mute",
+      label: context.notificationsMuted
+        ? t("agents.notifications.unmute")
+        : t("agents.notifications.mute"),
+      action: { type: context.notificationsMuted ? "unmute" : "mute" },
     });
   }
   // Restart resumes the agent's existing conversation.

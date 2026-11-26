@@ -131,6 +131,12 @@ pub struct SessionPresentation {
     /// Absent from older desktops; an older phone ignores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<SessionApproval>,
+    /// The person muted this agent's notifications on the desktop. The
+    /// desktop sends no push for it and the phone sends no local alert;
+    /// attention and the row itself are unchanged. Absent from older
+    /// desktops, which never mute; an older phone ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notifications_muted: Option<bool>,
 }
 
 /// A pending approval as the desktop's runtime state names it: the Host's
@@ -425,6 +431,31 @@ mod tests {
             serde_json::to_value(older)
                 .unwrap()
                 .get("approval")
+                .is_none()
+        );
+    }
+
+    /// The mute travels under the name the phone's shared presentation type
+    /// reads, and an older desktop's presentation reads as "not muted".
+    #[test]
+    fn the_notification_mute_is_optional_in_both_directions() {
+        let mut current = catalog();
+        current.sessions[0].presentation = Some(SessionPresentation {
+            notifications_muted: Some(true),
+            ..Default::default()
+        });
+        let encoded = encode(&current).unwrap();
+        assert_eq!(read(&mut encoded.as_slice()).unwrap(), current);
+        let wire = serde_json::to_value(&current.sessions[0].presentation).unwrap();
+        assert_eq!(wire, serde_json::json!({ "notificationsMuted": true }));
+
+        let older: SessionPresentation =
+            serde_json::from_str(r#"{"displayState":"idle"}"#).unwrap();
+        assert_eq!(older.notifications_muted, None);
+        assert!(
+            serde_json::to_value(older)
+                .unwrap()
+                .get("notificationsMuted")
                 .is_none()
         );
     }

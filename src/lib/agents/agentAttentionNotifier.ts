@@ -13,6 +13,7 @@ import {
 import { isDispatchedAgent } from "@/lib/agents/agentDispatchOrigin";
 import { pendingApproval } from "@/lib/agents/approvalRequest";
 import { agentDisplayName } from "@/lib/agents/agentDisplayName";
+import { agentNotificationsMuted } from "@/lib/agents/agentNotificationMute";
 import { agentSeatKey, chatOwnedAgent } from "@/lib/hub/sidebarLayout";
 import { t } from "@/lib/i18n";
 import type { HmuxAgentRuntimeState } from "@/lib/ipc/hmuxContracts";
@@ -97,6 +98,9 @@ export function notifyAgentEvent(
   // A dispatched worker's completion or prompt is not a separate cue for the
   // user. Its unread dot remains; approval and exit still request attention.
   if ((kind === "done" || kind === "input") && isDispatchedAgent(agent)) return;
+  // The person muted this agent: no desktop alert and no phone push. Its
+  // attention episode, unread dot and Needs you entry are not touched.
+  if (agentNotificationsMuted(agent)) return;
   // The phone's preference and recipient authority belong to the paired Hub.
   // Desktop visibility and notification preferences apply only to this screen.
   if (kind !== "exited" && options?.eventId) {

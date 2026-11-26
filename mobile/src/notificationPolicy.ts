@@ -29,6 +29,8 @@ export interface NotificationContext {
   readonly next: AgentRuntimeState;
   /** `document.visibilityState === "hidden"` at the moment the record arrived. */
   readonly hidden: boolean;
+  /** The person muted this agent's notifications on the computer. */
+  readonly muted: boolean;
   /** The session's title, so a phone with several open sessions knows which one wants it. */
   readonly session: string;
 }
@@ -42,8 +44,8 @@ export interface NotificationContext {
  * they were away.
  */
 export function decideNotification(context: NotificationContext): LocalNotification | null {
-  const { preference, previous, next, hidden, session } = context;
-  if (preference === "off" || !hidden || previous === undefined) return null;
+  const { preference, previous, next, hidden, muted, session } = context;
+  if (preference === "off" || muted || !hidden || previous === undefined) return null;
 
   if (
     next.attention === "approval_required" &&
@@ -102,6 +104,8 @@ export interface NotificationObserverOptions {
   readonly preference: () => NotificationPreference;
   /** Read on every record — whether the app is off screen right now. */
   readonly hidden: () => boolean;
+  /** Read on every record — the computer can mute the agent while it is open. */
+  readonly muted: () => boolean;
   readonly session: string;
   readonly notify: (notification: LocalNotification) => void;
 }
@@ -126,6 +130,7 @@ export function createNotificationObserver(
         previous,
         next,
         hidden: options.hidden(),
+        muted: options.muted(),
         session: options.session,
       });
       previous = next;

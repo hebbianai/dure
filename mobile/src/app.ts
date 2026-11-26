@@ -21,6 +21,7 @@ import {
   flattenRows,
   hubKnowing,
   mergeLayouts,
+  notificationsMutedFor,
   sourceOpenable,
 } from "./allSessions";
 import { renderHomeScreen } from "./censusView";
@@ -4661,6 +4662,7 @@ export function startApp(root: HTMLElement): () => void {
     const notifier = createNotificationObserver({
       preference: () => state.settings.notifications,
       hidden: () => state.pushSync?.kind === "unsupported" && document.visibilityState === "hidden",
+      muted: () => notificationsMutedFor(Object.values(state.hubSessions), session.session_id),
       session: sessionTitle(session),
       notify: (notification) => void sendLocalNotification(notification),
     });

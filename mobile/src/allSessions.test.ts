@@ -5,6 +5,7 @@ import {
   groupByProject,
   hubKnowing,
   mergeLayouts,
+  notificationsMutedFor,
 } from "./allSessions";
 import type { CensusRow } from "./census";
 import type { HubLayout, HubPlacement, HubProbeSession } from "./ipc";
@@ -336,6 +337,29 @@ describe("hubKnowing", () => {
   /** 아무도 모르면 없다. SSH 로만 닿는 상자가 그렇다. */
   it("아무 허브도 모르면 없다", () => {
     expect(hubKnowing([], "s-1")).toBeUndefined();
+  });
+});
+
+describe("notificationsMutedFor", () => {
+  it("reads the mute from the computer that lists the session, and nothing else", () => {
+    const hubs = [
+      {
+        hubId: "SHA256:a",
+        hubLabel: "Laptop",
+        reachable: true,
+        sessions: [
+          hubSession("s-muted", { presentation: { notificationsMuted: true } }),
+          hubSession("s-loud", { presentation: { pinned: true } }),
+          hubSession("s-bare"),
+        ],
+      },
+    ];
+
+    expect(notificationsMutedFor(hubs, "s-muted")).toBe(true);
+    expect(notificationsMutedFor(hubs, "s-loud")).toBe(false);
+    expect(notificationsMutedFor(hubs, "s-bare")).toBe(false);
+    // An SSH-only session has no computer to mute it.
+    expect(notificationsMutedFor(hubs, "s-elsewhere")).toBe(false);
   });
 });
 
