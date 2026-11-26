@@ -33,6 +33,7 @@ import { StructuredTerminalFindBar, StructuredTerminalFindHighlights } from "./S
 import { StructuredTerminalRecoveryStatus } from "./StructuredTerminalRecoveryStatus";
 import { useStructuredTerminalGeometryCommit } from "./useStructuredTerminalGeometryCommit";
 import { useStructuredTerminalPointerInput } from "./useStructuredTerminalPointerInput";
+import { structuredTerminalSurfacePointerHandlers } from "./structuredTerminalSurfacePointer";
 import { StructuredTerminalScrollToBottom } from "./StructuredTerminalScrollToBottom";
 import type { StructuredTerminalViewProps } from "./structuredTerminalViewContract";
 import { createTerminalCanvasRenderer } from "./TerminalCanvasRenderer";
@@ -54,6 +55,7 @@ import { useStructuredTerminalFind } from "./useStructuredTerminalFind";
 import { useStructuredTerminalInputLatency } from "./useStructuredTerminalInputLatency";
 import { useStructuredTerminalKeyInput } from "./useStructuredTerminalKeyInput";
 import { useStructuredTerminalLargeViewLifecycle } from "./useStructuredTerminalLargeViewLifecycle";
+import { useStructuredTerminalLinkActivation } from "./useStructuredTerminalLinkActivation";
 import { useStructuredTerminalPaneHealth } from "./useStructuredTerminalPaneHealth";
 import { useStructuredTerminalReceiptObservers } from "./useStructuredTerminalReceiptObservers";
 import { useStructuredTerminalQuickCommands } from "./useStructuredTerminalQuickCommands";
@@ -77,6 +79,7 @@ export function StructuredTerminalView({
 	surfaceId = sessionId,
 	paneHealthId,
 	binding,
+	runtimeWorkingDirectory,
 	inputDisabled = false,
 	paneApi,
 	presentationRole = "ungated",
@@ -584,6 +587,13 @@ export function StructuredTerminalView({
 		surfaceBox,
 	]);
 
+	const linkActivation = useStructuredTerminalLinkActivation({
+		sessionId,
+		binding,
+		runtimeWorkingDirectory,
+		terminalSurfaceRef,
+		paintedPresentationRef,
+	});
 	useStructuredTerminalViewportPaint({
 		sessionId,
 		terminalSurfaceRef,
@@ -608,6 +618,7 @@ export function StructuredTerminalView({
 		canvasTheme,
 		canvasRenderer,
 		viewportRenderer,
+		openHyperlink: linkActivation.openHyperlink,
 		reportPresentationPainted: reportStructuredPresentationPainted,
 		afterPresentationPainted,
 		onResizePresentationPainted: resolveResizeFailure,
@@ -797,42 +808,16 @@ export function StructuredTerminalView({
 						data-testid="structured-terminal-viewport"
 						data-selectable
 						className="absolute inset-0 size-full"
-						onPointerDown={(event) => {
-							if (!installedFrame || !paintedAttachmentIsCurrent) {
-								// Retain the explicit click until input is ready; no pointer
-								// or keyboard intent may reach an unpainted attachment.
-								if (event.button === 0) structuredTextInput.focusPaneInput();
-								event.preventDefault();
-								return;
-							}
-							const reportClick = !inputDisabled && mouseReporting && !event.shiftKey;
-							const selecting = selectionDrag.begin(
-								event.nativeEvent,
-								reportClick,
-							);
-							if (!selecting && reportClick) issuePointer(event.nativeEvent, PointerKind.DOWN);
-						}}
-						onPointerMove={(event) => {
-							if (!paintedAttachmentIsCurrent) return;
-							if (selectionDrag.ownsPointer(event.pointerId)) return;
-							if (mouseReporting)
-								issuePointer(event.nativeEvent, PointerKind.MOVE);
-						}}
-						onPointerUp={(event) => {
-							if (selectionDrag.ownsPointer(event.pointerId)) return;
-							if (
-								!inputDisabled &&
-								!event.shiftKey &&
-								paintedAttachmentIsCurrent &&
-								mouseReporting
-							) {
-								structuredTextInput.focusPaneInput();
-								issuePointer(event.nativeEvent, PointerKind.UP);
-							}
-						}}
-						onPointerCancel={(event) => {
-							selectionDrag.cancel(event.pointerId);
-						}}
+						{...structuredTerminalSurfacePointerHandlers({
+							frameInstalled: installedFrame !== null,
+							painted: paintedAttachmentIsCurrent,
+							inputDisabled,
+							mouseReporting,
+							focusPaneInput: structuredTextInput.focusPaneInput,
+							links: linkActivation,
+							selection: selectionDrag,
+							issuePointer,
+						})}
 						onWheel={onWheel}
 					/>
 					<textarea
