@@ -20,7 +20,7 @@ const STATUS_LABEL: Record<AgentRowStatus, () => string> = {
 	result: () => t("agents.row.result"),
 };
 
-export function agentRowStatusLabel(status: AgentRowStatus): string {
+function agentRowStatusLabel(status: AgentRowStatus): string {
 	return STATUS_LABEL[status]();
 }
 

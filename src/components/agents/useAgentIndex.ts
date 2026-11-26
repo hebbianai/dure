@@ -7,7 +7,7 @@ let cache: { agents?: readonly Agent[]; index: ReadonlyMap<string, Agent> } = {
 	index: new Map(),
 };
 
-export function agentIndexOf(agents: readonly Agent[]): ReadonlyMap<string, Agent> {
+function agentIndexOf(agents: readonly Agent[]): ReadonlyMap<string, Agent> {
 	if (cache.agents !== agents) {
 		cache = { agents, index: new Map(agents.map((agent) => [agent.id, agent])) };
 	}

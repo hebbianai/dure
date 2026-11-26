@@ -11,7 +11,7 @@ import { compareWaitStart, hasResult } from "@/lib/agents/agentResult";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
 import type { NeedsPersonMap, NeedsPersonReason } from "@/lib/agents/needsPerson";
 
-export type NextUpReason = NeedsPersonReason | "result";
+type NextUpReason = NeedsPersonReason | "result";
 
 export interface NextUpEntry {
 	agentId: string;

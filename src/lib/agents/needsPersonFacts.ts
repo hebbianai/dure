@@ -73,7 +73,7 @@ let mapCache: {
 
 /** The map for these store values. Equal content keeps the previous map, so
  * memos keyed on it survive unrelated agent edits. */
-export function needsPersonFor(
+function needsPersonFor(
 	agents: AppState["agents"],
 	displayStates: Readonly<Record<string, AgentDisplayState>>,
 	waitingSince: Readonly<Record<string, number>>,
