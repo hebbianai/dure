@@ -3,8 +3,8 @@ use dure_app::{
     AgentNativeRecoveryContinuationV1, AgentNativeRecoveryRecordV1, AgentNativeTurnFailureV1,
     AgentRecoveryAttemptV1, AgentRecoveryRecordV1, AgentRecoveryStopV1, AgentRecoveryStore,
     AgentStartTurnIntentV1, AgentTurnEffectReceiptV1, AgentTurnFailureReasonV1, AgentTurnIdV1,
-    DomainStoreErrorV1, DomainStoreFuture, WorkflowPromptDeliveryEvidenceV1,
-    agent_runtime_transition_identity,
+    DomainStoreErrorV1, DomainStoreFuture, ProviderCredentialProfileV1,
+    WorkflowPromptDeliveryEvidenceV1,
 };
 use sha2::{Digest, Sha256};
 use sqlx::{AssertSqlSafe, SqliteConnection};
@@ -167,6 +167,7 @@ async fn prepare_native_on(
         connection,
         &policy.accounts,
         &selection.execution_profile,
+        &[],
         observed_at_ms,
     )
     .await?;
@@ -181,6 +182,7 @@ async fn prepare_native_on(
         policy_revision: policy.revision,
         stopped: target.is_none().then_some(AgentRecoveryStopV1::Exhausted),
         target,
+        unusable_targets: Vec::new(),
         continuation: AgentNativeRecoveryContinuationV1::NotStarted,
         created_at_ms: observed_at_ms,
     }));
@@ -280,6 +282,7 @@ async fn prepare_conversation_on(
         connection,
         &policy.accounts,
         &source.execution_profile,
+        &[],
         observed_at_ms,
     )
     .await?;
@@ -304,6 +307,7 @@ async fn prepare_conversation_on(
         policy_revision: policy.revision,
         stopped: target.is_none().then_some(AgentRecoveryStopV1::Exhausted),
         target,
+        unusable_targets: Vec::new(),
         continuation: None,
         created_at_ms: observed_at_ms,
     };
@@ -317,10 +321,11 @@ async fn prepare_turn_on(
     attempt_id: &str,
     observed_at_ms: i64,
 ) -> Result<Option<AgentTurnEffectReceiptV1>, DomainStoreErrorV1> {
-    let Some(mut record) = read_on(connection, attempt_id)
-        .await?
-        .and_then(AgentRecoveryAttemptV1::into_conversation)
-    else {
+    let Some(attempt) = read_on(connection, attempt_id).await? else {
+        return Ok(None);
+    };
+    let operation_id = attempt.runtime_operation_id();
+    let Some(mut record) = attempt.into_conversation() else {
         return Ok(None);
     };
     if let Some(request) = &record.continuation {
@@ -335,8 +340,8 @@ async fn prepare_turn_on(
     let policy = crate::provider_recovery::read_on(connection, &record.source.provider_id).await?;
     let goal = crate::agent_goals::read_on(connection, &record.source.agent_id).await?;
     let goal_revision = goal.as_ref().map(|goal| goal.revision);
-    let (operation_id, _) = agent_runtime_transition_identity(&record.attempt_id)
-        .map_err(|error| corrupt_identifier("recovery operation identity", error))?;
+    let operation_id =
+        operation_id.map_err(|error| corrupt_identifier("recovery operation identity", error))?;
     let still_authorized = record.target.as_ref().is_some_and(|target| {
         policy.as_ref().is_some_and(|policy| {
             policy.enabled
@@ -403,6 +408,64 @@ async fn prepare_turn_on(
     )
     .await?;
     Ok(None)
+}
+
+async fn reselect_on(
+    connection: &mut SqliteConnection,
+    attempt_id: &str,
+    unusable: &[ProviderCredentialProfileV1],
+    failure_code: Option<&str>,
+    observed_at_ms: i64,
+) -> Result<AgentRecoveryAttemptV1, DomainStoreErrorV1> {
+    let mut attempt = read_on(connection, attempt_id)
+        .await?
+        .ok_or_else(|| not_found(attempt_id))?;
+    let source = attempt.source_execution_profile().clone();
+    let provider_id = attempt.provider_id().clone();
+    let (target, unusable_targets, stopped, started) = match &mut attempt {
+        AgentRecoveryAttemptV1::Conversation(record) => (
+            &mut record.target,
+            &mut record.unusable_targets,
+            &mut record.stopped,
+            record.continuation.is_some(),
+        ),
+        AgentRecoveryAttemptV1::Native(record) => (
+            &mut record.target,
+            &mut record.unusable_targets,
+            &mut record.stopped,
+            record.continuation != AgentNativeRecoveryContinuationV1::NotStarted,
+        ),
+    };
+    if stopped.is_some() || started {
+        return Ok(attempt);
+    }
+    for profile in unusable {
+        profile.validate()?;
+        if profile.provider_id == provider_id && !unusable_targets.contains(profile) {
+            unusable_targets.push(profile.clone());
+        }
+    }
+    *target = match crate::provider_recovery::read_on(connection, &provider_id).await? {
+        Some(policy) => {
+            crate::provider_recovery_usage::select_on(
+                connection,
+                &policy.accounts,
+                &source,
+                unusable_targets,
+                observed_at_ms,
+            )
+            .await?
+        }
+        None => None,
+    };
+    if target.is_none() {
+        *stopped = Some(match failure_code {
+            Some(code) => AgentRecoveryStopV1::Failed { code: code.into() },
+            None => AgentRecoveryStopV1::Exhausted,
+        });
+    }
+    save_on(connection, &attempt).await?;
+    Ok(attempt)
 }
 
 pub(crate) async fn latest_on(
@@ -574,6 +637,35 @@ impl AgentRecoveryStore for SqliteDomainStore {
                 .await
                 .map_err(|error| map_sqlx("prepare_agent_recovery_turn", error))?;
             Ok(result)
+        })
+    }
+
+    fn reselect_agent_recovery_target<'a>(
+        &'a self,
+        attempt_id: &'a str,
+        unusable: &'a [ProviderCredentialProfileV1],
+        failure_code: Option<&'a str>,
+        observed_at_ms: i64,
+    ) -> DomainStoreFuture<'a, AgentRecoveryAttemptV1> {
+        Box::pin(async move {
+            let mut transaction = self
+                .pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(|error| map_sqlx("reselect_agent_recovery_target", error))?;
+            let attempt = reselect_on(
+                &mut transaction,
+                attempt_id,
+                unusable,
+                failure_code,
+                observed_at_ms,
+            )
+            .await?;
+            transaction
+                .commit()
+                .await
+                .map_err(|error| map_sqlx("reselect_agent_recovery_target", error))?;
+            Ok(attempt)
         })
     }
 

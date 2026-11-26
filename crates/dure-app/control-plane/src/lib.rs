@@ -121,6 +121,7 @@ mod project_resolve;
 mod provider_commands;
 pub mod provider_credential_profile;
 mod provider_executable;
+mod provider_login_observation;
 #[cfg(unix)]
 mod provider_recovery_api;
 #[cfg(unix)]

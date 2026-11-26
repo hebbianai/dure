@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AgentContinueTurnRequestV1, AgentExecutionProfileV1, AgentIdV1, AgentInteractionBindingV1,
     AgentInteractionProfileV1, AgentTimelineFailureV1, AgentTurnEffectReceiptV1,
-    AgentTurnFailureReasonV1, DomainStoreFuture, ProviderIdV1, ProviderRecoveryAccountV1,
-    WorkflowPromptDeliveryEvidenceV1,
+    AgentTurnFailureReasonV1, DomainIdErrorV1, DomainStoreFuture, OperationIdV1,
+    ProviderCredentialProfileV1, ProviderIdV1, ProviderRecoveryAccountV1,
+    WorkflowPromptDeliveryEvidenceV1, agent_runtime_transition_identity,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -22,6 +23,11 @@ pub struct AgentRecoveryRecordV1 {
     pub goal_revision: Option<u64>,
     pub policy_revision: u64,
     pub target: Option<ProviderRecoveryAccountV1>,
+    /// Logins this attempt found it cannot use, in the order they were set
+    /// aside: signed out, the source's own login, or a target that failed to
+    /// start. Selection skips them for the rest of the attempt.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unusable_targets: Vec<ProviderCredentialProfileV1>,
     /// Once present, the existing turn-effect receipt owns the send outcome.
     pub continuation: Option<AgentContinueTurnRequestV1>,
     pub stopped: Option<AgentRecoveryStopV1>,
@@ -70,6 +76,11 @@ pub struct AgentNativeRecoveryRecordV1 {
     pub native_failure: AgentNativeTurnFailureV1,
     pub policy_revision: u64,
     pub target: Option<ProviderRecoveryAccountV1>,
+    /// Logins this attempt found it cannot use, in the order they were set
+    /// aside: signed out, the source's own login, or a target that failed to
+    /// start. Selection skips them for the rest of the attempt.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unusable_targets: Vec<ProviderCredentialProfileV1>,
     /// Always present, so queries written before native recoveries (which
     /// select `$.continuation IS NULL`) never take a native row for theirs.
     pub continuation: AgentNativeRecoveryContinuationV1,
@@ -155,6 +166,35 @@ impl AgentRecoveryAttemptV1 {
     }
 
     #[must_use]
+    pub fn unusable_targets(&self) -> &[ProviderCredentialProfileV1] {
+        match self {
+            Self::Conversation(record) => &record.unusable_targets,
+            Self::Native(record) => &record.unusable_targets,
+        }
+    }
+
+    /// The runtime transition that applies the current target. Each login
+    /// set aside starts a new one, so a failed target's journal is replaced
+    /// rather than replayed; the first target keeps the attempt's own key.
+    #[must_use]
+    pub fn runtime_attempt_id(&self) -> String {
+        runtime_attempt_at(self.attempt_id(), self.unusable_targets().len())
+    }
+
+    pub fn runtime_operation_id(&self) -> Result<OperationIdV1, DomainIdErrorV1> {
+        agent_runtime_transition_identity(&self.runtime_attempt_id()).map(|(id, _)| id)
+    }
+
+    /// Whether a runtime transition applied one of this attempt's targets.
+    #[must_use]
+    pub fn owns_runtime_operation(&self, operation_id: &OperationIdV1) -> bool {
+        (0..=self.unusable_targets().len()).any(|index| {
+            agent_runtime_transition_identity(&runtime_attempt_at(self.attempt_id(), index))
+                .is_ok_and(|(id, _)| &id == operation_id)
+        })
+    }
+
+    #[must_use]
     pub fn stopped(&self) -> Option<&AgentRecoveryStopV1> {
         match self {
             Self::Conversation(record) => record.stopped.as_ref(),
@@ -169,6 +209,14 @@ impl AgentRecoveryAttemptV1 {
             Self::Conversation(record) => record.failure.created_at_ms,
             Self::Native(record) => record.native_failure.observed_at_ms,
         }
+    }
+}
+
+fn runtime_attempt_at(attempt_id: &str, index: usize) -> String {
+    if index == 0 {
+        attempt_id.to_owned()
+    } else {
+        format!("{attempt_id}-target-{index}")
     }
 }
 
@@ -224,6 +272,19 @@ pub trait AgentRecoveryStore: Send + Sync {
         attempt_id: &'a str,
         observed_at_ms: i64,
     ) -> DomainStoreFuture<'a, Option<AgentTurnEffectReceiptV1>>;
+
+    /// Sets `unusable` aside for an attempt that has not started its
+    /// continuation and selects again from the policy with the same rule as
+    /// the first choice, so fresh usage can also reorder it. Without a next
+    /// account the attempt stops: `Failed` with `failure_code` when a target
+    /// failed, otherwise `Exhausted`. Any other attempt is returned unchanged.
+    fn reselect_agent_recovery_target<'a>(
+        &'a self,
+        attempt_id: &'a str,
+        unusable: &'a [ProviderCredentialProfileV1],
+        failure_code: Option<&'a str>,
+        observed_at_ms: i64,
+    ) -> DomainStoreFuture<'a, AgentRecoveryAttemptV1>;
 
     /// Stops an attempt whose continuation is not yet owned elsewhere: a
     /// conversation attempt before its turn is admitted, a native attempt
