@@ -457,7 +457,7 @@ impl ChatConversation {
             .unwrap();
     }
 
-    async fn write_unannounced(
+    pub(super) async fn write_unannounced(
         &mut self,
         state: &ServiceState,
         mutations: Vec<AgentTimelineMutationV1>,
@@ -470,7 +470,7 @@ impl ChatConversation {
             .unwrap();
     }
 
-    fn row(&self, id: &str, body: AgentTimelineItemBodyV1) -> AgentTimelineMutationV1 {
+    pub(super) fn row(&self, id: &str, body: AgentTimelineItemBodyV1) -> AgentTimelineMutationV1 {
         AgentTimelineMutationV1::Append {
             item: AgentTimelineItemDraftV1 {
                 item_id: AgentTimelineItemIdV1::new(id).unwrap(),

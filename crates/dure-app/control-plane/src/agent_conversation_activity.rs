@@ -15,8 +15,7 @@ use std::io;
 use std::sync::Arc;
 
 use dure_app::{
-    AgentIdV1, AgentInteractionBindingV1, AgentInteractionSessionIdV1,
-    AgentRuntimeBindingAuthorityV1, AgentRuntimeCloseStateV1, AgentTimelineEpochV1,
+    AgentIdV1, AgentInteractionBindingV1, AgentInteractionSessionIdV1, AgentTimelineEpochV1,
     AgentTimelineStore,
 };
 use serde::{Deserialize, Serialize};
@@ -31,9 +30,9 @@ use crate::agent_conversation::{
 };
 use crate::agent_conversation_api::{serve_subscription, write_subscription_event};
 use crate::agent_conversation_outcome::{
-    ConversationAttention, ConversationOutcome, read_tail, turn_completed_sequence,
+    ChatRuntime, ConversationAttention, ConversationOutcome, chat_runtime, latest_turn_completed,
+    read_tail,
 };
-use crate::agent_runtime_projection::{AgentRuntimeObservedV1, read_locked};
 use crate::{BackendDispatchError, BackendRequest, ServiceState};
 
 pub const SUBSCRIBE_OPERATION: &str = "agent_conversation.activity.subscribe";
@@ -258,39 +257,11 @@ async fn observe(
     state: &ServiceState,
     agent_id: &AgentIdV1,
 ) -> Result<Option<AgentActivityV1>, String> {
-    let (lifecycle, binding) = match read_locked(state, agent_id).await? {
-        AgentRuntimeObservedV1::Stable { authority, .. } => match *authority {
-            AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding } => {
-                (ActivityLifecycle::Running, binding)
-            }
-            AgentRuntimeBindingAuthorityV1::NativeCli { .. } => return Ok(None),
-        },
-        AgentRuntimeObservedV1::Closed { close, .. } => {
-            // Until the stop completes, the conversation is still the state.
-            let lifecycle = if close.state == AgentRuntimeCloseStateV1::Stopped {
-                ActivityLifecycle::Exited
-            } else {
-                ActivityLifecycle::Running
-            };
-            match close.intent.source_authority {
-                AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding } => {
-                    (lifecycle, binding)
-                }
-                AgentRuntimeBindingAuthorityV1::NativeCli { .. } => return Ok(None),
-            }
-        }
-        AgentRuntimeObservedV1::Transitioning { .. } => {
-            let Some(binding) = state
-                .store
-                .agent_interaction_for_agent(agent_id)
-                .await
-                .map_err(|_| "agent_activity_unavailable".to_string())?
-            else {
-                return Ok(None);
-            };
-            (ActivityLifecycle::Starting, binding)
-        }
-        AgentRuntimeObservedV1::Unmanaged => return Ok(None),
+    let (lifecycle, binding) = match chat_runtime(state, agent_id).await? {
+        Some(ChatRuntime::Running(binding)) => (ActivityLifecycle::Running, binding),
+        Some(ChatRuntime::Changing(binding)) => (ActivityLifecycle::Starting, binding),
+        Some(ChatRuntime::Stopped(binding)) => (ActivityLifecycle::Exited, binding),
+        None => return Ok(None),
     };
     activity(state, lifecycle, binding).await.map(Some)
 }
@@ -321,10 +292,11 @@ async fn activity(
     } else {
         (false, ConversationAttention::None, None)
     };
-    let completed = turn_completed_sequence(state, &binding)
+    // `0` before the first finished turn, as a Host's count starts.
+    let completed = latest_turn_completed(state, &binding)
         .await
         .map_err(unavailable)?
-        .ok_or_else(|| "agent_activity_binding_changed".to_string())?;
+        .unwrap_or(0);
     Ok(AgentActivityV1 {
         agent_id: binding.agent_id,
         interaction_session_id: binding.interaction_session_id,
