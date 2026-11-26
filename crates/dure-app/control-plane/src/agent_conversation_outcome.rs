@@ -8,15 +8,20 @@
 //! the goal and committed rows. Streamed text belongs to the active turn and is
 //! never evidence on its own.
 use dure_app::{
-    AgentGoalStatusV1, AgentInteractionBindingV1, AgentInteractionRequestIdV1,
-    AgentPendingRequestKindV1, AgentTimelineItemBodyV1, AgentTimelineItemIdV1,
-    AgentTimelineLifecycleStateV1, AgentTimelineMessageRoleV1, AgentTimelinePageV1,
-    AgentTimelineReadDirectionV1, AgentTimelineReadRequestV1, AgentTimelineReadV1,
-    AgentTimelineStore, DomainStoreErrorV1,
+    AgentGoalStatusV1, AgentIdV1, AgentInteractionBindingV1, AgentInteractionRequestIdV1,
+    AgentPendingRequestKindV1, AgentRuntimeBindingAuthorityV1, AgentRuntimeCloseStateV1,
+    AgentTimelineItemBodyV1, AgentTimelineItemIdV1, AgentTimelineLifecycleStateV1,
+    AgentTimelineMessageRoleV1, AgentTimelinePageV1, AgentTimelineReadDirectionV1,
+    AgentTimelineReadRequestV1, AgentTimelineReadV1, AgentTimelineStore, DomainStoreErrorV1,
 };
 use serde_json::{Value, json};
 
 use crate::ServiceState;
+use crate::agent_runtime_projection::{AgentRuntimeObservedV1, read_locked};
+
+/// How much of a conversation one outcome reading takes. A finished turn's
+/// row is the newest; its answer is usually just before it.
+pub(crate) const OUTCOME_TAIL_ROWS: usize = 64;
 
 /// What a chat conversation is waiting on, if anything.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -104,6 +109,9 @@ impl ConversationActivity {
 pub(crate) struct CompletedTurn {
     /// The turn's `TurnCompleted` row.
     pub(crate) item_id: AgentTimelineItemIdV1,
+    /// That row's position in the conversation's timeline. It only grows
+    /// within one timeline, so a later finished turn has a larger one.
+    pub(crate) sequence: i64,
     /// The turn's last assistant message, when the tail holds it.
     pub(crate) final_response: Option<String>,
 }
@@ -141,6 +149,62 @@ impl ConversationOutcome {
                 .map(|failure| failure.item_id.clone()),
         }
     }
+
+    /// What a client polling the conversation is told, such as `dure wait`.
+    /// `turnCompletedSequence` is the newest finished turn's position, so a
+    /// watcher that saw a smaller one in the same conversation and timeline
+    /// knows a turn finished since. It is null when the tail holds no
+    /// finished turn.
+    pub(crate) fn observation(&self, binding: &AgentInteractionBindingV1) -> Value {
+        let mut value = self.activity.observation();
+        value["state"] = json!("observed");
+        value["interactionSessionId"] = json!(binding.interaction_session_id.as_str());
+        value["timelineEpoch"] = json!(binding.timeline_epoch.as_str());
+        value["quiescent"] = json!(self.activity.quiescent);
+        value["turnCompletedSequence"] = json!(
+            self.turn_completed
+                .as_ref()
+                .map(|turn| turn.sequence.to_string())
+        );
+        value
+    }
+}
+
+/// The conversation the Agent runs on now, for a client that polls it. `None`
+/// while the Agent runs in a terminal, is between runtimes or has no managed
+/// runtime; a stopped chat runtime is `stopped`. A read that failed is
+/// `unavailable`, never a state of the agent.
+pub(crate) async fn observe_agent(state: &ServiceState, agent_id: &AgentIdV1) -> Option<Value> {
+    let observed = {
+        let _guard = state.agent_operations.acquire(agent_id).await;
+        read_locked(state, agent_id).await
+    };
+    let binding = match observed {
+        Ok(AgentRuntimeObservedV1::Stable { authority, .. }) => match *authority {
+            AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding } => binding,
+            AgentRuntimeBindingAuthorityV1::NativeCli { .. } => return None,
+        },
+        Ok(AgentRuntimeObservedV1::Closed { close, .. })
+            if close.state == AgentRuntimeCloseStateV1::Stopped
+                && matches!(
+                    close.intent.source_authority,
+                    AgentRuntimeBindingAuthorityV1::StructuredProtocol { .. }
+                ) =>
+        {
+            return Some(json!({ "state": "stopped" }));
+        }
+        Ok(_) => return None,
+        Err(code) => return Some(json!({ "state": "unavailable", "errorCode": code })),
+    };
+    match read_tail(state, &binding, OUTCOME_TAIL_ROWS).await {
+        Ok(Some(page)) => Some(ConversationOutcome::from_page(&page).observation(&page.binding)),
+        // The conversation moved to another runtime since it was selected.
+        Ok(None) => None,
+        Err(_) => Some(json!({
+            "state": "unavailable",
+            "errorCode": "agent_conversation_observation_unavailable",
+        })),
+    }
 }
 
 fn completed_turn(page: &AgentTimelinePageV1) -> Option<CompletedTurn> {
@@ -169,6 +233,7 @@ fn completed_turn(page: &AgentTimelinePageV1) -> Option<CompletedTurn> {
         });
     Some(CompletedTurn {
         item_id: completed.item.item_id.clone(),
+        sequence: completed.cursor.sequence,
         final_response,
     })
 }
@@ -346,6 +411,7 @@ mod tests {
             outcome.turn_completed,
             Some(CompletedTurn {
                 item_id: AgentTimelineItemIdV1::new("item-6").unwrap(),
+                sequence: 6,
                 final_response: Some("Done: https://github.com/o/r/pull/1".into()),
             })
         );
@@ -372,6 +438,39 @@ mod tests {
                 .as_deref(),
             Some("Answer")
         );
+    }
+
+    #[test]
+    fn a_watcher_sees_the_newest_finished_turn_by_its_position() {
+        let mut rows = turn(Some("First answer"));
+        rows.extend(turn(Some("Second answer")));
+        let finished = page(rows);
+        assert_eq!(
+            ConversationOutcome::from_page(&finished).observation(&finished.binding),
+            json!({
+                "state": "observed",
+                "interactionSessionId": "interaction-1",
+                "timelineEpoch": "timeline-1",
+                "activity": "waiting",
+                "attention": "none",
+                "quiescent": true,
+                "turnCompletedSequence": "12",
+            })
+        );
+
+        // A running turn whose tail holds no finished turn has no position.
+        let mut running = page(vec![
+            message(AgentTimelineMessageRoleV1::User, "Fix it"),
+            lifecycle(AgentTimelineLifecycleStateV1::TurnStarted),
+        ]);
+        running.active_turn = Some(AgentTimelineActiveTurnV1 {
+            turn_id: AgentTurnIdV1::new("turn-1").unwrap(),
+            client_message_id: AgentClientMessageIdV1::new("message-1").unwrap(),
+        });
+        let observed = ConversationOutcome::from_page(&running).observation(&running.binding);
+        assert_eq!(observed["activity"], "working");
+        assert_eq!(observed["quiescent"], false);
+        assert_eq!(observed["turnCompletedSequence"], Value::Null);
     }
 
     #[test]

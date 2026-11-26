@@ -2190,8 +2190,16 @@ async fn show_agent_spawn(
     state: &ServiceState,
     body: agent_spawn_api::AgentSpawnStatusBody,
 ) -> Result<Value, String> {
+    let observe_conversation = body.observe_conversation;
     let receipt = agent_spawn_api::status(&state.store, body).await?;
-    Ok(json!({ "schemaVersion": 1, "receipt": receipt }))
+    let mut shown = json!({ "schemaVersion": 1, "receipt": receipt });
+    // Only a client that asks gets the field, so older clients read the
+    // status exactly as before.
+    if observe_conversation && let Some(receipt) = &receipt {
+        shown["conversation"] =
+            json!(agent_conversation_outcome::observe_agent(state, &receipt.plan.agent_id).await);
+    }
+    Ok(shown)
 }
 
 async fn apply_agent_spawn(

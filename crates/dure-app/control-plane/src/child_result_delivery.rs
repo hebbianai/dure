@@ -27,7 +27,9 @@ use tokio::time::{Duration, MissedTickBehavior};
 use crate::agent_conversation::{
     AgentConversationNotificationKindV1, AgentConversationNotificationV1,
 };
-use crate::agent_conversation_outcome::{ConversationAttention, ConversationOutcome, read_tail};
+use crate::agent_conversation_outcome::{
+    ConversationAttention, ConversationOutcome, OUTCOME_TAIL_ROWS, read_tail,
+};
 use crate::agent_runtime_projection::{AgentRuntimeObservedV1, read_locked};
 use crate::hmux_session_inspection::{
     AgentRuntimeAttention, AgentRuntimeLifecycle, HmuxSessionInspection,
@@ -45,9 +47,6 @@ const RETRY_BASE_MS: i64 = 5_000;
 const MAX_RETRY_MS: i64 = 5 * 60 * 1_000;
 /// A response this long is cut; the parent can read the rest from the child.
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
-/// How much of a chat child's conversation one observation reads. A finished
-/// turn's row is the newest; its answer is usually just before it.
-const CONVERSATION_TAIL_ROWS: usize = 64;
 const MAX_PULL_REQUESTS: usize = 8;
 const GITHUB: &str = "https://github.com/";
 
@@ -432,7 +431,7 @@ async fn observe_chat_child(
     {
         return Ok(reading.outcome.clone());
     }
-    let Some(page) = read_tail(state, binding, CONVERSATION_TAIL_ROWS)
+    let Some(page) = read_tail(state, binding, OUTCOME_TAIL_ROWS)
         .await
         .map_err(|_| BackendDispatchError::from("child_result_conversation_unavailable"))?
     else {
@@ -1009,6 +1008,7 @@ mod tests {
                 attention_id: attention_id.map(|id| AgentInteractionRequestIdV1::new(id).unwrap()),
                 turn_completed: Some(CompletedTurn {
                     item_id: AgentTimelineItemIdV1::new("completed-3").unwrap(),
+                    sequence: 3,
                     final_response: Some("Done.".into()),
                 }),
                 latest_failure: Some(AgentTimelineItemIdV1::new("failed-2").unwrap()),

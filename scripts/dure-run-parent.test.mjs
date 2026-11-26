@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  AGENT_SPAWN_CONVERSATION_OBSERVATION_CAPABILITY,
   AGENT_SPAWN_PARENT_LINK_CAPABILITY,
+  backendObservesRunConversations,
   collectAgentSpawnQuery,
+  readRunConversation,
 } from "../cli/lib/agent-spawn-query.mjs";
 import {
   callerSessionParent,
@@ -258,5 +261,196 @@ describe("dure wait --children", () => {
     expect(() => parseWaitArguments(["--children", "some"])).toThrow(/--children all/);
     expect(() => parseWaitArguments(["--children", "all", "--workspace", "w"])).toThrow(/--workspace/);
     expect(() => parseWaitArguments(["--children", "all", "--operation-id", "spawn-1"])).toThrow(/exactly one/);
+  });
+});
+
+const OBSERVES = [AGENT_SPAWN_PARENT_LINK_CAPABILITY, AGENT_SPAWN_CONVERSATION_OBSERVATION_CAPABILITY];
+
+function conversation(overrides = {}) {
+  return {
+    state: "observed", interactionSessionId: "chat-a", timelineEpoch: "timeline-a",
+    activity: "working", attention: "none", quiescent: false, turnCompletedSequence: null,
+    ...overrides,
+  };
+}
+
+const finishedTurn = (sequence) => conversation({ activity: "waiting", quiescent: true, turnCompletedSequence: sequence });
+
+function observeRunFrom(byOperation) {
+  const calls = {};
+  return vi.fn(async ({ operationId }) => {
+    const readings = byOperation[operationId];
+    const index = Math.min(calls[operationId] = (calls[operationId] ?? -1) + 1, readings.length - 1);
+    return readings[index];
+  });
+}
+
+describe("chat-runtime children", () => {
+  it("settles a chat child from the backend's reading of its conversation", () => {
+    const chat = run("a", { sessionId: undefined });
+    expect(classifyChild(chat, undefined, conversation())).toEqual({ state: "working", turnCompletedSequence: null });
+    // Quiet before its first finished turn is not a finished turn.
+    expect(classifyChild(chat, undefined, conversation({ activity: "waiting", quiescent: true })))
+      .toMatchObject({ state: "working" });
+    expect(classifyChild(chat, undefined, finishedTurn("7")))
+      .toEqual({ state: "turn_completed", turnCompletedSequence: "7" });
+    expect(classifyChild(chat, undefined, conversation({ attention: "approval_required", turnCompletedSequence: "7" })))
+      .toEqual({ state: "attention_required", attention: "approval_required", turnCompletedSequence: "7" });
+    expect(classifyChild(chat, undefined, { state: "stopped" })).toEqual({ state: "exited" });
+    expect(classifyChild(chat, undefined, { state: "unavailable", errorCode: "agent_runtime_observation_store_failed" }))
+      .toEqual({ state: "working", reason: "observation_unavailable" });
+    // A terminal child that moved into Chat is read through its conversation.
+    expect(classifyChild(run("b"), session({ lifecycle: "exited" }), finishedTurn("3")))
+      .toMatchObject({ state: "turn_completed" });
+    // Without an observation it stays unobservable, as on an older backend.
+    expect(classifyChild(chat, undefined, null)).toMatchObject({ state: "unobservable", reason: "chat_runtime" });
+  });
+
+  it("waits on chat children through their conversation, and terminal children through the Host", async () => {
+    const observeRun = observeRunFrom({
+      "spawn-a": [conversation(), conversation({ attention: "approval_required" })],
+      "spawn-b": [null],
+    });
+    const { result, querySession } = waitFor("all", [run("a", { sessionId: undefined }), run("b")], {
+      "session-b": [session({ activity: "waiting", turn_completed_count: "1" })],
+    }, { backend: backend({ capabilities: OBSERVES }), observeRun });
+    const report = await result;
+    expect(report).toMatchObject({ state: "failed", exitCode: 1, error: { code: "wait_children_action_required" } });
+    expect(report.observation.children.map((child) => [child.name, child.state]))
+      .toEqual([["a", "attention_required"], ["b", "turn_completed"]]);
+    expect(querySession.mock.calls.map(([call]) => call.sessionId)).toEqual(["session-b", "session-b"]);
+    expect(observeRun).toHaveBeenCalledWith(expect.objectContaining({ operationId: "spawn-a" }));
+  });
+
+  it("settles any on a chat child that finished a turn", async () => {
+    const observeRun = observeRunFrom({ "spawn-a": [conversation(), finishedTurn("4")] });
+    const { result } = waitFor("any", [run("a", { sessionId: undefined })], {},
+      { backend: backend({ capabilities: OBSERVES }), observeRun });
+    const report = await result;
+    expect(report).toMatchObject({ state: "completed", exitCode: 0 });
+    expect(report.observation.children[0]).toMatchObject({ state: "turn_completed", turnCompletedSequence: "4" });
+  });
+
+  it("keeps today's unobservable result on a backend without the observation", async () => {
+    const observeRun = vi.fn();
+    const { result } = waitFor("all", [run("a", { sessionId: undefined })], {}, { observeRun });
+    expect(await result).toMatchObject({ state: "unknown", exitCode: 2, error: { code: "wait_children_unobservable" } });
+    expect(observeRun).not.toHaveBeenCalled();
+  });
+});
+
+function waitOnAgent(selector, readings, { capabilities = OBSERVES, registry: agents, runs = [run("a", { sessionId: undefined })], ...adapters } = {}) {
+  let elapsed = 0;
+  const observeRun = vi.fn(async () => readings[Math.min(observeRun.mock.calls.length - 1, readings.length - 1)]);
+  const listRuns = vi.fn(async ({ selector: wanted }) => ({
+    page: { schemaVersion: 1, runs: runs.filter((entry) => [entry.agentId, entry.name, entry.operationId].includes(wanted)), nextCursor: null },
+  }));
+  const querySession = vi.fn(async () => session({ activity: "waiting", turn_completed_count: "2" }));
+  return {
+    observeRun, listRuns, querySession,
+    result: collectWait(parseWaitArguments([selector, "--timeout", "5"]), {
+      backend: backend({ capabilities }), registry: agents, observeRun, listRuns, querySession,
+      now: () => elapsed, pause: async (ms) => { elapsed += ms; }, ...adapters,
+    }),
+  };
+}
+
+describe("dure wait <chat agent>", () => {
+  it("completes when the agent's next turn finishes after the wait started", async () => {
+    const { result, observeRun } = waitOnAgent("agent-a", [
+      finishedTurn("4"), finishedTurn("4"), conversation({ turnCompletedSequence: "4" }), finishedTurn("9"),
+    ]);
+    const report = await result;
+    expect(report).toMatchObject({
+      subject: "response", state: "completed", exitCode: 0,
+      target: { agentId: "agent-a", operationId: "spawn-a", interactionSessionId: "chat-a", timelineEpoch: "timeline-a", afterTurnSequence: "4" },
+      observation: { turnCompletedSequence: "9" },
+    });
+    expect(observeRun).toHaveBeenCalledTimes(4);
+  });
+
+  it("completes on the first finished turn of a conversation that had none", async () => {
+    const { result } = waitOnAgent("a", [conversation(), conversation(), finishedTurn("2")], {
+      registry: registry([{ id: "agent-a", name: "a" }]),
+    });
+    expect(await result).toMatchObject({ state: "completed", target: { agentId: "agent-a", afterTurnSequence: null } });
+  });
+
+  it("returns when the agent needs a person, stopped, or its conversation was replaced", async () => {
+    const asking = waitOnAgent("agent-a", [conversation(), conversation({ attention: "input_required" })]);
+    expect(await asking.result).toMatchObject({ state: "unknown", exitCode: 2, error: { code: "wait_response_attention_required" } });
+    const stopped = waitOnAgent("agent-a", [conversation(), { state: "stopped" }]);
+    expect(await stopped.result).toMatchObject({ state: "unknown", exitCode: 2, error: { code: "wait_response_exited" } });
+    const replaced = waitOnAgent("agent-a", [conversation(), conversation(), conversation({ interactionSessionId: "chat-b" })]);
+    expect(await replaced.result).toMatchObject({ state: "unknown", exitCode: 2, error: { code: "wait_generation_changed" } });
+  });
+
+  it("keeps waiting through a failed read or a runtime switch in progress", async () => {
+    const { result } = waitOnAgent("agent-a", [
+      conversation(), conversation(), { state: "unavailable", errorCode: "agent_conversation_observation_unavailable" }, null, finishedTurn("1"),
+    ]);
+    expect(await result).toMatchObject({ state: "completed", exitCode: 0 });
+  });
+
+  it("reads a terminal Run without the app through the Session it started in", async () => {
+    const { result, querySession } = waitOnAgent("agent-b", [null], { runs: [run("b")] });
+    await result;
+    expect(querySession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "session-b", workspaceId: "workspace-b" }));
+  });
+
+  it("refuses terminal resume flags for a chat agent", async () => {
+    let elapsed = 0;
+    const report = await collectWait(parseWaitArguments(["agent-a", "--after-turn", "1", "--terminal-epoch", "t", "--timeout", "5"]), {
+      backend: backend({ capabilities: OBSERVES }), observeRun: async () => conversation(),
+      listRuns: async () => ({ page: { schemaVersion: 1, runs: [run("a", { sessionId: undefined })], nextCursor: null } }),
+      now: () => elapsed, pause: async (ms) => { elapsed += ms; },
+    });
+    expect(report).toMatchObject({ state: "unknown", exitCode: 2, error: { code: "wait_arguments_invalid" } });
+  });
+
+  it("behaves as today on a backend without the observation", async () => {
+    const withoutApp = waitOnAgent("agent-a", [], { capabilities: [] });
+    expect(await withoutApp.result).toMatchObject({ state: "unknown", exitCode: 2, error: { code: "wait_arguments_invalid", message: expect.stringContaining("name projection") } });
+    const chatInApp = waitOnAgent("agent-a", [], { capabilities: [], registry: registry([{ id: "agent-a", name: "a" }]) });
+    expect(await chatInApp.result).toMatchObject({ error: { code: "wait_runtime_unavailable" } });
+    expect(withoutApp.listRuns).not.toHaveBeenCalled();
+    expect(chatInApp.observeRun).not.toHaveBeenCalled();
+  });
+});
+
+describe("the Run observation request", () => {
+  const profileBackend = backend({ capabilities: OBSERVES });
+
+  it("asks agent_spawn.status for the conversation and validates the answer", async () => {
+    const sent = [];
+    const observed = await readRunConversation({
+      backend: profileBackend, operationId: "spawn-a", deadlineMs: 900,
+      requestBackend: async (_profile, request, options) => {
+        sent.push({ request, options });
+        return { result: { schemaVersion: 1, receipt: { operationId: "spawn-a" }, conversation: finishedTurn("5") } };
+      },
+    });
+    expect(observed).toEqual(finishedTurn("5"));
+    expect(sent[0].request).toMatchObject({
+      operation: "agent_spawn.status",
+      requiredCapabilities: ["agent_spawn.status", AGENT_SPAWN_CONVERSATION_OBSERVATION_CAPABILITY],
+      body: { schemaVersion: 1, operationId: "spawn-a", observeConversation: true },
+    });
+    expect(sent[0].options.deadlineMs).toBe(900);
+    expect(backendObservesRunConversations(profileBackend)).toBe(true);
+    expect(backendObservesRunConversations(backend())).toBe(false);
+  });
+
+  it("reads no conversation as null and refuses a malformed one", async () => {
+    const answer = (result) => readRunConversation({ backend: profileBackend, operationId: "spawn-a", requestBackend: async () => ({ result }) });
+    expect(await answer({ schemaVersion: 1, receipt: { operationId: "spawn-a" }, conversation: null })).toBeNull();
+    for (const result of [
+      { schemaVersion: 1, receipt: { operationId: "spawn-other" }, conversation: null },
+      { schemaVersion: 1, receipt: { operationId: "spawn-a" }, conversation: { ...finishedTurn("5"), extra: true } },
+      { schemaVersion: 1, receipt: { operationId: "spawn-a" }, conversation: finishedTurn("-1") },
+      { schemaVersion: 1, receipt: { operationId: "spawn-a" }, conversation: conversation({ attention: "maybe" }) },
+    ]) {
+      await expect(answer(result)).rejects.toMatchObject({ code: "runs_response_invalid" });
+    }
   });
 });

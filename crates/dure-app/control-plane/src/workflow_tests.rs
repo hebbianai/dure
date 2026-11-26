@@ -75,6 +75,7 @@ mod orchestration_interaction_open_tests;
 mod orchestration_observation_tests;
 mod prompt_recovery_tests;
 mod real_hmux;
+mod run_conversation_observation_tests;
 mod runtime_close_recovery_tests;
 mod runtime_close_retirement_tests;
 mod runtime_close_successor_tests;

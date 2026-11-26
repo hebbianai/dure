@@ -14,7 +14,9 @@ const PARENT_WORKSPACE: &str = "coordinator-workspace";
 /// Starts a native child through the public spawn path, linked to the
 /// fixture's coordinator Session as its parent. The repository it runs in is
 /// returned so it outlives the Run.
-async fn spawn_linked_child(state: &ServiceState) -> (AgentSpawnJournalReceiptV1, TempDir) {
+pub(super) async fn spawn_linked_child(
+    state: &ServiceState,
+) -> (AgentSpawnJournalReceiptV1, TempDir) {
     let repository = crate::workspace_git::tests::repository().await;
     register_project(
         &state.projects_catalog_path,
@@ -319,7 +321,7 @@ async fn a_child_whose_parent_exited_is_not_reported() {
 
 /// Moves the child onto the chat runtime the way a committed runtime switch
 /// does, and returns its new conversation.
-async fn move_child_to_chat(
+pub(super) async fn move_child_to_chat(
     state: &ServiceState,
     agent_id: &AgentIdV1,
 ) -> AgentInteractionBindingV1 {
@@ -414,13 +416,13 @@ async fn move_child_to_chat(
 /// Writes the chat child's conversation as its provider bridge does. An
 /// unannounced write reaches only the store, as if its change notice were
 /// still in flight.
-struct ChatConversation {
-    binding: AgentInteractionBindingV1,
-    sequence: i64,
+pub(super) struct ChatConversation {
+    pub(super) binding: AgentInteractionBindingV1,
+    pub(super) sequence: i64,
 }
 
 impl ChatConversation {
-    fn at_ms(&self) -> i64 {
+    pub(super) fn at_ms(&self) -> i64 {
         self.binding.created_at_ms + self.sequence
     }
 }
@@ -441,7 +443,11 @@ impl ChatConversation {
         }
     }
 
-    async fn commit(&mut self, state: &ServiceState, mutations: Vec<AgentTimelineMutationV1>) {
+    pub(super) async fn commit(
+        &mut self,
+        state: &ServiceState,
+        mutations: Vec<AgentTimelineMutationV1>,
+    ) {
         let event = self.event(mutations);
         state
             .agent_conversations
@@ -477,13 +483,17 @@ impl ChatConversation {
         }
     }
 
-    fn lifecycle(&self, id: &str, state: AgentTimelineLifecycleStateV1) -> AgentTimelineMutationV1 {
+    pub(super) fn lifecycle(
+        &self,
+        id: &str,
+        state: AgentTimelineLifecycleStateV1,
+    ) -> AgentTimelineMutationV1 {
         let detail = (state == AgentTimelineLifecycleStateV1::TurnFailed)
             .then(|| "provider_error".to_owned());
         self.row(id, AgentTimelineItemBodyV1::Lifecycle { state, detail })
     }
 
-    fn message(
+    pub(super) fn message(
         &self,
         id: &str,
         role: AgentTimelineMessageRoleV1,
@@ -498,7 +508,7 @@ impl ChatConversation {
         )
     }
 
-    fn ask(&self, id: &str, kind: AgentPendingRequestKindV1) -> AgentTimelineMutationV1 {
+    pub(super) fn ask(&self, id: &str, kind: AgentPendingRequestKindV1) -> AgentTimelineMutationV1 {
         AgentTimelineMutationV1::PutPending {
             request: AgentPendingRequestDraftV1 {
                 request_id: AgentInteractionRequestIdV1::new(id).unwrap(),
@@ -511,7 +521,46 @@ impl ChatConversation {
         }
     }
 
-    fn answer(&self, id: &str) -> AgentTimelineMutationV1 {
+    /// Stops the chat runtime as a confirmed runtime stop does, and returns
+    /// the close operation.
+    pub(super) async fn stop(&self, state: &ServiceState) -> OperationIdV1 {
+        let selection = state
+            .store
+            .agent_runtime_selection(&self.binding.agent_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let close = OperationIdV1::new("child-chat-stop").unwrap();
+        state
+            .store
+            .admit_agent_runtime_close(&AgentRuntimeCloseIntentV1 {
+                schema_version: AGENT_RUNTIME_CLOSE_SCHEMA_VERSION_V1,
+                operation_id: close.clone(),
+                idempotency_key: "child-chat-stop-key".into(),
+                source: selection,
+                source_authority: AgentRuntimeBindingAuthorityV1::StructuredProtocol {
+                    binding: self.binding.clone(),
+                },
+                stopped_transition: None,
+                requested_at_ms: self.at_ms() + 1,
+            })
+            .await
+            .unwrap();
+        state
+            .store
+            .advance_agent_runtime_close(&AgentRuntimeCloseAdvanceRequestV1 {
+                schema_version: AGENT_RUNTIME_CLOSE_SCHEMA_VERSION_V1,
+                operation_id: close.clone(),
+                expected_journal_revision: 1,
+                advance: AgentRuntimeCloseAdvanceV1::Stopped,
+                advanced_at_ms: self.at_ms() + 2,
+            })
+            .await
+            .unwrap();
+        close
+    }
+
+    pub(super) fn answer(&self, id: &str) -> AgentTimelineMutationV1 {
         AgentTimelineMutationV1::ResolvePending {
             request_id: AgentInteractionRequestIdV1::new(id).unwrap(),
             outcome: json!({"allowed": true}),
@@ -683,39 +732,7 @@ async fn a_chat_child_reports_each_outcome_once_after_moving_from_a_terminal() {
     assert_eq!(prompt_deliverer.requests().len(), 5);
 
     // A stop ends the Run's reports.
-    let selection = state
-        .store
-        .agent_runtime_selection(&agent)
-        .await
-        .unwrap()
-        .unwrap();
-    let close = OperationIdV1::new("child-chat-stop").unwrap();
-    state
-        .store
-        .admit_agent_runtime_close(&AgentRuntimeCloseIntentV1 {
-            schema_version: AGENT_RUNTIME_CLOSE_SCHEMA_VERSION_V1,
-            operation_id: close.clone(),
-            idempotency_key: "child-chat-stop-key".into(),
-            source: selection,
-            source_authority: AgentRuntimeBindingAuthorityV1::StructuredProtocol {
-                binding: chat.binding.clone(),
-            },
-            stopped_transition: None,
-            requested_at_ms: chat.at_ms() + 1,
-        })
-        .await
-        .unwrap();
-    state
-        .store
-        .advance_agent_runtime_close(&AgentRuntimeCloseAdvanceRequestV1 {
-            schema_version: AGENT_RUNTIME_CLOSE_SCHEMA_VERSION_V1,
-            operation_id: close.clone(),
-            expected_journal_revision: 1,
-            advance: AgentRuntimeCloseAdvanceV1::Stopped,
-            advanced_at_ms: chat.at_ms() + 2,
-        })
-        .await
-        .unwrap();
+    let close = chat.stop(&state).await;
     child_result_delivery::tick(&state, &mut deliveries)
         .await
         .unwrap();

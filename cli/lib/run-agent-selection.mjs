@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
-import { agentDisplayName, matchingAgents } from "./client-registry.mjs";
+import { agentDisplayName, selectAgents } from "./client-registry.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
 import { rehostCommandLine } from "./managed-rehost-preview.mjs";
 
@@ -108,8 +108,7 @@ export function formatRunCandidates(candidates = []) {
  * proves that the selected backend owns a runtime for that Agent. */
 function clientAgentCandidates(registry, selector) {
   if (registry?.state !== "available") return [];
-  const byId = registry.agents.filter((agent) => agent.id === selector);
-  const matches = byId.length ? byId : matchingAgents(registry, selector);
+  const matches = selectAgents(registry, selector);
   const seen = new Set();
   return matches.filter((agent) => isDureDomainIdV1(agent.id) && !seen.has(agent.id) && seen.add(agent.id))
     .map((agent) => ({ agentId: agent.id, name: agentDisplayName(agent) ?? null,
