@@ -1,5 +1,6 @@
 // One agent id → Agent index per agents array, shared by every row in the
 // window, so a list of n rows never runs n linear finds.
+import { useSyncExternalStore } from "react";
 import { useStore } from "@/store";
 import type { Agent } from "@/types";
 
@@ -19,4 +20,14 @@ export function agentIndexOf(
 /** One agent by id, through the shared index. Re-renders only when that agent's record changes. */
 export function useIndexedAgent(agentId: string): Agent | undefined {
 	return useStore((state) => agentIndexOf(state.agents).get(agentId));
+}
+
+/** Whether the Agent registry has loaded, so an Agent missing from it is
+ * gone rather than not read yet. */
+export function useAgentRegistryHydrated(): boolean {
+	return useSyncExternalStore(
+		(listener) => useStore.persist.onFinishHydration(listener),
+		() => useStore.persist.hasHydrated(),
+		() => useStore.persist.hasHydrated(),
+	);
 }

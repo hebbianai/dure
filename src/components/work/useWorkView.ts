@@ -40,9 +40,16 @@ export interface WorkView {
 	readonly dayStart: number;
 }
 
+const SHELL_KEY_PREFIX = "pane:";
+
 /** The key of a shell pane's entry. Pane ids are unique per Space only. */
 function workShellKey(desktopId: string, panelId: string): string {
-	return `pane:${desktopId}:${panelId}`;
+	return `${SHELL_KEY_PREFIX}${desktopId}:${panelId}`;
+}
+
+/** Whether a Work entry's key names a shell pane rather than an Agent. */
+export function isWorkShellKey(key: string): boolean {
+	return key.startsWith(SHELL_KEY_PREFIX);
 }
 
 function shellEntries(rows: readonly SpaceRow[]): WorkShellEntry[] {

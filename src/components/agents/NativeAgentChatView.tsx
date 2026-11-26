@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo } from "react";
+import { useId } from "react";
 import { AgentTeamLine } from "@/components/agents/AgentTeamLine";
 import { NativeAgentBackgroundWork } from "@/components/agents/NativeAgentBackgroundWork";
 import { AgentPendingRequestCard } from "@/components/agents/chat/AgentPendingRequestCard";
@@ -9,8 +9,8 @@ import {
 	ChatComposerShell,
 } from "@/components/agents/chat/ChatComposerShell";
 import { useAgentChatDraft } from "@/components/agents/chat/useAgentChatDraft";
-import { useOlderProviderHistory } from "@/components/agents/chat/useOlderProviderHistory";
 import type { NativeAgentChatState } from "@/components/agents/useNativeAgentChatState";
+import { useNativeAgentTranscriptPage } from "@/components/agents/useNativeAgentTranscriptPage";
 import { PanelStatus } from "@/components/common/PanelStatus";
 import { Button } from "@/components/ui/button";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
@@ -26,16 +26,13 @@ import {
 	nativeAgentChatComposerReason,
 	nativeAgentChatComposerState,
 	nativeAgentChatDraftIdentity,
-	nativeAgentChatPage,
 	nativeAgentChatPendingSettled,
-	nativeAgentChatRefreshCursor,
 	nativeAgentInputFailure,
 	nativeAgentPromptBackendProfileId,
 	nativeTranscriptUserEntries,
 	presentNativeAgentInputError,
 } from "@/lib/agents/chat/nativeAgentChat";
 import { t } from "@/lib/i18n";
-import { readProviderConversationTranscript } from "@/lib/ipc/conversations";
 import {
 	answerNativeAgentApproval,
 	sendNativeAgentPrompt,
@@ -68,7 +65,7 @@ export function NativeAgentChatView({
 	chat: NativeAgentChatState;
 	onContinueInTerminal(): void;
 }) {
-	const { agentId, provider, conversationId } = source;
+	const { agentId } = source;
 	// The desktop reads background work for its own managed sessions; for a
 	// provider without readable records it answers an empty list.
 	const backgroundWorkTarget = backgroundWorkSession(agent.runtimeBinding);
@@ -92,80 +89,20 @@ export function NativeAgentChatView({
 	} = chat;
 	const chatDraft = useAgentChatDraft(nativeAgentChatDraftIdentity(agent));
 	const draft = chatDraft.draft.text;
-	const cursor = nativeAgentChatRefreshCursor({
-		conversationId,
-		terminalEpoch,
-		turnCompletedCount: count,
-		working,
-	});
-
-	// The cursor is the refresh contract: it changes exactly when the inputs
-	// read below (conversation, terminal generation, Host count) change. A new
-	// owner of the pane's state also re-reads, since its setters are new. The
-	// pane keeps the last read, so showing the view again at the same cursor
-	// reuses it.
-	const readCursor = snapshot?.cursor;
-	useEffect(() => {
-		if (readCursor === cursor) return;
-		let current = true;
-		void readProviderConversationTranscript(provider, conversationId, {
-			includeTools: true,
-		}).then(
-			(transcript) => {
-				if (!current) return;
-				setSnapshot({ transcript, turnCompletedCount: count, cursor });
-				setReadFailed(false);
-			},
-			() => {
-				if (current) setReadFailed(true);
-			},
-		);
-		return () => {
-			current = false;
-		};
-	}, [cursor, setSnapshot, setReadFailed]);
-
-	// Older history loads on request above the newest read, from where that
-	// read starts; a newer read that starts elsewhere starts the pages again.
-	const older = useOlderProviderHistory(
-		{ provider, conversationId },
-		snapshot?.transcript.olderCursor,
-		(before) =>
-			readProviderConversationTranscript(provider, conversationId, {
-				includeTools: true,
-				before,
-			}),
-	);
-	const olderPages = older.pages?.pages;
 	const livePending =
 		pending && !nativeAgentChatPendingSettled(pending, snapshot)
 			? pending
 			: undefined;
-	const page = useMemo(() => {
-		if (!snapshot) return undefined;
-		try {
-			return nativeAgentChatPage({
-				source: { kind: "local", agentId, provider, conversationId },
-				transcript: snapshot.transcript,
-				older: olderPages,
-				canLoadOlder: true,
-				terminalEpoch,
-				working,
-				pending: livePending,
-			});
-		} catch {
-			return null;
-		}
-	}, [
-		agentId,
-		provider,
-		conversationId,
-		snapshot,
-		olderPages,
+	// The pane keeps the last read, so showing the view again at the same
+	// cursor reuses it.
+	const { page, older } = useNativeAgentTranscriptPage({
+		source,
 		terminalEpoch,
+		turnCompletedCount: count,
 		working,
-		livePending,
-	]);
+		read: { snapshot, setSnapshot, setReadFailed },
+		pending: livePending,
+	});
 
 	const approval = pendingApproval(runtime);
 	const showsApproval = approvalShown(approval, approvalAnswer);

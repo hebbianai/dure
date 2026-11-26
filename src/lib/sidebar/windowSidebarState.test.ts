@@ -221,7 +221,27 @@ describe("window main view", () => {
 			tab: "work",
 		});
 		expect(initialWindowSidebarState("main", saved, null).tab).toBe("work");
-		expect(MAIN_WINDOW_SIDEBAR_DEFAULT.tab).toBe("spaces");
+	});
+
+	it("opens a new main window on Work and keeps every saved window's view", () => {
+		expect(initialWindowSidebarState("main", null, null).tab).toBe("work");
+		// A saved window keeps its tab, Spaces included.
+		const spaces = serializeWindowSidebarState({
+			...MAIN_WINDOW_SIDEBAR_DEFAULT,
+			tab: "spaces",
+		});
+		expect(initialWindowSidebarState("main", spaces, null).tab).toBe("spaces");
+		// A snapshot from a build before Work, or a legacy one, without a tab
+		// reads as Spaces.
+		const tabless = JSON.stringify({
+			state: { open: false, width: 320 },
+			version: 2,
+		});
+		expect(initialWindowSidebarState("main", tabless, null).tab).toBe("spaces");
+		const legacy = JSON.stringify({ state: { sidebarOpen: true } });
+		expect(initialWindowSidebarState("main", null, legacy).tab).toBe("spaces");
+		// Other windows have no Work view to open on.
+		expect(initialWindowSidebarState("auxiliary", null, null).tab).toBe("spaces");
 	});
 
 	it("returns from Work to the tab Spaces was last shown with", () => {
