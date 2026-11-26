@@ -3,7 +3,9 @@
 //! `autoMemoryDirectory` is the supported Claude setting (including --settings):
 //! https://code.claude.com/docs/en/memory#storage-location
 //! Never put it in the shared account settings: concurrent projects need different
-//! directories. Legacy notes are copied once, with the original retained.
+//! directories. One directory per project serves every Dure-managed account, so
+//! an account switch keeps the conversation's notes. Earlier per-account and
+//! legacy notes are merged in once, with every original retained.
 
 use super::{
     create_or_require_owned_directory, lock_profile, require_owned_real_directory, typed_error,
@@ -138,57 +140,139 @@ fn project_paths(cwd: &Path) -> Result<(PathBuf, PathBuf), String> {
     Ok((common, legacy))
 }
 
+fn create_note(path: &Path, contents: &[u8]) -> Result<(), String> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|_| error("cannot create migrated memory note"))?;
+    file.write_all(contents)
+        .and_then(|_| file.sync_all())
+        .map_err(|_| error("cannot save migrated memory note"))
+}
+
+/// Copy the notes `source` has that `destination` lacks. A note already in
+/// `destination` is kept; when its contents differ, it is added to `differing`.
 fn copy_notes(
     source: &Path,
     destination: &Path,
     entries: &mut usize,
     bytes: &mut u64,
     depth: usize,
+    differing: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
     if depth > 32 {
         return Err(error("memory directory is too deep"));
     }
-    require_owned_real_directory(source, "legacy memory")?;
-    for entry in fs::read_dir(source).map_err(|_| error("cannot read legacy memory"))? {
-        let entry = entry.map_err(|_| error("cannot inspect legacy memory"))?;
+    require_owned_real_directory(source, "earlier memory")?;
+    for entry in fs::read_dir(source).map_err(|_| error("cannot read earlier memory"))? {
+        let entry = entry.map_err(|_| error("cannot inspect earlier memory"))?;
         *entries += 1;
         if *entries > MAX_ENTRIES {
-            return Err(error("too many legacy memory entries"));
+            return Err(error("too many earlier memory entries"));
         }
         let from = entry.path();
         let to = destination.join(entry.file_name());
         let metadata =
-            fs::symlink_metadata(&from).map_err(|_| error("cannot inspect legacy note"))?;
+            fs::symlink_metadata(&from).map_err(|_| error("cannot inspect earlier note"))?;
         if metadata.file_type().is_symlink() {
-            return Err(error("legacy memory contains a symlink"));
+            return Err(error("earlier memory contains a symlink"));
         }
+        let kept = match fs::symlink_metadata(&to) {
+            Ok(kept) => Some(kept.is_dir()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(_) => return Err(error("cannot inspect merged memory")),
+        };
         if metadata.is_dir() {
+            if kept == Some(false) {
+                differing.push(to);
+                continue;
+            }
             create_or_require_owned_directory(&to, "memory topic directory", 0o700)?;
-            copy_notes(&from, &to, entries, bytes, depth + 1)?;
+            copy_notes(&from, &to, entries, bytes, depth + 1, differing)?;
         } else {
             let contents = read_regular(&from)?;
             *bytes += contents.len() as u64;
             if *bytes > MAX_TREE_BYTES {
-                return Err(error("legacy memory exceeds copy limit"));
+                return Err(error("earlier memory exceeds copy limit"));
             }
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-                .open(&to)
-                .map_err(|_| error("cannot create migrated memory note"))?;
-            file.write_all(&contents)
-                .and_then(|_| file.sync_all())
-                .map_err(|_| error("cannot save migrated memory note"))?;
+            match kept {
+                None => create_note(&to, &contents)?,
+                Some(true) => differing.push(to),
+                Some(false) if read_regular(&to)? != contents => differing.push(to),
+                Some(false) => {}
+            }
         }
     }
     Ok(())
 }
 
+const MERGE_NOTE: &str = "dure-merged-account-memory.md";
+
+/// Leave the merge where Claude reads it: a note listing the retained folders
+/// and the files whose other versions were not copied, linked from MEMORY.md.
+fn write_merge_note(stage: &Path, sources: &[(PathBuf, Vec<PathBuf>)]) -> Result<(), String> {
+    let mut note = String::from(
+        "# Merged account memory\n\n\
+         Dure now keeps one Claude memory folder per project, shared by every \
+         Dure-managed account. This folder was built once from the earlier \
+         folders below, in this order. A file copied from an earlier folder was \
+         kept, so the other versions of the files listed after a folder were not \
+         copied. Every earlier folder is still in place, unchanged.\n\n",
+    );
+    for (index, (source, differing)) in sources.iter().enumerate() {
+        note.push_str(&format!("{}. `{}`", index + 1, source.display()));
+        if !differing.is_empty() {
+            let mut names: Vec<_> = differing
+                .iter()
+                .filter_map(|path| path.strip_prefix(stage).ok())
+                .map(|path| format!("`{}`", path.display()))
+                .collect();
+            names.sort();
+            note.push_str(&format!(" — differs: {}", names.join(", ")));
+        }
+        note.push('\n');
+    }
+    note.push_str(
+        "\nCopy anything still needed from those versions into this folder, then \
+         delete this file and its line in `MEMORY.md`.\n",
+    );
+    let index_path = stage.join("MEMORY.md");
+    let mut index = match fs::symlink_metadata(&index_path) {
+        Ok(_) => read_regular(&index_path)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(_) => return Err(error("cannot inspect merged memory index")),
+    };
+    if index.last().is_some_and(|byte| *byte != b'\n') {
+        index.push(b'\n');
+    }
+    index.extend_from_slice(
+        format!(
+            "- [Merged account memory]({MERGE_NOTE}) — earlier per-account notes to reconcile\n"
+        )
+        .as_bytes(),
+    );
+    // Both paths are copies in the private staging directory, never originals.
+    for (path, contents) in [
+        (stage.join(MERGE_NOTE), note.into_bytes()),
+        (index_path, index),
+    ] {
+        match fs::symlink_metadata(&path) {
+            Ok(_) => fs::remove_file(&path).map_err(|_| error("cannot update merged memory"))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(error("cannot inspect merged memory")),
+        }
+        create_note(&path, &contents)?;
+    }
+    Ok(())
+}
+
 /// The config directory comes from the existing, authorized account launch
-/// environment, never from a renderer-selected memory path. Provider-default
-/// launches retain Claude's native memory configuration.
+/// environment, never from a renderer-selected memory path. Every managed
+/// account resolves the same project to `~/.dure/memories/claude/<project>`.
+/// Provider-default launches retain Claude's native memory configuration.
 pub fn prepare_directory(
     home: &Path,
     config: Option<&Path>,
@@ -263,27 +347,16 @@ pub fn prepare_directory(
         "{:x}",
         Sha256::digest(identity.as_os_str().as_encoded_bytes())
     );
-    let _lock = lock_profile(accounts, &format!("{name}-memory-{key}"))?;
-    let mut parent = dure;
-    for component in ["memories", "claude", name] {
-        parent = create_or_require_owned_directory(
-            &parent.join(component),
-            "Claude memory root",
-            0o700,
-        )?;
+    // One lock and one directory per project for every managed account.
+    let _lock = lock_profile(accounts, &format!("memory-claude-{key}"))?;
+    let mut root = dure;
+    for component in ["memories", "claude"] {
+        root =
+            create_or_require_owned_directory(&root.join(component), "Claude memory root", 0o700)?;
     }
-    let destination = parent.join(&key);
-    let marker = profile.join(format!(".dure-memory-imported-{key}"));
-    let imported = match fs::symlink_metadata(&marker) {
-        Ok(_) => {
-            if read_regular(&marker)? != b"1\n" {
-                return Err(error("memory import marker changed"));
-            }
-            true
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-        Err(_) => return Err(error("cannot inspect memory import marker")),
-    };
+    let destination = root.join(&key);
+    let marker = root.join(format!(".dure-memory-imported-{key}"));
+    let imported_before = imported(&marker)?;
     match fs::symlink_metadata(&destination) {
         Ok(_) => {
             let directory = require_owned_real_directory(&destination, "Claude memory")?;
@@ -296,39 +369,16 @@ pub fn prepare_directory(
     let stage = unique_sidecar_path(&destination, "memory")?;
     create_or_require_owned_directory(&stage, "memory staging directory", 0o700)?;
     let result = (|| {
-        if !imported {
-            // `projects` is a reviewed profile overlay link. Accept only that exact
-            // canonical target, or an old profile-local directory, before reading notes.
-            let projects = profile.join("projects");
-            if fs::symlink_metadata(&projects).is_ok() {
-                let metadata = fs::symlink_metadata(&projects)
-                    .map_err(|_| error("cannot inspect projects"))?;
-                if metadata.file_type().is_symlink() {
-                    let canonical = home
-                        .join(".claude/projects")
-                        .canonicalize()
-                        .map_err(|_| error("canonical Claude projects are unavailable"))?;
-                    if projects.canonicalize().ok().as_ref() != Some(&canonical) {
-                        return Err(error("profile projects link is not the reviewed target"));
-                    }
-                } else {
-                    require_owned_real_directory(&projects, "Claude projects")?;
-                }
+        // Clearing the shared directory must not resurrect the retained copies.
+        if !imported_before {
+            let mut sources = Vec::new();
+            for source in earlier_memory(home, &profile, &root, name, &key, project_text)? {
+                let mut differing = Vec::new();
+                copy_notes(&source, &stage, &mut 0, &mut 0, 0, &mut differing)?;
+                sources.push((source, differing));
             }
-            let slug = legacy_project_key(project_text);
-            let legacy_project = projects.join(slug);
-            let source = legacy_project.join("memory");
-            match fs::symlink_metadata(&legacy_project) {
-                Ok(_) => {
-                    require_owned_real_directory(&legacy_project, "legacy Claude project")?;
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(_) => return Err(error("cannot inspect legacy project")),
-            }
-            match fs::symlink_metadata(&source) {
-                Ok(_) => copy_notes(&source, &stage, &mut 0, &mut 0, 0)?,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(_) => return Err(error("cannot inspect legacy memory")),
+            if sources.len() > 1 {
+                write_merge_note(&stage, &sources)?;
             }
         }
         fs::rename(&stage, &destination).map_err(|_| error("cannot publish memory directory"))?;
@@ -340,6 +390,105 @@ pub fn prepare_directory(
         let _ = fs::remove_dir_all(&stage);
     }
     result
+}
+
+fn imported(marker: &Path) -> Result<bool, String> {
+    match fs::symlink_metadata(marker) {
+        Ok(_) if read_regular(marker)? == b"1\n" => Ok(true),
+        Ok(_) => Err(error("memory import marker changed")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err(error("cannot inspect memory import marker")),
+    }
+}
+
+/// The folders notes come from on first preparation, in precedence order: the
+/// launching account's own notes, then every other account's per-account
+/// folder. An account's own notes are its per-account folder, or, before it
+/// had one, the legacy Claude project memory it has not imported yet.
+fn earlier_memory(
+    home: &Path,
+    profile: &Path,
+    root: &Path,
+    name: &str,
+    key: &str,
+    project_text: &str,
+) -> Result<Vec<PathBuf>, String> {
+    let account_folder = |account: &str| -> Result<Option<PathBuf>, String> {
+        let account = root.join(account);
+        match fs::symlink_metadata(&account) {
+            Ok(_) => require_owned_real_directory(&account, "account memory root")?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(error("cannot inspect account memory root")),
+        };
+        let folder = account.join(key);
+        match fs::symlink_metadata(&folder) {
+            Ok(_) => require_owned_real_directory(&folder, "account memory").map(Some),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(error("cannot inspect account memory")),
+        }
+    };
+    let mut sources = Vec::new();
+    match account_folder(name)? {
+        Some(own) => sources.push(own),
+        None if !imported(&profile.join(format!(".dure-memory-imported-{key}")))? => {
+            sources.extend(legacy_memory(home, profile, project_text)?);
+        }
+        None => {}
+    }
+    let mut others = Vec::new();
+    for entry in fs::read_dir(root).map_err(|_| error("cannot read Claude memory root"))? {
+        let entry = entry.map_err(|_| error("cannot inspect Claude memory root"))?;
+        let Some(account) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if account.starts_with("claude-") && account != name {
+            others.push(account);
+        }
+    }
+    others.sort();
+    for account in others {
+        sources.extend(account_folder(&account)?);
+    }
+    Ok(sources)
+}
+
+fn legacy_memory(
+    home: &Path,
+    profile: &Path,
+    project_text: &str,
+) -> Result<Option<PathBuf>, String> {
+    // `projects` is a reviewed profile overlay link. Accept only that exact
+    // canonical target, or an old profile-local directory, before reading notes.
+    let projects = profile.join("projects");
+    if fs::symlink_metadata(&projects).is_ok() {
+        let metadata =
+            fs::symlink_metadata(&projects).map_err(|_| error("cannot inspect projects"))?;
+        if metadata.file_type().is_symlink() {
+            let canonical = home
+                .join(".claude/projects")
+                .canonicalize()
+                .map_err(|_| error("canonical Claude projects are unavailable"))?;
+            if projects.canonicalize().ok().as_ref() != Some(&canonical) {
+                return Err(error("profile projects link is not the reviewed target"));
+            }
+        } else {
+            require_owned_real_directory(&projects, "Claude projects")?;
+        }
+    }
+    let legacy_project = projects.join(legacy_project_key(project_text));
+    match fs::symlink_metadata(&legacy_project) {
+        Ok(_) => {
+            require_owned_real_directory(&legacy_project, "legacy Claude project")?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(error("cannot inspect legacy project")),
+    }
+    let source = legacy_project.join("memory");
+    match fs::symlink_metadata(&source) {
+        Ok(_) => require_owned_real_directory(&source, "legacy memory").map(Some),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(error("cannot inspect legacy memory")),
+    }
 }
 
 fn publish_settings(config: &Path, document: &Map<String, Value>) -> Result<String, String> {
@@ -583,6 +732,150 @@ mod migration_tests {
             let slug = legacy_project_key(project.to_str().unwrap());
             self.account.join("projects").join(slug).join("memory")
         }
+        fn key(&self) -> String {
+            let (identity, _) = project_paths(&self.cwd).unwrap();
+            format!(
+                "{:x}",
+                Sha256::digest(identity.as_os_str().as_encoded_bytes())
+            )
+        }
+        /// A folder written by the per-account layout that preceded #718.
+        fn account_memory(&self, account: &str, notes: &[(&str, &str)]) -> PathBuf {
+            let folder = self
+                .home
+                .join(".dure/memories/claude")
+                .join(account)
+                .join(self.key());
+            for (name, contents) in notes {
+                let path = folder.join(name);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, contents).unwrap();
+            }
+            folder
+        }
+    }
+
+    fn tree(root: &Path) -> std::collections::BTreeMap<PathBuf, String> {
+        let mut files = std::collections::BTreeMap::new();
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(directory) = pending.pop() {
+            for entry in fs::read_dir(directory).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else {
+                    let relative = path.strip_prefix(root).unwrap().to_path_buf();
+                    files.insert(relative, fs::read_to_string(path).unwrap());
+                }
+            }
+        }
+        files
+    }
+
+    #[test]
+    fn drifted_account_folders_merge_once_and_every_original_is_kept() {
+        let f = Fixture::new();
+        let work = f.account_memory(
+            "claude-work",
+            &[
+                ("MEMORY.md", "- work index\n"),
+                ("shared.md", "same"),
+                ("own.md", "work"),
+            ],
+        );
+        let other = f.account_memory(
+            "claude-other",
+            &[
+                ("MEMORY.md", "- other index"),
+                ("shared.md", "same"),
+                ("own.md", "other"),
+                ("topics/only-other.md", "other topic"),
+            ],
+        );
+        let third = f.account_memory("claude-third", &[("only-third.md", "third")]);
+        // A removed account's folder still contributes; unrelated entries do not.
+        fs::create_dir_all(f.home.join(".dure/memories/claude/not-an-account")).unwrap();
+        // Legacy notes were already imported into the launching account's folder.
+        fs::create_dir_all(f.legacy()).unwrap();
+        fs::write(f.legacy().join("legacy.md"), "legacy").unwrap();
+        let originals = [&work, &other, &third].map(|path| tree(path));
+
+        let shared = f.prepare().unwrap();
+        let merged = tree(&shared);
+        assert_eq!(merged[Path::new("shared.md")], "same");
+        assert_eq!(merged[Path::new("own.md")], "work");
+        assert_eq!(merged[Path::new("topics/only-other.md")], "other topic");
+        assert_eq!(merged[Path::new("only-third.md")], "third");
+        assert!(!merged.contains_key(Path::new("legacy.md")));
+        assert_eq!(
+            merged[Path::new("MEMORY.md")],
+            format!(
+                "- work index\n- [Merged account memory]({MERGE_NOTE}) — earlier per-account notes to reconcile\n"
+            )
+        );
+        let note = &merged[Path::new(MERGE_NOTE)];
+        let canonical = |path: &Path| path.canonicalize().unwrap().display().to_string();
+        assert!(note.contains(&format!("1. `{}`\n", canonical(&work))));
+        assert!(note.contains(&format!(
+            "2. `{}` — differs: `MEMORY.md`, `own.md`\n",
+            canonical(&other)
+        )));
+        assert!(note.contains(&format!("3. `{}`\n", canonical(&third))));
+        assert_eq!(merged.len(), 6);
+        for (folder, original) in [&work, &other, &third].iter().zip(&originals) {
+            assert_eq!(&tree(folder), original, "an original folder changed");
+        }
+
+        // Another account reaches the same folder; the merge note is written once.
+        let account = f.home.join(".dure/accounts/claude-other");
+        fs::create_dir(&account).unwrap();
+        fs::write(shared.join("MEMORY.md"), "- reconciled\n").unwrap();
+        fs::remove_file(shared.join(MERGE_NOTE)).unwrap();
+        assert_eq!(
+            prepare_directory(&f.home, Some(&account), &f.cwd).unwrap(),
+            Some(shared.clone())
+        );
+        assert_eq!(
+            fs::read_to_string(shared.join("MEMORY.md")).unwrap(),
+            "- reconciled\n"
+        );
+        assert!(!shared.join(MERGE_NOTE).exists());
+        // Clearing the shared folder must not resurrect the retained copies.
+        fs::remove_dir_all(&shared).unwrap();
+        assert_eq!(f.prepare().unwrap(), shared);
+        assert_eq!(fs::read_dir(&shared).unwrap().count(), 0);
+        for (folder, original) in [&work, &other, &third].iter().zip(&originals) {
+            assert_eq!(&tree(folder), original, "an original folder changed");
+        }
+    }
+
+    #[test]
+    fn an_account_without_a_folder_seeds_from_its_unimported_legacy_notes_first() {
+        let f = Fixture::new();
+        fs::create_dir_all(f.legacy()).unwrap();
+        fs::write(f.legacy().join("MEMORY.md"), "legacy index\n").unwrap();
+        let other = f.account_memory(
+            "claude-other",
+            &[("MEMORY.md", "other index\n"), ("other.md", "other")],
+        );
+        let shared = f.prepare().unwrap();
+        assert!(
+            fs::read_to_string(shared.join("MEMORY.md"))
+                .unwrap()
+                .starts_with("legacy index\n- [Merged account memory]")
+        );
+        assert_eq!(
+            fs::read_to_string(shared.join("other.md")).unwrap(),
+            "other"
+        );
+        assert_eq!(
+            fs::read_to_string(other.join("MEMORY.md")).unwrap(),
+            "other index\n"
+        );
+        assert_eq!(
+            fs::read_to_string(f.legacy().join("MEMORY.md")).unwrap(),
+            "legacy index\n"
+        );
     }
 
     #[test]
@@ -637,7 +930,7 @@ mod migration_tests {
     }
 
     #[test]
-    fn accounts_and_colliding_legacy_project_slugs_have_distinct_storage() {
+    fn accounts_share_project_memory_and_colliding_legacy_slugs_stay_distinct() {
         let f = Fixture::new();
         let one = f.prepare().unwrap();
         let other = f.home.join(".dure/accounts/claude-other");
@@ -645,9 +938,10 @@ mod migration_tests {
         let two = prepare_directory(&f.home, Some(&other), &f.cwd)
             .unwrap()
             .unwrap();
-        assert_ne!(one, two);
-        fs::write(one.join("MEMORY.md"), "work only").unwrap();
-        assert!(!two.join("MEMORY.md").exists());
+        assert_eq!(one, two);
+        assert_eq!(one, f.home.join(".dure/memories/claude").join(f.key()));
+        fs::write(one.join("MEMORY.md"), "shared").unwrap();
+        assert_eq!(fs::read_to_string(two.join("MEMORY.md")).unwrap(), "shared");
         let project = f.home.join("project-one");
         fs::create_dir(&project).unwrap();
         assert_ne!(
@@ -689,7 +983,8 @@ mod migration_tests {
             prepare_arguments(&f.home, &environment, &f.cwd, &original).unwrap(),
             arguments
         );
-        // Reusing launch settings during an account switch must rebind memory.
+        // An account switch reuses the launch settings, republished in the new
+        // profile, and keeps the conversation's memory folder.
         let other = f.home.join(".dure/accounts/claude-other");
         fs::create_dir(&other).unwrap();
         let other_environment =
@@ -701,7 +996,7 @@ mod migration_tests {
         let switched = prepare_arguments(&f.home, &other_environment, &f.cwd, &arguments).unwrap();
         let switched_settings: Value =
             serde_json::from_slice(&fs::read(&switched[1]).unwrap()).unwrap();
-        assert_ne!(
+        assert_eq!(
             composed["autoMemoryDirectory"],
             switched_settings["autoMemoryDirectory"]
         );
