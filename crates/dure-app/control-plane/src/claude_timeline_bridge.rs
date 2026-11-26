@@ -1,21 +1,22 @@
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use dure_app::{
-    AGENT_TIMELINE_SCHEMA_VERSION_V1, AgentClientMessageIdV1, AgentHistoryHydrationDispositionV1,
-    AgentHistorySnapshotV1, AgentInteractionBindingV1, AgentInteractionRequestIdV1,
-    AgentInteractionSessionIdV1, AgentInterruptTurnRequestV1, AgentPendingAnswerIntentV1,
-    AgentPendingRequestDraftV1, AgentPendingRequestKindV1, AgentPendingRequestV1,
-    AgentPendingSnapshotV1, AgentProviderEventCommitV1, AgentProviderEventIdentityV1,
-    AgentProviderGapV1, AgentProviderMessageIdV1, AgentProviderRuntimeFenceV1,
-    AgentStartTurnIntentV1, AgentTimelineItemBodyV1, AgentTimelineItemDraftV1,
-    AgentTimelineItemIdV1, AgentTimelineLifecycleStateV1, AgentTimelineMutationV1,
-    AgentTimelineStore, AgentTimelineStreamIdV1, AgentTimelineTextFragmentV1,
-    AgentTimelineTextKindV1, AgentTimelineToolStateV1, AgentTurnFailureReasonV1,
-    MAX_AGENT_HISTORY_ITEMS_V1,
+    AGENT_TIMELINE_SCHEMA_VERSION_V1, AgentClientMessageIdV1, AgentHeldHistoryEndV1,
+    AgentHistoryHydrationDispositionV1, AgentHistorySnapshotV1, AgentInteractionBindingV1,
+    AgentInteractionRequestIdV1, AgentInteractionSessionIdV1, AgentInterruptTurnRequestV1,
+    AgentPendingAnswerIntentV1, AgentPendingRequestDraftV1, AgentPendingRequestKindV1,
+    AgentPendingRequestV1, AgentPendingSnapshotV1, AgentProviderEventCommitV1,
+    AgentProviderEventIdentityV1, AgentProviderGapV1, AgentProviderMessageIdV1,
+    AgentProviderRuntimeFenceV1, AgentStartTurnIntentV1, AgentTimelineItemBodyV1,
+    AgentTimelineItemDraftV1, AgentTimelineItemIdV1, AgentTimelineLifecycleStateV1,
+    AgentTimelineMutationV1, AgentTimelineStore, AgentTimelineStreamIdV1,
+    AgentTimelineTextFragmentV1, AgentTimelineTextKindV1, AgentTimelineToolStateV1,
+    AgentTurnFailureReasonV1, MAX_AGENT_HISTORY_ITEMS_V1,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -87,6 +88,9 @@ pub struct ClaudeTimelineBridge<S, T> {
     interaction_session_id: AgentInteractionSessionIdV1,
     service: Arc<AgentConversationService<S>>,
     transport: T,
+    /// The Claude state directory whose `projects` hold the Query's
+    /// transcript, where a continued history finds where the held rows end.
+    transcript_home: Option<PathBuf>,
 }
 
 impl<S, T> ClaudeTimelineBridge<S, T>
@@ -109,7 +113,16 @@ where
             interaction_session_id,
             service,
             transport,
+            transcript_home: None,
         })
+    }
+
+    /// Reads the Query's transcript under `home`, Claude's state directory
+    /// for the Query's account, to place a continued history's gap.
+    #[must_use]
+    pub fn with_transcript_home(mut self, home: Option<PathBuf>) -> Self {
+        self.transcript_home = home;
+        self
     }
 
     pub fn identity(&self) -> &ClaudeDch1QueryIdentity {
@@ -306,11 +319,22 @@ where
             Err(error) => return Err(error),
         };
 
+        let held_history_end = if continuing {
+            self.held_history_end(
+                authority.newest_provider_message_id,
+                provider_conversation_ref,
+                &items,
+            )
+            .await
+        } else {
+            None
+        };
         let snapshot = AgentHistorySnapshotV1 {
             schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
             binding,
             items,
             observed_at_ms: now_ms()?,
+            held_history_end,
         };
         if continuing {
             // The provider may have continued the conversation outside this
@@ -333,6 +357,49 @@ where
             }
         }
         self.release_history().await
+    }
+
+    /// Where the records of the timeline's newest provider message end in the
+    /// Query's transcript, when the history read does not reach that message
+    /// but opens at a place in the transcript: the store then places the gap
+    /// between them, which a view pages the skipped history into. `None`
+    /// leaves the gap at no place, as when the transcript is not on this
+    /// machine.
+    async fn held_history_end(
+        &self,
+        newest: Option<AgentProviderMessageIdV1>,
+        provider_conversation_ref: &str,
+        items: &[AgentTimelineItemDraftV1],
+    ) -> Option<AgentHeldHistoryEndV1> {
+        let newest = newest?;
+        let resumed_at = items
+            .first()
+            .and_then(|item| item.body.transcript_history_start())
+            .and_then(|start| u64::try_from(start).ok())?;
+        if items
+            .iter()
+            .any(|item| item.provider_message_id.as_ref() == Some(&newest))
+        {
+            return None;
+        }
+        let projects = self.transcript_home.as_ref()?.join("projects");
+        let conversation = provider_conversation_ref.to_owned();
+        let message = newest.as_str().to_owned();
+        let end = tokio::task::spawn_blocking(move || {
+            dure_provider_profile::transcript::claude_message_end_cursor(
+                &projects,
+                &conversation,
+                &message,
+                resumed_at,
+            )
+        })
+        .await
+        .ok()?
+        .ok()??;
+        Some(AgentHeldHistoryEndV1 {
+            provider_message_id: newest,
+            transcript_offset: i64::try_from(end).ok()?,
+        })
     }
 
     /// The provider history the host read when it bound this Query, or `None`

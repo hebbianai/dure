@@ -2,6 +2,7 @@ use super::*;
 
 const CONVERSATION: &str = "conversation-history";
 const CAPABILITY: &str = "agent_conversation.read_provider_history";
+const AFTER_CAPABILITY: &str = "agent_conversation.read_provider_history.after.v1";
 
 fn claude_record(kind: &str, text: &str) -> String {
     format!(
@@ -94,6 +95,10 @@ async fn history_fixture() -> (
 }
 
 fn history_request(state: &ServiceState, body: Value) -> BackendRequest {
+    let mut required_capabilities = vec![CAPABILITY.into()];
+    if body.get("after").is_some() {
+        required_capabilities.push(AFTER_CAPABILITY.into());
+    }
     BackendRequest {
         schema_version: 1,
         api_version: BACKEND_PROTOCOL_API.into(),
@@ -108,7 +113,7 @@ fn history_request(state: &ServiceState, body: Value) -> BackendRequest {
                 minimum: ProtocolVersion { major: 1, minor: 0 },
                 maximum: ProtocolVersion { major: 1, minor: 0 },
             },
-            required_capabilities: vec![CAPABILITY.into()],
+            required_capabilities,
         },
         body,
         connection: None,
@@ -196,4 +201,42 @@ async fn a_read_outside_the_sessions_own_conversation_is_refused() {
     .await
     .unwrap_err();
     assert_eq!(error.code, "agent_conversation_history_unavailable");
+}
+
+/// A gap in a Chat timeline reads only the history between its ends: the page
+/// starts where the rows above it end, and names no older cursor once it gets
+/// there. A floor that is not before the page's end is refused.
+#[tokio::test]
+async fn a_gap_reads_only_the_history_between_the_rows_around_it() {
+    let (_root, state, binding, transcript) = history_fixture().await;
+    let held_end = claude_record("user", "first prompt").len() as u64;
+    let resumed_at = fs::metadata(&transcript).unwrap().len()
+        - claude_record("assistant", "second answer").len() as u64;
+    let mut body = history_body(&binding, resumed_at);
+    body["after"] = json!(held_end);
+
+    let response = dispatch(&state, &history_request(&state, body.clone()))
+        .await
+        .unwrap();
+
+    let activity = &response["activity"];
+    assert_eq!(
+        activity["entries"],
+        json!([
+            { "role": "agent", "text": "first answer" },
+            { "role": "user", "text": "second prompt" },
+        ])
+    );
+    assert!(
+        activity.get("olderCursor").is_none(),
+        "the floor is reached"
+    );
+
+    for after in [resumed_at, resumed_at + 1] {
+        body["after"] = json!(after);
+        let error = dispatch(&state, &history_request(&state, body.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "agent_conversation_request_invalid");
+    }
 }

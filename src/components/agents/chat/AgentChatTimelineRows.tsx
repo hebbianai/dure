@@ -15,6 +15,7 @@ import {
 import { ChatDisclosure } from "@/components/agents/chat/ChatDisclosure";
 import { ChatMarkdown } from "@/components/agents/chat/ChatMarkdown";
 import { ChatToolBurst } from "@/components/agents/chat/ChatToolBurst";
+import { useProviderHistoryGap } from "@/components/agents/chat/ProviderHistoryGapContext";
 import { CodeBlock } from "@/components/common/CodeBlock";
 import { EmptyHint } from "@/components/common/StatusBlocks";
 import { ChatAlert } from "@/components/agents/chat/ChatAlert";
@@ -280,6 +281,37 @@ function PlanRow({
 	);
 }
 
+/** Where the timeline leaves provider history out. At a gap the view can
+ * page, it offers that history, which loads in right below it. */
+function HistoryBoundaryRow({ itemId }: { itemId: string }) {
+	const gap = useProviderHistoryGap(itemId);
+	if (!gap || gap.state.unavailable) {
+		return <CenteredNotice>{t("agents.chat.historyBoundary")}</CenteredNotice>;
+	}
+	const { loading, failed } = gap.state;
+	return (
+		<div className="flex w-full flex-col items-center gap-1">
+			<Button
+				type="button"
+				variant="ghost"
+				size="xs"
+				disabled={loading}
+				aria-busy={loading}
+				onClick={() => void gap.load().catch(() => {})}
+			>
+				{loading
+					? t("agents.chat.loadingEarlierHistory")
+					: t("agents.chat.loadEarlierHistory")}
+			</Button>
+			{failed && (
+				<ErrorText className="text-center">
+					{t("agents.chat.historyBoundary")}
+				</ErrorText>
+			)}
+		</div>
+	);
+}
+
 function TimelineRow({
 	projected,
 	dimmed = false,
@@ -399,9 +431,7 @@ function TimelineRow({
 				</ChatAlert>
 			);
 		case "history_boundary":
-			return (
-				<CenteredNotice>{t("agents.chat.historyBoundary")}</CenteredNotice>
-			);
+			return <HistoryBoundaryRow itemId={projected.timeline.item.itemId} />;
 		case "provider_evidence":
 			return null;
 		case "lifecycle": {

@@ -37,6 +37,11 @@ struct ReadProviderHistoryBodyV1 {
     /// The transcript offset the page ends before: where the timeline's
     /// seeded history starts, or an earlier page's `olderCursor`.
     before: u64,
+    /// The transcript offset the page starts no earlier than: where the rows
+    /// above a gap in the timeline end. Without it, the transcript's start.
+    /// Requires `agent_conversation.read_provider_history.after.v1`.
+    #[serde(default)]
+    after: Option<u64>,
 }
 
 pub(super) async fn read(
@@ -45,7 +50,8 @@ pub(super) async fn read(
 ) -> Result<Value, AgentConversationApiErrorV1> {
     let body: ReadProviderHistoryBodyV1 = serde_json::from_value(body.clone())
         .map_err(|_| AgentConversationApiErrorV1::RequestInvalid)?;
-    if body.schema_version != AGENT_TIMELINE_SCHEMA_VERSION_V1 {
+    let after = body.after.unwrap_or(0);
+    if body.schema_version != AGENT_TIMELINE_SCHEMA_VERSION_V1 || after >= body.before {
         return Err(AgentConversationApiErrorV1::RequestInvalid);
     }
     let binding = state
@@ -74,6 +80,7 @@ pub(super) async fn read(
             &provider,
             &conversation,
             before,
+            after,
         )
     })
     .await

@@ -368,7 +368,7 @@ pub fn activity_page_from_file(
     } else {
         Limits::DEFAULT
     };
-    activity_window(path, provider, conversation_id, limits, before)
+    activity_window(path, provider, conversation_id, limits, before, 0)
 }
 
 fn activity_window(
@@ -377,6 +377,7 @@ fn activity_window(
     conversation_id: &str,
     limits: Limits,
     before: Option<u64>,
+    after: u64,
 ) -> Result<ProviderConversationActivity, String> {
     let (parse, tool_events) = provider_parsers(provider)?;
     let window = read_window(
@@ -387,6 +388,7 @@ fn activity_window(
         Some(tool_events),
         limits,
         before,
+        after,
     )?;
     Ok(ProviderConversationActivity {
         transcript: window.transcript,
@@ -463,6 +465,7 @@ fn transcript_window(
             ..Limits::DEFAULT
         },
         None,
+        0,
     )
     .map(|window| window.transcript)
 }
@@ -483,6 +486,11 @@ struct TranscriptWindow {
     older_cursor: Option<u64>,
 }
 
+/// The records of `path` that end by `before` (by default, its end) and start
+/// no earlier than `after`, the newest first within the bounds. `after` is a
+/// record's start, where the records a reader already shows end; 0 is the
+/// transcript's start.
+#[allow(clippy::too_many_arguments)]
 fn read_window(
     path: &Path,
     provider: &str,
@@ -497,8 +505,10 @@ fn read_window(
         tool_calls: tool_call_limit,
     }: Limits,
     before: Option<u64>,
+    after: u64,
 ) -> Result<TranscriptWindow, String> {
     let read_error = |error| format!("read provider transcript: {error}");
+    let changed = || "provider transcript changed since the newer page was read".to_string();
     let mut file = fs::File::open(path).map_err(read_error)?;
     let metadata = file.metadata().map_err(read_error)?;
     if !metadata.is_file() {
@@ -506,11 +516,14 @@ fn read_window(
     }
     let end = before.unwrap_or(metadata.len());
     if end > metadata.len() {
-        return Err("provider transcript changed since the newer page was read".to_string());
+        return Err(changed());
+    }
+    if after > end {
+        return Err("provider transcript range is invalid".to_string());
     }
     // Snapshot a bounded range, even while the provider continues appending.
     // Start one byte earlier so a record exactly on the boundary is retained.
-    let start = end.saturating_sub(source_limit);
+    let start = end.saturating_sub(source_limit).max(after);
     file.seek(SeekFrom::Start(start.saturating_sub(1)))
         .map_err(read_error)?;
     let mut bytes = Vec::new();
@@ -518,6 +531,11 @@ fn read_window(
         .take(end - start + u64::from(start > 0))
         .read_to_end(&mut bytes)
         .map_err(read_error)?;
+    // A floor inside the range is where a record starts: right after a line
+    // break. Anywhere else the transcript is not the one it was measured in.
+    if start == after && after > 0 && bytes.first() != Some(&b'\n') {
+        return Err(changed());
+    }
     let (mut offset, bytes) = if start > 0 {
         // Never decode a partial JSON record or split UTF-8 code point.
         let boundary = bytes
@@ -629,7 +647,7 @@ fn read_window(
             .front()
             .map_or(records_start, |record| record.offset);
     }
-    let older_cursor = (start > 0 || trimmed).then(|| {
+    let older_cursor = (start > after || trimmed).then(|| {
         // A record longer than the read window leaves no whole record in it;
         // the older page then starts inside that record.
         if cut >= end {
@@ -760,12 +778,18 @@ pub fn read_roots_activity(
 /// earlier page named, for a client across a backend connection: it joins
 /// the pages before and after it as [`activity_page_from_file`] does, and
 /// carries fewer messages and calls, so that it fits one backend response.
+///
+/// It never reads a record that starts before `after`: where the history a
+/// view already shows below a gap ends (0 at the transcript's start). A page
+/// that reaches `after` names no older cursor, so paging stops there and
+/// joins the older rows exactly.
 pub fn read_roots_activity_page(
     claude_projects: &Path,
     codex_sessions: &Path,
     provider: &str,
     conversation_id: &str,
     before: u64,
+    after: u64,
 ) -> Result<ProviderConversationActivity, String> {
     provider_parsers(provider)?;
     let path = conversation_path(claude_projects, codex_sessions, provider, conversation_id)?;
@@ -775,6 +799,7 @@ pub fn read_roots_activity_page(
         conversation_id,
         Limits::BACKEND_PAGE,
         Some(before),
+        after,
     )
 }
 
@@ -841,26 +866,75 @@ pub fn codex_turn_start_cursor(
             && value.pointer("/payload/type").and_then(Value::as_str) == Some("task_started")
             && value.pointer("/payload/turn_id").and_then(Value::as_str) == Some(turn_id)
     };
-    last_record_offset(&mut file, turn_id.as_bytes(), opens_turn).map_err(read_error)
+    let end = file.metadata().map_err(read_error)?.len();
+    last_record(&mut file, end, turn_id.as_bytes(), opens_turn)
+        .map(|record| record.map(|(offset, _)| offset))
+        .map_err(read_error)
 }
 
-/// How much of a transcript one step of [`last_record_offset`] reads.
+/// Where the records of message `provider_message_id` of a Claude
+/// conversation end, looking back from `before`: the offset just past the last
+/// record that carries it, as its `uuid` (a person's message) or as its
+/// `message.id` (a reply, which the provider writes one record per content
+/// block). A timeline that holds the conversation through that message and
+/// resumes it at `before` leaves out the records between them, which
+/// [`read_roots_activity_page`] pages with this as its floor. `None` when no
+/// record before `before` carries the message.
+pub fn claude_message_end_cursor(
+    claude_projects: &Path,
+    conversation_id: &str,
+    provider_message_id: &str,
+    before: u64,
+) -> Result<Option<u64>, String> {
+    let message_id = !provider_message_id.is_empty()
+        && provider_message_id.len() <= 256
+        && provider_message_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "._:+-_".contains(character));
+    if !safe_id(conversation_id) || !message_id {
+        return Err("provider conversation id is invalid".to_string());
+    }
+    let path = find_claude_conversation(claude_projects, conversation_id)
+        .map(|(_, path)| path)
+        .ok_or_else(|| "provider conversation was not found".to_string())?;
+    let read_error = |error| format!("read provider transcript: {error}");
+    let mut file = fs::File::open(path).map_err(read_error)?;
+    if before > file.metadata().map_err(read_error)?.len() {
+        return Err("provider transcript changed since the newer page was read".to_string());
+    }
+    let carries_message = |value: &Value| {
+        value.get("uuid").and_then(Value::as_str) == Some(provider_message_id)
+            || value.pointer("/message/id").and_then(Value::as_str) == Some(provider_message_id)
+    };
+    last_record(
+        &mut file,
+        before,
+        provider_message_id.as_bytes(),
+        carries_message,
+    )
+    .map(|record| record.map(|(offset, length)| offset + length))
+    .map_err(read_error)
+}
+
+/// How much of a transcript one step of [`last_record`] reads.
 const BACKWARD_READ_BYTES: u64 = 1024 * 1024;
 
-/// The offset of the last record in `file` that `matches`, reading back from
-/// its end. Only records that contain `needle` are decoded.
-fn last_record_offset(
+/// The offset and length of the last whole record that ends by `end` in
+/// `file` and `matches`, reading back from `end`. Only records that contain
+/// `needle` are decoded.
+fn last_record(
     file: &mut fs::File,
+    mut end: u64,
     needle: &[u8],
     matches: impl Fn(&Value) -> bool,
-) -> std::io::Result<Option<u64>> {
+) -> std::io::Result<Option<(u64, u64)>> {
     let metadata = file.metadata()?;
     if !metadata.is_file() {
         return Err(std::io::Error::other(
             "provider transcript is not a regular file",
         ));
     }
-    let mut end = metadata.len();
+    end = end.min(metadata.len());
     // The start of the earliest record read so far, whose line began before
     // `end`: it is decoded once the step before it completes it.
     let mut carried = Vec::new();
@@ -894,7 +968,7 @@ fn last_record_offset(
             if line.windows(needle.len()).any(|window| window == needle)
                 && serde_json::from_slice::<Value>(line).is_ok_and(|value| matches(&value))
             {
-                return Ok(Some(offset));
+                return Ok(Some((offset, line.len() as u64)));
             }
         }
         bytes.truncate(whole_from);

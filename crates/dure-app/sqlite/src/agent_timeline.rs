@@ -15,7 +15,7 @@ use dure_app::{
     AgentTimelineReadV1, AgentTimelineRowV1, AgentTimelineStreamIdV1, AgentTimelineTextFragmentV1,
     AgentTimelineTextKindV1, AgentTurnEffectReceiptV1, AgentTurnEffectStateV1, AgentTurnIdV1,
     DomainStoreErrorV1, MAX_AGENT_PENDING_REQUESTS_V1, MAX_AGENT_TIMELINE_LIVE_TEXT_HEADS_V1,
-    MAX_AGENT_TIMELINE_TEXT_BYTES_V1, PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1, ProviderIdV1,
+    MAX_AGENT_TIMELINE_TEXT_BYTES_V1, ProviderIdV1,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -1092,9 +1092,16 @@ pub(crate) async fn history_hydration_authority_on(
     } else {
         AgentHistoryHydrationDispositionV1::Seedable
     };
+    let newest_provider_message_id =
+        if disposition == AgentHistoryHydrationDispositionV1::Continuable {
+            newest_provider_message_id(connection, &binding).await?
+        } else {
+            None
+        };
     Ok(AgentHistoryHydrationAuthorityV1 {
         binding,
         disposition,
+        newest_provider_message_id,
     })
 }
 
@@ -1208,9 +1215,12 @@ pub(crate) async fn continue_history(
 /// appended, each item once. A snapshot that reaches no held provider message
 /// but opens at a window or a compaction starts after everything the timeline
 /// holds: it follows the held rows behind a boundary that marks the provider
-/// history between them. Any other snapshot cannot be placed after the held
-/// rows, and older history is never inserted ahead of them, so nothing is
-/// appended. Neither is anything while a turn is in flight.
+/// history between them. The boundary is placed in the transcript when the
+/// snapshot opens at a place there and says where the records of the newest
+/// provider message the timeline holds end. Any other snapshot cannot be
+/// placed after the held rows, and older history is never inserted ahead of
+/// them, so nothing is appended. Neither is anything while a turn is in
+/// flight.
 async fn continue_history_on(
     connection: &mut SqliteConnection,
     snapshot: &AgentHistorySnapshotV1,
@@ -1238,9 +1248,13 @@ async fn continue_history_on(
     let mut timeline_changed = false;
     if let Some((behind_gap, continued)) = continued.filter(|(_, items)| !items.is_empty()) {
         if behind_gap {
-            timeline_changed |=
-                append_item_on(connection, &current, &history_gap(&current, &continued[0])?)
-                    .await?;
+            let range = held_history_gap_range(connection, &current, snapshot).await?;
+            timeline_changed |= append_item_on(
+                connection,
+                &current,
+                &history_gap(&current, &continued[0], range)?,
+            )
+            .await?;
         }
         for item in continued {
             if !has_timeline_item(connection, &current, &item.item_id).await? {
@@ -1268,12 +1282,14 @@ async fn continue_history_on(
     })
 }
 
-/// The boundary a continued timeline shows where it skips provider history:
-/// at no place in the transcript a reader could page, so no view loads older
-/// pages into the middle of the timeline.
+/// The boundary a continued timeline shows where it skips provider history,
+/// before the first item it continues with: placed at `range` in the
+/// transcript, a view pages the history between the held rows and the
+/// continued ones into it; without one, at no place a reader could page.
 fn history_gap(
     binding: &AgentInteractionBindingV1,
     first: &AgentTimelineItemDraftV1,
+    range: Option<(i64, i64)>,
 ) -> Result<AgentTimelineItemDraftV1, DomainStoreErrorV1> {
     Ok(AgentTimelineItemDraftV1 {
         item_id: stable_item_id(
@@ -1286,13 +1302,58 @@ fn history_gap(
         turn_id: None,
         client_message_id: None,
         provider_message_id: None,
-        body: AgentTimelineItemBodyV1::HistoryBoundary {
-            reason: PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1.into(),
-            requested_after_provider_sequence: 0,
-            dropped_through_provider_sequence: 1,
-        },
+        body: AgentTimelineItemBodyV1::history_gap(range),
         created_at_ms: first.created_at_ms,
     })
+}
+
+/// Where the provider history a continued timeline skips lies in the
+/// transcript: from where the records of the newest provider message the
+/// timeline holds end, as the snapshot found them, to where the snapshot's
+/// history starts. A measurement of any other message describes rows this
+/// timeline no longer ends with.
+async fn held_history_gap_range(
+    connection: &mut SqliteConnection,
+    binding: &AgentInteractionBindingV1,
+    snapshot: &AgentHistorySnapshotV1,
+) -> Result<Option<(i64, i64)>, DomainStoreErrorV1> {
+    let (Some(held), Some(resumed_at)) = (
+        snapshot.held_history_end.as_ref(),
+        snapshot
+            .opening_boundary()
+            .and_then(|boundary| boundary.body.transcript_history_start()),
+    ) else {
+        return Ok(None);
+    };
+    let newest = newest_provider_message_id(connection, binding).await?;
+    Ok((newest.as_ref() == Some(&held.provider_message_id))
+        .then_some((held.transcript_offset, resumed_at)))
+}
+
+/// The provider message of the newest timeline row that names one.
+async fn newest_provider_message_id(
+    connection: &mut SqliteConnection,
+    binding: &AgentInteractionBindingV1,
+) -> Result<Option<AgentProviderMessageIdV1>, DomainStoreErrorV1> {
+    let newest = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT provider_message_id FROM agent_timeline_rows
+        WHERE interaction_session_id = ?1
+          AND timeline_epoch = ?2
+          AND provider_message_id IS NOT NULL
+        ORDER BY sequence DESC LIMIT 1
+        "#,
+    )
+    .bind(binding.interaction_session_id.as_str())
+    .bind(binding.timeline_epoch.as_str())
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| map_sqlx("agent_history_newest_provider_message", error))?;
+    parse_optional_id(
+        "agent_timeline_rows.provider_message_id",
+        newest,
+        AgentProviderMessageIdV1::new,
+    )
 }
 
 /// The index of the newest history item whose provider message the timeline

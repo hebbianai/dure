@@ -926,10 +926,12 @@ describe("AgentChatSessionController", () => {
 		controller.start();
 		await settle();
 
-		expect(await controller.readProviderHistory(900)).toEqual(activity);
+		expect(
+			await controller.readProviderHistory({ before: 900, after: 400 }),
+		).toEqual(activity);
 		expect(fixture.transport.readProviderHistory).toHaveBeenCalledWith(
 			initial.page.binding,
-			900,
+			{ before: 900, after: 400 },
 			ROUTE_AUTHORITY,
 		);
 	});

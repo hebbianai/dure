@@ -39,11 +39,12 @@ interface AgentChatSessionActions {
 	putGoal(update: AgentGoalUpdateV1): Promise<boolean>;
 	retryConnection(): void;
 	loadOlder(): Promise<void>;
-	/** The provider history page that ends `before` a transcript cursor,
-	 * older than the seeded timeline; null when this session cannot read
-	 * it. */
+	/** The provider history page that ends `before` a transcript cursor and
+	 * starts no earlier than `after`: older than the seeded timeline, or in a
+	 * gap between its rows; null when this session cannot read it. */
 	readProviderHistory(
 		before: number,
+		after?: number,
 	): Promise<ProviderConversationActivity | null>;
 	send(input: string): Promise<void>;
 	queueMessage(input: string): Promise<void>;

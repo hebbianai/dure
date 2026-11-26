@@ -358,7 +358,7 @@ describe("AgentChatSurface", () => {
 			fireEvent.click(loadEarlier());
 
 			await screen.findByText("Answered in the terminal");
-			expect(value.readProviderHistory).toHaveBeenCalledWith(900);
+			expect(value.readProviderHistory).toHaveBeenCalledWith(900, 0);
 			expect(screen.getByText("Before the move")).toBeTruthy();
 			expect(screen.getByText("Hello from Claude")).toBeTruthy();
 			expect(
@@ -373,6 +373,115 @@ describe("AgentChatSurface", () => {
 			render(<AgentChatSurface session={value} />);
 
 			fireEvent.click(loadEarlier());
+
+			await screen.findByText(t("agents.chat.historyBoundary"));
+			expect(value.readProviderHistory).toHaveBeenCalledTimes(1);
+			expect(
+				screen.queryByRole("button", {
+					name: t("agents.chat.loadEarlierHistory"),
+				}),
+			).toBeNull();
+		});
+	});
+
+	describe("history a continued timeline skips", () => {
+		/** The first Chat session's answer, the gap placed between where its
+		 * records end (400) and where the newest window starts (900) in the
+		 * transcript, then the window. */
+		function continued() {
+			const value = session();
+			if (!value.page) throw new Error("expected a timeline page");
+			const held = value.page.rows[0];
+			if (!held) throw new Error("expected a held row");
+			value.page.binding.providerConversationRef = "conversation-1";
+			value.page.rows = [
+				held,
+				{
+					cursor: { epoch: "timeline-1", sequence: 2 },
+					item: {
+						itemId: "history-gap",
+						turnId: null,
+						clientMessageId: null,
+						providerMessageId: null,
+						body: {
+							type: "history_boundary",
+							reason: "provider_transcript_gap",
+							requestedAfterProviderSequence: 400,
+							droppedThroughProviderSequence: 900,
+						},
+						createdAtMs: 1,
+					},
+				},
+				{
+					cursor: { epoch: "timeline-1", sequence: 3 },
+					item: {
+						itemId: "item-newest",
+						turnId: null,
+						clientMessageId: null,
+						providerMessageId: "provider-message-9",
+						body: {
+							type: "message",
+							role: "assistant",
+							markdown: "Newest answer",
+						},
+						createdAtMs: 3,
+					},
+				},
+			];
+			value.page.finalCursor = { epoch: "timeline-1", sequence: 3 };
+			return value;
+		}
+
+		it("pages the skipped turns into the gap, between the rows around it", async () => {
+			const value = continued();
+			value.readProviderHistory = vi.fn(async () => ({
+				schemaVersion: 1 as const,
+				provider: "claude",
+				conversationId: "conversation-1",
+				historyComplete: true,
+				finalResponse: null,
+				entries: [
+					{ role: "user" as const, text: "Asked in the terminal" },
+					{ role: "agent" as const, text: "Answered in the terminal" },
+				],
+			}));
+			render(<AgentChatSurface session={value} />);
+			expect(screen.queryByText(t("agents.chat.historyBoundary"))).toBeNull();
+
+			fireEvent.click(
+				screen.getByRole("button", {
+					name: t("agents.chat.loadEarlierHistory"),
+				}),
+			);
+
+			const between = await screen.findByText("Answered in the terminal");
+			expect(value.readProviderHistory).toHaveBeenCalledWith(900, 400);
+			const before = screen.getByText("Hello from Claude");
+			const after = screen.getByText("Newest answer");
+			expect(
+				before.compareDocumentPosition(between) &
+					Node.DOCUMENT_POSITION_FOLLOWING,
+			).toBeTruthy();
+			expect(
+				between.compareDocumentPosition(after) &
+					Node.DOCUMENT_POSITION_FOLLOWING,
+			).toBeTruthy();
+			expect(
+				screen.queryByRole("button", {
+					name: t("agents.chat.loadEarlierHistory"),
+				}),
+			).toBeNull();
+		});
+
+		it("keeps the gap's notice when the backend cannot read it", async () => {
+			const value = continued();
+			render(<AgentChatSurface session={value} />);
+
+			fireEvent.click(
+				screen.getByRole("button", {
+					name: t("agents.chat.loadEarlierHistory"),
+				}),
+			);
 
 			await screen.findByText(t("agents.chat.historyBoundary"));
 			expect(value.readProviderHistory).toHaveBeenCalledTimes(1);

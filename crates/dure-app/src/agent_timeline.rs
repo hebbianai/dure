@@ -35,8 +35,16 @@ pub const PROVIDER_TRANSCRIPT_WINDOW_HISTORY_BOUNDARY_V1: &str = "provider_trans
 /// provider history at no known place in the provider's transcript: older
 /// history precedes it, at least `droppedThroughProviderSequence` messages or
 /// turns of it. It also marks where a continued timeline skips provider
-/// history that falls between the rows it already held and the newest window.
+/// history that falls between the rows it already held and the newest window,
+/// when the skipped history has no known place in the transcript.
 pub const PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1: &str = "provider_history_truncated";
+/// The history boundary reason that marks provider history a continued
+/// timeline skips, at its place in the provider's transcript: between the rows
+/// the timeline held, whose records end at `requestedAfterProviderSequence`,
+/// and the history it continues with, whose records start at
+/// `droppedThroughProviderSequence`. A transcript reader pages the records
+/// between the two offsets.
+pub const PROVIDER_TRANSCRIPT_GAP_HISTORY_BOUNDARY_V1: &str = "provider_transcript_gap";
 
 macro_rules! timeline_id {
     ($name:ident) => {
@@ -416,6 +424,47 @@ pub enum AgentTimelineItemBodyV1 {
 }
 
 impl AgentTimelineItemBodyV1 {
+    /// The boundary a continued timeline shows where it leaves out provider
+    /// history between the rows it held and the history it continues with.
+    /// With the transcript offsets where the held rows' records end and the
+    /// continuing history's start, it is placed, so a reader pages the history
+    /// between them; without them, or when they do not enclose any records, it
+    /// is at no place a reader could page from.
+    pub fn history_gap(transcript_range: Option<(i64, i64)>) -> Self {
+        match transcript_range {
+            Some((held_end, resumed_at)) if 0 <= held_end && held_end < resumed_at => {
+                Self::HistoryBoundary {
+                    reason: PROVIDER_TRANSCRIPT_GAP_HISTORY_BOUNDARY_V1.into(),
+                    requested_after_provider_sequence: held_end,
+                    dropped_through_provider_sequence: resumed_at,
+                }
+            }
+            _ => Self::HistoryBoundary {
+                reason: PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1.into(),
+                requested_after_provider_sequence: 0,
+                dropped_through_provider_sequence: 1,
+            },
+        }
+    }
+
+    /// Where the history after this boundary starts in the provider's
+    /// transcript, when the boundary opens a history at its place there: a
+    /// window's start or a compaction's.
+    pub fn transcript_history_start(&self) -> Option<i64> {
+        match self {
+            Self::HistoryBoundary {
+                reason,
+                dropped_through_provider_sequence,
+                ..
+            } if reason == PROVIDER_TRANSCRIPT_WINDOW_HISTORY_BOUNDARY_V1
+                || reason == PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1 =>
+            {
+                Some(*dropped_through_provider_sequence)
+            }
+            _ => None,
+        }
+    }
+
     /// Whether this row marks provider history that the timeline leaves out
     /// and the provider resumes from: any history boundary but a compaction's,
     /// whose summary stands in for the records before it.
@@ -842,6 +891,21 @@ pub struct AgentHistorySnapshotV1 {
     pub binding: AgentInteractionBindingV1,
     pub items: Vec<AgentTimelineItemDraftV1>,
     pub observed_at_ms: i64,
+    /// For a history that continues a timeline: where the records of the
+    /// newest provider message the timeline holds end in the provider's
+    /// transcript, as the runtime that read the history found them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_history_end: Option<AgentHeldHistoryEndV1>,
+}
+
+/// Where, in a provider's transcript, the records of one provider message a
+/// timeline holds end. A continued history that does not reach the held rows
+/// follows them behind a gap placed from here to where that history starts.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentHeldHistoryEndV1 {
+    pub provider_message_id: AgentProviderMessageIdV1,
+    pub transcript_offset: i64,
 }
 
 impl AgentHistorySnapshotV1 {
@@ -908,6 +972,9 @@ impl AgentHistorySnapshotV1 {
                 return invalid("items", "contains duplicate stable item IDs");
             }
         }
+        if let Some(held) = &self.held_history_end {
+            non_negative("heldHistoryEnd.transcriptOffset", held.transcript_offset)?;
+        }
         timestamp("observedAtMs", self.observed_at_ms)
     }
 }
@@ -945,6 +1012,9 @@ pub enum AgentHistoryHydrationDispositionV1 {
 pub struct AgentHistoryHydrationAuthorityV1 {
     pub binding: AgentInteractionBindingV1,
     pub disposition: AgentHistoryHydrationDispositionV1,
+    /// For a continuable timeline, the newest provider message it holds: where
+    /// a continuing history meets it, or ends before the history it skips.
+    pub newest_provider_message_id: Option<AgentProviderMessageIdV1>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

@@ -73,8 +73,16 @@ where
         if window.omits_older
             && let Some(oldest) = window.turns.first()
         {
-            let start = self.transcript_start(oldest).await?;
-            self.commit_history_boundary(oldest, start).await?;
+            let boundary = if projection.holds_turns() {
+                // A window that does not reach the turns the timeline holds
+                // follows them behind the gap between them, which has no
+                // place in the rollout here: a view never pages from the
+                // window's start back over the held turns.
+                AgentTimelineItemBodyV1::history_gap(None)
+            } else {
+                Self::window_boundary(self.transcript_start(oldest).await?)
+            };
+            self.commit_history_boundary(oldest, boundary).await?;
         }
         for turn in &window.turns {
             let provider_turn_id = field_string(turn, "id")?;
@@ -280,30 +288,35 @@ where
         Ok(start.and_then(|start| i64::try_from(start).ok()))
     }
 
-    /// Marks where a window that left older turns out starts: the existing
-    /// boundary row, before the window's oldest turn. Placed at the turn's
-    /// `start` in the rollout, it is where the older history pages in;
-    /// unplaced, it says only that older turns precede the window, not how
-    /// many.
-    async fn commit_history_boundary(
-        &self,
-        oldest: &Value,
-        start: Option<i64>,
-    ) -> Result<(), AgentProviderCommandErrorV1> {
-        let provider_turn_id = field_string(oldest, "id")?;
-        let created_at_ms = provider_timestamp_ms(oldest, "startedAt")?.unwrap_or(now_ms()?);
+    /// The boundary that opens a window of the thread's newest turns. Placed
+    /// at the oldest turn's `start` in the rollout, it is where the older
+    /// history pages in; unplaced, it says only that older turns precede the
+    /// window, not how many.
+    fn window_boundary(start: Option<i64>) -> AgentTimelineItemBodyV1 {
         let (reason, dropped_through_provider_sequence) = match start {
             Some(start) => (PROVIDER_TRANSCRIPT_WINDOW_HISTORY_BOUNDARY_V1, start),
             None => (PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1, 1),
         };
+        AgentTimelineItemBodyV1::HistoryBoundary {
+            reason: reason.into(),
+            requested_after_provider_sequence: 0,
+            dropped_through_provider_sequence,
+        }
+    }
+
+    /// Marks where a window that left older turns out starts: the existing
+    /// boundary row, before the window's oldest turn.
+    async fn commit_history_boundary(
+        &self,
+        oldest: &Value,
+        boundary: AgentTimelineItemBodyV1,
+    ) -> Result<(), AgentProviderCommandErrorV1> {
+        let provider_turn_id = field_string(oldest, "id")?;
+        let created_at_ms = provider_timestamp_ms(oldest, "startedAt")?.unwrap_or(now_ms()?);
         let item = self.item_for_turn(
             provider_turn_id,
             "history-boundary",
-            AgentTimelineItemBodyV1::HistoryBoundary {
-                reason: reason.into(),
-                requested_after_provider_sequence: 0,
-                dropped_through_provider_sequence,
-            },
+            boundary,
             TimelineItemContext {
                 turn_id: None,
                 client_message_id: None,

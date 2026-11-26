@@ -12,6 +12,10 @@ pub(super) fn operation_body_capability(
     } else if operation == "provider_recovery.put" && body.get("continueAfterReset").is_some() {
         // A backend with this switch also has account recovery.
         Some("account_recovery.continue_after_reset.v1")
+    } else if operation == "agent_conversation.read_provider_history" && body.get("after").is_some()
+    {
+        // A backend that reads a gap's history also reads older history.
+        Some("agent_conversation.read_provider_history.after.v1")
     } else if operation == "schedule.put"
         && body.pointer("/runTemplate/interactionPreference").is_some()
     {
@@ -192,6 +196,25 @@ mod tests {
                 &serde_json::json!({"enabled": true})
             ),
             Some("account_recovery.v1")
+        );
+    }
+
+    #[test]
+    fn reading_a_gap_requires_its_capability_but_older_history_stays_compatible() {
+        use super::operation_body_capability;
+        assert_eq!(
+            operation_body_capability(
+                "agent_conversation.read_provider_history",
+                &serde_json::json!({"before": 9000, "after": 4000})
+            ),
+            Some("agent_conversation.read_provider_history.after.v1")
+        );
+        assert_eq!(
+            operation_body_capability(
+                "agent_conversation.read_provider_history",
+                &serde_json::json!({"before": 9000})
+            ),
+            Some("agent_conversation.read_provider_history")
         );
     }
 
