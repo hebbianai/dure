@@ -28,6 +28,10 @@ export interface SessionPresentation
 	 * provider asks (`pendingApproval`): the wait `displayState: "blocked"`
 	 * names, with the attention id an answer quotes. */
 	readonly approval?: PendingApproval;
+	/** The person muted this agent's notifications on the desktop
+	 * (`agentNotificationMute.ts`). The phone sends no local alert for it;
+	 * the desktop already sends it no push. Absent means not muted. */
+	readonly notificationsMuted?: boolean;
 }
 
 export function sessionPresentation(
@@ -35,6 +39,7 @@ export function sessionPresentation(
 		readonly detail?: string;
 		readonly pinned?: boolean;
 		readonly approval?: PendingApproval;
+		readonly notificationsMuted?: boolean;
 	},
 	git?: {
 		readonly ahead: number;
@@ -68,5 +73,6 @@ export function sessionPresentation(
 			: {}),
 		...(account ? { account } : {}),
 		...(row.approval ? { approval: row.approval } : {}),
+		...(row.notificationsMuted ? { notificationsMuted: true } : {}),
 	};
 }

@@ -4,6 +4,7 @@ import {
 	isAgentUnread,
 	useAgentAttention,
 } from "@/lib/agents/agentAttentionStore";
+import { agentNotificationsMuted } from "@/lib/agents/agentNotificationMute";
 import { createAgentRunLeadResolver } from "@/lib/agents/agentRunParent";
 import { presentedAgentDisplayState } from "@/lib/agents/agentStateModel";
 import {
@@ -413,6 +414,9 @@ export function useSpaces() {
 				workerOrder:
 					leadAgentId && agent ? agentStartOrder.get(agent.id) : undefined,
 				...(space.hidden ? { hidden: true as const } : {}),
+				...(agent && agentNotificationsMuted(agent)
+					? { notificationsMuted: true as const }
+					: {}),
 			};
 		});
 	}, [

@@ -583,6 +583,42 @@ describe("OpenSpaceRow managed promotion", () => {
     }
   });
 
+  it("marks a muted agent's row and toggles its mute from the context menu", async () => {
+    const prevAgents = useStore.getState().agents;
+    const registered: Agent = {
+      id: "agent-open",
+      name: "codex-1",
+      provider: "codex",
+      projectId: "project-1",
+      worktreePath: "/repo",
+      branch: "main",
+      sessionId: "session-open",
+      sessionKind: "pty",
+      notificationsMuted: true,
+    };
+    useStore.setState({ agents: [registered] });
+    try {
+      const mutedRow = {
+        ...space,
+        kind: "agent",
+        agentId: registered.id,
+        notificationsMuted: true,
+      } satisfies SpaceRowView;
+      const { container } = render(row(handlers(), mutedRow));
+      expect(screen.getByRole("img", { name: t("agents.notifications.muted") })).toBeTruthy();
+
+      fireEvent.contextMenu(
+        container.querySelector(`[data-space-key="${space.key}"]`) as Element,
+      );
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: t("agents.notifications.unmute") }),
+      );
+      expect(useStore.getState().agents[0].notificationsMuted).toBeUndefined();
+    } finally {
+      useStore.setState({ agents: prevAgents });
+    }
+  });
+
   it("keeps a working pane visible but disabled with the defer reason", () => {
     useStore.setState({ accounts: [], activeAccounts: {} });
     render(
@@ -940,6 +976,51 @@ describe("UnopenedAgentRow diff badge", () => {
     expect(onHide).toHaveBeenCalledOnce();
     expect(onHide).toHaveBeenCalledWith(agent);
     expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("mutes the agent from its context menu and marks the row as muted", async () => {
+    const prevAgents = useStore.getState().agents;
+    useStore.setState({ agents: [agent] });
+    try {
+      const unopened = (current: Agent) => (
+        <UnopenedAgentRow
+          remote={false}
+          agent={current}
+          displayState="waiting"
+          unread={false}
+          projectName="repo"
+          detail="repo · agent/diff"
+          onOpen={vi.fn()}
+          onViewDiff={vi.fn()}
+          onFork={vi.fn()}
+          onHide={vi.fn()}
+          onKill={vi.fn()}
+        />
+      );
+      const { container, rerender } = render(unopened(agent));
+      expect(screen.queryByRole("img", { name: t("agents.notifications.muted") })).toBeNull();
+
+      fireEvent.contextMenu(
+        container.querySelector(`[data-agent-id="${agent.id}"]`) as Element,
+      );
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: t("agents.notifications.mute") }),
+      );
+      const muted = useStore.getState().agents[0];
+      expect(muted.notificationsMuted).toBe(true);
+
+      rerender(unopened(muted));
+      expect(screen.getByRole("img", { name: t("agents.notifications.muted") })).toBeTruthy();
+      fireEvent.contextMenu(
+        container.querySelector(`[data-agent-id="${agent.id}"]`) as Element,
+      );
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: t("agents.notifications.unmute") }),
+      );
+      expect(useStore.getState().agents[0]).toEqual(agent);
+    } finally {
+      useStore.setState({ agents: prevAgents });
+    }
   });
 
   it("keeps the QA-visible ± badge in Spaces and opens diff without opening the agent", async () => {

@@ -1,5 +1,7 @@
 import {
   ArrowLeftRight,
+  Bell,
+  BellOff,
   CircleArrowUp,
   CirclePlus,
   Code2,
@@ -33,6 +35,10 @@ import type {
 } from "@/components/workspace/PaneActionMenu";
 import { availableProviders } from "@/lib/agents/agentInstalls";
 import { agentDisplayName } from "@/lib/agents/agentDisplayName";
+import {
+  agentNotificationsMuted,
+  setAgentNotificationsMuted,
+} from "@/lib/agents/agentNotificationMute";
 import { forkAgent } from "@/lib/agents/fork";
 import { providerForkInheritsConversation } from "@/lib/agents/providerForkCapability";
 import type { FileTarget } from "@/lib/files/fileTarget";
@@ -345,6 +351,15 @@ export function buildPaneActionMenuSections({
       label: pinned ? t("workspace.paneMenu.unpin") : t("workspace.paneMenu.pin"),
       icon: pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />,
       onSelect: togglePin,
+    });
+  }
+  if (agent) {
+    const muted = agentNotificationsMuted(agent);
+    paneActions.push({
+      id: "notifications-mute",
+      label: muted ? t("agents.notifications.unmute") : t("agents.notifications.mute"),
+      icon: muted ? <Bell className="size-3.5" /> : <BellOff className="size-3.5" />,
+      onSelect: () => setAgentNotificationsMuted(agent.id, !muted),
     });
   }
   if (hide) {
