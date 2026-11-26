@@ -25,7 +25,7 @@ use dure_app::{
 use crate::agent_conversation_api::AgentConversationApiErrorV1;
 use crate::agent_runtime_projection::{AgentRuntimeObservedV1, read_locked};
 use crate::agent_runtime_transition_apply::{self, AgentRuntimeTransitionApplyBodyV1};
-use crate::hmux_session_inspection::HmuxSessionInspection;
+use crate::hmux_session_inspection::{HmuxSessionInspection, HmuxSessionInspectionFailure};
 use crate::{
     ServiceState, authority_stop_fence, now_ms, pro_features, query_hmux_for_runtime_transition,
 };
@@ -96,15 +96,24 @@ async fn may_start(
         AgentRecoveryAttemptV1::Native(record) => {
             // A person who resumed the conversation, or a new turn, wins:
             // the Host must still show the exact failure that was recorded.
-            return Ok(stable_native(state, &record.agent_id).await?.is_some_and(
-                |(selection, _, inspection)| {
-                    selection.revision == record.source_selection_revision
-                        && inspection.terminal_epoch == record.native_failure.terminal_epoch
-                        && inspection.attention_id()
-                            == Some(record.native_failure.attention_id.as_str())
-                        && inspection.settled_turn_failure() == Some(record.native_failure.reason)
-                },
-            ));
+            // A Host that timed out decides nothing: the attempt stays
+            // unfinished and the next wake asks again. Any other answer that
+            // is not this Host generation means the failure is not current.
+            let Some((selection, _, inspection)) = stable_native(state, &record.agent_id).await?
+            else {
+                return Ok(false);
+            };
+            let inspection = match inspection {
+                Ok(inspection) => inspection,
+                Err(HmuxSessionInspectionFailure::DescriptorTimeout) => {
+                    return Err("agent_recovery_host_unavailable");
+                }
+                Err(_) => return Ok(false),
+            };
+            return Ok(selection.revision == record.source_selection_revision
+                && inspection.terminal_epoch == record.native_failure.terminal_epoch
+                && inspection.attention_id() == Some(record.native_failure.attention_id.as_str())
+                && inspection.settled_turn_failure() == Some(record.native_failure.reason));
         }
         AgentRecoveryAttemptV1::Conversation(record) => record,
     };
@@ -283,7 +292,8 @@ async fn advance_locked(state: &ServiceState, agent_id: &AgentIdV1) -> Result<bo
 }
 
 /// The stable native terminal runtime of an Agent and its exact Host
-/// observation, or `None` when the Agent is not one or its Host cannot say.
+/// observation, or `None` when the Agent is not one. Each caller decides
+/// what a Host that cannot answer means for it.
 async fn stable_native(
     state: &ServiceState,
     agent_id: &AgentIdV1,
@@ -291,7 +301,7 @@ async fn stable_native(
     Option<(
         AgentRuntimeSelectionV1,
         AgentCheckpointBindingAuthorityV1,
-        HmuxSessionInspection,
+        Result<HmuxSessionInspection, HmuxSessionInspectionFailure>,
     )>,
     &'static str,
 > {
@@ -310,20 +320,20 @@ async fn stable_native(
     if selection.interaction_profile != AgentInteractionProfileV1::NativeCli {
         return Ok(None);
     }
-    // An unreachable Host proves nothing; the next wake inspects again.
-    let Ok(inspection) = query_hmux_for_runtime_transition(
+    let inspection = query_hmux_for_runtime_transition(
         &state.hmux_identity,
         &authority.binding.session_id,
         &authority.runtime_workspace_id,
         &authority_stop_fence(&authority),
     )
     .await
-    else {
-        return Ok(None);
-    };
-    if inspection.provider_id != selection.provider_id.as_str() {
-        return Ok(None);
-    }
+    .and_then(|inspection| {
+        if inspection.provider_id == selection.provider_id.as_str() {
+            Ok(inspection)
+        } else {
+            Err(HmuxSessionInspectionFailure::DescriptorMismatch)
+        }
+    });
     Ok(Some((*selection, authority, inspection)))
 }
 
@@ -353,7 +363,8 @@ async fn observe_native_failure(
     {
         return Ok(None);
     }
-    let Some((_, _, inspection)) = stable_native(state, agent_id).await? else {
+    // A Host that cannot answer shows no failure; the next wake looks again.
+    let Some((_, _, Ok(inspection))) = stable_native(state, agent_id).await? else {
         return Ok(None);
     };
     let (Some(reason), Some(attention_id)) =
@@ -404,7 +415,11 @@ async fn continue_native(
         // The runtime journal still owns the switch; wake again later.
         return Ok(true);
     };
-    let switched = stable_native(state, &record.agent_id).await?;
+    // A target Host that cannot answer yet is not ready; the selection still
+    // decides whether recovery owns the Agent.
+    let switched = stable_native(state, &record.agent_id).await?.and_then(
+        |(selection, authority, inspection)| Some((selection, authority, inspection.ok()?)),
+    );
     let still_switched = match &switched {
         Some((selection, _, _)) => {
             selection.selected_by_operation_id.as_ref() == Some(operation_id)
