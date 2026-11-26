@@ -1,29 +1,55 @@
 //! Automatic account recovery over the existing runtime and conversation owners.
+//!
+//! One owner serves both runtime modes. A Chat Agent's failure is its
+//! timeline's failed turn, and recovery retries that turn on the next account.
+//! A native terminal Agent's failure is the turn its Hmux Host saw settle on a
+//! typed limit failure; recovery moves the same conversation to the next
+//! account in the terminal and sends it one fixed prompt to continue.
+
+mod native_scan;
+
+pub(crate) use native_scan::scan_native_failures;
 
 use dure_app::{
-    AgentIdV1, AgentInteractionProfileV1, AgentRecoveryRecordV1, AgentRecoveryStopV1,
-    AgentRecoveryStore, AgentRuntimeSourceStopPolicyV1, AgentRuntimeTransitionStateV1,
-    AgentRuntimeTransitionStore, AgentTimelineReadDirectionV1, AgentTimelineReadRequestV1,
-    AgentTimelineReadV1, AgentTimelineStore, AgentTurnEffectStateV1, ProviderRecoveryStore,
+    AgentCheckpointBindingAuthorityV1, AgentIdV1, AgentInteractionProfileV1,
+    AgentNativeRecoveryContinuationV1, AgentNativeRecoveryRecordV1, AgentNativeTurnFailureV1,
+    AgentRecoveryAttemptV1, AgentRecoveryStopV1, AgentRecoveryStore,
+    AgentRuntimeBindingAuthorityV1, AgentRuntimeSelectionV1, AgentRuntimeSourceStopPolicyV1,
+    AgentRuntimeTransitionStateV1, AgentRuntimeTransitionStore, AgentTimelineReadDirectionV1,
+    AgentTimelineReadRequestV1, AgentTimelineReadV1, AgentTimelineStore, AgentTurnEffectStateV1,
+    OperationIdV1, ProviderRecoveryStore, RuntimeKindIdV1, WorkflowPromptDeliveryIntentV1,
+    WorkflowPromptDeliveryRequestV1, WorkflowSessionGenerationV1,
     agent_runtime_transition_identity,
 };
 
 use crate::agent_conversation_api::AgentConversationApiErrorV1;
-use crate::agent_runtime_projection::AgentRuntimeObservedV1;
+use crate::agent_runtime_projection::{AgentRuntimeObservedV1, read_locked};
 use crate::agent_runtime_transition_apply::{self, AgentRuntimeTransitionApplyBodyV1};
-use crate::{ServiceState, now_ms, pro_features};
+use crate::hmux_session_inspection::HmuxSessionInspection;
+use crate::{
+    ServiceState, authority_stop_fence, now_ms, pro_features, query_hmux_for_runtime_transition,
+};
+
+/// The one prompt a native Agent receives after its conversation moved to
+/// another account. Fixed text, so it never carries provider output.
+const NATIVE_CONTINUATION: &str = "Your previous turn stopped at a usage limit. Dure moved this \
+    conversation to another account; continue where you left off.";
+
+/// How long the resumed conversation has to become ready for its prompt
+/// after the account switch committed.
+const NATIVE_TARGET_READY_TIMEOUT_MS: i64 = 120_000;
 
 async fn stop(
     state: &ServiceState,
-    record: &AgentRecoveryRecordV1,
+    record: &AgentRecoveryAttemptV1,
     reason: AgentRecoveryStopV1,
 ) -> Result<bool, &'static str> {
     let stopped = state
         .store
-        .stop_agent_recovery(&record.attempt_id, &reason)
+        .stop_agent_recovery(record.attempt_id(), &reason)
         .await
         .map_err(|_| "agent_recovery_store_failed")?;
-    stopped_result(stopped.stopped.as_ref())
+    stopped_result(stopped.stopped())
 }
 
 fn stopped_result(reason: Option<&AgentRecoveryStopV1>) -> Result<bool, &'static str> {
@@ -34,29 +60,54 @@ fn stopped_result(reason: Option<&AgentRecoveryStopV1>) -> Result<bool, &'static
     }
 }
 
-async fn may_start(
+/// Whether the provider's recovery policy still covers this failure and
+/// still offers the attempt's target account.
+async fn policy_allows(
     state: &ServiceState,
-    record: &AgentRecoveryRecordV1,
+    record: &AgentRecoveryAttemptV1,
 ) -> Result<bool, &'static str> {
     let policy = state
         .store
-        .provider_recovery_policy(&record.source.provider_id)
+        .provider_recovery_policy(record.provider_id())
         .await
         .map_err(|_| "agent_recovery_store_failed")?;
-    if !policy.as_ref().is_some_and(|policy| {
+    Ok(policy.as_ref().is_some_and(|policy| {
         policy.enabled
             && policy
                 .activated_at_ms
-                .is_some_and(|at| at <= record.failure.created_at_ms)
-            && record.target.as_ref().is_some_and(|target| {
+                .is_some_and(|at| at <= record.failure_created_at_ms())
+            && record.target().is_some_and(|target| {
                 policy
                     .accounts
                     .iter()
                     .any(|account| account.profile == target.profile)
             })
-    }) {
+    }))
+}
+
+async fn may_start(
+    state: &ServiceState,
+    record: &AgentRecoveryAttemptV1,
+) -> Result<bool, &'static str> {
+    if !policy_allows(state, record).await? {
         return Ok(false);
     }
+    let record = match record {
+        AgentRecoveryAttemptV1::Native(record) => {
+            // A person who resumed the conversation, or a new turn, wins:
+            // the Host must still show the exact failure that was recorded.
+            return Ok(stable_native(state, &record.agent_id).await?.is_some_and(
+                |(selection, _, inspection)| {
+                    selection.revision == record.source_selection_revision
+                        && inspection.terminal_epoch == record.native_failure.terminal_epoch
+                        && inspection.attention_id()
+                            == Some(record.native_failure.attention_id.as_str())
+                        && inspection.settled_turn_failure() == Some(record.native_failure.reason)
+                },
+            ));
+        }
+        AgentRecoveryAttemptV1::Conversation(record) => record,
+    };
     let read = state
         .store
         .read_agent_timeline(&AgentTimelineReadRequestV1 {
@@ -113,30 +164,29 @@ pub(crate) async fn advance(
 }
 
 async fn advance_locked(state: &ServiceState, agent_id: &AgentIdV1) -> Result<bool, &'static str> {
+    let observed_at_ms = now_ms().map_err(|_| "agent_recovery_clock_unavailable")?;
+    let native = observe_native_failure(state, agent_id, observed_at_ms).await?;
     let Some(record) = state
         .store
-        .prepare_agent_recovery(
-            agent_id,
-            now_ms().map_err(|_| "agent_recovery_clock_unavailable")?,
-        )
+        .prepare_agent_recovery(agent_id, observed_at_ms, native.as_ref())
         .await
         .map_err(|_| "agent_recovery_store_failed")?
     else {
         return Ok(false);
     };
-    if record.stopped.is_some() {
-        return stopped_result(record.stopped.as_ref());
+    if record.stopped().is_some() {
+        return stopped_result(record.stopped());
     }
-    let (operation_id, _) = agent_runtime_transition_identity(&record.attempt_id)
+    let (operation_id, _) = agent_runtime_transition_identity(record.attempt_id())
         .map_err(|_| "agent_recovery_identity_invalid")?;
-    let current = crate::agent_runtime_projection::read_locked(state, agent_id)
+    let current = read_locked(state, agent_id)
         .await
         .map_err(|_| "agent_recovery_store_failed")?;
     let owns_runtime = match current {
         AgentRuntimeObservedV1::Stable { selection, .. } => {
-            (selection.revision == record.source_selection_revision
-                && selection.interaction_profile == AgentInteractionProfileV1::StructuredProtocol
-                && selection.execution_profile == record.source.execution_profile)
+            (selection.revision == record.source_selection_revision()
+                && selection.interaction_profile == record.source_interaction_profile()
+                && &selection.execution_profile == record.source_execution_profile())
                 || selection.selected_by_operation_id.as_ref() == Some(&operation_id)
         }
         AgentRuntimeObservedV1::Transitioning { transition, .. } => {
@@ -177,17 +227,19 @@ async fn advance_locked(state: &ServiceState, agent_id: &AgentIdV1) -> Result<bo
     if !transition
         .is_some_and(|transition| transition.state == AgentRuntimeTransitionStateV1::Committed)
     {
-        let Some(target) = &record.target else {
+        let Some(target) = record.target() else {
             return Err("agent_recovery_accounts_exhausted");
         };
+        // The conversation stays in the runtime mode it failed in. Preserve
+        // stops a native source only at its exact settled failure.
         if let Err(error) = agent_runtime_transition_apply::apply_locked(
             state,
-            &record.attempt_id,
+            record.attempt_id(),
             AgentRuntimeTransitionApplyBodyV1 {
                 schema_version: 1,
                 agent_id: agent_id.clone(),
-                target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
-                expected_source_revision: Some(record.source_selection_revision),
+                target_interaction_profile: record.source_interaction_profile(),
+                expected_source_revision: Some(record.source_selection_revision()),
                 expected_operation_id: None,
                 source_stop_policy: AgentRuntimeSourceStopPolicyV1::Preserve,
                 target_execution_profile: Some(target.execution_profile()),
@@ -204,6 +256,12 @@ async fn advance_locked(state: &ServiceState, agent_id: &AgentIdV1) -> Result<bo
             .await;
         }
     }
+    let record = match record {
+        AgentRecoveryAttemptV1::Native(native) => {
+            return continue_native(state, &native, &operation_id).await;
+        }
+        AgentRecoveryAttemptV1::Conversation(record) => record,
+    };
     match state.agent_conversations.start_recovery_turn(&record).await {
         Ok(Some(receipt)) if receipt.state == AgentTurnEffectStateV1::Accepted => Ok(true),
         Ok(Some(_)) => Err("agent_recovery_turn_unconfirmed"),
@@ -213,13 +271,241 @@ async fn advance_locked(state: &ServiceState, agent_id: &AgentIdV1) -> Result<bo
         Err(error) => {
             stop(
                 state,
-                &record,
+                &AgentRecoveryAttemptV1::Conversation(record),
                 AgentRecoveryStopV1::Failed {
                     code: error.code().into(),
                 },
             )
             .await?;
             Err(error.code())
+        }
+    }
+}
+
+/// The stable native terminal runtime of an Agent and its exact Host
+/// observation, or `None` when the Agent is not one or its Host cannot say.
+async fn stable_native(
+    state: &ServiceState,
+    agent_id: &AgentIdV1,
+) -> Result<
+    Option<(
+        AgentRuntimeSelectionV1,
+        AgentCheckpointBindingAuthorityV1,
+        HmuxSessionInspection,
+    )>,
+    &'static str,
+> {
+    let AgentRuntimeObservedV1::Stable {
+        selection,
+        authority,
+    } = read_locked(state, agent_id)
+        .await
+        .map_err(|_| "agent_recovery_store_failed")?
+    else {
+        return Ok(None);
+    };
+    let AgentRuntimeBindingAuthorityV1::NativeCli { authority } = *authority else {
+        return Ok(None);
+    };
+    if selection.interaction_profile != AgentInteractionProfileV1::NativeCli {
+        return Ok(None);
+    }
+    // An unreachable Host proves nothing; the next wake inspects again.
+    let Ok(inspection) = query_hmux_for_runtime_transition(
+        &state.hmux_identity,
+        &authority.binding.session_id,
+        &authority.runtime_workspace_id,
+        &authority_stop_fence(&authority),
+    )
+    .await
+    else {
+        return Ok(None);
+    };
+    if inspection.provider_id != selection.provider_id.as_str() {
+        return Ok(None);
+    }
+    Ok(Some((*selection, authority, inspection)))
+}
+
+/// The settled limit failure a native terminal Agent's Host shows now, when
+/// its provider has recovery enabled. Only the Host's typed failure counts;
+/// terminal output never does.
+async fn observe_native_failure(
+    state: &ServiceState,
+    agent_id: &AgentIdV1,
+    observed_at_ms: i64,
+) -> Result<Option<AgentNativeTurnFailureV1>, &'static str> {
+    let Some(selection) = state
+        .store
+        .agent_runtime_selection(agent_id)
+        .await
+        .map_err(|_| "agent_recovery_store_failed")?
+        .filter(|selection| selection.interaction_profile == AgentInteractionProfileV1::NativeCli)
+    else {
+        return Ok(None);
+    };
+    if !state
+        .store
+        .provider_recovery_policy(&selection.provider_id)
+        .await
+        .map_err(|_| "agent_recovery_store_failed")?
+        .is_some_and(|policy| policy.enabled)
+    {
+        return Ok(None);
+    }
+    let Some((_, _, inspection)) = stable_native(state, agent_id).await? else {
+        return Ok(None);
+    };
+    let (Some(reason), Some(attention_id)) =
+        (inspection.settled_turn_failure(), inspection.attention_id())
+    else {
+        return Ok(None);
+    };
+    Ok(Some(AgentNativeTurnFailureV1 {
+        terminal_epoch: inspection.terminal_epoch.clone(),
+        attention_id: attention_id.to_owned(),
+        reason,
+        observed_at_ms,
+    }))
+}
+
+/// Sends the resumed conversation its one continuation prompt. The prompt is
+/// claimed before it is written: a refusal that proves nothing was written
+/// releases it for the next wake, and a prompt that may have been written is
+/// never written again.
+async fn continue_native(
+    state: &ServiceState,
+    record: &AgentNativeRecoveryRecordV1,
+    operation_id: &OperationIdV1,
+) -> Result<bool, &'static str> {
+    let attempt = AgentRecoveryAttemptV1::Native(record.clone());
+    match &record.continuation {
+        AgentNativeRecoveryContinuationV1::Delivered { .. } => return Ok(false),
+        // A claim found on replay may already have reached the terminal.
+        AgentNativeRecoveryContinuationV1::Claimed { .. } => {
+            return stop(
+                state,
+                &attempt,
+                AgentRecoveryStopV1::Failed {
+                    code: "agent_recovery_continuation_uncertain".into(),
+                },
+            )
+            .await;
+        }
+        AgentNativeRecoveryContinuationV1::NotStarted => {}
+    }
+    let Some(transition) = state
+        .store
+        .agent_runtime_transition(operation_id)
+        .await
+        .map_err(|_| "agent_recovery_store_failed")?
+        .filter(|transition| transition.state == AgentRuntimeTransitionStateV1::Committed)
+    else {
+        // The runtime journal still owns the switch; wake again later.
+        return Ok(true);
+    };
+    let switched = stable_native(state, &record.agent_id).await?;
+    let still_switched = match &switched {
+        Some((selection, _, _)) => {
+            selection.selected_by_operation_id.as_ref() == Some(operation_id)
+                && Some(selection.revision) == record.source_selection_revision.checked_add(1)
+                && policy_allows(state, &attempt).await?
+        }
+        // The Host may still be starting; the selection decides ownership.
+        None => match read_locked(state, &record.agent_id)
+            .await
+            .map_err(|_| "agent_recovery_store_failed")?
+        {
+            AgentRuntimeObservedV1::Stable { selection, .. } => {
+                selection.selected_by_operation_id.as_ref() == Some(operation_id)
+            }
+            _ => false,
+        },
+    };
+    if !still_switched {
+        return stop(state, &attempt, AgentRecoveryStopV1::Superseded).await;
+    }
+    let ready = switched.and_then(|(selection, authority, inspection)| {
+        let conversation = inspection
+            .provider_conversation_identity
+            .as_ref()
+            .map(|identity| identity.conversation_id.clone())
+            .or_else(|| authority.binding.provider_conversation_id.clone())?;
+        inspection.is_agent_quiescent().then_some((
+            WorkflowSessionGenerationV1 {
+                session_id: authority.binding.session_id,
+                workspace_id: authority.runtime_workspace_id,
+                provider_id: selection.provider_id,
+                runner_principal: authority.runner_principal,
+                runner_instance: authority.runner_instance,
+                channel_epoch: authority.channel_epoch,
+                host_instance_id: authority.host_instance_id,
+                terminal_epoch: authority.terminal_epoch,
+            },
+            conversation,
+        ))
+    });
+    let Some((session, provider_conversation_id)) = ready else {
+        let now = now_ms().map_err(|_| "agent_recovery_clock_unavailable")?;
+        if now.saturating_sub(transition.updated_at_ms) > NATIVE_TARGET_READY_TIMEOUT_MS {
+            return stop(
+                state,
+                &attempt,
+                AgentRecoveryStopV1::Failed {
+                    code: "agent_recovery_target_not_ready".into(),
+                },
+            )
+            .await;
+        }
+        return Ok(true);
+    };
+    let delivery_idempotency_key = format!("recovery:{}", record.attempt_id);
+    let claimed = state
+        .store
+        .claim_native_agent_recovery_continuation(&record.attempt_id, &delivery_idempotency_key)
+        .await
+        .map_err(|_| "agent_recovery_store_failed")?;
+    if claimed.continuation
+        != (AgentNativeRecoveryContinuationV1::Claimed {
+            delivery_idempotency_key: delivery_idempotency_key.clone(),
+        })
+    {
+        return Ok(false);
+    }
+    let request = WorkflowPromptDeliveryRequestV1 {
+        runtime_kind_id: RuntimeKindIdV1::new("runtime.hmux")
+            .map_err(|_| "agent_recovery_identity_invalid")?,
+        delivery_idempotency_key,
+        session,
+        intent: WorkflowPromptDeliveryIntentV1::ExistingConversation {
+            provider_conversation_id,
+        },
+        handoff: NATIVE_CONTINUATION.to_owned(),
+    };
+    match state.workflow_prompt_deliverer.deliver(request).await {
+        Ok(evidence) => {
+            state
+                .store
+                .settle_native_agent_recovery_continuation(&record.attempt_id, Some(&evidence))
+                .await
+                .map_err(|_| "agent_recovery_store_failed")?;
+            Ok(true)
+        }
+        Err(failure) if !failure.may_have_written => {
+            state
+                .store
+                .settle_native_agent_recovery_continuation(&record.attempt_id, None)
+                .await
+                .map_err(|_| "agent_recovery_store_failed")?;
+            Ok(true)
+        }
+        Err(failure) => {
+            stop(
+                state,
+                &attempt,
+                AgentRecoveryStopV1::Failed { code: failure.code },
+            )
+            .await
         }
     }
 }

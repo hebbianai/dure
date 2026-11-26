@@ -134,6 +134,7 @@ fn startup_gate_report() -> hmux_client::AgentStateReport {
         expected_observation: None,
         background_work: false,
         startup_gate: None,
+        turn_failure: None,
     }
 }
 
@@ -480,6 +481,7 @@ mod launch_prompt_tests {
             program_status: None,
             background_work: false,
             held_prompts: None,
+            turn_failure: None,
         }
     }
 

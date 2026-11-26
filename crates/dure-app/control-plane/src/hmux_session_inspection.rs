@@ -105,6 +105,11 @@ impl HmuxSessionInspection {
         }) {
             return Ok(None);
         }
+        // Idle is quiescence only: a settled turn failure may admit a stop,
+        // but it is never idle time that hibernation can spend.
+        if !self.is_agent_quiescent() {
+            return Err("hmux_agent_runtime_not_quiescent");
+        }
         self.managed_stop_quiescence_fence()?;
         match self.semantic_idle_age {
             SemanticIdleAge::Observed(age) if self.controller_input_pending == Some(false) => {
@@ -146,6 +151,41 @@ impl HmuxSessionInspection {
         })
     }
 
+    /// Why the provider's turn ended, when it settled on a typed API failure
+    /// nobody has answered: the Host negotiated the failure, the prompt waits
+    /// on that error with no background work, and no typed input is pending.
+    /// Nothing runs and nothing more is coming until someone sends input, so
+    /// a fenced managed stop may end it without losing work.
+    pub(crate) fn settled_turn_failure(&self) -> Option<dure_app::AgentTurnFailureReasonV1> {
+        if !self.capabilities.iter().any(|capability| {
+            capability == hmux_session_protocol::AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY
+        }) || self.controller_input_pending != Some(false)
+        {
+            return None;
+        }
+        let state = self.agent_runtime_state.as_ref()?;
+        if state.lifecycle != AgentRuntimeLifecycle::Running
+            || state.activity != AgentRuntimeActivity::Waiting
+            || state.attention != AgentRuntimeAttention::Error
+            || state.attention_id.is_none()
+            || state.background_work
+        {
+            return None;
+        }
+        state
+            .turn_failure
+            .as_deref()
+            .and_then(dure_app::AgentTurnFailureReasonV1::from_token)
+    }
+
+    /// Whether a managed stop that preserves the conversation may end the
+    /// provider here: it is idle, or its turn settled on a typed failure.
+    /// Idle-only consumers (hibernation, child results) keep using
+    /// [`Self::is_agent_quiescent`].
+    pub(crate) fn is_stop_boundary(&self) -> bool {
+        self.is_agent_quiescent() || self.settled_turn_failure().is_some()
+    }
+
     /// Names the Host evidence that keeps this observation from being an idle
     /// boundary, so an idle-only refusal can say what to wait for.
     pub(crate) fn busy_reason(&self) -> AgentBusyReason {
@@ -178,7 +218,7 @@ impl HmuxSessionInspection {
             .agent_runtime_state
             .as_ref()
             .filter(|_| self.lifecycle == "ready" && self.health == "healthy")
-            .filter(|_| self.is_agent_quiescent())
+            .filter(|_| self.is_stop_boundary())
             .ok_or("hmux_agent_runtime_not_quiescent")?;
         // This is the Host's existing input protection, not inferred activity.
         // An older Host leaves it unknown and retains its exact stop fence;
@@ -297,6 +337,11 @@ pub(crate) struct AgentRuntimeState {
     /// the turn ended while work the provider started is still running.
     #[serde(default)]
     background_work: bool,
+    /// Why the turn ended on an API error, beside `error`, from Hosts that
+    /// negotiate turn failures. Kept as its token so a reason this backend
+    /// does not know reads as none instead of an unreadable descriptor.
+    #[serde(default)]
+    turn_failure: Option<String>,
 }
 
 impl AgentRuntimeState {
@@ -558,6 +603,88 @@ mod tests {
             parse(&observed).semantic_idle_age(),
             Err("hmux_agent_runtime_not_quiescent")
         );
+    }
+
+    #[test]
+    fn a_settled_limit_failure_is_a_stop_boundary_on_a_negotiated_host() {
+        let failed = || {
+            let mut observed = inspection();
+            observed["capabilities"] =
+                json!([hmux_session_protocol::AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY]);
+            observed["controllerInputPending"] = json!(false);
+            let state = &mut observed["agentRuntimeState"];
+            state["activity"] = json!("waiting");
+            state["attention"] = json!("error");
+            state["attention_id"] = json!("attention-3");
+            state["turn_failure"] = json!("rate_limit");
+            observed
+        };
+        let parse = |value: &serde_json::Value| {
+            parse_exact_hmux_session(&serde_json::to_vec(value).unwrap(), &expected()).unwrap()
+        };
+
+        let parsed = parse(&failed());
+        assert_eq!(
+            parsed.settled_turn_failure(),
+            Some(dure_app::AgentTurnFailureReasonV1::RateLimit)
+        );
+        assert!(parsed.is_stop_boundary());
+        let fence = parsed.managed_stop_quiescence_fence().unwrap();
+        assert_eq!(fence.runtime_revision(), 3);
+        assert_eq!(fence.observed_through_output_seq(), 9);
+        // A failed turn is never idle: hibernation and child results stay
+        // quiescence-only.
+        assert!(!parsed.is_agent_quiescent());
+        let mut idle_capable = failed();
+        idle_capable["capabilities"] = json!([
+            hmux_session_protocol::AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY,
+            hmux_session_protocol::SEMANTIC_IDLE_OBSERVATION_CAPABILITY,
+        ]);
+        idle_capable["semanticIdleMs"] = json!("1000");
+        assert_eq!(
+            parse(&idle_capable).semantic_idle_age(),
+            Err("hmux_agent_runtime_not_quiescent")
+        );
+
+        let mut older_host = failed();
+        older_host["capabilities"] = json!([]);
+        let mut input_pending = failed();
+        input_pending["controllerInputPending"] = json!(true);
+        let mut input_unknown = failed();
+        input_unknown
+            .as_object_mut()
+            .unwrap()
+            .remove("controllerInputPending");
+        let mut background = failed();
+        background["agentRuntimeState"]["background_work"] = json!(true);
+        let mut untyped = failed();
+        untyped["agentRuntimeState"]
+            .as_object_mut()
+            .unwrap()
+            .remove("turn_failure");
+        let mut asking = failed();
+        asking["agentRuntimeState"]["attention"] = json!("input_required");
+        for refused in [
+            older_host,
+            input_pending,
+            input_unknown,
+            background,
+            untyped,
+            asking,
+        ] {
+            let parsed = parse(&refused);
+            assert_eq!(parsed.settled_turn_failure(), None);
+            assert!(!parsed.is_stop_boundary());
+            assert!(parsed.managed_stop_quiescence_fence().is_err());
+        }
+
+        // A reason this backend does not know is no reason, never a
+        // malformed descriptor.
+        let mut unknown = failed();
+        unknown["agentRuntimeState"]["turn_failure"] = json!("quota_exhausted_v9");
+        let parsed = parse(&unknown);
+        assert_eq!(parsed.settled_turn_failure(), None);
+        assert!(parsed.managed_stop_quiescence_fence().is_err());
     }
 
     #[test]

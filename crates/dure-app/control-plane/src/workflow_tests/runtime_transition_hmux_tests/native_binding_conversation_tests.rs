@@ -79,6 +79,7 @@ async fn ensure_late_conversation(bound_conversation: Option<&str>) {
                 expected_observation: None,
                 background_work: false,
                 startup_gate: None,
+                turn_failure: None,
             },
             fence.clone(),
         )
@@ -224,6 +225,7 @@ async fn ensure_late_conversation(bound_conversation: Option<&str>) {
                 expected_observation: None,
                 background_work: false,
                 startup_gate: None,
+                turn_failure: None,
             },
             fence,
         )

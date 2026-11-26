@@ -70,6 +70,7 @@ mod workflow_effect_bindings;
 mod workflow_graph;
 mod workspace_catalog;
 
+pub use agent_recovery::NativeRecoveryCandidateV1;
 pub use session_checkout::SessionCheckoutAdmission;
 
 pub use orchestration::{

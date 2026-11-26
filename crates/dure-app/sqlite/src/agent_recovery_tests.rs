@@ -1,12 +1,13 @@
 use super::*;
 use dure_app::{
     AgentCompleteTurnEffectV1, AgentInteractionProfileV1, AgentProviderConversationPlanV1,
-    AgentQueuedTurnStore, AgentRecoveryRecordV1, AgentRecoveryStopV1, AgentRecoveryStore,
-    AgentRuntimeBindingAuthorityV1, AgentRuntimeSelectionV1, AgentRuntimeSourceStopPolicyV1,
-    AgentRuntimeTransitionAdvanceRequestV1, AgentRuntimeTransitionAdvanceV1,
-    AgentRuntimeTransitionIntentV1, AgentRuntimeTransitionStore, ProviderCredentialProfileV1,
-    ProviderPermissionModeV1, ProviderRecoveryAccountV1, ProviderRecoveryPolicyPutV1,
-    ProviderRecoveryStore, ProviderRecoveryUsageV1, agent_runtime_transition_identity,
+    AgentQueuedTurnStore, AgentRecoveryAttemptV1, AgentRecoveryRecordV1, AgentRecoveryStopV1,
+    AgentRecoveryStore, AgentRuntimeBindingAuthorityV1, AgentRuntimeSelectionV1,
+    AgentRuntimeSourceStopPolicyV1, AgentRuntimeTransitionAdvanceRequestV1,
+    AgentRuntimeTransitionAdvanceV1, AgentRuntimeTransitionIntentV1, AgentRuntimeTransitionStore,
+    ProviderCredentialProfileV1, ProviderPermissionModeV1, ProviderRecoveryAccountV1,
+    ProviderRecoveryPolicyPutV1, ProviderRecoveryStore, ProviderRecoveryUsageV1,
+    agent_runtime_transition_identity,
 };
 
 fn policy() -> ProviderRecoveryPolicyPutV1 {
@@ -72,9 +73,10 @@ async fn initialized(path: &std::path::Path) -> SqliteDomainStore {
 
 async fn prepare(store: &SqliteDomainStore) -> AgentRecoveryRecordV1 {
     store
-        .prepare_agent_recovery(&interaction_binding().agent_id, 300)
+        .prepare_agent_recovery(&interaction_binding().agent_id, 300, None)
         .await
         .unwrap()
+        .and_then(AgentRecoveryAttemptV1::into_conversation)
         .unwrap()
 }
 
@@ -231,6 +233,7 @@ async fn queued_human_direction_wins_after_the_account_transition() {
             .agent_recovery(&record.attempt_id)
             .await
             .unwrap()
+            .and_then(AgentRecoveryAttemptV1::into_conversation)
             .unwrap()
             .stopped,
         Some(AgentRecoveryStopV1::Superseded)
@@ -276,9 +279,10 @@ async fn disabled_policy_and_failed_attempt_are_not_retried_after_reopen() {
         .unwrap();
     assert!(
         store
-            .prepare_agent_recovery(&interaction_binding().agent_id, 300)
+            .prepare_agent_recovery(&interaction_binding().agent_id, 300, None)
             .await
             .unwrap()
+            .and_then(AgentRecoveryAttemptV1::into_conversation)
             .is_none()
     );
     disabled.expected_revision = 2;
@@ -290,9 +294,10 @@ async fn disabled_policy_and_failed_attempt_are_not_retried_after_reopen() {
         .unwrap();
     assert!(
         store
-            .prepare_agent_recovery(&interaction_binding().agent_id, 400)
+            .prepare_agent_recovery(&interaction_binding().agent_id, 400, None)
             .await
             .unwrap()
+            .and_then(AgentRecoveryAttemptV1::into_conversation)
             .is_none(),
         "reenabling does not replay an older failure"
     );
@@ -312,6 +317,8 @@ async fn disabled_policy_and_failed_attempt_are_not_retried_after_reopen() {
             },
         )
         .await
+        .unwrap()
+        .into_conversation()
         .unwrap();
     store.close().await;
     let reopened = SqliteDomainStore::open(&path).await.unwrap();
@@ -459,6 +466,7 @@ async fn removing_permission_or_changing_the_goal_prevents_retained_resend() {
                 .agent_recovery(&record.attempt_id)
                 .await
                 .unwrap()
+                .and_then(AgentRecoveryAttemptV1::into_conversation)
                 .unwrap()
                 .stopped,
             Some(AgentRecoveryStopV1::Superseded),
@@ -547,9 +555,10 @@ async fn recovered_goal_input_keeps_its_origin_and_the_goal_can_continue() {
         if pause_before_failure {
             assert!(
                 store
-                    .prepare_agent_recovery(&agent_id, 300)
+                    .prepare_agent_recovery(&agent_id, 300, None)
                     .await
                     .unwrap()
+                    .and_then(AgentRecoveryAttemptV1::into_conversation)
                     .is_none(),
                 "a paused goal must not start a new account transition"
             );

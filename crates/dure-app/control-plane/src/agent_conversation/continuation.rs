@@ -7,7 +7,7 @@ use dure_app::{
     AgentGoalRecordV1, AgentGoalStatusV1, AgentGoalStore, AgentIdV1, AgentQueuedTurnStore,
     AgentRecoveryStore, AgentTimelineStore,
 };
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tokio::task::{Id, JoinSet};
 
 use crate::agent_conversation::AgentConversationNotificationKindV1;
@@ -50,12 +50,16 @@ async fn advance(
     goal: Option<&AgentGoalRecordV1>,
 ) -> Result<(), &'static str> {
     let recovery = agent_recovery::advance(state, agent_id).await;
-    let binding = state
+    // A native terminal Agent has no conversation to queue turns or goals
+    // in; account recovery is all this loop does for it.
+    let Some(binding) = state
         .store
         .agent_interaction_for_agent(agent_id)
         .await
         .map_err(|_| "agent_conversation_store_failed")?
-        .ok_or("agent_conversation_not_found")?;
+    else {
+        return recovery.map(|_| ());
+    };
     if state
         .store
         .has_queued_agent_turns(&binding.interaction_session_id)
@@ -80,6 +84,14 @@ async fn advance(
 async fn run_inner(state: Arc<ServiceState>) -> Result<(), &'static str> {
     state.wait_for_mutation_authority().await;
     let mut notifications = state.agent_conversations.notifications();
+    // Native terminal failures live in their Hosts, not in conversation
+    // notifications; the scanner wakes the same owner for them.
+    let (native_wake, mut native_failures) = mpsc::unbounded_channel();
+    let scanner = tokio::spawn(agent_recovery::scan_native_failures(
+        Arc::clone(&state),
+        native_wake,
+    ));
+    let _scanner = scanner_guard(scanner);
     let mut pending = BTreeSet::new();
     let mut running: HashMap<Id, (AgentIdV1, Option<u64>)> = HashMap::new();
     let mut jobs = JoinSet::new();
@@ -106,6 +118,9 @@ async fn run_inner(state: Arc<ServiceState>) -> Result<(), &'static str> {
         }
         tokio::select! {
             _ = state.goal_wakeup.notified() => enqueue_active(&state, &mut pending).await?,
+            Some(agent_id) = native_failures.recv() => {
+                pending.insert(agent_id);
+            }
             notification = notifications.recv() => match notification {
                 Ok(notification) => {
                     if notification.kinds.iter().all(|kind| matches!(kind, AgentConversationNotificationKindV1::LiveText | AgentConversationNotificationKindV1::Goal | AgentConversationNotificationKindV1::Recovery)) { continue; }
@@ -134,6 +149,17 @@ async fn run_inner(state: Arc<ServiceState>) -> Result<(), &'static str> {
             }
         }
     }
+}
+
+/// Stops the scanner when the loop that consumes its wakes ends.
+fn scanner_guard(task: tokio::task::JoinHandle<()>) -> impl Drop {
+    struct Abort(tokio::task::JoinHandle<()>);
+    impl Drop for Abort {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    Abort(task)
 }
 
 pub(crate) async fn run(state: Arc<ServiceState>) {

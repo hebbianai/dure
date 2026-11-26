@@ -56,6 +56,7 @@ pub(super) fn report_conversation(
             expected_observation: None,
             background_work: false,
             startup_gate: None,
+            turn_failure: None,
         },
         fence,
     )

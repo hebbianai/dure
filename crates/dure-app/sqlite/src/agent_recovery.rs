@@ -1,11 +1,13 @@
 use dure_app::{
     AgentClientMessageIdV1, AgentContinueTurnRequestV1, AgentIdV1, AgentInteractionProfileV1,
-    AgentRecoveryRecordV1, AgentRecoveryStopV1, AgentRecoveryStore, AgentStartTurnIntentV1,
-    AgentTurnEffectReceiptV1, AgentTurnFailureReasonV1, AgentTurnIdV1, DomainStoreErrorV1,
-    DomainStoreFuture, agent_runtime_transition_identity,
+    AgentNativeRecoveryContinuationV1, AgentNativeRecoveryRecordV1, AgentNativeTurnFailureV1,
+    AgentRecoveryAttemptV1, AgentRecoveryRecordV1, AgentRecoveryStopV1, AgentRecoveryStore,
+    AgentStartTurnIntentV1, AgentTurnEffectReceiptV1, AgentTurnFailureReasonV1, AgentTurnIdV1,
+    DomainStoreErrorV1, DomainStoreFuture, WorkflowPromptDeliveryEvidenceV1,
+    agent_runtime_transition_identity,
 };
 use sha2::{Digest, Sha256};
-use sqlx::SqliteConnection;
+use sqlx::{AssertSqlSafe, SqliteConnection};
 
 use crate::SqliteDomainStore;
 use crate::agent_timeline::{
@@ -28,14 +30,23 @@ fn encode<T: serde::Serialize>(value: &T) -> Result<String, DomainStoreErrorV1> 
     serde_json::to_string(value).map_err(|error| serialization("agent recovery", error))
 }
 
-fn decode(source: &str) -> Result<AgentRecoveryRecordV1, DomainStoreErrorV1> {
+fn decode(source: &str) -> Result<AgentRecoveryAttemptV1, DomainStoreErrorV1> {
     serde_json::from_str(source).map_err(|error| serialization("agent recovery", error))
 }
+
+/// An attempt that still owns work: unstopped, and a conversation attempt
+/// before its turn is admitted or a native attempt before its prompt is
+/// delivered. Native rows always carry a continuation, so the conversation
+/// half is exactly the predicate older backends use and never selects them.
+const UNFINISHED: &str = "json_extract(record_json, '$.stopped') IS NULL \
+    AND (json_extract(record_json, '$.continuation') IS NULL \
+    OR (json_extract(record_json, '$.nativeFailure') IS NOT NULL \
+    AND json_extract(record_json, '$.continuation.state') != 'delivered'))";
 
 async fn read_on(
     connection: &mut SqliteConnection,
     attempt_id: &str,
-) -> Result<Option<AgentRecoveryRecordV1>, DomainStoreErrorV1> {
+) -> Result<Option<AgentRecoveryAttemptV1>, DomainStoreErrorV1> {
     sqlx::query_scalar::<_, String>(
         "SELECT record_json FROM agent_recoveries WHERE attempt_id = ?1",
     )
@@ -49,14 +60,14 @@ async fn read_on(
 
 async fn save_on(
     connection: &mut SqliteConnection,
-    record: &AgentRecoveryRecordV1,
+    record: &AgentRecoveryAttemptV1,
 ) -> Result<(), DomainStoreErrorV1> {
     sqlx::query(
         "INSERT INTO agent_recoveries (attempt_id, agent_id, record_json) VALUES (?1, ?2, ?3) \
         ON CONFLICT(attempt_id) DO UPDATE SET record_json = excluded.record_json",
     )
-    .bind(&record.attempt_id)
-    .bind(record.source.agent_id.as_str())
+    .bind(record.attempt_id())
+    .bind(record.agent_id().as_str())
     .bind(encode(record)?)
     .execute(&mut *connection)
     .await
@@ -68,14 +79,13 @@ async fn prepare_on(
     connection: &mut SqliteConnection,
     agent_id: &AgentIdV1,
     observed_at_ms: i64,
-) -> Result<Option<AgentRecoveryRecordV1>, DomainStoreErrorV1> {
+    native: Option<&AgentNativeTurnFailureV1>,
+) -> Result<Option<AgentRecoveryAttemptV1>, DomainStoreErrorV1> {
     // Resume the saved intent even if runtime replacement is incomplete. The
     // runtime journal, rather than a new failure observation, owns that effect.
-    if let Some(source) = sqlx::query_scalar::<_, String>(
-        "SELECT record_json FROM agent_recoveries \
-        WHERE agent_id = ?1 AND json_extract(record_json, '$.stopped') IS NULL \
-        AND json_extract(record_json, '$.continuation') IS NULL LIMIT 1",
-    )
+    if let Some(source) = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!(
+        "SELECT record_json FROM agent_recoveries WHERE agent_id = ?1 AND {UNFINISHED} LIMIT 1"
+    )))
     .bind(agent_id.as_str())
     .fetch_optional(&mut *connection)
     .await
@@ -83,6 +93,106 @@ async fn prepare_on(
     {
         return decode(&source).map(Some);
     }
+    // A native terminal's failure is the Host's, not a timeline row: any
+    // conversation attempt the Agent kept from an earlier Chat is history.
+    match native {
+        Some(native) => prepare_native_on(connection, agent_id, observed_at_ms, native).await,
+        None => Ok(
+            prepare_conversation_on(connection, agent_id, observed_at_ms)
+                .await?
+                .map(AgentRecoveryAttemptV1::Conversation),
+        ),
+    }
+}
+
+async fn prepare_native_on(
+    connection: &mut SqliteConnection,
+    agent_id: &AgentIdV1,
+    observed_at_ms: i64,
+    native: &AgentNativeTurnFailureV1,
+) -> Result<Option<AgentRecoveryAttemptV1>, DomainStoreErrorV1> {
+    if !matches!(
+        native.reason,
+        AgentTurnFailureReasonV1::UsageLimit | AgentTurnFailureReasonV1::RateLimit
+    ) {
+        return Ok(None);
+    }
+    // The Host's failure episode survives account replacement and restarts,
+    // so a repeated observation cannot create a second attempt.
+    let identity = encode(&(
+        "native",
+        agent_id.as_str(),
+        &native.terminal_epoch,
+        &native.attention_id,
+    ))?;
+    let attempt_id = format!("recovery-{:x}", Sha256::digest(identity.as_bytes()));
+    if let Some(record) = read_on(connection, &attempt_id).await? {
+        return Ok(Some(record));
+    }
+    let Some(selection) =
+        crate::agent_runtime_transition::selection_on(connection, agent_id).await?
+    else {
+        return Ok(None);
+    };
+    if selection.interaction_profile != AgentInteractionProfileV1::NativeCli {
+        return Ok(None);
+    }
+    let Some(policy) =
+        crate::provider_recovery::read_on(connection, &selection.provider_id).await?
+    else {
+        return Ok(None);
+    };
+    if !policy.enabled
+        || policy
+            .activated_at_ms
+            .is_none_or(|at| native.observed_at_ms < at)
+        || !crate::agent_runtime_close::is_open_on(connection, agent_id).await?
+        || crate::agent_runtime_transition::active_transition_on(connection, agent_id)
+            .await?
+            .is_some()
+        || crate::checkpoint_bindings::authority_on(connection, agent_id)
+            .await?
+            .is_none_or(|authority| authority.terminal_epoch != native.terminal_epoch)
+    {
+        return Ok(None);
+    }
+    crate::provider_recovery_usage::report_limit_on(
+        connection,
+        &selection.provider_id,
+        &selection.execution_profile,
+        native.observed_at_ms,
+    )
+    .await?;
+    let target = crate::provider_recovery_usage::select_on(
+        connection,
+        &policy.accounts,
+        &selection.execution_profile,
+        observed_at_ms,
+    )
+    .await?;
+    let record = AgentRecoveryAttemptV1::Native(AgentNativeRecoveryRecordV1 {
+        schema_version: 1,
+        attempt_id,
+        agent_id: agent_id.clone(),
+        provider_id: selection.provider_id,
+        source_execution_profile: selection.execution_profile,
+        source_selection_revision: selection.revision,
+        native_failure: native.clone(),
+        policy_revision: policy.revision,
+        stopped: target.is_none().then_some(AgentRecoveryStopV1::Exhausted),
+        target,
+        continuation: AgentNativeRecoveryContinuationV1::NotStarted,
+        created_at_ms: observed_at_ms,
+    });
+    save_on(connection, &record).await?;
+    Ok(Some(record))
+}
+
+async fn prepare_conversation_on(
+    connection: &mut SqliteConnection,
+    agent_id: &AgentIdV1,
+    observed_at_ms: i64,
+) -> Result<Option<AgentRecoveryRecordV1>, DomainStoreErrorV1> {
     let Some(source) = binding_for_agent_on(connection, agent_id).await? else {
         return Ok(None);
     };
@@ -104,7 +214,7 @@ async fn prepare_on(
     ))?;
     let attempt_id = format!("recovery-{:x}", Sha256::digest(identity.as_bytes()));
     if let Some(record) = read_on(connection, &attempt_id).await? {
-        return Ok(Some(record));
+        return Ok(record.into_conversation());
     }
     let Some(policy) = crate::provider_recovery::read_on(connection, &source.provider_id).await?
     else {
@@ -197,8 +307,9 @@ async fn prepare_on(
         continuation: None,
         created_at_ms: observed_at_ms,
     };
+    let record = AgentRecoveryAttemptV1::Conversation(record);
     save_on(connection, &record).await?;
-    Ok(Some(record))
+    Ok(record.into_conversation())
 }
 
 async fn prepare_turn_on(
@@ -206,7 +317,10 @@ async fn prepare_turn_on(
     attempt_id: &str,
     observed_at_ms: i64,
 ) -> Result<Option<AgentTurnEffectReceiptV1>, DomainStoreErrorV1> {
-    let Some(mut record) = read_on(connection, attempt_id).await? else {
+    let Some(mut record) = read_on(connection, attempt_id)
+        .await?
+        .and_then(AgentRecoveryAttemptV1::into_conversation)
+    else {
         return Ok(None);
     };
     if let Some(request) = &record.continuation {
@@ -274,12 +388,12 @@ async fn prepare_turn_on(
             prepare_continuation_with_goal_on(connection, &request, original_goal).await?
         {
             record.continuation = Some(request);
-            save_on(connection, &record).await?;
+            save_on(connection, &AgentRecoveryAttemptV1::Conversation(record)).await?;
             return Ok(Some(receipt));
         }
     }
     record.stopped = Some(AgentRecoveryStopV1::Superseded);
-    save_on(connection, &record).await?;
+    save_on(connection, &AgentRecoveryAttemptV1::Conversation(record)).await?;
     Ok(None)
 }
 
@@ -299,10 +413,13 @@ pub(crate) async fn latest_on(
     .fetch_optional(&mut *connection)
     .await
     .map_err(|error| map_sqlx("read_agent_recovery", error))?;
-    let Some(source) = source else {
+    let Some(record) = source
+        .map(|source| decode(&source))
+        .transpose()?
+        .and_then(AgentRecoveryAttemptV1::into_conversation)
+    else {
         return Ok(None);
     };
-    let record = decode(&source)?;
     let turn_state = match &record.continuation {
         Some(request) => crate::agent_timeline::turn_effect_on(
             connection,
@@ -386,14 +503,15 @@ impl AgentRecoveryStore for SqliteDomainStore {
         &'a self,
         agent_id: &'a AgentIdV1,
         observed_at_ms: i64,
-    ) -> DomainStoreFuture<'a, Option<AgentRecoveryRecordV1>> {
+        native: Option<&'a AgentNativeTurnFailureV1>,
+    ) -> DomainStoreFuture<'a, Option<AgentRecoveryAttemptV1>> {
         Box::pin(async move {
             let mut transaction = self
                 .pool
                 .begin_with("BEGIN IMMEDIATE")
                 .await
                 .map_err(|error| map_sqlx("prepare_agent_recovery", error))?;
-            let result = prepare_on(&mut transaction, agent_id, observed_at_ms).await?;
+            let result = prepare_on(&mut transaction, agent_id, observed_at_ms, native).await?;
             transaction
                 .commit()
                 .await
@@ -405,7 +523,7 @@ impl AgentRecoveryStore for SqliteDomainStore {
     fn agent_recovery<'a>(
         &'a self,
         attempt_id: &'a str,
-    ) -> DomainStoreFuture<'a, Option<AgentRecoveryRecordV1>> {
+    ) -> DomainStoreFuture<'a, Option<AgentRecoveryAttemptV1>> {
         Box::pin(async move {
             let mut connection = self
                 .pool
@@ -418,11 +536,10 @@ impl AgentRecoveryStore for SqliteDomainStore {
 
     fn agents_with_recovery(&self) -> DomainStoreFuture<'_, Vec<AgentIdV1>> {
         Box::pin(async move {
-            let rows = sqlx::query_scalar::<_, String>("SELECT DISTINCT sessions.agent_id FROM agent_interaction_sessions AS sessions \
+            let rows = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!("SELECT DISTINCT sessions.agent_id FROM agent_interaction_sessions AS sessions \
                 JOIN provider_recovery_policies AS policies ON sessions.provider_id = policies.provider_id \
                 WHERE json_extract(policies.record_json, '$.enabled') = 1 \
-                UNION SELECT agent_id FROM agent_recoveries WHERE json_extract(record_json, '$.stopped') IS NULL \
-                AND json_extract(record_json, '$.continuation') IS NULL")
+                UNION SELECT agent_id FROM agent_recoveries WHERE {UNFINISHED}")))
                 .fetch_all(&self.pool).await.map_err(|error| map_sqlx("agents_with_recovery", error))?;
             rows.into_iter()
                 .map(|id| {
@@ -456,7 +573,7 @@ impl AgentRecoveryStore for SqliteDomainStore {
         &'a self,
         attempt_id: &'a str,
         reason: &'a AgentRecoveryStopV1,
-    ) -> DomainStoreFuture<'a, AgentRecoveryRecordV1> {
+    ) -> DomainStoreFuture<'a, AgentRecoveryAttemptV1> {
         Box::pin(async move {
             let mut transaction = self
                 .pool
@@ -465,12 +582,21 @@ impl AgentRecoveryStore for SqliteDomainStore {
                 .map_err(|error| map_sqlx("stop_agent_recovery", error))?;
             let mut record = read_on(&mut transaction, attempt_id)
                 .await?
-                .ok_or_else(|| DomainStoreErrorV1::NotFound {
-                    entity: "agent_recovery",
-                    id: attempt_id.into(),
-                })?;
-            if record.stopped.is_none() && record.continuation.is_none() {
-                record.stopped = Some(reason.clone());
+                .ok_or_else(|| not_found(attempt_id))?;
+            let (stopped, owned_elsewhere) = match &mut record {
+                AgentRecoveryAttemptV1::Conversation(record) => {
+                    (&mut record.stopped, record.continuation.is_some())
+                }
+                AgentRecoveryAttemptV1::Native(record) => (
+                    &mut record.stopped,
+                    matches!(
+                        record.continuation,
+                        AgentNativeRecoveryContinuationV1::Delivered { .. }
+                    ),
+                ),
+            };
+            if stopped.is_none() && !owned_elsewhere {
+                *stopped = Some(reason.clone());
                 save_on(&mut transaction, &record).await?;
             }
             transaction
@@ -479,5 +605,130 @@ impl AgentRecoveryStore for SqliteDomainStore {
                 .map_err(|error| map_sqlx("stop_agent_recovery", error))?;
             Ok(record)
         })
+    }
+
+    fn claim_native_agent_recovery_continuation<'a>(
+        &'a self,
+        attempt_id: &'a str,
+        delivery_idempotency_key: &'a str,
+    ) -> DomainStoreFuture<'a, AgentNativeRecoveryRecordV1> {
+        Box::pin(async move {
+            update_native_continuation(&self.pool, attempt_id, |record| {
+                (record.stopped.is_none()
+                    && record.continuation == AgentNativeRecoveryContinuationV1::NotStarted)
+                    .then(|| AgentNativeRecoveryContinuationV1::Claimed {
+                        delivery_idempotency_key: delivery_idempotency_key.into(),
+                    })
+            })
+            .await
+        })
+    }
+
+    fn settle_native_agent_recovery_continuation<'a>(
+        &'a self,
+        attempt_id: &'a str,
+        evidence: Option<&'a WorkflowPromptDeliveryEvidenceV1>,
+    ) -> DomainStoreFuture<'a, AgentNativeRecoveryRecordV1> {
+        Box::pin(async move {
+            update_native_continuation(&self.pool, attempt_id, |record| {
+                matches!(
+                    record.continuation,
+                    AgentNativeRecoveryContinuationV1::Claimed { .. }
+                )
+                .then(|| match evidence {
+                    Some(evidence) => AgentNativeRecoveryContinuationV1::Delivered {
+                        evidence: evidence.clone(),
+                    },
+                    None => AgentNativeRecoveryContinuationV1::NotStarted,
+                })
+            })
+            .await
+        })
+    }
+}
+
+fn not_found(attempt_id: &str) -> DomainStoreErrorV1 {
+    DomainStoreErrorV1::NotFound {
+        entity: "agent_recovery",
+        id: attempt_id.into(),
+    }
+}
+
+/// Moves a native attempt's continuation in one immediate transaction when
+/// `next` allows it from the stored state; otherwise returns it unchanged.
+async fn update_native_continuation(
+    pool: &sqlx::SqlitePool,
+    attempt_id: &str,
+    next: impl FnOnce(&AgentNativeRecoveryRecordV1) -> Option<AgentNativeRecoveryContinuationV1>,
+) -> Result<AgentNativeRecoveryRecordV1, DomainStoreErrorV1> {
+    let mut transaction = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|error| map_sqlx("update_agent_recovery_continuation", error))?;
+    let Some(AgentRecoveryAttemptV1::Native(mut record)) =
+        read_on(&mut transaction, attempt_id).await?
+    else {
+        return Err(not_found(attempt_id));
+    };
+    if let Some(continuation) = next(&record) {
+        record.continuation = continuation;
+        let attempt = AgentRecoveryAttemptV1::Native(record);
+        save_on(&mut transaction, &attempt).await?;
+        let AgentRecoveryAttemptV1::Native(saved) = attempt else {
+            unreachable!("a native attempt stays native");
+        };
+        record = saved;
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|error| map_sqlx("update_agent_recovery_continuation", error))?;
+    Ok(record)
+}
+
+/// One Agent the native recovery scanner probes or wakes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeRecoveryCandidateV1 {
+    pub agent_id: AgentIdV1,
+    /// The Agent has a native attempt that still owns work.
+    pub unfinished_attempt: bool,
+}
+
+impl SqliteDomainStore {
+    /// Candidate enumeration for native account recovery, in pages: native
+    /// terminal Agents whose provider has an enabled recovery policy, and
+    /// Agents with an unfinished native attempt. Selection proves nothing
+    /// about a failure; the Host observation and the owner decide.
+    pub async fn agent_native_recovery_candidates(
+        &self,
+        after: Option<&AgentIdV1>,
+        limit: u32,
+    ) -> Result<Vec<NativeRecoveryCandidateV1>, DomainStoreErrorV1> {
+        let rows = sqlx::query_as::<_, (String, bool)>(AssertSqlSafe(format!(
+            "SELECT agent_id, MAX(unfinished) FROM (\
+             SELECT selections.agent_id AS agent_id, 0 AS unfinished \
+             FROM agent_runtime_selections AS selections \
+             JOIN provider_recovery_policies AS policies \
+             ON selections.provider_id = policies.provider_id \
+             WHERE selections.interaction_profile = 'native_cli' \
+             AND json_extract(policies.record_json, '$.enabled') = 1 \
+             UNION ALL SELECT agent_id, 1 FROM agent_recoveries \
+             WHERE json_extract(record_json, '$.nativeFailure') IS NOT NULL AND {UNFINISHED}) \
+             WHERE ?1 IS NULL OR agent_id > ?1 GROUP BY agent_id ORDER BY agent_id LIMIT ?2"
+        )))
+        .bind(after.map(AgentIdV1::as_str))
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| map_sqlx("read_native_recovery_candidates", error))?;
+        rows.into_iter()
+            .map(|(agent_id, unfinished_attempt)| {
+                Ok(NativeRecoveryCandidateV1 {
+                    agent_id: AgentIdV1::new(agent_id)
+                        .map_err(|error| corrupt_identifier("native recovery candidate", error))?,
+                    unfinished_attempt,
+                })
+            })
+            .collect()
     }
 }
