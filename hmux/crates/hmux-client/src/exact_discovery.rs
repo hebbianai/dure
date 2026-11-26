@@ -906,6 +906,7 @@ mod tests {
             program_status: None,
             background_work: false,
             held_prompts: None,
+            turn_failure: None,
         });
         observed.working_directory = Some(crate::WorkingDirectoryDescriptor {
             terminal_epoch: "terminal-1".into(),

@@ -252,3 +252,114 @@ fn process_existence_cannot_authorize_idle_stop() {
         "a running process does not prove that its provider is idle"
     );
 }
+
+/// A turn that settled on a typed API failure admits the exact fenced stop
+/// a managed account switch needs, and nothing later: new output or a new
+/// runtime revision refuses the same fence.
+#[test]
+fn a_settled_turn_failure_admits_only_its_exact_stop_fence() {
+    use crate::local_protocol::{
+        AgentRuntimeActivity, AgentRuntimeAttention, AgentTurnFailure,
+        ManagedProviderStopQuiescenceFence,
+    };
+    use crate::terminal_replay::AgentStateReportObservation;
+    let report = |activity, attention, turn_failure| AgentStateReportObservation {
+        progress: None,
+        activity,
+        attention,
+        turn_completed: false,
+        turn_completion_id: None,
+        causality: None,
+        working_ttl_ms: None,
+        expected_observation: None,
+        background_work: false,
+        startup_gate: None,
+        approval_request: None,
+        turn_failure,
+    };
+    let mut host = host();
+    let current = fence("runner-1", 1, "terminal-1");
+    let AgentStateReportFold::Applied(failed) = host
+        .apply_agent_state_report(
+            &current,
+            report(
+                AgentRuntimeActivity::Waiting,
+                AgentRuntimeAttention::Error,
+                Some(AgentTurnFailure::RateLimit),
+            ),
+        )
+        .unwrap()
+    else {
+        panic!("the failure report must apply");
+    };
+    let at_failure = ManagedProviderStopQuiescenceFence {
+        terminal_epoch: failed.terminal_epoch.clone(),
+        runtime_revision: failed.revision,
+        observed_through_output_seq: host.current_output_seq(),
+    };
+    assert!(
+        host.matches_agent_runtime_quiescence(&current, &at_failure)
+            .unwrap()
+    );
+
+    host.ingest_output(&current, b"late provider output")
+        .unwrap();
+    assert!(
+        !host
+            .matches_agent_runtime_quiescence(&current, &at_failure)
+            .unwrap(),
+        "output after the captured failure invalidates its fence"
+    );
+
+    let after_output = ManagedProviderStopQuiescenceFence {
+        observed_through_output_seq: host.current_output_seq(),
+        ..at_failure.clone()
+    };
+    assert!(
+        host.matches_agent_runtime_quiescence(&current, &after_output)
+            .unwrap()
+    );
+    host.apply_agent_state_report(
+        &current,
+        report(
+            AgentRuntimeActivity::Working,
+            AgentRuntimeAttention::None,
+            None,
+        ),
+    )
+    .unwrap();
+    assert!(
+        !host
+            .matches_agent_runtime_quiescence(&current, &after_output)
+            .unwrap(),
+        "a new turn retires the failure's stop authority"
+    );
+
+    // An untyped error never admits a stop: a person decides what it means.
+    let mut host = super::host();
+    let AgentStateReportFold::Applied(untyped) = host
+        .apply_agent_state_report(
+            &current,
+            report(
+                AgentRuntimeActivity::Waiting,
+                AgentRuntimeAttention::Error,
+                None,
+            ),
+        )
+        .unwrap()
+    else {
+        panic!("the error report must apply");
+    };
+    assert!(
+        !host
+            .matches_agent_runtime_quiescence(
+                &current,
+                &ManagedProviderStopQuiescenceFence {
+                    terminal_epoch: untyped.terminal_epoch.clone(),
+                    runtime_revision: untyped.revision,
+                    observed_through_output_seq: host.current_output_seq(),
+                },
+            )
+            .unwrap()
+    );
+}

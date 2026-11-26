@@ -17,6 +17,7 @@ fn turn_ended_with_background_work() -> AgentStateReport {
         expected_observation: None,
         background_work: true,
         startup_gate: None,
+        turn_failure: None,
     }
 }
 

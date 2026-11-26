@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use crate::local_protocol::{
     AgentRuntimeActivity, AgentRuntimeAttention, AgentRuntimeLifecycle,
     AgentRuntimeStateProjection, AgentRuntimeStateSource, AgentStateReportObservationFence,
-    HeldAgentPromptsProjection,
+    AgentTurnFailure, HeldAgentPromptsProjection,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -21,6 +21,10 @@ pub struct AgentRuntimeObservation {
     /// Working only because of background work after the provider's turn
     /// ended; its prompt accepts input.
     pub background_work: bool,
+    /// Why the provider's turn ended on an API error, beside `error`. An
+    /// observation without one continues the failure of the error episode
+    /// it continues.
+    pub turn_failure: Option<AgentTurnFailure>,
 }
 
 impl AgentRuntimeObservation {
@@ -37,6 +41,7 @@ impl AgentRuntimeObservation {
             attention,
             source,
             background_work: false,
+            turn_failure: None,
         }
     }
 
@@ -46,6 +51,7 @@ impl AgentRuntimeObservation {
     pub(super) fn of(current: &AgentRuntimeStateProjection) -> Self {
         Self {
             background_work: current.background_work,
+            turn_failure: current.turn_failure,
             ..Self::new(
                 current.lifecycle,
                 current.activity,
@@ -108,6 +114,9 @@ pub struct AgentStateReportObservation {
     /// What the provider asks the person to approve; see
     /// `AgentStateReport::approval_request`.
     pub approval_request: Option<crate::local_protocol::AgentApprovalRequest>,
+    /// Why the provider's turn ended on an API error; see
+    /// `AgentStateReport::turn_failure`.
+    pub turn_failure: Option<AgentTurnFailure>,
 }
 
 impl AgentStateReportObservation {
@@ -569,6 +578,23 @@ impl TerminalReplay {
                 .agent_runtime_state
                 .as_ref()
                 .is_some_and(|state| state.is_semantically_quiescent())
+    }
+
+    /// Whether a quiescence-fenced managed stop may end the provider here:
+    /// it is semantically quiescent, or its turn settled on a typed API
+    /// failure that nobody has answered yet. Input pending at the prompt, an
+    /// Escape, or key input since the failure was raised (a person may be
+    /// answering it in the terminal) keeps the session. Never idle: semantic
+    /// idle age and hibernation stay quiescence-only.
+    pub(crate) fn is_stop_boundary(&self) -> bool {
+        self.is_semantically_quiescent()
+            || (!self.has_pending_controller_input()
+                && !self.interrupt_requested
+                && !self.attention_input_since_raised
+                && self
+                    .agent_runtime_state
+                    .as_ref()
+                    .is_some_and(AgentRuntimeStateProjection::is_settled_turn_failure))
     }
 
     pub(crate) fn semantic_idle_ms_at(&self, now: Instant) -> Option<u64> {

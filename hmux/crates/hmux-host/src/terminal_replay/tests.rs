@@ -4,6 +4,7 @@ mod causal_reports;
 mod controller_input;
 mod interrupt_request;
 mod startup_gate;
+mod turn_failure;
 
 use super::*;
 use crate::local_protocol::{ScreenSnapshotProfile, WorkingDirectorySource};
@@ -1424,6 +1425,7 @@ fn state_report(
         expected_observation: None,
         background_work: false,
         startup_gate: None,
+        turn_failure: None,
     }
 }
 

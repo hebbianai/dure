@@ -289,6 +289,11 @@ pub struct AgentRuntimeStateDescriptor {
     /// older Hosts never report it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held_prompts: Option<hmux_session_protocol::HeldAgentPromptsProjection>,
+    /// Why the provider's turn ended on an API error, when its adapter
+    /// reported it. Only beside `error`, for that error episode; older Hosts
+    /// never report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_failure: Option<hmux_session_protocol::AgentTurnFailure>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -837,6 +842,7 @@ pub fn project_agent_runtime_state(
         background_work: projection.background_work,
         approval_request: projection.approval_request,
         held_prompts: projection.held_prompts,
+        turn_failure: projection.turn_failure,
     })
 }
 
@@ -1464,6 +1470,7 @@ mod tests {
             program_status: None,
             background_work: false,
             held_prompts: None,
+            turn_failure: None,
         });
         let hello = serve(
             fixture.socket_path.clone(),
@@ -1519,6 +1526,7 @@ mod tests {
             program_status: None,
             background_work: false,
             held_prompts: None,
+            turn_failure: None,
         });
         let _hello = serve(
             fixture.socket_path.clone(),
