@@ -9,6 +9,11 @@
 //! boundary is placed there, and an older page reads every message created
 //! before it. The messages created at one time go into a window or a page
 //! whole or not at all, so pages join exactly where they meet.
+//!
+//! A continued timeline (Chat, then a Terminal, then Chat again) whose window
+//! does not reach back to the messages it holds skips the history between
+//! them. That gap is placed from right after the newest held message was
+//! created to where the window opens, and its pages are read down to there.
 
 use std::collections::BTreeSet;
 use std::sync::Mutex as StdMutex;
@@ -20,7 +25,7 @@ use dure_provider_profile::transcript::{
 };
 
 use super::*;
-use crate::opencode_session_client::{Error as SessionError, MessagePages};
+use crate::opencode_session_client::Error as SessionError;
 
 /// How far back a history window pages. [`Self::ATTACH`] holds the bounds
 /// the whole history had while an attach read all of it, so a session that
@@ -84,6 +89,54 @@ impl HistoryPlaces {
     }
 }
 
+/// What a timeline holds of the session when its runtime attaches.
+pub(super) struct HeldTimeline {
+    items: BTreeSet<AgentTimelineItemIdV1>,
+    /// Whether a held row belongs to a turn: a window that does not reach
+    /// the held rows then follows them behind a gap.
+    holds_turns: bool,
+    /// The newest message the timeline holds, when the newest row that names
+    /// a provider record names a message: no later message has a row in the
+    /// timeline then. A newer part's row, or rows stored before lifecycle
+    /// rows named their message, leave it unknown.
+    newest_message: Option<String>,
+}
+
+impl HeldTimeline {
+    pub(super) fn of(rows: &[AgentTimelineRowV1]) -> Self {
+        let newest_message = rows
+            .iter()
+            .filter(|row| row.item.provider_message_id.is_some())
+            .max_by_key(|row| row.cursor.sequence)
+            .and_then(|row| provider_message(&row.item))
+            .map(str::to_owned);
+        Self {
+            items: rows.iter().map(|row| row.item.item_id.clone()).collect(),
+            holds_turns: rows.iter().any(|row| row.item.turn_id.is_some()),
+            newest_message,
+        }
+    }
+
+    /// Where the messages the timeline holds end: right after the newest of
+    /// them was created, which the pages of the gap after them are read down
+    /// to. `None` when the newest held message is unknown, OpenCode no longer
+    /// has it, or it is too large to read.
+    async fn history_end(
+        &self,
+        client: &OpenCodeSessionClient,
+        session: &SessionId,
+    ) -> Result<Option<i64>, CommandError> {
+        let Some(id) = &self.newest_message else {
+            return Ok(None);
+        };
+        match client.message(session, id).await {
+            Ok(Some(message)) => Ok(created_at_ms(&message)?.checked_add(1)),
+            Ok(None) | Err(SessionError::Limit) => Ok(None),
+            Err(error) => Err(provider_error(error)),
+        }
+    }
+}
+
 /// One message of a window, or a stand-in for a message too large to read.
 struct Shown {
     /// The message's id and when it was created; none for a stand-in.
@@ -100,17 +153,19 @@ struct Shown {
 ///
 /// A window that leaves older messages out and opens the timeline opens at a
 /// place, from which [`history_page`] reads them. After turns the timeline
-/// `holds_turns` of, its boundary marks the gap between them and the window,
-/// at no place: paging back from the window's start would show the held
-/// turns again.
+/// holds, its boundary marks the gap between them and the window instead:
+/// placed from where the held messages end to where the window opens, and
+/// otherwise at no place, since paging back from the window's start would
+/// show the held turns again.
 pub(super) async fn history_window(
-    mut pages: MessagePages<'_>,
+    client: &OpenCodeSessionClient,
+    session: &SessionId,
     turns: &mut BTreeMap<String, TurnContext>,
-    held: &BTreeSet<AgentTimelineItemIdV1>,
-    holds_turns: bool,
+    held: &HeldTimeline,
     bounds: HistoryWindowBounds,
     places: &StdMutex<HistoryPlaces>,
 ) -> Result<HistoryWindow, CommandError> {
+    let mut pages = client.message_pages(session);
     let mut newest_first = Vec::<Shown>::new();
     let mut completed_users = Vec::new();
     let mut oldest = None::<(String, i64)>;
@@ -129,7 +184,11 @@ pub(super) async fn history_window(
                 .ok_or_else(|| provider_error(SessionError::Limit))?;
             newest_first.push(Shown {
                 message: None,
-                items: vec![history_boundary(&id, created, None)?],
+                items: vec![history_boundary(
+                    &id,
+                    created,
+                    AgentTimelineItemBodyV1::history_window(None),
+                )?],
             });
         }
         if let (Some(oldest), Some(cursor)) = (page.messages.first(), pages.next_cursor()) {
@@ -139,7 +198,7 @@ pub(super) async fn history_window(
         let mut shown = Vec::with_capacity(page.messages.len());
         for message in &page.messages {
             let (items, completed_user) = message_items(message, turns)?;
-            if !reached_held && items.iter().any(|item| held.contains(&item.item_id)) {
+            if !reached_held && items.iter().any(|item| held.items.contains(&item.item_id)) {
                 // The page's older messages come before what the timeline
                 // holds: behind its boundary, never rows to append after it.
                 reached_held = true;
@@ -171,9 +230,22 @@ pub(super) async fn history_window(
     if omits_older {
         // Placed only where OpenCode pages by creation time, as a read of the
         // history before the place assumes.
-        let place = (ordered && !holds_turns)
-            .then(|| open_at_place(&mut newest_first))
-            .flatten();
+        let body = if held.holds_turns {
+            let end = if ordered {
+                held.history_end(client, session).await?
+            } else {
+                None
+            };
+            AgentTimelineItemBodyV1::history_gap(
+                end.and_then(|end| Some((end, open_at_place(&mut newest_first, end)?))),
+            )
+        } else {
+            AgentTimelineItemBodyV1::history_window(
+                ordered
+                    .then(|| open_at_place(&mut newest_first, 0))
+                    .flatten(),
+            )
+        };
         let newer = newest_first
             .iter()
             .rev()
@@ -181,7 +253,7 @@ pub(super) async fn history_window(
             .ok_or_else(|| protocol_error("history window holds no message"))?;
         newest_first.push(Shown {
             message: None,
-            items: vec![history_boundary(&newer.0, newer.1, place)?],
+            items: vec![history_boundary(&newer.0, newer.1, body)?],
         });
     }
     if ordered {
@@ -205,19 +277,23 @@ pub(super) async fn history_window(
     })
 }
 
-/// Where a window that leaves older messages out opens: at the oldest time it
-/// holds every message of. The messages created at the window's oldest time
-/// can share it with messages on the page past the window, so they leave the
-/// window for the history before it, and so does any stand-in older than
-/// what stays. `None` when every message of the window was created at once.
-fn open_at_place(newest_first: &mut Vec<Shown>) -> Option<i64> {
+/// Where a window that leaves older messages out opens, for a history before
+/// it that is read down to `floor`: at the oldest time it holds every message
+/// of. The messages created at the window's oldest time can share it with
+/// messages on the page past the window, so they leave the window for the
+/// history before it, and so does any stand-in older than what stays. `None`,
+/// and the window stays whole, when every message of the window was created
+/// at once, or the history read down to `floor` would not hold the messages
+/// that leave.
+fn open_at_place(newest_first: &mut Vec<Shown>, floor: i64) -> Option<i64> {
     let created = |shown: &Shown| shown.message.as_ref().map(|(_, created)| *created);
     let oldest = newest_first.iter().rev().find_map(created)?;
     let kept = newest_first
         .iter()
         .rposition(|shown| created(shown).is_some_and(|at| at > oldest))?;
+    let place = created(&newest_first[kept]).filter(|_| oldest >= floor)?;
     newest_first.truncate(kept + 1);
-    created(&newest_first[kept])
+    Some(place)
 }
 
 /// The page of `provider`'s session history that ends before `place` and
@@ -367,21 +443,21 @@ fn created_at_ms(message: &Value) -> Result<i64, CommandError> {
 }
 
 /// The existing boundary row before the message `newer_id`, created at
-/// `newer_created`, which marks that older messages precede it. With the
-/// `place` the history before it is read from, it is placed there; without
-/// one, it says only that they are left out. The boundary that opens a window
-/// and one that stands in for a message too large to read right before it
-/// are the same row.
+/// `newer_created`, which marks that older messages precede it: a window's
+/// opening or a continued timeline's gap (`body`), placed where the history
+/// it leaves out is read or at no place. The boundary that opens a window and
+/// one that stands in for a message too large to read right before it are
+/// the same row.
 fn history_boundary(
     newer_id: &str,
     newer_created: i64,
-    place: Option<i64>,
+    body: AgentTimelineItemBodyV1,
 ) -> Result<AgentTimelineItemDraftV1, CommandError> {
     item(
         &format!("history-boundary:{newer_id}"),
         None,
         None,
-        AgentTimelineItemBodyV1::history_window(place),
+        body,
         newer_created,
     )
 }
