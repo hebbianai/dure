@@ -948,24 +948,34 @@ pub fn bounded_suffix(path: &Path, max_bytes: u64) -> Option<String> {
     if !metadata.is_file() {
         return None;
     }
+    let (_, bytes) = bounded_suffix_records(&mut file, metadata.len(), max_bytes).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// The whole records in the last `max_bytes` of a `len`-byte line-delimited
+/// file, and the offset of the first of them. A provider may still be
+/// appending, so the last record can be incomplete.
+pub fn bounded_suffix_records(
+    file: &mut fs::File,
+    len: u64,
+    max_bytes: u64,
+) -> std::io::Result<(u64, Vec<u8>)> {
     // Start one byte earlier so a record exactly on the boundary is retained.
-    let start = metadata.len().saturating_sub(max_bytes);
-    file.seek(SeekFrom::Start(start.saturating_sub(1))).ok()?;
+    let start = len.saturating_sub(max_bytes);
+    file.seek(SeekFrom::Start(start.saturating_sub(1)))?;
     let mut bytes = Vec::new();
-    file.take(max_bytes + u64::from(start > 0))
-        .read_to_end(&mut bytes)
-        .ok()?;
-    let bytes = if start > 0 {
-        // Never decode a partial JSON record or split UTF-8 code point.
-        let boundary = bytes
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map_or(bytes.len(), |index| index + 1);
-        &bytes[boundary..]
-    } else {
-        &bytes[..]
-    };
-    Some(String::from_utf8_lossy(bytes).into_owned())
+    file.take(len - start + u64::from(start > 0))
+        .read_to_end(&mut bytes)?;
+    if start == 0 {
+        return Ok((0, bytes));
+    }
+    // Never decode a partial JSON record or split UTF-8 code point.
+    let boundary = bytes
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map_or(bytes.len(), |index| index + 1);
+    bytes.drain(..boundary);
+    Ok((start - 1 + boundary as u64, bytes))
 }
 
 fn recorded_setting(value: Option<&Value>) -> Option<String> {

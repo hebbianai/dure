@@ -253,6 +253,31 @@ fn session_settings_read_only_a_bounded_suffix() {
     }
 }
 
+#[test]
+fn a_bounded_suffix_reports_where_its_whole_records_start() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    let (old, newest) = (record("old"), record("newest"));
+    write!(file, "{old}{newest}").unwrap();
+    let len = (old.len() + newest.len()) as u64;
+    let handle = file.as_file_mut();
+    // The newest record exactly, one byte more, and the whole file.
+    for (max_bytes, start, expected) in [
+        (newest.len() as u64, old.len() as u64, newest.clone()),
+        (newest.len() as u64 + 1, old.len() as u64, newest.clone()),
+        (len, 0, format!("{old}{newest}")),
+    ] {
+        let (offset, bytes) = bounded_suffix_records(handle, len, max_bytes).unwrap();
+        assert_eq!(
+            (offset, String::from_utf8(bytes).unwrap()),
+            (start, expected)
+        );
+    }
+    // A record appended after `len` was measured stays for a later read.
+    write!(handle, "{}", record("later")).unwrap();
+    let (_, bytes) = bounded_suffix_records(handle, len, newest.len() as u64).unwrap();
+    assert_eq!(String::from_utf8(bytes).unwrap(), newest);
+}
+
 fn page(path: &Path, before: Option<u64>, limits: Limits) -> TranscriptWindow {
     read_window(
         path,

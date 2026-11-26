@@ -61,7 +61,10 @@ try {
     DURE_QA_CONTROL_PLANE_BIN: controlPlane, DURE_QA_HMUX_RUNTIME: hmux, DURE_QA_PI_FIXTURE_URL: url,
   };
   assert.equal((await run(pi, ["--version"], { env })).trim(), "0.85.1", "qualify the exact public Pi protocol before changing its pin");
-  process.stdout.write(await run(test, ["--ignored", "--exact", "managed_structured_runtime::pi_tests::live_pi_preserves_conversation_across_settings_busy_turns_and_reconnect", "--nocapture"], { env }));
+  for (const name of [
+    "live_pi_preserves_conversation_across_settings_busy_turns_and_reconnect",
+    "live_pi_opens_a_long_terminal_conversation_in_chat",
+  ]) process.stdout.write(await run(test, ["--ignored", "--exact", `managed_structured_runtime::pi_tests::${name}`, "--nocapture"], { env }));
   for (const [model, effort] of [["model-a", "high"], ["model-b", "high"], ["model-b", "low"]]) {
     assert(observations.some((entry) => entry.model === model && entry.effort === effort));
   }
