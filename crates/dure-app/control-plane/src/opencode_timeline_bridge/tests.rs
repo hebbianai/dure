@@ -136,14 +136,35 @@ fn answer(target: &str, messages: &[SerializedMessage], page_size: usize) -> (u1
 
 /// The user message and the assistant's answer of one imported turn. The
 /// answer of an `oversized` turn is over the bound of one record, which the
-/// client reads of one message.
+/// client keeps of one message.
 fn turn(index: usize, oversized: bool) -> Vec<Value> {
-    let text = if oversized {
-        "A".repeat(64 * 1024 * 1024)
+    if oversized {
+        turn_reading(index, &[KEPT_FILE_BYTES; 65])
     } else {
-        format!("Answer {index}")
-    };
-    turn_answered(index, text)
+        turn_answered(index, format!("Answer {index}"))
+    }
+}
+
+/// The size of an encoded file the session client keeps whole in an
+/// attachment: with its scheme, the URL is just under one mebibyte.
+const KEPT_FILE_BYTES: usize = 1024 * 1024 - 64;
+
+/// A turn whose answer reads files with OpenCode's `read` tool before it
+/// answers. The tool part keeps each file whole, encoded, in an attachment,
+/// one per size in `files`.
+fn turn_reading(index: usize, files: &[usize]) -> Vec<Value> {
+    let mut turn = turn_answered(index, format!("Answer {index}"));
+    let answer = turn[1]["info"]["id"].clone();
+    let attachments = files
+        .iter()
+        .map(|bytes| json!({"type": "file", "mime": "application/pdf", "url": format!("data:application/pdf;base64,{}", "A".repeat(*bytes))}))
+        .collect::<Vec<_>>();
+    let read = json!({
+        "id": format!("prt_read{index:04}"), "sessionID": SESSION, "messageID": answer, "type": "tool", "tool": "read", "callID": format!("call_read{index:04}"),
+        "state": {"status": "completed", "input": {"filePath": "large.pdf"}, "output": "PDF read successfully", "attachments": attachments},
+    });
+    turn[1]["parts"].as_array_mut().unwrap().insert(0, read);
+    turn
 }
 
 /// When the user message of turn `index` was created; its answer follows a
@@ -310,6 +331,34 @@ fn prompts_and_answers(range: std::ops::Range<usize>) -> Vec<String> {
     range
         .flat_map(|index| [format!("Prompt {index}"), format!("Answer {index}")])
         .collect()
+}
+
+/// The output of each completed `read` tool row in the timeline, in order.
+async fn reads(
+    service: &Arc<AgentConversationService<crate::SqliteDomainStore>>,
+    binding: &AgentInteractionBindingV1,
+) -> Vec<Value> {
+    let journal = ProviderTimelineJournal::new(Arc::clone(service), binding)
+        .await
+        .unwrap();
+    let mut rows = journal.existing_rows().await.unwrap().rows;
+    rows.sort_by_key(|row| row.cursor.sequence);
+    rows.into_iter()
+        .filter_map(|row| match row.item.body {
+            AgentTimelineItemBodyV1::Tool {
+                name,
+                state: AgentTimelineToolStateV1::Completed,
+                output,
+                ..
+            } if name == "read" => output,
+            _ => None,
+        })
+        .collect()
+}
+
+/// The event that says message `id` changed.
+fn changed(id: &str) -> Value {
+    json!({"type": "message.updated", "properties": {"info": {"id": id, "sessionID": SESSION}}})
 }
 
 fn small_window(messages: usize) -> HistoryWindowBounds {
@@ -585,16 +634,16 @@ async fn a_newest_message_too_large_to_read_still_fails_the_attach() {
 }
 
 /// An answer larger than an answer of several messages, as OpenCode keeps a
-/// message whose `read` tool attached a large image or PDF.
-fn large_answer() -> String {
-    "A".repeat(9 * 1024 * 1024)
+/// message whose `read` tool attached large images or PDFs.
+fn large_answer(index: usize) -> Vec<Value> {
+    turn_reading(index, &[KEPT_FILE_BYTES; 9])
 }
 
 #[tokio::test]
 async fn a_message_larger_than_a_page_opens_in_chat_as_one_record() {
     let (_temporary, service, binding) = conversation_fixture().await;
     let mut messages = turns(0..1);
-    messages.extend(turn_answered(1, large_answer()));
+    messages.extend(large_answer(1));
     messages.extend(turns(2..4));
     let server = FakeOpenCode::start(messages, 100).await;
     let bridge = bridge(&server, &binding, &service).await;
@@ -603,10 +652,11 @@ async fn a_message_larger_than_a_page_opens_in_chat_as_one_record() {
     // boundary row stood in its place.
     bridge.hydrate().await.unwrap();
 
-    let mut expected = prompts_and_answers(0..1);
-    expected.extend(["Prompt 1".into(), "clipped answer".into()]);
-    expected.extend(prompts_and_answers(2..4));
-    assert_eq!(conversation(&service, &binding).await, expected);
+    assert_eq!(
+        conversation(&service, &binding).await,
+        prompts_and_answers(0..4)
+    );
+    assert_eq!(reads(&service, &binding).await, ["PDF read successfully"]);
     assert!(history_complete(&service, &binding).await);
 }
 
@@ -616,23 +666,59 @@ async fn a_live_message_larger_than_a_page_keeps_chat_connected() {
     let server = FakeOpenCode::start(turns(0..2), 100).await;
     let bridge = bridge(&server, &binding, &service).await;
     bridge.hydrate().await.unwrap();
-    let changed = |id: &str| json!({"type": "message.updated", "properties": {"info": {"id": id, "sessionID": SESSION}}});
 
     // Before, reading the changed message failed, which ended the live
     // event loop, so Chat disconnected in the middle of the turn.
-    server.push(turn_answered(2, large_answer()));
+    server.push(large_answer(2));
     bridge.handle_event(&changed("msg_user0002")).await.unwrap();
     bridge
         .handle_event(&changed("msg_answer0002"))
         .await
         .unwrap();
 
-    let mut expected = prompts_and_answers(0..2);
-    expected.extend(["Prompt 2".into(), "clipped answer".into()]);
-    assert_eq!(conversation(&service, &binding).await, expected);
+    assert_eq!(
+        conversation(&service, &binding).await,
+        prompts_and_answers(0..3)
+    );
     // A reattach while that message is the newest reads it again.
     bridge.hydrate().await.unwrap();
-    assert_eq!(conversation(&service, &binding).await, expected);
+    assert_eq!(
+        conversation(&service, &binding).await,
+        prompts_and_answers(0..3)
+    );
+    assert_eq!(reads(&service, &binding).await, ["PDF read successfully"]);
+}
+
+#[tokio::test]
+async fn a_live_message_that_read_a_file_over_the_record_bound_keeps_chat_connected() {
+    let (_temporary, service, binding) = conversation_fixture().await;
+    let server = FakeOpenCode::start(turns(0..2), 100).await;
+    let bridge = bridge(&server, &binding, &service).await;
+    bridge.hydrate().await.unwrap();
+
+    // The model reads a PDF over 48 MB, whose encoding is over the bound of
+    // one record. Before, the message could not be read, which ended the
+    // live event loop, so Chat disconnected in the middle of the turn.
+    server.push(turn_reading(2, &[64 * 1024 * 1024]));
+    bridge.handle_event(&changed("msg_user0002")).await.unwrap();
+    bridge
+        .handle_event(&changed("msg_answer0002"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        conversation(&service, &binding).await,
+        prompts_and_answers(0..3)
+    );
+    assert_eq!(reads(&service, &binding).await, ["PDF read successfully"]);
+    // Before, a reattach while that message was the newest failed, so Chat
+    // could not open again.
+    bridge.hydrate().await.unwrap();
+    assert_eq!(
+        conversation(&service, &binding).await,
+        prompts_and_answers(0..3)
+    );
+    assert!(history_complete(&service, &binding).await);
 }
 
 #[tokio::test]
@@ -670,7 +756,6 @@ async fn live_changes_to_messages_behind_the_boundary_are_left_out() {
     let server = FakeOpenCode::start(turns(0..12), 4).await;
     let bridge = bridge(&server, &binding, &service).await;
     bridge.hydrate_within(small_window(6)).await.unwrap();
-    let changed = |id: &str| json!({"type": "message.updated", "properties": {"info": {"id": id, "sessionID": SESSION}}});
 
     // OpenCode changes an old message, for example when it prunes old tool
     // output, and the conversation continues.

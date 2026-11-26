@@ -9,14 +9,21 @@ use dure_app::{AgentSpawnEffortSelectionV1, AgentSpawnModelSelectionV1};
 use reqwest::{Client, Method, Response, StatusCode};
 use serde_json::{Value, json};
 
-/// What the client reads of one answer, unless it is one provider record.
+/// What the client keeps of one answer, unless it is one provider record.
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
-/// What the client reads of one provider record: one message, alone or as a
+/// What the client keeps of one provider record: one message, alone or as a
 /// page of one, or one event. Codex and Pi connections hold one record within
-/// the same bound. A record cannot be read in smaller parts, and OpenCode
-/// keeps what a message carries whole: its `read` tool attaches an image or
-/// PDF to the message in full, encoded, whatever its size.
+/// the same bound. A record cannot be read in smaller parts.
 const MAX_RECORD_BYTES: usize = 64 * 1024 * 1024;
+/// What the client keeps of one string in an answer or an event: a longer
+/// string is cut to its beginning ([`KeptJson`]). OpenCode keeps what a
+/// message carries whole. Its `read` tool attaches an image or PDF to the
+/// message in full, encoded, whatever its size, and Dure never shows that.
+/// No reader of an answer keeps more of one string: a timeline row holds at
+/// most [`dure_app::MAX_AGENT_TIMELINE_JSON_BYTES_V1`] of one field's JSON,
+/// and a string's text is at least a sixth as long as its JSON (`\u0000`).
+const MAX_STRING_BYTES: usize = 1024 * 1024;
+const _: () = assert!(MAX_STRING_BYTES / 6 > dure_app::MAX_AGENT_TIMELINE_JSON_BYTES_V1);
 /// Message page sizes, largest first. A page whose answer is over its bound
 /// is read again at the next smaller size, down to one message.
 const PAGE_SIZES: [usize; 3] = [100, 10, 1];
@@ -325,8 +332,8 @@ impl OpenCodeSessionClient {
     }
 
     /// One page of at most `limit` messages before the opaque cursor, oldest
-    /// first, or `None` when its answer is over [`page_bound`]; and the
-    /// cursor of the page before it.
+    /// first, or `None` when what the client keeps of its answer is over
+    /// [`page_bound`]; and the cursor of the page before it.
     async fn message_page(
         &self,
         id: &SessionId,
@@ -408,6 +415,7 @@ impl OpenCodeSessionClient {
         Ok(OpenCodeEvents {
             response,
             buffer: Vec::new(),
+            kept: KeptJson::default(),
             searched: 0,
         })
     }
@@ -478,7 +486,8 @@ impl PendingKind {
 /// One page of a session's messages, oldest first.
 pub(crate) struct MessagePage {
     pub(crate) messages: Vec<Value>,
-    /// The size in bytes of the provider's answer for this page.
+    /// The size in bytes of what the client keeps of the provider's answer
+    /// for this page.
     pub(crate) bytes: usize,
     /// The page is one message too large to read, which it skips: it holds
     /// no messages.
@@ -571,7 +580,9 @@ impl MessagePages<'_> {
 
 pub(crate) struct OpenCodeEvents {
     response: Response,
+    /// What the client keeps of the stream's bytes not yet read as events.
     buffer: Vec<u8>,
+    kept: KeptJson,
     /// How much of `buffer` is known to hold no whole frame, so a frame as
     /// large as one record arriving in many chunks is searched once.
     searched: usize,
@@ -600,11 +611,148 @@ impl OpenCodeEvents {
                 .map_err(|_| Error::Unavailable)?
                 .map_err(|_| Error::Unavailable)?
                 .ok_or(Error::Unavailable)?;
-            if self.buffer.len().saturating_add(chunk.len()) > MAX_RECORD_BYTES {
+            self.kept.keep(&chunk, &mut self.buffer);
+            if self.buffer.len() > MAX_RECORD_BYTES {
                 return Err(Error::Limit);
             }
-            self.buffer.extend_from_slice(&chunk);
         }
+    }
+}
+
+/// Provider JSON as the client keeps it while it arrives in chunks: whole,
+/// except that each string longer than [`MAX_STRING_BYTES`] is cut to its
+/// beginning, after a whole character, so what is kept is still JSON. It
+/// follows only where strings start and end, so the bytes between them, an
+/// event stream's framing too, are kept as they come. A line end is never
+/// part of a JSON string, so it ends one: a line that is not JSON cannot hold
+/// the strings after it.
+#[derive(Default)]
+struct KeptJson {
+    /// The string the bytes so far end in.
+    string: Option<KeptString>,
+}
+
+/// Where the bytes so far end in one string.
+#[derive(Default)]
+struct KeptString {
+    /// How many bytes of the string's JSON are kept.
+    bytes: usize,
+    /// Whether the rest of the string is left out.
+    cut: bool,
+    escape: Escape,
+    /// The last whole character is an escaped high surrogate, which only
+    /// the low surrogate escaped after it completes.
+    high_surrogate: bool,
+}
+
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+enum Escape {
+    #[default]
+    None,
+    /// After a backslash.
+    Started,
+    /// In `\uXXXX`, after `digits` of its hex digits, which read `value`.
+    Unicode { digits: u8, value: u16 },
+}
+
+impl KeptJson {
+    /// Appends what is kept of `chunk`, the next bytes of the JSON, to `kept`.
+    fn keep(&mut self, mut chunk: &[u8], kept: &mut Vec<u8>) {
+        while !chunk.is_empty() {
+            let Some(string) = &mut self.string else {
+                // Between strings, every byte is kept.
+                let Some(quote) = chunk.iter().position(|byte| *byte == b'"') else {
+                    kept.extend_from_slice(chunk);
+                    return;
+                };
+                kept.extend_from_slice(&chunk[..=quote]);
+                self.string = Some(KeptString::default());
+                chunk = &chunk[quote + 1..];
+                continue;
+            };
+            // A run of the string's characters that are neither escaped nor
+            // end it, kept up to the bound at once.
+            if string.escape == Escape::None && !string.high_surrogate {
+                let run = chunk
+                    .iter()
+                    .position(|byte| matches!(byte, b'"' | b'\\' | b'\n'))
+                    .unwrap_or(chunk.len());
+                let plain = if string.cut {
+                    run
+                } else {
+                    run.min(MAX_STRING_BYTES.saturating_sub(string.bytes))
+                };
+                if plain > 0 {
+                    if !string.cut {
+                        kept.extend_from_slice(&chunk[..plain]);
+                        string.bytes += plain;
+                    }
+                    chunk = &chunk[plain..];
+                    continue;
+                }
+            }
+            if string.next(chunk[0], kept) {
+                self.string = None;
+            }
+            chunk = &chunk[1..];
+        }
+    }
+}
+
+impl KeptString {
+    /// Takes the string's next byte, which is kept unless the string is cut
+    /// by now. True when the byte ends the string.
+    fn next(&mut self, byte: u8, kept: &mut Vec<u8>) -> bool {
+        if byte == b'\n' || (byte == b'"' && self.escape == Escape::None) {
+            kept.push(byte);
+            return true;
+        }
+        // UTF-8 continues a character with bytes `10xxxxxx`.
+        let starts_character = byte & 0xC0 != 0x80;
+        match self.escape {
+            Escape::None => {
+                if !self.cut
+                    && self.bytes >= MAX_STRING_BYTES
+                    && starts_character
+                    && !self.high_surrogate
+                {
+                    self.cut = true;
+                }
+                if byte == b'\\' {
+                    self.escape = Escape::Started;
+                } else if starts_character {
+                    self.high_surrogate = false;
+                }
+            }
+            Escape::Started if byte == b'u' => {
+                self.escape = Escape::Unicode {
+                    digits: 0,
+                    value: 0,
+                };
+            }
+            Escape::Started => {
+                self.escape = Escape::None;
+                self.high_surrogate = false;
+            }
+            Escape::Unicode { digits, value } => {
+                let digit = char::from(byte).to_digit(16).unwrap_or(0);
+                let value = (value << 4) | u16::try_from(digit).unwrap_or(0);
+                if digits < 3 {
+                    self.escape = Escape::Unicode {
+                        digits: digits + 1,
+                        value,
+                    };
+                } else {
+                    self.escape = Escape::None;
+                    self.high_surrogate = !self.high_surrogate && (0xD800..0xDC00).contains(&value);
+                }
+            }
+        }
+        if !self.cut {
+            kept.push(byte);
+            self.bytes += 1;
+        }
+        false
     }
 }
 
@@ -702,7 +850,8 @@ fn page_bound(messages: usize) -> usize {
     }
 }
 
-/// The answer's JSON and its size, within `bound`.
+/// The answer's JSON as the client keeps it ([`KeptJson`]) and the size of
+/// what it keeps, within `bound`.
 async fn read_json_sized(mut response: Response, bound: usize) -> Result<(Value, usize), Error> {
     let status = response.status();
     if !status.is_success() {
@@ -711,12 +860,13 @@ async fn read_json_sized(mut response: Response, bound: usize) -> Result<(Value,
     if status == StatusCode::NO_CONTENT {
         return Ok((Value::Null, 0));
     }
+    let mut kept = KeptJson::default();
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| Error::Unavailable)? {
-        if bytes.len().saturating_add(chunk.len()) > bound {
+        kept.keep(&chunk, &mut bytes);
+        if bytes.len() > bound {
             return Err(Error::Limit);
         }
-        bytes.extend_from_slice(&chunk);
     }
     let value = serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
     Ok((value, bytes.len()))
