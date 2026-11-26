@@ -23,6 +23,11 @@ const MAX_STDERR_BYTES: usize = 2 * 1024;
 const HOST_EVENT_CAPACITY: usize = 16;
 const CHILD_EXIT_GRACE: Duration = Duration::from_secs(2);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
+/// The relay's exit status when Claude exited cleanly although its host never
+/// asked it to stop (EX_UNAVAILABLE). Claude ends a host-driven session at
+/// stdin EOF or on a host signal, so a clean exit with its input still open is
+/// not a normal end of the session.
+const UNREQUESTED_CLEAN_EXIT_STATUS: i32 = 69;
 
 #[derive(Debug)]
 pub struct RelayError {
@@ -48,6 +53,71 @@ impl std::error::Error for RelayError {}
 impl From<io::Error> for RelayError {
     fn from(_: io::Error) -> Self {
         Self::contract("io_failed")
+    }
+}
+
+/// The first way the host asked the relayed child to end, while it still ran.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StopRequest {
+    InputClosed,
+    Signal(libc::c_int),
+    Abort,
+}
+
+/// How the relayed Claude process ended. The relay is the provider process its
+/// Hmux session supervises, so the relay's own exit status is all Hmux records
+/// of that end.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RelayCompletion {
+    status: ExitStatus,
+    stop_request: Option<StopRequest>,
+}
+
+impl RelayCompletion {
+    /// A stop the host asked for is a normal end: the host receives Claude's
+    /// exact status in the Exit frame and owns why it stopped the session. An
+    /// end nobody asked for carries Claude's own status (128 + signal when a
+    /// signal ended it), so Hmux records it as a provider failure rather than a
+    /// normal exit with code 0.
+    #[must_use]
+    pub fn exit_code(&self) -> i32 {
+        if self.stop_request.is_some() {
+            return 0;
+        }
+        match (self.status.code(), self.status.signal()) {
+            (Some(code), _) if code != 0 => code,
+            (_, Some(signal)) => 128 + signal,
+            _ => UNREQUESTED_CLEAN_EXIT_STATUS,
+        }
+    }
+}
+
+impl std::fmt::Display for RelayCompletion {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match (self.status.code(), self.status.signal()) {
+            (Some(code), _) => write!(formatter, "Claude exited with code {code}")?,
+            (None, Some(signal)) => {
+                write!(formatter, "Claude was ended by {}", signal_label(signal))?
+            }
+            (None, None) => formatter.write_str("Claude ended")?,
+        }
+        match self.stop_request {
+            Some(StopRequest::InputClosed) => {
+                formatter.write_str(" after its host closed its input")
+            }
+            Some(StopRequest::Signal(signal)) => {
+                write!(formatter, " after its host sent {}", signal_label(signal))
+            }
+            Some(StopRequest::Abort) => formatter.write_str(" after its host aborted the session"),
+            None => formatter.write_str(" without a stop request from its host"),
+        }
+    }
+}
+
+fn signal_label(signal: libc::c_int) -> String {
+    match signal_name(Some(signal)) {
+        Ok(Some(name)) => name.to_owned(),
+        _ => format!("signal {signal}"),
     }
 }
 
@@ -747,6 +817,16 @@ struct RelaySessionState {
     child_stdin: Option<ChildStdin>,
     pending_stdout: Option<(u64, SyncSender<()>)>,
     child_exited: bool,
+    stop_request: Option<StopRequest>,
+}
+
+impl RelaySessionState {
+    /// A request that reaches a child which already exited did not end it.
+    fn record_stop_request(&mut self, request: StopRequest) {
+        if !self.child_exited {
+            self.stop_request.get_or_insert(request);
+        }
+    }
 }
 
 fn process_host_frame(
@@ -784,6 +864,7 @@ fn process_host_frame(
             if !frame.payload.is_empty() || state.child_stdin.take().is_none() {
                 return Err(RelayError::contract("stdin_eof_invalid"));
             }
+            state.record_stop_request(StopRequest::InputClosed);
             write_frame(
                 writer,
                 FrameKind::StdinEofAck,
@@ -815,6 +896,7 @@ fn process_host_frame(
                 unix_signal(signal_name).ok_or_else(|| RelayError::contract("signal_invalid"))?;
             if !state.child_exited {
                 send_signal(process_id, signal)?;
+                state.record_stop_request(StopRequest::Signal(signal));
             }
             write_frame(
                 writer,
@@ -831,6 +913,7 @@ fn process_host_frame(
             }
             if !state.child_exited {
                 send_signal(process_id, libc::SIGTERM)?;
+                state.record_stop_request(StopRequest::Abort);
             }
             write_frame(
                 writer,
@@ -851,7 +934,7 @@ fn run_session(
     identity: &RelayIdentity,
     capability: &str,
     capability_file: &Path,
-) -> Result<(), RelayError> {
+) -> Result<RelayCompletion, RelayError> {
     let hello = match read_frame(&mut stream)? {
         ReadFrame::Frame(frame) => frame,
         ReadFrame::Closed => return Err(RelayError::contract("hello_missing")),
@@ -897,6 +980,7 @@ fn run_session(
         child_stdin,
         pending_stdout: None,
         child_exited: false,
+        stop_request: None,
     };
     write_frame(
         &mut stream,
@@ -981,7 +1065,10 @@ fn run_session(
                 })),
                 &tail.bytes,
             )?;
-            return Ok(());
+            return Ok(RelayCompletion {
+                status,
+                stop_request: state.stop_request,
+            });
         }
 
         match host_events.recv_timeout(POLL_INTERVAL) {
@@ -1016,7 +1103,9 @@ fn run_session(
     }
 }
 
-pub fn run_from_arguments(arguments: impl Iterator<Item = OsString>) -> Result<(), RelayError> {
+pub fn run_from_arguments(
+    arguments: impl Iterator<Item = OsString>,
+) -> Result<RelayCompletion, RelayError> {
     let options = RelayOptions::parse(arguments)?;
     let capability = read_capability(&options.capability_file)?;
     let listener = bind_endpoint(&options.endpoint)?;
@@ -1104,6 +1193,7 @@ mod tests {
             child_stdin: None,
             pending_stdout: None,
             child_exited: true,
+            stop_request: None,
         };
         let frame = Frame {
             kind: FrameKind::Signal,
@@ -1120,5 +1210,166 @@ mod tests {
         };
         assert_eq!(ack.kind, FrameKind::SignalAck);
         assert_eq!(metadata_sequence(&ack.metadata, "ackSequence").unwrap(), 2);
+        assert_eq!(
+            state.stop_request, None,
+            "a signal that reaches an exited child did not end it"
+        );
+    }
+
+    fn exited(code: i32) -> ExitStatus {
+        ExitStatus::from_raw(code << 8)
+    }
+
+    fn signaled(signal: libc::c_int) -> ExitStatus {
+        ExitStatus::from_raw(signal)
+    }
+
+    #[test]
+    fn only_an_end_the_host_did_not_ask_for_leaves_a_failing_relay_status() {
+        for (status, stop_request, exit_code) in [
+            (exited(0), Some(StopRequest::InputClosed), 0),
+            (exited(23), Some(StopRequest::InputClosed), 0),
+            (signaled(libc::SIGTERM), Some(StopRequest::Abort), 0),
+            (
+                signaled(libc::SIGINT),
+                Some(StopRequest::Signal(libc::SIGINT)),
+                0,
+            ),
+            (exited(0), None, UNREQUESTED_CLEAN_EXIT_STATUS),
+            (exited(23), None, 23),
+            (signaled(libc::SIGKILL), None, 128 + libc::SIGKILL),
+            (signaled(libc::SIGHUP), None, 128 + libc::SIGHUP),
+        ] {
+            let completion = RelayCompletion {
+                status,
+                stop_request,
+            };
+            assert_eq!(completion.exit_code(), exit_code, "{completion}");
+        }
+    }
+
+    #[test]
+    fn the_completion_line_names_how_claude_ended_and_who_asked() {
+        let line = |status, stop_request| {
+            RelayCompletion {
+                status,
+                stop_request,
+            }
+            .to_string()
+        };
+        assert_eq!(
+            line(exited(0), None),
+            "Claude exited with code 0 without a stop request from its host"
+        );
+        assert_eq!(
+            line(signaled(libc::SIGKILL), None),
+            "Claude was ended by SIGKILL without a stop request from its host"
+        );
+        assert_eq!(
+            line(exited(0), Some(StopRequest::InputClosed)),
+            "Claude exited with code 0 after its host closed its input"
+        );
+        assert_eq!(
+            line(signaled(libc::SIGTERM), Some(StopRequest::Abort)),
+            "Claude was ended by SIGTERM after its host aborted the session"
+        );
+        assert_eq!(
+            line(
+                signaled(libc::SIGTERM),
+                Some(StopRequest::Signal(libc::SIGTERM))
+            ),
+            "Claude was ended by SIGTERM after its host sent SIGTERM"
+        );
+    }
+
+    /// Runs one relay session against a real `/bin/sh` child. `host` acts for
+    /// the SDK host after Ready; the session's completion is returned once
+    /// the relay reports Exit.
+    fn relay_session(child_script: &str, host: impl FnOnce(&mut UnixStream)) -> RelayCompletion {
+        let root = tempfile::tempdir().unwrap();
+        let command = root.path().join("claude");
+        fs::write(&command, format!("#!/bin/sh\n{child_script}\n")).unwrap();
+        fs::set_permissions(&command, fs::Permissions::from_mode(0o755)).unwrap();
+        let metadata = fs::symlink_metadata(&command).unwrap();
+        let launch = serde_json::to_vec(&json!({
+            "command": command,
+            "commandIdentity": {
+                "changedNanoseconds": metadata.ctime_nsec().to_string(),
+                "changedSeconds": metadata.ctime().to_string(),
+                "device": metadata.dev().to_string(),
+                "inode": metadata.ino().to_string(),
+                "modifiedNanoseconds": metadata.mtime_nsec().to_string(),
+                "modifiedSeconds": metadata.mtime().to_string(),
+                "sha256": format!("sha256:{}", "0".repeat(64)),
+                "size": metadata.len().to_string(),
+            },
+            "args": [],
+            "cwd": root.path(),
+            "env": {},
+        }))
+        .unwrap();
+        let capability = "relay-session-capability-0123456789";
+        let capability_file = root.path().join("relay-capability");
+        fs::write(&capability_file, capability).unwrap();
+        let (relay_stream, mut host_stream) = UnixStream::pair().unwrap();
+        let relay = {
+            let capability_file = capability_file.clone();
+            thread::spawn(move || {
+                run_session(relay_stream, &identity(), capability, &capability_file)
+            })
+        };
+        host_stream
+            .write_all(
+                &Frame::encode(
+                    FrameKind::Hello,
+                    1,
+                    &identity(),
+                    metadata_map(json!({ "launchCapability": capability })),
+                    &launch,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let ReadFrame::Frame(ready) = read_frame(&mut host_stream).unwrap() else {
+            panic!("relay closed before Ready");
+        };
+        assert_eq!(ready.kind, FrameKind::Ready);
+        host(&mut host_stream);
+        loop {
+            let ReadFrame::Frame(frame) = read_frame(&mut host_stream).unwrap() else {
+                panic!("relay closed before Exit");
+            };
+            if frame.kind == FrameKind::Exit {
+                break;
+            }
+        }
+        relay.join().unwrap().unwrap()
+    }
+
+    #[test]
+    fn a_child_that_exits_cleanly_on_its_own_is_not_a_normal_relay_end() {
+        let completion = relay_session("exit 0", |_| {});
+        assert_eq!(completion.stop_request, None);
+        assert_eq!(completion.exit_code(), UNREQUESTED_CLEAN_EXIT_STATUS);
+    }
+
+    #[test]
+    fn a_child_killed_outside_the_host_reports_its_signal() {
+        let completion = relay_session("kill -9 $$", |_| {});
+        assert_eq!(completion.stop_request, None);
+        assert_eq!(completion.exit_code(), 128 + libc::SIGKILL);
+    }
+
+    #[test]
+    fn a_child_that_ends_after_its_host_closes_input_is_a_normal_relay_end() {
+        let completion = relay_session("read line\nexit 3", |host| {
+            host.write_all(
+                &Frame::encode(FrameKind::StdinEof, 2, &identity(), Map::new(), &[]).unwrap(),
+            )
+            .unwrap();
+        });
+        assert_eq!(completion.stop_request, Some(StopRequest::InputClosed));
+        assert_eq!(completion.status.code(), Some(3));
+        assert_eq!(completion.exit_code(), 0);
     }
 }
