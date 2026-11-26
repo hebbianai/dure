@@ -10,7 +10,11 @@ import {
 import { compareWaitStart, hasResult } from "@/lib/agents/agentResult";
 import type { AgentRowFacts } from "@/lib/agents/agentRowModel";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
-import type { NeedsPersonMap, NeedsPersonReason } from "@/lib/agents/needsPerson";
+import type {
+	NeedsPerson,
+	NeedsPersonMap,
+	NeedsPersonReason,
+} from "@/lib/agents/needsPerson";
 
 type NextUpReason = NeedsPersonReason | "result";
 
@@ -43,45 +47,76 @@ export interface NextUpFacts {
 	episodeAt: Readonly<Record<string, number>>;
 }
 
-export function deriveNextUp(facts: NextUpFacts): NextUp {
-	const needsYou: NextUpEntry[] = [];
-	const results: NextUpEntry[] = [];
-	for (const agentId of facts.agentIds) {
-		const state = facts.displayStates[agentId];
-		const need = facts.needsPerson.get(agentId);
-		if (need) {
-			needsYou.push({
-				agentId,
-				reason: need.reason,
-				// An exit the watcher has not resolved yet still lists, as the
-				// badge counts it.
-				state: state ?? "unknown",
-				...(need.sinceMs === undefined ? {} : { sinceMs: need.sinceMs }),
-				...(need.signIn ? { signIn: true as const } : {}),
-			});
-			continue;
-		}
-		if (state === undefined) continue;
-		const resultAtMs = facts.episodeAt[agentId];
-		if (
-			// Next up's window is "not looked at yet": an unread episode in
-			// this window, which bringing the agent's pane into view clears.
-			hasResult(
-				{
-					state,
-					turnFinished: facts.episodeKinds[agentId] === "done",
-					...(resultAtMs === undefined ? {} : { resultAtMs }),
-				},
-				{ unread: isAgentUnread(facts.episodes, facts.acks, agentId) },
-			)
-		) {
-			results.push({
+/** One agent's attention facts, as the needs-person map and the attention
+ * watcher hold them. */
+export interface NextUpAgentFacts {
+	readonly needsPerson: NeedsPerson | undefined;
+	readonly state: AgentDisplayState | undefined;
+	/** The latest episode was a finished turn. */
+	readonly turnFinished: boolean;
+	readonly resultAtMs?: number;
+	/** The latest episode has not been looked at in this window. */
+	readonly unread: boolean;
+}
+
+export function nextUpAgentFacts(
+	facts: Omit<NextUpFacts, "agentIds">,
+	agentId: string,
+): NextUpAgentFacts {
+	const resultAtMs = facts.episodeAt[agentId];
+	return {
+		needsPerson: facts.needsPerson.get(agentId),
+		state: facts.displayStates[agentId],
+		turnFinished: facts.episodeKinds[agentId] === "done",
+		...(resultAtMs === undefined ? {} : { resultAtMs }),
+		unread: isAgentUnread(facts.episodes, facts.acks, agentId),
+	};
+}
+
+/** Why one agent is in Next up, if it is. Any surface that reports an agent
+ * the way Next up does (a crowded pane's status card) reads this. */
+export function nextUpEntry(
+	agentId: string,
+	facts: NextUpAgentFacts,
+): NextUpEntry | undefined {
+	const { needsPerson: need, state, resultAtMs } = facts;
+	if (need) {
+		return {
+			agentId,
+			reason: need.reason,
+			// An exit the watcher has not resolved yet still lists, as the
+			// badge counts it.
+			state: state ?? "unknown",
+			...(need.sinceMs === undefined ? {} : { sinceMs: need.sinceMs }),
+			...(need.signIn ? { signIn: true as const } : {}),
+		};
+	}
+	if (state === undefined) return undefined;
+	// Next up's window is "not looked at yet": an unread episode in this
+	// window, which bringing the agent's pane into view clears.
+	return hasResult(
+		{
+			state,
+			turnFinished: facts.turnFinished,
+			...(resultAtMs === undefined ? {} : { resultAtMs }),
+		},
+		{ unread: facts.unread },
+	)
+		? {
 				agentId,
 				reason: "result",
 				state,
 				...(resultAtMs === undefined ? {} : { sinceMs: resultAtMs }),
-			});
-		}
+			}
+		: undefined;
+}
+
+export function deriveNextUp(facts: NextUpFacts): NextUp {
+	const needsYou: NextUpEntry[] = [];
+	const results: NextUpEntry[] = [];
+	for (const agentId of facts.agentIds) {
+		const entry = nextUpEntry(agentId, nextUpAgentFacts(facts, agentId));
+		if (entry) (entry.reason === "result" ? results : needsYou).push(entry);
 	}
 	const order = new Map(facts.agentIds.map((agentId, index) => [agentId, index]));
 	const byWait = (left: NextUpEntry, right: NextUpEntry) =>

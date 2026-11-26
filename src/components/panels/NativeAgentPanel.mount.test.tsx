@@ -26,6 +26,7 @@ import { invokePaneAction, paneActionSnapshot, registerPaneActions } from "@/lib
 import { agentFixture, managedBindingFixture } from "@/test/agentFixtures";
 import type { Agent, SshHostConfig } from "@/types";
 import { publishConversationTitle } from "@/lib/agents/chat/conversationPresentationState";
+import { workspacePerformance } from "@/lib/workspace/performance/workspacePerformance";
 
 const mocks = vi.hoisted(() => ({
 	inspectExact: vi.fn(),
@@ -301,6 +302,19 @@ vi.mock("@/components/plugins/AgentPluginClaimStatus", () => ({
 }));
 vi.mock("@/components/agents/DelegateTaskControl", () => ({
 	DelegateTaskControl: () => null,
+}));
+vi.mock("@/components/agents/AgentStatusCard", () => ({
+	AgentStatusCard: ({
+		view,
+		children,
+	}: {
+		view: string;
+		children?: ReactNode;
+	}) => (
+		<div data-testid="agent-status-card" data-view={view}>
+			{children}
+		</div>
+	),
 }));
 
 function panelProps(agentId: string): AgentPanelDockProps {
@@ -1381,6 +1395,75 @@ describe("NativeAgentPanel mount", () => {
 			"preserve",
 			undefined,
 		);
+	});
+
+	it("shows the status card instead of the toolbar and terminal while crowded, and returns the terminal when larger", () => {
+		useStore.setState((state) => ({
+			uiPrefs: { ...state.uiPrefs, interfaceMode: "basic" as const },
+		}));
+		const agent = mountedAgent(0);
+		const props = {
+			agent,
+			backendManaged: true,
+			panelProps: panelProps(agent.id),
+			launchSelection: launchSelection(),
+			switchCredential: vi.fn(),
+			switchToStructuredChat: vi.fn(),
+		};
+		const view = render(<NativeAgentPanel {...props} statusCard />);
+
+		expect(screen.getByTestId("agent-status-card").getAttribute("data-view")).toBe(
+			"terminal",
+		);
+		// No terminal surface: its presentation is released, so this pane no
+		// longer sizes the PTY for the large window or the phone.
+		expect(screen.queryByTestId("terminal-view")).toBeNull();
+		expect(screen.queryByTestId("credential-switch")).toBeNull();
+		// Exit recovery stays a panel concern, and the pane menu's history
+		// entry still has its control to open.
+		expect(screen.getByTestId("agent-exited-recovery")).toBeTruthy();
+		expect(mocks.historyProps?.panelId).toBe(`agent:${agent.id}`);
+		// A card paints no terminal, so it never opens a pane-open sample.
+		expect(workspacePerformance.beginPaneOpen).not.toHaveBeenCalled();
+
+		view.rerender(<NativeAgentPanel {...props} statusCard={false} />);
+		expect(screen.queryByTestId("agent-status-card")).toBeNull();
+		expect(screen.getByTestId("terminal-view")).toBeTruthy();
+		expect(screen.getByTestId("credential-switch")).toBeTruthy();
+		expect(workspacePerformance.beginPaneOpen).toHaveBeenCalledOnce();
+	});
+
+	it("brings the toolbar back over a card while the recovery cover's account menu is open", () => {
+		useStore.setState((state) => ({
+			uiPrefs: { ...state.uiPrefs, interfaceMode: "basic" as const },
+		}));
+		mocks.activity = "exited";
+		const agent = mountedAgent(0);
+		render(
+			<NativeAgentPanel
+				agent={agent}
+				backendManaged
+				panelProps={panelProps(agent.id)}
+				launchSelection={launchSelection()}
+				statusCard
+				switchCredential={vi.fn()}
+				switchToStructuredChat={vi.fn()}
+			/>,
+		);
+		expect(screen.queryByTestId("credential-switch")).toBeNull();
+		const attachRecovery = mocks.exitedProps
+			?.attachRecovery as TerminalAttachRecovery;
+		act(() => attachRecovery.signIn?.switchAccount?.());
+		expect(screen.getByTestId("credential-switch")).toBeTruthy();
+		expect(mocks.credentialSwitcherProps?.open).toBe(true);
+
+		const onOpenChange = mocks.credentialSwitcherProps?.onOpenChange as
+			| ((open: boolean) => void)
+			| undefined;
+		expect(onOpenChange).toBeTypeOf("function");
+		act(() => onOpenChange?.(false));
+		expect(screen.queryByTestId("credential-switch")).toBeNull();
+		expect(screen.getByTestId("agent-status-card")).toBeTruthy();
 	});
 });
 

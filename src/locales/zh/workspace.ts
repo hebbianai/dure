@@ -224,6 +224,8 @@ export const workspace: Record<string, string> = {
 	"workspace.health.notResponding": "无响应",
 	"workspace.paneRename.description": "这仅应用于当前窗格。会话、工作目录和代理名称不会改变。",
 	"workspace.agentWindow.unavailable": "无法在大窗口中查看此会话",
+	"workspace.statusCard.enlargeForTerminal": "将此窗格调大即可查看其终端",
+	"workspace.statusCard.enlargeForConversation": "将此窗格调大即可查看其对话",
 	"workspace.desktopClose.terminatesSessions": "将终止 {n} 个普通终端 / SSH 会话，已注册的代理会话将被保留。",
 	"workspace.desktopClose.terminateFailed": "部分会话无法终止，因此保留了该桌面。\n{error}",
 	"workspace.rehost.failed": "重新托管失败：{error}",

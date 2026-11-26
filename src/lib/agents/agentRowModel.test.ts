@@ -11,7 +11,7 @@ describe("agentRowModel", () => {
 		});
 	});
 
-	it("orders where the agent is: project, then Space", () => {
+	it("orders where the agent is: project, branch, then Space", () => {
 		expect(
 			agentRowModel({
 				agentId: "a",
@@ -20,6 +20,15 @@ describe("agentRowModel", () => {
 				projectName: "repo",
 			}).context,
 		).toEqual(["repo", "Review"]);
+		expect(
+			agentRowModel({
+				agentId: "a",
+				title: "t",
+				spaceName: "Review",
+				branch: "fix/build",
+				projectName: "repo",
+			}).context,
+		).toEqual(["repo", "fix/build", "Review"]);
 		expect(
 			agentRowModel({ agentId: "a", title: "t", spaceName: "Review" }).context,
 		).toEqual(["Review"]);

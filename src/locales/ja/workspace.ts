@@ -224,6 +224,8 @@ export const workspace: Record<string, string> = {
 	"workspace.health.notResponding": "応答なし",
 	"workspace.paneRename.description": "このペインだけに適用されます。セッション、作業フォルダ、エージェント名は変更されません。",
 	"workspace.agentWindow.unavailable": "このセッションは大きなウィンドウで表示できません",
+	"workspace.statusCard.enlargeForTerminal": "このペインを大きくするとターミナルが表示されます",
+	"workspace.statusCard.enlargeForConversation": "このペインを大きくすると会話が表示されます",
 	"workspace.desktopClose.terminatesSessions": "通常のターミナル/SSH セッション {n} 個を終了します。登録済みのエージェントセッションは維持されます。",
 	"workspace.desktopClose.terminateFailed": "一部のセッションを終了できなかったため、デスクトップを維持しました。\n{error}",
 	"workspace.rehost.failed": "再ホストに失敗しました: {error}",

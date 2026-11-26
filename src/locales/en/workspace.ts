@@ -238,6 +238,8 @@ export const workspaceEnglishTranslations = {
 	"workspace.health.notResponding": "Not responding",
 	"workspace.paneRename.description": "This applies only to this pane. The session, working directory, and agent name stay unchanged.",
 	"workspace.agentWindow.unavailable": "This session cannot be viewed in a large window",
+	"workspace.statusCard.enlargeForTerminal": "Make this pane larger to see its terminal",
+	"workspace.statusCard.enlargeForConversation": "Make this pane larger to see its conversation",
 	"workspace.desktopClose.terminatesSessions": "Terminates {n} plain terminal/SSH sessions. Registered agent sessions are kept.",
 	"workspace.desktopClose.terminateFailed": "Could not terminate some sessions, so the desktop was kept.\n{error}",
 	"workspace.rehost.failed": "Rehost failed: {error}",
