@@ -7,7 +7,11 @@ import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
 import { t } from "@/lib/i18n";
 import type { HmuxAgentRuntimeState } from "@/lib/ipc/hmuxContracts";
 import { useStore } from "@/store";
-import { agentFixture } from "@/test/agentFixtures";
+import {
+	agentFixture,
+	hmuxSessionMetadataFixture,
+	managedAgentFixture,
+} from "@/test/agentFixtures";
 import type { Project, Space } from "@/types";
 
 const navigation = vi.hoisted(() => ({
@@ -63,6 +67,8 @@ beforeEach(() => {
 			{ id: "space-b", name: "Review" },
 		] as Space[],
 		projects: [{ id: "project-1", name: "repo", path: "/repo" }] as Project[],
+		hmuxSessionMetadata: {},
+		sessionActivity: {},
 		sessionAgentRuntimeState: {
 			"session-question": runtime({
 				attention: "input_required",
@@ -133,14 +139,14 @@ describe("NextUpChip", () => {
 		expect(chip().getAttribute("data-tone")).toBe("attention");
 	});
 
-	it("stays quiet when only finished turns wait", () => {
+	it("stays quiet when only results wait", () => {
 		seed({
 			displayStates: { finished: "waiting" },
 			episodes: { finished: 1 },
 			episodeKinds: { finished: "done" },
 		});
 		render(<NextUpChip />);
-		expect(chip().textContent).toBe(`${t("agents.nextUp.finished")}1`);
+		expect(chip().textContent).toBe(`${t("agents.nextUp.results")}1`);
 		expect(chip().getAttribute("data-tone")).toBe("quiet");
 	});
 
@@ -169,7 +175,7 @@ describe("NextUpChip", () => {
 		);
 		// The program's words are attributed and only ever add to Host attention.
 		expect(question.textContent).toContain(
-			t("agents.nextUp.programMessageFromApp", {
+			t("agents.row.programMessageFromApp", {
 				app: "claude-code",
 				message: "Which branch?",
 			}),
@@ -181,10 +187,91 @@ describe("NextUpChip", () => {
 			),
 		);
 
-		const finished = screen.getByRole("region", { name: t("agents.nextUp.finished") });
-		const [done] = within(finished).getAllByRole("button");
-		expect(done.textContent).toContain(t("agents.nextUp.finishedTurn"));
+		const results = screen.getByRole("region", { name: t("agents.nextUp.results") });
+		const [done] = within(results).getAllByRole("button");
+		expect(done.textContent).toContain(t("agents.row.result"));
 		expect(done.textContent).not.toContain("Stale report");
+	});
+
+	it("lists an unexpected exit with its cause, and says what each agent was asked", () => {
+		const now = Date.now();
+		useStore.setState({
+			agents: [
+				...agents,
+				managedAgentFixture({
+					id: "crashed",
+					name: "crashed",
+					displayName: "Agent crashed",
+					sessionId: "session-crashed",
+				}),
+			],
+			hmuxSessionMetadata: hmuxSessionMetadataFixture({
+				failure: {
+					correlationId: "failure_1",
+					sessionId: "session-1",
+					workspaceId: "workspace-1",
+					terminalEpoch: "terminal-1",
+					code: "provider_exited_at_sign_in",
+					phase: "conversation_identity",
+					summary: "Managed provider exited at its sign-in screen.",
+					exitKind: "normal",
+					exitCode: 0,
+					occurredUnixMs: String(now - 4 * 60_000),
+					retryPosture: "never",
+				},
+			}),
+			sessionActivity: {
+				"session-approval": { text: "Clean up\nthe build" },
+			},
+			sessionAgentRuntimeState: {
+				"session-approval": runtime({
+					attention: "approval_required",
+					attentionId: "request-1",
+					approvalRequest: {
+						toolName: "Bash",
+						summary: "rm -rf build",
+						choices: ["approve", "deny"],
+					},
+				}),
+			},
+		});
+		seed({ displayStates: { crashed: "exited", approval: "blocked", finished: "waiting" } });
+		render(<NextUpChip />);
+		expect(chip().textContent).toBe(`${t("agents.nextUp.needsYou")}2`);
+		act(() => fireEvent.click(chip()));
+
+		const needsYou = screen.getByRole("region", { name: t("agents.nextUp.needsYou") });
+		const [approval, crashed] = within(needsYou).getAllByRole("button");
+		expect(crashed.textContent).toContain("Agent crashed");
+		expect(crashed.textContent).toContain(
+			[t("agents.row.signInExit"), t("common.time.minutesAgo", { n: 4 }), "repo"].join(
+				" · ",
+			),
+		);
+		// The Host's approval says what it asks; the prompt line yields to it.
+		expect(approval.textContent).toContain(
+			t("agents.row.approvalWithSummary", { tool: "Bash", summary: "rm -rf build" }),
+		);
+		expect(approval.textContent).not.toContain("Clean up");
+	});
+
+	it("labels a result's line as what the agent was asked", () => {
+		useStore.setState({
+			sessionActivity: { "session-finished": { text: "Clean up\nthe build" } },
+		});
+		seed({
+			displayStates: { finished: "waiting" },
+			episodes: { finished: 1 },
+			episodeKinds: { finished: "done" },
+		});
+		render(<NextUpChip />);
+		act(() => fireEvent.click(chip()));
+		const [done] = within(
+			screen.getByRole("region", { name: t("agents.nextUp.results") }),
+		).getAllByRole("button");
+		expect(done.textContent).toContain(
+			t("agents.row.asked", { prompt: "Clean up the build" }),
+		);
 	});
 
 	it("brings the chosen agent forward and closes the list", () => {

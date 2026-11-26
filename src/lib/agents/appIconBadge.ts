@@ -20,7 +20,7 @@ export function supportsAppIconBadge(
 }
 
 /** The badge for a Needs you count. Zero clears it, since the Dock would draw
- * a "0"; finished turns stay off it, as they stay quiet on the chip. */
+ * a "0"; results stay off it, as they stay quiet on the chip. */
 export function appIconBadgeCount(
 	needsYou: number,
 	enabled: boolean,
@@ -56,16 +56,25 @@ export function installAppIconBadge({
 	};
 	const sync = () => show(currentBadgeCount());
 	sync();
+	// The same facts the needs-person map reads. Session metadata changes with
+	// every output; while its exit capsules stay the same, the cached map and
+	// so the badge stay as they were.
 	const stopApp = useStore.subscribe((state, previous) => {
 		if (
 			state.agents !== previous.agents ||
-			state.notifyPrefs !== previous.notifyPrefs
+			state.notifyPrefs !== previous.notifyPrefs ||
+			state.hmuxSessionMetadata !== previous.hmuxSessionMetadata
 		) {
 			sync();
 		}
 	});
 	const stopAttention = useAgentAttention.subscribe((state, previous) => {
-		if (state.displayStates !== previous.displayStates) sync();
+		if (
+			state.displayStates !== previous.displayStates ||
+			state.waitingSince !== previous.waitingSince
+		) {
+			sync();
+		}
 	});
 	return () => {
 		stopApp();

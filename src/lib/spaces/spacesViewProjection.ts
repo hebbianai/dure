@@ -1,7 +1,8 @@
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
+import type { NeedsPersonReason } from "@/lib/agents/needsPerson";
 import { spaceRepositoryGroupKey } from "@/lib/spaces/spaceRepositoryGroups";
 import {
-	ATTENTION_DISPLAY_STATES,
+	countsTowardNeedsPersonRollup,
 	countsTowardProgramStatusRollup,
 } from "@/lib/spaces/spacesStateFilter";
 import {
@@ -22,6 +23,8 @@ import {
 export interface SpacesFacetSource {
 	readonly activityAt?: number;
 	readonly displayState?: AgentDisplayState;
+	/** Why a person is needed, from the needs-person authority. */
+	readonly needsPerson?: NeedsPersonReason;
 	readonly programStatusKind?: string;
 	readonly projectId?: string;
 	readonly projectName?: string;
@@ -273,7 +276,7 @@ export function groupSpacesRows<Row extends SpacesFacetSource>(
 			programStatusCount: 0,
 		};
 		if (isVisible(row)) group.spaces.push(row);
-		if (facets.status && ATTENTION_DISPLAY_STATES.has(facets.status)) {
+		if (countsTowardNeedsPersonRollup(row)) {
 			group.attentionCount += 1;
 		} else if (countsTowardProgramStatusRollup(row)) {
 			group.programStatusCount += 1;
