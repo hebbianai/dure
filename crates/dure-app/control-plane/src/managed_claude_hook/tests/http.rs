@@ -122,11 +122,7 @@ async fn send(
         path: root.into(),
         writable,
     };
-    let mut headers = fence_headers(&env).unwrap();
-    headers.insert(
-        SOURCE_SEQUENCE_HEADER,
-        HeaderValue::from_static("123456789"),
-    );
+    let headers = report_headers(&env, 123456789, Some(4242)).unwrap();
     deliver(
         root,
         headers,
@@ -174,6 +170,7 @@ async fn exact_delivery_preserves_prompt_and_only_coalesces_tool_reports_in_one_
     assert_eq!(events[1]["prompt"], "fixture-prompt");
     for (headers, _) in posts.iter() {
         assert!(headers.contains("x-hebbian-hmux-source-sequence: 123456789\r\n"));
+        assert!(headers.contains("x-hebbian-hook-parent-process-id: 4242\r\n"));
         assert!(headers.contains("authorization: Bearer fixture-token\r\n"));
         for (key, value) in fence_headers(&environment()).unwrap().iter() {
             if key != "x-hebbian-hmux-terminal-epoch" {

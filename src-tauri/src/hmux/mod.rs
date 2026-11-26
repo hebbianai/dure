@@ -37,6 +37,7 @@ pub(crate) use standalone_creation::AppStandaloneCreateRequest;
 pub use managed_create::ManagedCreateSummary;
 pub(crate) use managed_create::ManagedCreateLaunch;
 pub use conversion::{SessionConversionReceipt, SessionConversionRequest};
+pub(crate) use conversation::ClaudeSessionStart;
 pub use conversation::{
     ExistingManagedWriterInspection, ExistingManagedWriterRequest, ManagedConversationIdentity,
 };

@@ -26,6 +26,7 @@ const TOTAL_TIMEOUT: Duration = Duration::from_millis(2_400);
 const PING_TIMEOUT: Duration = Duration::from_millis(350);
 const CAPABILITY: &str = "managed_claude_host_report_causality_v1";
 const SOURCE_SEQUENCE_HEADER: &str = "x-hebbian-hmux-source-sequence";
+const PARENT_PROCESS_HEADER: &str = "x-hebbian-hook-parent-process-id";
 const FENCE_HEADERS: [(&str, &str); 7] = [
     ("X-Hebbian-Hmux-Session-Id", "HMUX_SESSION_ID"),
     ("X-Hebbian-Hmux-Workspace-Id", "HMUX_WORKSPACE_ID"),
@@ -129,6 +130,36 @@ fn fence_headers(environment: &BTreeMap<String, String>) -> Result<HeaderMap, Ho
     Ok(headers)
 }
 
+/// The process that ran this hook. Claude starts each hook command as its own
+/// child, and the published shim `exec`s this companion, so this is the
+/// Claude process whose event it is. A Claude process the pane's provider did
+/// not start in place (a background session, say) inherits the same fence;
+/// the app tells them apart by this process.
+#[cfg(unix)]
+fn hook_parent_process() -> Option<u32> {
+    Some(std::os::unix::process::parent_id()).filter(|process| *process > 1)
+}
+
+#[cfg(not(unix))]
+fn hook_parent_process() -> Option<u32> {
+    None
+}
+
+/// Everything the app needs besides the event itself: the exact fence, the
+/// event's place in the source order and the process that reported it.
+fn report_headers(
+    environment: &BTreeMap<String, String>,
+    sequence: u64,
+    parent_process: Option<u32>,
+) -> Result<HeaderMap, HookFailure> {
+    let mut headers = fence_headers(environment)?;
+    headers.insert(SOURCE_SEQUENCE_HEADER, HeaderValue::from(sequence));
+    if let Some(process) = parent_process {
+        headers.insert(PARENT_PROCESS_HEADER, HeaderValue::from(process));
+    }
+    Ok(headers)
+}
+
 #[derive(Debug, PartialEq)]
 struct Input {
     body: Vec<u8>,
@@ -173,6 +204,7 @@ fn bounded_body(raw: Vec<u8>) -> Result<Input, HookFailure> {
     for field in [
         "hook_event_name",
         "session_id",
+        "source",
         "prompt_id",
         "notification_type",
         "error",
@@ -493,11 +525,7 @@ pub async fn run() -> Result<(), HookFailure> {
                 .map(|value| ((*variable).into(), value))
         })
         .collect();
-    let mut headers = fence_headers(&environment)?;
-    headers.insert(
-        SOURCE_SEQUENCE_HEADER,
-        HeaderValue::from_str(&sequence.to_string()).map_err(|_| HookFailure::Unavailable)?,
-    );
+    let headers = report_headers(&environment, sequence, hook_parent_process())?;
     let deadline = Instant::now() + TOTAL_TIMEOUT;
     let expires = tokio::time::Instant::from_std(deadline);
     let mut raw = Vec::new();

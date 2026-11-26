@@ -1266,7 +1266,7 @@ fn serve_claude_hook(mut req: tiny_http::Request, app: &AppHandle) {
             &app,
             report.host_request,
             report.transcript_path,
-            report.cleared_conversation_id,
+            report.session_start,
         );
         if (200..300).contains(&status) {
             emit_claude_activity_projection(&app, &presentation);
@@ -1776,7 +1776,7 @@ fn dispatch_claude_hook_request(
     app: &AppHandle,
     request: crate::hmux::AgentStateReportRequest,
     transcript_path: Option<std::path::PathBuf>,
-    cleared_conversation_id: Option<String>,
+    session_start: Option<crate::hmux::ClaudeSessionStart>,
 ) -> (u16, Value) {
     let hmux = {
         let state = app.state::<crate::AppState>();
@@ -1789,7 +1789,7 @@ fn dispatch_claude_hook_request(
             &dispatch_app,
             request,
             transcript_path.as_deref(),
-            cleared_conversation_id,
+            session_start,
         ));
     });
     match receiver.recv_timeout(Duration::from_millis(1500)) {

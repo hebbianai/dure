@@ -4,7 +4,7 @@ use super::{
     SessionClass, SessionDescriptor, SessionLifecycle, SessionProbeStatus, SessionSelector,
     SessionSummary,
 };
-use hmux_client::{recovery_journal::managed_create_ledger, PermissionMode};
+use hmux_client::{recovery_journal::managed_create_ledger, PermissionMode, ProcessDescriptor};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -14,20 +14,36 @@ use std::{
 };
 use tauri::AppHandle;
 
-/// Conversations Claude started in place with `/clear`, by the exact Host
-/// generation that reported them. `/clear` writes no forward link from the
-/// old transcript, so this provider-announced successor is the only
-/// evidence that the same native process moved to the new conversation.
-/// The report naming it often arrives before the new transcript exists, so
-/// the successor is held until a report carries its conversation identity.
-fn cleared_successors() -> &'static Mutex<HashMap<String, String>> {
+/// What a Claude `SessionStart` says: the conversation the Claude process that
+/// ran the hook runs from now on. Claude reports it when it starts or resumes
+/// a conversation, and when `/clear`, `/resume` or `/branch` moves the same
+/// process to another one in place.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ClaudeSessionStart {
+    pub(crate) conversation_id: String,
+    /// `/clear` started it. Only an interactive `/clear` reports source
+    /// `clear`; a child Claude process that inherits the hook environment
+    /// starts with `startup`.
+    pub(crate) cleared: bool,
+    /// The Claude process that ran the hook, when the hook names it.
+    pub(crate) reporting_process: Option<u32>,
+}
+
+/// Conversations Claude moved a pane's own process to in place, by the exact
+/// Host generation that reported them. `/clear`, `/resume` and `/branch`
+/// write no forward link from the old transcript, so this provider-announced
+/// successor is the only evidence that the same native process moved to the
+/// new conversation. The report naming it can arrive before the new
+/// transcript exists, so the successor is held until a report carries its
+/// conversation identity.
+fn announced_successors() -> &'static Mutex<HashMap<String, String>> {
     static SUCCESSORS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
     SUCCESSORS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-const MAX_CLEARED_SUCCESSORS: usize = 256;
+const MAX_ANNOUNCED_SUCCESSORS: usize = 256;
 
-fn cleared_successor_key(fence: &super::ReportedSessionFence) -> String {
+fn announced_successor_key(fence: &super::ReportedSessionFence) -> String {
     [
         fence.session_id.as_str(),
         fence.workspace_id.as_str(),
@@ -37,22 +53,68 @@ fn cleared_successor_key(fence: &super::ReportedSessionFence) -> String {
     .join("\n")
 }
 
-fn record_cleared_successor(fence: &super::ReportedSessionFence, conversation_id: String) {
-    let Ok(mut successors) = cleared_successors().lock() else {
+fn record_announced_successor(fence: &super::ReportedSessionFence, conversation_id: String) {
+    let Ok(mut successors) = announced_successors().lock() else {
         return;
     };
-    if successors.len() >= MAX_CLEARED_SUCCESSORS {
+    if successors.len() >= MAX_ANNOUNCED_SUCCESSORS {
         successors.clear();
     }
-    successors.insert(cleared_successor_key(fence), conversation_id);
+    successors.insert(announced_successor_key(fence), conversation_id);
 }
 
-fn is_cleared_successor(fence: &super::ReportedSessionFence, conversation_id: &str) -> bool {
-    cleared_successors().lock().is_ok_and(|successors| {
+fn is_announced_successor(fence: &super::ReportedSessionFence, conversation_id: &str) -> bool {
+    announced_successors().lock().is_ok_and(|successors| {
         successors
-            .get(&cleared_successor_key(fence))
+            .get(&announced_successor_key(fence))
             .is_some_and(|successor| successor == conversation_id)
     })
+}
+
+/// Whether a `SessionStart` names the pane's next conversation. Its own
+/// provider process does, whatever moved it there. A Claude process the
+/// provider did not start in place, such as a background session copied with
+/// `/fork`, inherits the pane's fence and hook settings and reports its own
+/// `resume` or `fork`, so the source alone proves nothing, except `clear`.
+fn announces_successor(
+    start: &ClaudeSessionStart,
+    descriptor: Option<&SessionDescriptor>,
+    provider_generation_is_live: impl FnOnce(&ProcessDescriptor) -> bool,
+) -> bool {
+    start.cleared
+        || descriptor
+            .zip(start.reporting_process)
+            .is_some_and(|(descriptor, process)| {
+                descriptor.provider_id == "claude"
+                && descriptor.provider_process.process_id == process
+                // The exact generation the Host launched still runs, so
+                // its process id belongs to no later process.
+                && provider_generation_is_live(&descriptor.provider_process)
+            })
+}
+
+/// The exact Host generation a report is fenced to, from the local catalog.
+fn fenced_descriptor(fence: &super::ReportedSessionFence) -> Option<SessionDescriptor> {
+    let expected = fence.clone().into_session_fence().ok()?;
+    let descriptor = product_catalog()
+        .ok()?
+        .find(&SessionSelector::new(
+            &fence.session_id,
+            Some(fence.workspace_id.clone()),
+        ))
+        .ok()?;
+    descriptor.matches_fence(&expected).then_some(descriptor)
+}
+
+#[cfg(unix)]
+fn provider_generation_is_live(process: &ProcessDescriptor) -> bool {
+    hmux_client::probe_local_process_generation(process)
+        .is_ok_and(|status| status == hmux_client::LocalProcessGenerationStatus::Live)
+}
+
+#[cfg(not(unix))]
+fn provider_generation_is_live(_process: &ProcessDescriptor) -> bool {
+    false
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -89,8 +151,9 @@ pub struct ExistingManagedWriterInspection {
 
 impl HmuxManager {
     /// Claude may rotate its transcript ID without replacing the native
-    /// process, by continuing a transcript or by an interactive `/clear`.
-    /// Verify its forward link, or the successor `/clear` announced for this
+    /// process, by continuing a transcript or by moving to another
+    /// conversation in place (`/clear`, `/resume`, `/branch`). Verify its
+    /// forward link, or the successor its own process announced for this
     /// exact Host generation, against the live Host identity before proposing
     /// an atomic, causally ordered continuation to that same Host.
     pub(crate) fn report_claude_agent_state<R: tauri::Runtime>(
@@ -98,13 +161,16 @@ impl HmuxManager {
         app: &AppHandle<R>,
         mut request: super::AgentStateReportRequest,
         transcript: Option<&Path>,
-        cleared_conversation_id: Option<String>,
+        session_start: Option<ClaudeSessionStart>,
     ) -> Result<super::AgentStateReportReceiptSummary, super::AgentStateReportFailure> {
-        if let (Some(cleared), Some(fence)) = (
-            cleared_conversation_id,
-            request.expected_session_fence.as_ref(),
-        ) {
-            record_cleared_successor(fence, cleared);
+        if let (Some(start), Some(fence)) = (session_start, request.expected_session_fence.as_ref())
+        {
+            let descriptor = start
+                .reporting_process
+                .and_then(|_| fenced_descriptor(fence));
+            if announces_successor(&start, descriptor.as_ref(), provider_generation_is_live) {
+                record_announced_successor(fence, start.conversation_id);
+            }
         }
         if let (Some(transcript), Some(identity), Some(expected)) = (
             transcript,
@@ -130,10 +196,14 @@ impl HmuxManager {
                                 && current.conversation_id != identity.conversation_id
                         })
                     {
-                        let cleared = request.expected_session_fence.as_ref().is_some_and(
-                            |fence| is_cleared_successor(fence, &identity.conversation_id),
-                        );
-                        if cleared
+                        let announced =
+                            request
+                                .expected_session_fence
+                                .as_ref()
+                                .is_some_and(|fence| {
+                                    is_announced_successor(fence, &identity.conversation_id)
+                                });
+                        if announced
                             || dure_provider_adapter::claude_continuation::claude_transcript_continues(
                                 transcript,
                                 &current.conversation_id,
@@ -394,7 +464,9 @@ fn validate_projected_conversation_identity(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_projected_conversation_identity;
+    use super::{
+        announces_successor, validate_projected_conversation_identity, ClaudeSessionStart,
+    };
     use hmux_client::{
         EndpointDescriptor, EndpointKind, ProcessDescriptor, ProtocolVersion,
         ProviderConversationIdentityDescriptor, ProviderConversationIdentitySource, SessionClass,
@@ -461,6 +533,79 @@ mod tests {
             conversation_id: "019fa780-c26f-7a72-9544-cf09f3e89e35".into(),
             source: ProviderConversationIdentitySource::ProviderEvent,
         }
+    }
+
+    fn start(cleared: bool, reporting_process: Option<u32>) -> ClaudeSessionStart {
+        ClaudeSessionStart {
+            conversation_id: "fixture-next".into(),
+            cleared,
+            reporting_process,
+        }
+    }
+
+    /// Claude Code 2.1.331 reports `/resume <id>` and `/branch` from the
+    /// pane's own process (SessionStart `resume` and `fork`), and `/fork`
+    /// from a background session's process that inherits the pane's fence
+    /// (SessionStart `fork`). Only the pane's own process moves the pane.
+    #[test]
+    fn only_the_hosts_own_live_provider_process_names_the_next_conversation() {
+        let mut claude = descriptor();
+        claude.provider_id = "claude".into();
+        let provider = claude.provider_process.process_id;
+        let live = |_: &hmux_client::ProcessDescriptor| true;
+        assert!(announces_successor(
+            &start(false, Some(provider)),
+            Some(&claude),
+            live
+        ));
+        // Another Claude process with the pane's fence, such as a background
+        // session copied with `/fork`.
+        assert!(!announces_successor(
+            &start(false, Some(provider + 1)),
+            Some(&claude),
+            live
+        ));
+        // The exact provider generation is gone, so its process id may name
+        // a later process.
+        let mut probed = None;
+        assert!(!announces_successor(
+            &start(false, Some(provider)),
+            Some(&claude),
+            |process| {
+                probed = Some(process.clone());
+                false
+            },
+        ));
+        assert_eq!(probed.as_ref(), Some(&claude.provider_process));
+        // No process named, no exact Host generation, or another provider.
+        assert!(!announces_successor(
+            &start(false, None),
+            Some(&claude),
+            live
+        ));
+        assert!(!announces_successor(
+            &start(false, Some(provider)),
+            None,
+            live
+        ));
+        assert!(!announces_successor(
+            &start(false, Some(provider)),
+            Some(&descriptor()),
+            live
+        ));
+    }
+
+    #[test]
+    fn an_interactive_clear_keeps_naming_its_conversation_without_a_process() {
+        let mut claude = descriptor();
+        claude.provider_id = "claude".into();
+        let gone = |_: &hmux_client::ProcessDescriptor| false;
+        assert!(announces_successor(&start(true, None), None, gone));
+        assert!(announces_successor(
+            &start(true, Some(1_999)),
+            Some(&claude),
+            gone
+        ));
     }
 
     #[test]

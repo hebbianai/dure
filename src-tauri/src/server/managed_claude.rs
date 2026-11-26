@@ -8,11 +8,17 @@ pub(super) struct ClaudeHookReport {
     pub(super) presentation: Value,
     pub(super) host_request: crate::hmux::AgentStateReportRequest,
     pub(super) transcript_path: Option<std::path::PathBuf>,
-    /// The conversation Claude started in place with `/clear`. Only an
-    /// interactive `/clear` reports `SessionStart` with source `clear`; a
-    /// child Claude process that inherits the hook environment starts with
-    /// `startup`, so it can never claim the pane's conversation this way.
-    pub(super) cleared_conversation_id: Option<String>,
+    /// The conversation a `SessionStart` says its Claude process runs now.
+    pub(super) session_start: Option<crate::hmux::ClaudeSessionStart>,
+}
+
+/// The Claude process that ran the hook, as the app-owned hook companion
+/// names it. Older companions and the script hook name none.
+fn hook_parent_process(header: Option<String>) -> Option<u32> {
+    header
+        .filter(|value| value.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|process| *process > 1)
 }
 
 /// What a `PermissionRequest` asks: its attention, and the request a chat
@@ -278,12 +284,17 @@ pub(super) fn normalize_hook_report(
             None,
         ),
     };
-    let cleared_conversation_id = (event == "SessionStart"
-        && object.get("source").and_then(Value::as_str) == Some("clear"))
-    .then(|| conversation_id.to_string());
+    // A subagent's SessionStart is about its own context, never about the
+    // conversation its process runs.
+    let session_start =
+        (event == "SessionStart" && !subagent).then(|| crate::hmux::ClaudeSessionStart {
+            conversation_id: conversation_id.to_string(),
+            cleared: object.get("source").and_then(Value::as_str) == Some("clear"),
+            reporting_process: hook_parent_process(header("X-Hebbian-Hook-Parent-Process-Id")),
+        });
     Ok(Some(ClaudeHookReport {
         presentation,
-        cleared_conversation_id,
+        session_start,
         transcript_path: object
             .get("transcript_path")
             .and_then(Value::as_str)
@@ -411,32 +422,78 @@ mod tests {
     }
 
     #[test]
-    fn only_an_interactive_clear_names_a_successor_conversation() {
-        let header = |name: &str| {
-            (name != "X-Hebbian-Hmux-Source-Sequence").then(|| "fixture-id".to_string())
+    fn a_session_start_names_its_conversation_how_it_began_and_its_process() {
+        let header = |process: Option<&'static str>| {
+            move |name: &str| match name {
+                "X-Hebbian-Hmux-Source-Sequence" => None,
+                "X-Hebbian-Hook-Parent-Process-Id" => process.map(str::to_string),
+                _ => Some("fixture-id".to_string()),
+            }
         };
-        for (source, expected) in [
-            (Some("clear"), Some("fixture-cleared")),
-            (Some("startup"), None),
-            (Some("resume"), None),
-            (Some("compact"), None),
-            (None, None),
+        let start = |input: Value, process| {
+            normalize_hook_report(input, header(process))
+                .unwrap()
+                .unwrap()
+                .session_start
+        };
+        // Only an interactive `/clear` reports source `clear`. Every source
+        // names the conversation the reporting process runs from now on.
+        for (source, cleared) in [
+            (Some("clear"), true),
+            (Some("startup"), false),
+            (Some("resume"), false),
+            (Some("fork"), false),
+            (Some("compact"), false),
+            (None, false),
         ] {
             let mut input = serde_json::json!({
-                "hook_event_name": "SessionStart", "session_id": "fixture-cleared",
+                "hook_event_name": "SessionStart", "session_id": "fixture-next",
             });
             if let Some(source) = source {
                 input["source"] = source.into();
             }
-            let report = normalize_hook_report(input, header).unwrap().unwrap();
-            assert_eq!(report.cleared_conversation_id.as_deref(), expected, "{source:?}");
+            assert_eq!(
+                start(input, Some("4242")),
+                Some(crate::hmux::ClaudeSessionStart {
+                    conversation_id: "fixture-next".into(),
+                    cleared,
+                    reporting_process: Some(4242),
+                }),
+                "{source:?}"
+            );
         }
-        let prompt = serde_json::json!({
-            "hook_event_name": "UserPromptSubmit", "session_id": "fixture-cleared",
-            "source": "clear",
-        });
-        let report = normalize_hook_report(prompt, header).unwrap().unwrap();
-        assert_eq!(report.cleared_conversation_id, None);
+        // A hook that names no process, or no valid one, names none.
+        for process in [
+            None,
+            Some("0"),
+            Some("1"),
+            Some("+4242"),
+            Some("4242x"),
+            Some("4294967296"),
+        ] {
+            let input = serde_json::json!({
+                "hook_event_name": "SessionStart", "session_id": "fixture-next", "source": "resume",
+            });
+            assert_eq!(
+                start(input, process).unwrap().reporting_process,
+                None,
+                "{process:?}"
+            );
+        }
+        // Another event, or a subagent's start, says nothing about the
+        // conversation the process runs.
+        for input in [
+            serde_json::json!({
+                "hook_event_name": "UserPromptSubmit", "session_id": "fixture-next",
+                "source": "clear",
+            }),
+            serde_json::json!({
+                "hook_event_name": "SessionStart", "session_id": "fixture-next",
+                "source": "resume", "agent_id": "fixture-subagent",
+            }),
+        ] {
+            assert_eq!(start(input, Some("4242")), None);
+        }
     }
 
     #[test]

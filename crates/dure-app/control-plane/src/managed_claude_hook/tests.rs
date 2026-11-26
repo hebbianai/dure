@@ -61,6 +61,42 @@ fn requires_all_exact_fence_fields_before_reporting() {
 }
 
 #[test]
+fn names_the_process_that_ran_the_hook_next_to_its_fence_and_order() {
+    // Claude starts each hook as its own child and the shim `exec`s this
+    // companion, so its parent is the Claude process the event belongs to.
+    assert_eq!(
+        hook_parent_process(),
+        Some(std::os::unix::process::parent_id()).filter(|process| *process > 1)
+    );
+    let named = report_headers(&environment(), 42, Some(4242)).unwrap();
+    assert_eq!(named[PARENT_PROCESS_HEADER], "4242");
+    assert_eq!(named[SOURCE_SEQUENCE_HEADER], "42");
+    assert_eq!(named.len(), FENCE_HEADERS.len() + 2);
+    let unnamed = report_headers(&environment(), 42, None).unwrap();
+    assert!(unnamed.get(PARENT_PROCESS_HEADER).is_none());
+    assert_eq!(unnamed.len(), FENCE_HEADERS.len() + 1);
+    let mut missing = environment();
+    missing.remove("HMUX_SESSION_ID");
+    assert_eq!(
+        report_headers(&missing, 42, Some(4242)),
+        Err(HookFailure::InvalidFence)
+    );
+}
+
+#[test]
+fn an_oversized_session_start_keeps_how_its_conversation_started() {
+    let oversized = serde_json::json!({
+        "hook_event_name": "SessionStart", "session_id": "fixture", "source": "resume",
+        "transcript_path": "/fixture/conversation.jsonl", "model": "x".repeat(MAX_BODY_BYTES),
+    });
+    let body = bounded_body(serde_json::to_vec(&oversized).unwrap()).unwrap();
+    let body: Value = serde_json::from_slice(&body.body).unwrap();
+    assert_eq!(body["source"], "resume");
+    assert_eq!(body["session_id"], "fixture");
+    assert!(body.get("model").is_none());
+}
+
+#[test]
 fn subagent_tool_calls_keep_their_identity_and_coalesce_apart() {
     let call = |agent: Option<&str>| {
         let mut input = serde_json::json!({
