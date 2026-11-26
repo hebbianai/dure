@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { UsageRecentReport } from "@/lib/ipc";
+import type {
+	ClaudeUsageSnapshot,
+	ClaudeUsageWindow,
+	UsageRecentReport,
+} from "@/lib/ipc";
 import type { AccountProfile, Agent } from "@/types";
 import {
 	sessionAccountChoices,
@@ -134,6 +138,63 @@ describe("sessionAccountChoices", () => {
 				pending: false,
 			},
 		]);
+	});
+
+	/** The account row's separate limits cross as numbers and the provider's
+	 * names: a model's own weekly window that is full while the account's
+	 * weekly window still has room, and a window Dure does not know by its
+	 * key. One the account has not used, or whose reset has passed, says
+	 * nothing about which account to pick. */
+	it("sends each separate limit in use with its reset", () => {
+		const window = (
+			id: string,
+			kind: ClaudeUsageWindow["kind"],
+			usedPercent: number,
+			resetsAt: number | null,
+			model: string | null = null,
+		): ClaudeUsageWindow => ({ id, kind, model, usedPercent, resetsAt });
+		const check: ClaudeUsageSnapshot = {
+			credentialId: "acct-spare",
+			capturedAt: nowSec,
+			attemptedAt: nowSec,
+			error: null,
+			windows: [
+				window("five_hour", "fiveHour", 20, nowSec + 3_600),
+				window("seven_day", "weekly", 40, nowSec + 3 * 86_400),
+				window(
+					"seven_day_fable",
+					"modelWeekly",
+					100,
+					nowSec + 93_600,
+					"Fable 5.1",
+				),
+				window("seven_day_opus", "modelWeekly", 0, null, "Opus"),
+				window("seven_day_sonnet", "modelWeekly", 64, nowSec - 1, "Sonnet"),
+				window("seven_day_lantern", "other", 7, null),
+			],
+		};
+		const spare = sessionAccountChoices(
+			agent(),
+			accounts,
+			{ ...report, claudeAccountSnapshots: [check] },
+			nowSec,
+		)[2];
+		expect(spare).toEqual({
+			accountId: "acct-spare",
+			label: "Spare",
+			current: false,
+			pending: false,
+			usage: { usedPercent: 20, window: "five_hour", resetsIn: "1h" },
+			separateLimits: [
+				{
+					name: "Fable 5.1",
+					usedPercent: 100,
+					window: "weekly",
+					resetsIn: "1d 2h",
+				},
+				{ name: "seven_day_lantern", usedPercent: 7 },
+			],
+		});
 	});
 
 	it("never sends a profile directory", () => {

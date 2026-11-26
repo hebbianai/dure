@@ -26,14 +26,22 @@
 //!
 //! # What does not cross
 //!
-//! Account ids, the labels the desktop already draws, and usage percentages.
-//! Never a profile directory, credential file, token, or anything else that
+//! Account ids, the labels the desktop already draws, usage percentages and
+//! the provider's names for its separate limits (a model name). Never a
+//! profile directory, credential file, token, or anything else that
 //! would let the phone act as the account.
 //!
 //! # Why a separate version
 //!
 //! Like `launch_offer`, so a phone that meets a desktop speaking another
 //! version of this document loses this sheet only, not the session list.
+//!
+//! # Why separate limits did not change the version
+//!
+//! They are an optional list beside `usage`. A phone built before them
+//! ignores the field and still draws the headline; a desktop built before
+//! them sends none, which reads as "no separate limit in use". Neither side
+//! claims anything the other did not say.
 
 use crate::frame::{self, FrameError};
 use serde::{Deserialize, Serialize};
@@ -69,6 +77,26 @@ pub struct AccountUsage {
     pub resets_in: Option<String>,
 }
 
+/// A limit the provider keeps beside the account's general one, such as one
+/// model's own weekly window. It can be used up while the general window
+/// still has room, so an account that looks free can still refuse that model.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SeparateLimitUsage {
+    /// The provider's name for the limit: a model name, or the provider's own
+    /// key for a window the desktop does not know. Absent when the provider
+    /// gave none; the phone names it in its own language.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// 0–100, rounded the way the desktop draws it.
+    pub used_percent: u8,
+    /// The period the limit covers. Absent when the provider does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<UsageWindow>,
+    /// Time until the limit resets, in [`AccountUsage::resets_in`]'s form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resets_in: Option<String>,
+}
+
 /// One account the desktop's selector offers for this session's provider.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionAccountChoice {
@@ -89,6 +117,11 @@ pub struct SessionAccountChoice {
     /// Absent when nothing was observed. Never filled with 0 or 100.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<AccountUsage>,
+    /// The separate limits in use beside `usage`, as the desktop's account
+    /// rows list them. Empty when none is, or from a desktop that predates
+    /// them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub separate_limits: Vec<SeparateLimitUsage>,
 }
 
 /// What the desktop did with the question.
@@ -218,6 +251,7 @@ mod tests {
                 current: false,
                 pending: false,
                 usage: None,
+                separate_limits: Vec::new(),
             },
             SessionAccountChoice {
                 account_id: Some("account-work".to_string()),
@@ -225,10 +259,24 @@ mod tests {
                 current: true,
                 pending: false,
                 usage: Some(AccountUsage {
-                    used_percent: 100,
+                    used_percent: 40,
                     window: UsageWindow::Weekly,
                     resets_in: Some("2d 4h".to_string()),
                 }),
+                separate_limits: vec![
+                    SeparateLimitUsage {
+                        name: Some("Fable 5.1".to_string()),
+                        used_percent: 100,
+                        window: Some(UsageWindow::Weekly),
+                        resets_in: Some("1d 2h".to_string()),
+                    },
+                    SeparateLimitUsage {
+                        name: None,
+                        used_percent: 7,
+                        window: None,
+                        resets_in: None,
+                    },
+                ],
             },
             SessionAccountChoice {
                 account_id: Some("account-spare".to_string()),
@@ -240,6 +288,7 @@ mod tests {
                     window: UsageWindow::FiveHour,
                     resets_in: None,
                 }),
+                separate_limits: Vec::new(),
             },
         ]
     }
@@ -260,6 +309,55 @@ mod tests {
         assert!(value.get("account_id").is_none());
         assert!(value.get("label").is_none());
         assert!(value.get("usage").is_none());
+        assert!(value.get("separate_limits").is_none());
+    }
+
+    /// A model's own weekly window crosses with the provider's name for it,
+    /// and a limit the provider neither named nor gave a period stays
+    /// without either rather than borrowing one.
+    #[test]
+    fn a_separate_limit_carries_only_what_the_provider_said() {
+        let value = serde_json::to_value(&choices()[1]).expect("to value");
+        assert_eq!(
+            value["separate_limits"],
+            serde_json::json!([
+                { "name": "Fable 5.1", "used_percent": 100, "window": "weekly", "resets_in": "1d 2h" },
+                { "used_percent": 7 },
+            ])
+        );
+    }
+
+    /// Separate limits are optional beside the headline, so both sides of a
+    /// pairing may predate them: a desktop that sends none reads as no limit
+    /// in use, and a reader ignores fields it does not know.
+    #[test]
+    fn separate_limits_need_no_new_version() {
+        let older_desktop = serde_json::json!({
+            "hub_session_account_version": HUB_SESSION_ACCOUNT_VERSION,
+            "outcome": "listed",
+            "accounts": [{
+                "account_id": "account-work",
+                "current": true,
+                "usage": { "used_percent": 40, "window": "weekly" },
+            }],
+        });
+        let framed = frame::encode(&older_desktop, MAX_SESSION_ACCOUNT_BYTES).expect("encode");
+        let read_back = read(&mut framed.as_slice()).expect("an older desktop's answer reads");
+        assert!(read_back.accounts[0].separate_limits.is_empty());
+
+        let mut newer_desktop = serde_json::to_value(HubSessionAccountResult::answered(
+            SessionAccountOutcome::Listed,
+            choices(),
+        ))
+        .expect("to value");
+        newer_desktop["accounts"][1]["a_field_from_a_later_desktop"] = serde_json::json!(true);
+        let framed = frame::encode(&newer_desktop, MAX_SESSION_ACCOUNT_BYTES).expect("encode");
+        assert_eq!(
+            read(&mut framed.as_slice())
+                .expect("unknown fields are ignored")
+                .accounts,
+            choices()
+        );
     }
 
     #[test]
@@ -289,7 +387,8 @@ mod tests {
     }
 
     /// Nothing on the wire could carry a credential: only ids, labels and
-    /// usage. A field added later must fail here first.
+    /// usage, with the provider's names for its separate limits. A field
+    /// added later must fail here first.
     #[test]
     fn a_choice_has_no_field_that_could_carry_a_credential() {
         let value = serde_json::to_value(&choices()[1]).expect("to value");
@@ -302,7 +401,25 @@ mod tests {
         fields.sort_unstable();
         assert_eq!(
             fields,
-            ["account_id", "current", "label", "pending", "usage"]
+            [
+                "account_id",
+                "current",
+                "label",
+                "pending",
+                "separate_limits",
+                "usage"
+            ]
+        );
+        let mut limit_fields: Vec<&str> = value["separate_limits"][0]
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        limit_fields.sort_unstable();
+        assert_eq!(
+            limit_fields,
+            ["name", "resets_in", "used_percent", "window"]
         );
     }
 
@@ -321,13 +438,21 @@ mod tests {
                     window: UsageWindow::FiveHour,
                     resets_in: Some("4h 59m".to_string()),
                 }),
+                separate_limits: (0..4)
+                    .map(|model| SeparateLimitUsage {
+                        name: Some(format!("A model with a long name {model}")),
+                        used_percent: 100,
+                        window: Some(UsageWindow::Weekly),
+                        resets_in: Some("6d 23h".to_string()),
+                    })
+                    .collect(),
             })
             .collect();
         let framed = encode(&HubSessionAccountResult::answered(
             SessionAccountOutcome::Listed,
             accounts,
         ))
-        .expect("sixty-four accounts fit");
+        .expect("sixty-four accounts with four model limits each fit");
         assert_eq!(
             read(&mut framed.as_slice()).expect("read").accounts.len(),
             64

@@ -6,13 +6,16 @@
  * The phone's account sheet is the desktop account selector seen from away:
  * the same pool (`accounts` for the session's provider), the same current
  * account (`agentCredentialReferenceId`), the same queued switch, and the
- * same usage meter (`providerAccountMeter`). Deriving any of them again here
- * would let the two screens disagree about which account a session is on.
+ * same usage meter (`providerAccountMeter`), with the separate limits its
+ * account rows list (a model's own weekly window). Deriving any of them again
+ * here would let the two screens disagree about which account a session is
+ * on, or which one still has room.
  *
  * # What never crosses
  *
  * Profile directories, credential files and tokens. Only ids needed to
- * select, the names the selector shows, and usage numbers.
+ * select, the names the selector shows, usage numbers and the provider's
+ * names for its separate limits.
  */
 
 import { agentCredentialReferenceId } from "@/lib/agents/agentLaunchCredential";
@@ -20,10 +23,17 @@ import {
 	supportsAccounts,
 	supportsStructuredChat,
 } from "@/lib/agents/providers";
-import type { SessionAccountChoiceReply } from "@/lib/hub/sessionAccountWire";
+import type {
+	SessionAccountChoiceReply,
+	SessionAccountSeparateLimitReply,
+} from "@/lib/hub/sessionAccountWire";
 import type { SessionAccountSummary } from "@/lib/hub/sessionPresentation";
 import type { UsageRecentReport } from "@/lib/ipc";
-import { providerAccountMeter } from "@/lib/usage/accountUsageMeter";
+import {
+	type AccountUsageMeter,
+	providerAccountMeter,
+} from "@/lib/usage/accountUsageMeter";
+import { separateLimitReading } from "@/lib/usage/usageMeter";
 import type { AccountProfile, Agent } from "@/types";
 
 type AccountAgent = Pick<
@@ -108,6 +118,39 @@ export function sessionAccountSummary(
 	};
 }
 
+const WIRE_WINDOW = { "5h": "five_hour", weekly: "weekly" } as const;
+
+/** The meter's general reading and its separate limits in the hub's words:
+ * the numbers the desktop's account rows draw, without their wording. */
+function wireUsage(
+	meter: AccountUsageMeter | null,
+): Pick<SessionAccountChoiceReply, "usage" | "separateLimits"> {
+	if (!meter) return {};
+	const separateLimits = meter.separate.map(
+		(limit): SessionAccountSeparateLimitReply => {
+			const reading = separateLimitReading(limit);
+			return {
+				...(reading.limitName ? { name: reading.limitName } : {}),
+				usedPercent: reading.pct,
+				...(reading.window ? { window: WIRE_WINDOW[reading.window] } : {}),
+				...(reading.resetLabel ? { resetsIn: reading.resetLabel } : {}),
+			};
+		},
+	);
+	return {
+		...(meter.pct != null && meter.window
+			? {
+					usage: {
+						usedPercent: meter.pct,
+						window: WIRE_WINDOW[meter.window],
+						...(meter.resetLabel ? { resetsIn: meter.resetLabel } : {}),
+					},
+				}
+			: {}),
+		...(separateLimits.length > 0 ? { separateLimits } : {}),
+	};
+}
+
 /**
  * The selector's choices for this agent, with the selector's usage reading.
  *
@@ -147,15 +190,7 @@ export function sessionAccountChoices(
 			...(choice.name !== undefined ? { label: choice.name } : {}),
 			current: choice.id === currentId,
 			pending: pendingId !== undefined && choice.id === pendingId,
-			...(meter?.pct != null && meter.window
-				? {
-						usage: {
-							usedPercent: meter.pct,
-							window: meter.window === "5h" ? "five_hour" : "weekly",
-							...(meter.resetLabel ? { resetsIn: meter.resetLabel } : {}),
-						},
-					}
-				: {}),
+			...wireUsage(meter),
 		};
 	});
 }

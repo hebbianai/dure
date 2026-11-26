@@ -735,6 +735,7 @@ function demoAccounts(sessionId: string): SessionAccountChoice[] {
       current: false,
       pending: false,
       usage: { used_percent: 18, window: "weekly", resets_in: "3d 4h" },
+      separate_limits: [{ name: "Fable 5.1", used_percent: 100, window: "weekly", resets_in: "1d 2h" }],
     },
   ];
   return choices.map((choice) => ({ ...choice, current: (choice.account_id ?? null) === current }));

@@ -1,7 +1,10 @@
 import { t } from "@/lib/i18n";
 import type { CodexUsageSnapshot } from "@/lib/ipc";
 import { accountSnapshotFreshness } from "@/lib/usage/accountUsageSnapshots";
-import type { NamedLimitMeter } from "@/lib/usage/usageMeter";
+import {
+	type NamedLimitMeter,
+	separateLimitReading,
+} from "@/lib/usage/usageMeter";
 
 export function codexResetCreditsLabel(
 	snapshot: CodexUsageSnapshot | undefined,
@@ -85,19 +88,19 @@ export function separateLimitView(
 	meter: NamedLimitMeter,
 	fallbackName: string,
 ): SeparateLimitView {
-	const weekly = meter.weeklyPct != null;
+	const reading = separateLimitReading(meter);
 	const period =
-		weekly || meter.window === "weekly"
+		reading.window === "weekly"
 			? t("usage.window.weekly")
-			: meter.window === "5h"
+			: reading.window === "5h"
 				? t("usage.window.fiveHour")
 				: null;
-	const name = meter.limitName ?? fallbackName;
+	const name = reading.limitName ?? fallbackName;
 	return {
-		id: meter.limitId,
+		id: reading.limitId,
 		label: period ? `${period} · ${name}` : name,
-		pct: meter.weeklyPct ?? meter.pct ?? 0,
-		resetLabel: weekly ? meter.weeklyResetLabel : meter.resetLabel,
+		pct: reading.pct,
+		resetLabel: reading.resetLabel,
 	};
 }
 

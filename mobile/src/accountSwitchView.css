@@ -89,8 +89,9 @@ button.account-sheet__row:disabled {
   overflow-wrap: anywhere;
 }
 
-/* At its limit: the reason somebody opened this sheet, so it reads first. */
-.account-sheet__row--limited .account-sheet__detail {
+/* At its limit: the reason somebody opened this sheet, so it reads first.
+ * Per line, since a model's own limit can be full while the account is not. */
+.account-sheet__detail--limited {
   color: var(--destructive);
 }
 

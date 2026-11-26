@@ -17,8 +17,8 @@ use super::start_agent::{
 use super::roundtrip::{PendingRoundTrips, RoundTrip};
 use super::session_account::{PendingSessionAccount, SessionAccountRequest, SessionAccountSink};
 use dure_hub_protocol::session_account::{
-    AccountUsage, HubSessionAccountResult, SessionAccountChoice, SessionAccountOutcome,
-    UsageWindow,
+    AccountUsage, HubSessionAccountResult, SeparateLimitUsage, SessionAccountChoice,
+    SessionAccountOutcome, UsageWindow,
 };
 use dure_hub_protocol::git_status::BranchFacts;
 use dure_hub_protocol::{
@@ -662,6 +662,10 @@ mod tests {
                 {
                     "accountId": "account-work", "label": "Work", "current": true, "pending": false,
                     "usage": { "usedPercent": 104.2, "window": "weekly", "resetsIn": "2d 4h" },
+                    "separateLimits": [
+                        { "name": "Fable 5.1", "usedPercent": 99.6, "window": "weekly", "resetsIn": "1d 2h" },
+                        { "name": " ", "usedPercent": 7.2, "resetsIn": "" },
+                    ],
                 },
                 {
                     "accountId": "account-spare", "label": "Spare", "current": false, "pending": true,
@@ -676,10 +680,28 @@ mod tests {
         let work = result.accounts[1].usage.as_ref().expect("usage");
         assert_eq!(work.used_percent, 100);
         assert_eq!(work.window, UsageWindow::Weekly);
+        assert_eq!(
+            result.accounts[1].separate_limits,
+            [
+                SeparateLimitUsage {
+                    name: Some("Fable 5.1".to_string()),
+                    used_percent: 100,
+                    window: Some(UsageWindow::Weekly),
+                    resets_in: Some("1d 2h".to_string()),
+                },
+                SeparateLimitUsage {
+                    name: None,
+                    used_percent: 7,
+                    window: None,
+                    resets_in: None,
+                },
+            ]
+        );
         let spare = result.accounts[2].usage.as_ref().expect("usage");
         assert_eq!(spare.used_percent, 12);
         assert_eq!(spare.resets_in, None);
         assert!(result.accounts[2].pending);
+        assert!(result.accounts[2].separate_limits.is_empty());
     }
 
     #[test]
@@ -1209,6 +1231,8 @@ struct HubSessionAccountChoiceReply {
     pending: bool,
     #[serde(default)]
     usage: Option<HubAccountUsageReply>,
+    #[serde(default)]
+    separate_limits: Vec<HubSeparateLimitReply>,
 }
 
 #[derive(Deserialize)]
@@ -1218,6 +1242,32 @@ struct HubAccountUsageReply {
     window: UsageWindow,
     #[serde(default)]
     resets_in: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HubSeparateLimitReply {
+    #[serde(default)]
+    name: Option<String>,
+    used_percent: f64,
+    #[serde(default)]
+    window: Option<UsageWindow>,
+    #[serde(default)]
+    resets_in: Option<String>,
+}
+
+/// The screen's percentage as the phone may read it: clamped first, so the
+/// cast cannot wrap or saturate into a different claim, and none at all for
+/// a number that is not one.
+fn reply_percent(used_percent: f64) -> Option<u8> {
+    used_percent
+        .is_finite()
+        .then(|| used_percent.clamp(0.0, 100.0).round() as u8)
+}
+
+/// A blank reset or name says nothing, so it is not sent as one.
+fn reply_text(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.trim().is_empty())
 }
 
 impl HubSessionAccountReply {
@@ -1238,14 +1288,24 @@ impl HubSessionAccountReply {
                 current: choice.current,
                 pending: choice.pending,
                 usage: choice.usage.and_then(|usage| {
-                    usage.used_percent.is_finite().then(|| AccountUsage {
-                        // Clamped first, so the cast cannot wrap or saturate
-                        // into a different claim.
-                        used_percent: usage.used_percent.clamp(0.0, 100.0).round() as u8,
+                    Some(AccountUsage {
+                        used_percent: reply_percent(usage.used_percent)?,
                         window: usage.window,
-                        resets_in: usage.resets_in.filter(|value| !value.trim().is_empty()),
+                        resets_in: reply_text(usage.resets_in),
                     })
                 }),
+                separate_limits: choice
+                    .separate_limits
+                    .into_iter()
+                    .filter_map(|limit| {
+                        Some(SeparateLimitUsage {
+                            name: reply_text(limit.name),
+                            used_percent: reply_percent(limit.used_percent)?,
+                            window: limit.window,
+                            resets_in: reply_text(limit.resets_in),
+                        })
+                    })
+                    .collect(),
             })
             .collect();
         let mut result = HubSessionAccountResult::answered(self.outcome, accounts);

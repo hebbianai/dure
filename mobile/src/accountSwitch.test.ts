@@ -9,6 +9,7 @@ import {
   outcomeNotice,
   refusalText,
   retryKeepsPress,
+  separateLimitText,
   usageText,
 } from "./accountSwitch";
 import type { HubSessions } from "./allSessions";
@@ -94,6 +95,23 @@ describe("account wording", () => {
     expect(limitReached({ used_percent: 100, window: "weekly" })).toBe(true);
     expect(limitReached({ used_percent: 99, window: "weekly" })).toBe(false);
     expect(limitReached(null)).toBe(false);
+  });
+
+  /** A model's own limit reads under the provider's name for it; one it did
+   * not name or give a period still says how much is used, never more. */
+  it("says which model a separate limit is for, its window, and when it resets", () => {
+    expect(
+      separateLimitText({ name: "Fable 5.1", used_percent: 100, window: "weekly", resets_in: "1d 2h" }),
+    ).toBe("100% of the Fable 5.1 weekly limit used · resets in 1d 2h");
+    expect(separateLimitText({ name: "Spark", used_percent: 30, window: "five_hour" })).toBe(
+      "30% of the Spark 5-hour limit used",
+    );
+    expect(separateLimitText({ name: " ", used_percent: 7 })).toBe("7% of the separate model limit used");
+    expect(limitReached({ used_percent: 100 })).toBe(true);
+    saveSettingsPreferences({ ...DEFAULT_SETTINGS_PREFERENCES, language: "ko" });
+    expect(
+      separateLimitText({ name: "Fable 5.1", used_percent: 100, window: "weekly", resets_in: "1d 2h" }),
+    ).toBe("Fable 5.1 주간 한도 100% 사용 · 1일 2시간 후 초기화");
   });
 });
 
