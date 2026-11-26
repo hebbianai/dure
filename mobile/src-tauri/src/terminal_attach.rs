@@ -496,6 +496,7 @@ mod tests {
             program_status: None,
             background_work: false,
             held_prompts: None,
+            turn_failure: None,
         }
     }
 
@@ -524,6 +525,7 @@ mod tests {
             program_status: None,
             background_work: false,
             held_prompts: None,
+            turn_failure: None,
         });
         serde_json::to_value(AdapterRecord::Control { body: &body }).unwrap()
     }
