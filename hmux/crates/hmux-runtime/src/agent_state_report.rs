@@ -27,6 +27,7 @@ pub(crate) struct Permissions {
     pub(crate) background_work: bool,
     pub(crate) startup_gate: bool,
     pub(crate) approval_request: bool,
+    pub(crate) turn_failure: bool,
 }
 
 pub(crate) struct Application {
@@ -94,6 +95,13 @@ pub(crate) fn apply(
             ErrorCode::UnsupportedCapability,
             "agent state report approval request was not negotiated",
             Some(hmux_host::local_protocol::AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY),
+        );
+    }
+    if report.turn_failure.is_some() && !permissions.turn_failure {
+        return error(
+            ErrorCode::UnsupportedCapability,
+            "agent state report turn failure was not negotiated",
+            Some(hmux_host::local_protocol::AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY),
         );
     }
     if report.causality.is_some() && !permissions.causality {
@@ -226,6 +234,7 @@ pub(crate) fn apply(
                 background_work: report.background_work,
                 startup_gate: report.startup_gate,
                 approval_request: report.approval_request,
+                turn_failure: report.turn_failure,
             },
             conversation_identity,
         ) {
@@ -281,5 +290,114 @@ pub(crate) fn apply(
             "agent state report could not be folded",
             None,
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hmux_host::local_protocol::{
+        AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY, AgentRuntimeActivity, AgentRuntimeAttention,
+        AgentTurnFailure, ProcessProof,
+    };
+    use hmux_host::terminal_replay::TerminalReplayLimits;
+
+    fn fence() -> SessionFence {
+        SessionFence {
+            workspace_id: "workspace".into(),
+            session_id: "session".into(),
+            runner_principal: "local-user".into(),
+            runner_instance: "runner-1".into(),
+            channel_epoch: 1,
+            host_instance_id: "host-1".into(),
+            terminal_epoch: "terminal-1".into(),
+        }
+    }
+
+    /// A reporter that did not negotiate the failure must not get it folded:
+    /// the Host refuses it by name, so the reporter can send the plain report.
+    #[test]
+    fn an_unnegotiated_turn_failure_is_refused_by_name() {
+        let mut host = SessionHost::new(
+            fence(),
+            ProcessProof {
+                process_id: 11,
+                start_marker: "provider-start".into(),
+            },
+            24,
+            80,
+            TerminalReplayLimits::default(),
+            2,
+        )
+        .unwrap();
+        let permissions = Permissions {
+            progress: false,
+            report: true,
+            completion_id: false,
+            causality: false,
+            observation_fence: false,
+            conversation_identity: false,
+            fenced_conversation_identity: false,
+            identity_only_conversation: false,
+            conversation_continuation: false,
+            background_work: false,
+            startup_gate: false,
+            approval_request: false,
+            turn_failure: false,
+        };
+        let report = AgentStateReport {
+            progress: None,
+            request_id: "report-1".into(),
+            identity_only: false,
+            activity: AgentRuntimeActivity::Waiting,
+            attention: AgentRuntimeAttention::Error,
+            turn_completed: false,
+            turn_completion_id: None,
+            causality: None,
+            working_ttl_ms: None,
+            conversation_identity: None,
+            expected_observation: None,
+            background_work: false,
+            startup_gate: None,
+            approval_request: None,
+            turn_failure: Some(AgentTurnFailure::UsageLimit),
+        };
+        let refused = apply(&mut host, &fence(), "claude", permissions, report.clone());
+        let FrameBody::Error(error) = refused.response else {
+            panic!("an unnegotiated turn failure must be refused");
+        };
+        assert_eq!(error.code, ErrorCode::UnsupportedCapability);
+        assert_eq!(
+            error.required_capability.as_deref(),
+            Some(AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY)
+        );
+        let runtime_state = |host: &SessionHost| {
+            host.current_snapshot(hmux_host::local_protocol::ScreenSnapshotProfile::Full)
+                .unwrap()
+                .agent_runtime_state
+        };
+        assert!(runtime_state(&host).is_none());
+
+        let applied = apply(
+            &mut host,
+            &fence(),
+            "claude",
+            Permissions {
+                turn_failure: true,
+                ..permissions
+            },
+            report,
+        );
+        assert!(matches!(
+            applied.response,
+            FrameBody::AgentStateReportReceipt(AgentStateReportReceipt {
+                outcome: AgentStateReportOutcome::Applied,
+                ..
+            })
+        ));
+        assert_eq!(
+            runtime_state(&host).and_then(|state| state.turn_failure),
+            Some(AgentTurnFailure::UsageLimit)
+        );
     }
 }

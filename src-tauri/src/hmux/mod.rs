@@ -544,6 +544,10 @@ pub struct AgentStateReportRequest {
     /// report without it.
     #[serde(default)]
     pub approval_request: Option<hmux_client::AgentApprovalRequest>,
+    /// Why the provider's turn ended on an API error; older Hosts get the
+    /// report without it.
+    #[serde(default)]
+    pub turn_failure: Option<hmux_client::AgentTurnFailure>,
 }
 
 impl fmt::Debug for AgentStateReportRequest {
@@ -562,6 +566,7 @@ impl fmt::Debug for AgentStateReportRequest {
             .field("has_expected_observation", &self.expected_observation.is_some())
             .field("background_work", &self.background_work)
             .field("approval_request", &self.approval_request)
+            .field("turn_failure", &self.turn_failure)
             .finish()
     }
 }
@@ -1421,6 +1426,7 @@ impl HmuxManager {
             expected_observation,
             background_work,
             approval_request,
+            turn_failure,
         } = request;
         validate_identifier("session id", &session_id)
             .map_err(report_request_failure)?;
@@ -1546,6 +1552,7 @@ impl HmuxManager {
             background_work,
             startup_gate: None,
             approval_request,
+            turn_failure,
         };
         if report
             .conversation_identity
@@ -1675,6 +1682,7 @@ impl HmuxManager {
                     expected_observation: None,
                     background_work: false,
                     startup_gate: None,
+                    turn_failure: None,
                 },
                 expected_fence,
             )
@@ -2976,6 +2984,7 @@ mod tests {
             program_status: None,
             background_work: false,
             held_prompts: None,
+            turn_failure: None,
         });
         assert_eq!(projected.turn_completed_count, "3");
         assert_eq!(projected.activity, "waiting");
@@ -3005,6 +3014,7 @@ mod tests {
                 count: 3,
                 since_unix_ms: 1_700_000_000_000,
             }),
+            turn_failure: None,
         });
         assert_eq!(
             serde_json::to_value(projected).unwrap()["heldPrompts"],
@@ -3081,6 +3091,7 @@ mod tests {
             expected_observation: None,
             background_work: false,
             approval_request: None,
+            turn_failure: None,
         };
 
         let debug = format!("{request:?}");

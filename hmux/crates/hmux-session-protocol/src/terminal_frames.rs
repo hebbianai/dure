@@ -182,6 +182,32 @@ impl AgentStartupGate {
     }
 }
 
+/// Why a provider turn ended on an API error, as its adapter read it from the
+/// provider's own failure event; it is never inferred from terminal output.
+/// The vocabulary is provider-neutral and matches the structured drivers'
+/// turn failures.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTurnFailure {
+    /// The account's usage allowance or billing limit is exhausted.
+    UsageLimit,
+    /// The provider refused the request as rate limited.
+    RateLimit,
+    /// Any other provider or API failure.
+    ProviderError,
+}
+
+impl AgentTurnFailure {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::UsageLimit => "usage_limit",
+            Self::RateLimit => "rate_limit",
+            Self::ProviderError => "provider_error",
+        }
+    }
+}
+
 /// Longest provider tool name an approval request carries.
 pub const AGENT_APPROVAL_REQUEST_MAX_TOOL_NAME_BYTES: usize = 128;
 /// Longest tool input summary an approval request carries. The provider
@@ -373,6 +399,12 @@ pub struct AgentRuntimeStateProjection {
     /// older decoders ignore it and older Hosts never send it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held_prompts: Option<HeldAgentPromptsProjection>,
+    /// Why the provider's turn ended on an API error, when its adapter
+    /// reported it. Only beside `waiting` with `error`, and kept for exactly
+    /// that error episode: a new failure is a new `attention_id`. Additive,
+    /// so older decoders ignore it and older Hosts never send it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_failure: Option<AgentTurnFailure>,
 }
 
 /// How many agent prompts unsent input holds back, and since when. The Host
@@ -405,6 +437,20 @@ impl AgentRuntimeStateProjection {
                     | AgentRuntimeStateSource::OrchestrationEvent
             )
     }
+
+    /// The provider's turn ended on a typed API failure its adapter reported,
+    /// nothing runs and nothing more is coming until someone sends input.
+    /// Unlike semantic quiescence this leaves an open error episode, so it
+    /// never counts as idle; it only admits a fenced managed stop.
+    #[must_use]
+    pub fn is_settled_turn_failure(&self) -> bool {
+        self.lifecycle == AgentRuntimeLifecycle::Running
+            && self.activity == AgentRuntimeActivity::Waiting
+            && self.attention == AgentRuntimeAttention::Error
+            && self.turn_failure.is_some()
+            && !self.background_work
+            && self.source == AgentRuntimeStateSource::ProviderEvent
+    }
 }
 
 impl fmt::Debug for AgentRuntimeStateProjection {
@@ -427,6 +473,7 @@ impl fmt::Debug for AgentRuntimeStateProjection {
             .field("background_work", &self.background_work)
             .field("approval_request", &self.approval_request)
             .field("held_prompts", &self.held_prompts)
+            .field("turn_failure", &self.turn_failure)
             .finish()
     }
 }
@@ -921,6 +968,11 @@ pub struct AgentStateReport {
     /// report without it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_request: Option<AgentApprovalRequest>,
+    /// Why the provider's turn ended on an API error. Only beside `waiting`
+    /// with `error`. Capability-gated: older Hosts receive the report
+    /// without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_failure: Option<AgentTurnFailure>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

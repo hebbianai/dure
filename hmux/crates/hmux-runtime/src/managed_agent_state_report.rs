@@ -115,6 +115,8 @@ fn into_client_report(
         startup_gate: report.startup_gate,
         // The reporter drops it for a Host that does not negotiate it.
         approval_request: report.approval_request,
+        // The reporter drops it for a Host that does not negotiate it.
+        turn_failure: report.turn_failure,
     }
 }
 

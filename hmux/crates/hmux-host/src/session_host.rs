@@ -379,7 +379,7 @@ impl SessionHost {
             current.terminal_epoch == expected.terminal_epoch
                 && current.revision == expected.runtime_revision
                 && replay.current_output_seq() == expected.observed_through_output_seq
-                && replay.is_semantically_quiescent()
+                && replay.is_stop_boundary()
         }))
     }
 
@@ -1258,6 +1258,7 @@ mod tests {
             expected_observation: None,
             background_work: false,
             startup_gate: None,
+            turn_failure: None,
         };
         assert!(matches!(
             host.apply_agent_state_report(&current, report.clone())

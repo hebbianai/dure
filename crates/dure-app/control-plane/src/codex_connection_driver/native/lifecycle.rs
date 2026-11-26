@@ -755,6 +755,7 @@ impl Lifecycle {
             expected_observation: None,
             background_work: false,
             startup_gate: None,
+            turn_failure: None,
         }
     }
 }

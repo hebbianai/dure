@@ -7,8 +7,9 @@ use crate::structured_provider_runtime::{
     StructuredProviderOpenRequestV1, StructuredProviderRuntime, StructuredProviderRuntimeFuture,
 };
 use dure_app::{
-    AgentQueuedTurnStore, AgentRecoveryStore, AgentStartTurnIntentV1, AgentTimelineStore,
-    ProviderRecoveryAccountV1, ProviderRecoveryPolicyPutV1, ProviderRecoveryStore,
+    AgentQueuedTurnStore, AgentRecoveryAttemptV1, AgentRecoveryStore, AgentStartTurnIntentV1,
+    AgentTimelineStore, ProviderRecoveryAccountV1, ProviderRecoveryPolicyPutV1,
+    ProviderRecoveryStore,
 };
 
 #[derive(Default)]
@@ -291,9 +292,10 @@ async fn account_recovery_worker_starts_without_any_mounted_client() {
         "{observed:?}; recovery: {:?}",
         state
             .store
-            .prepare_agent_recovery(&agent_id, now_ms().unwrap())
+            .prepare_agent_recovery(&agent_id, now_ms().unwrap(), None)
             .await
             .unwrap()
+            .and_then(AgentRecoveryAttemptV1::into_conversation)
             .map(|record| record.stopped)
     );
     assert_eq!(runtime.stops.load(Ordering::SeqCst), 1);
@@ -321,9 +323,10 @@ async fn reopened_backend_resumes_after_committed_switch_without_launching_again
     let (_root, state, runtime, agent_id) = recovery_fixture(false).await;
     let record = state
         .store
-        .prepare_agent_recovery(&agent_id, now_ms().unwrap())
+        .prepare_agent_recovery(&agent_id, now_ms().unwrap(), None)
         .await
         .unwrap()
+        .and_then(AgentRecoveryAttemptV1::into_conversation)
         .unwrap();
     agent_runtime_transition_apply::apply(
         &state,
@@ -370,6 +373,7 @@ async fn reopened_backend_resumes_after_committed_switch_without_launching_again
         .agent_recovery(&record.attempt_id)
         .await
         .unwrap()
+        .and_then(AgentRecoveryAttemptV1::into_conversation)
         .unwrap();
     assert_eq!(receipt.continuation.unwrap().intent.input, record.input);
 }
@@ -386,9 +390,10 @@ async fn duplicate_recovery_requests_share_the_runtime_and_turn_effects() {
         "{left:?}; recovery: {:?}",
         state
             .store
-            .prepare_agent_recovery(&agent_id, now_ms().unwrap())
+            .prepare_agent_recovery(&agent_id, now_ms().unwrap(), None)
             .await
             .unwrap()
+            .and_then(AgentRecoveryAttemptV1::into_conversation)
             .map(|record| record.stopped)
     );
     right.unwrap();
@@ -407,9 +412,10 @@ async fn failed_account_recovery_does_not_launch_or_resend_again() {
     );
     let first = state
         .store
-        .prepare_agent_recovery(&agent_id, now_ms().unwrap())
+        .prepare_agent_recovery(&agent_id, now_ms().unwrap(), None)
         .await
         .unwrap()
+        .and_then(AgentRecoveryAttemptV1::into_conversation)
         .unwrap();
     assert!(first.stopped.is_some());
     assert!(
@@ -422,9 +428,10 @@ async fn failed_account_recovery_does_not_launch_or_resend_again() {
     assert_eq!(
         state
             .store
-            .prepare_agent_recovery(&agent_id, now_ms().unwrap())
+            .prepare_agent_recovery(&agent_id, now_ms().unwrap(), None)
             .await
-            .unwrap(),
+            .unwrap()
+            .and_then(AgentRecoveryAttemptV1::into_conversation),
         Some(first)
     );
 }
@@ -434,9 +441,10 @@ async fn pending_recovery_does_not_reopen_a_conversation_closed_by_a_person() {
     let (_root, state, runtime, agent_id) = recovery_fixture(false).await;
     let record = state
         .store
-        .prepare_agent_recovery(&agent_id, now_ms().unwrap())
+        .prepare_agent_recovery(&agent_id, now_ms().unwrap(), None)
         .await
         .unwrap()
+        .and_then(AgentRecoveryAttemptV1::into_conversation)
         .unwrap();
     let operation_id = OperationIdV1::new("human-close").unwrap();
     state
@@ -491,9 +499,10 @@ async fn pending_recovery_survives_startup_reattachment_of_the_same_source_conve
     let (_root, state, runtime, agent_id) = recovery_fixture(false).await;
     let record = state
         .store
-        .prepare_agent_recovery(&agent_id, now_ms().unwrap())
+        .prepare_agent_recovery(&agent_id, now_ms().unwrap(), None)
         .await
         .unwrap()
+        .and_then(AgentRecoveryAttemptV1::into_conversation)
         .unwrap();
     let attached = state
         .store
@@ -537,6 +546,7 @@ async fn pending_recovery_survives_startup_reattachment_of_the_same_source_conve
             .agent_recovery(&record.attempt_id)
             .await
             .unwrap()
+            .and_then(AgentRecoveryAttemptV1::into_conversation)
             .unwrap()
             .attempt_id,
         record.attempt_id
@@ -625,9 +635,10 @@ async fn independent_clients_observe_the_same_retained_recovery_and_canonical_se
     assert!(empty["result"]["recovery"].is_null());
     let record = state
         .store
-        .prepare_agent_recovery(&agent_id, now_ms().unwrap())
+        .prepare_agent_recovery(&agent_id, now_ms().unwrap(), None)
         .await
         .unwrap()
+        .and_then(AgentRecoveryAttemptV1::into_conversation)
         .unwrap();
     let pending = request_over_test_connection(
         Arc::clone(&state),
@@ -660,4 +671,29 @@ async fn independent_clients_observe_the_same_retained_recovery_and_canonical_se
     }
     assert_eq!(runtime.opens.load(Ordering::SeqCst), 1);
     assert_eq!(runtime.commands.inputs.lock().unwrap().len(), 1);
+}
+
+/// A native terminal Agent has no conversation binding. The continuation
+/// loop still runs account recovery for it and is not an error.
+#[tokio::test]
+async fn continuation_advances_an_agent_without_a_conversation() {
+    let (_root, mut state, _, _) = fixture(Vec::new()).await;
+    make_fixture_mutation_authority(&mut state);
+    let agent_id = AgentIdV1::new("native-terminal-agent").unwrap();
+    state
+        .store
+        .upsert_agent(&AgentRecordV1 {
+            agent_id: agent_id.clone(),
+            workspace_id: WorkspaceIdV1::new("workspace-1").unwrap(),
+            provider_id: ProviderIdV1::new("codex").unwrap(),
+            display_name: "Native terminal".into(),
+            created_at_ms: 2,
+            updated_at_ms: 2,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::agent_conversation::continuation::advance(&state, &agent_id, None).await,
+        Ok(())
+    );
 }

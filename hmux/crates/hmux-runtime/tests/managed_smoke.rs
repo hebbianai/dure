@@ -4756,6 +4756,7 @@ fn quiescent_managed_stop_accepts_current_output_snapshot_after_waiting_redraw()
                     expected_observation: None,
                     background_work: false,
                     startup_gate: None,
+                    turn_failure: None,
                 },
             )
             .unwrap(),
@@ -4885,6 +4886,7 @@ fn structured_input_receipt_crosses_a_live_runtime_projection() {
                 expected_observation: None,
                 background_work: false,
                 startup_gate: None,
+                turn_failure: None,
             },
         )
         .unwrap();
@@ -4935,6 +4937,7 @@ fn structured_input_receipt_crosses_a_live_runtime_projection() {
                 expected_observation: None,
                 background_work: false,
                 startup_gate: None,
+                turn_failure: None,
             },
         )
         .unwrap();
@@ -5072,6 +5075,7 @@ impl UnixAgentPromptFixture {
                     expected_observation: None,
                     background_work: false,
                     startup_gate: None,
+                    turn_failure: None,
                 },
             )
             .unwrap();
@@ -5104,6 +5108,7 @@ impl UnixAgentPromptFixture {
                     expected_observation: None,
                     background_work: false,
                     startup_gate: None,
+                    turn_failure: None,
                 },
             )
             .unwrap();
@@ -5505,6 +5510,7 @@ fn draft_guarded_command_input_waits_for_an_open_provider_prompt() {
                 background_work: false,
                 startup_gate: None,
                 approval_request: None,
+                turn_failure: None,
             },
         )
         .unwrap();
@@ -5629,6 +5635,7 @@ fn quiescent_managed_stop_ignores_structured_focus_control_input() {
                     expected_observation: None,
                     background_work: false,
                     startup_gate: None,
+                    turn_failure: None,
                 },
             )
             .unwrap(),
@@ -6897,6 +6904,7 @@ while IFS= read -r line; do printf '%s\n' "$line" >> "$2"; done"#
                     expected_observation: None,
                     background_work: false,
                     startup_gate: None,
+                    turn_failure: None,
                 },
             )
             .unwrap()
@@ -7351,6 +7359,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
         expected_observation: None,
         background_work: false,
         startup_gate: None,
+        turn_failure: None,
     };
 
     // A same-user observer attach is not authority on a managed Host: the
@@ -7419,6 +7428,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
         expected_observation: None,
         background_work: false,
         startup_gate: None,
+        turn_failure: None,
     };
     assert_eq!(
         reporter
@@ -7486,6 +7496,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
         expected_observation: None,
         background_work: false,
         startup_gate: None,
+        turn_failure: None,
     };
     let mut stale_epoch = expected_fence.clone();
     stale_epoch.terminal_epoch = "terminal-stale".into();
@@ -7588,6 +7599,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
                     expected_observation: None,
                     background_work: false,
                     startup_gate: None,
+                    turn_failure: None,
                 },
             )
             .unwrap(),
@@ -7611,6 +7623,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
                     expected_observation: Some(stale_boundary),
                     background_work: false,
                     startup_gate: None,
+                    turn_failure: None,
                 },
             )
             .unwrap(),
@@ -7654,6 +7667,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
                     }),
                     background_work: false,
                     startup_gate: None,
+                    turn_failure: None,
                 },
             )
             .unwrap(),
@@ -7697,6 +7711,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
                 expected_observation: None,
                 background_work: false,
                 startup_gate: None,
+                turn_failure: None,
             },
         )
         .unwrap_err();
@@ -7813,6 +7828,7 @@ fn structured_semantics_follow_output_that_does_not_change_the_viewport() {
                     expected_observation: None,
                     background_work: false,
                     startup_gate: None,
+                    turn_failure: None,
                 },
             )
             .unwrap(),
@@ -7928,6 +7944,7 @@ fn managed_identity_only_report_establishes_a_fresh_host_snapshot() {
         expected_observation: None,
         background_work: false,
         startup_gate: None,
+        turn_failure: None,
     };
     let reporter = ManagedAgentStateReporter::new(env!("CARGO_BIN_EXE_hmux-runtime"), &cwd)
         .with_discovery_root(&discovery_root);
@@ -8276,6 +8293,7 @@ fn publish_provider_conversation_identity_with_predecessor(
                 expected_observation: None,
                 background_work: false,
                 startup_gate: None,
+                turn_failure: None,
             },
         )
         .unwrap();

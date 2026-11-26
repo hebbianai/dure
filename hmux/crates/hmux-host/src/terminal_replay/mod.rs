@@ -1497,6 +1497,7 @@ impl TerminalReplay {
                     .is_some_and(|current| current.background_work));
         let observation = AgentRuntimeObservation {
             background_work,
+            turn_failure: report.turn_failure,
             ..AgentRuntimeObservation::new(
                 lifecycle,
                 activity,
@@ -1852,6 +1853,15 @@ impl TerminalReplay {
                 .or_else(|| continued.and_then(|current| current.approval_request.clone())),
             _ => None,
         };
+        // A failure belongs to the error episode it arrived with: the
+        // episode's idle reports keep it, and any other attention or a new
+        // turn ends both.
+        let turn_failure = match observation.attention {
+            AgentRuntimeAttention::Error => observation
+                .turn_failure
+                .or_else(|| continued.and_then(|current| current.turn_failure)),
+            _ => None,
+        };
         // Each request a provider reports is its own prompt, even one that
         // reads the same as the last (the same command run twice). Only a
         // report without content, such as the provider's own notice of the
@@ -1866,6 +1876,7 @@ impl TerminalReplay {
                 && current.background_work == observation.background_work
                 && current.progress == progress
                 && current.approval_request == approval_request
+                && current.turn_failure == turn_failure
                 && !replaces_request
         });
         // A new input acknowledgement ends the old semantic idle epoch even
@@ -1930,6 +1941,7 @@ impl TerminalReplay {
             background_work: observation.background_work,
             approval_request,
             held_prompts: self.held_prompts_projection(observation.lifecycle),
+            turn_failure,
         };
         self.agent_runtime_state = Some(projection.clone());
         self.agent_runtime_changed_at = Some(now);

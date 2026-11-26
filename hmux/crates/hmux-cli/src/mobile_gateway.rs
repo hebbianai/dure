@@ -4914,6 +4914,7 @@ mod tests {
             program_status: None,
             background_work: false,
             held_prompts: None,
+            turn_failure: None,
         };
         let expected = provider_identity(7);
         let (gateway_connection, _local_host) = structured_connection(
@@ -5097,6 +5098,7 @@ mod tests {
             program_status: None,
             background_work: false,
             held_prompts: None,
+            turn_failure: None,
         };
         let identity = ProviderConversationIdentityProjection {
             fence: fence(),
@@ -7493,6 +7495,7 @@ mod tests {
                     expected_observation: None,
                     background_work: false,
                     startup_gate: None,
+                    turn_failure: None,
                 }),
                 false
             ),

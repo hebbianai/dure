@@ -22,6 +22,7 @@ use hmux_session_protocol::{
     PROVIDER_CONVERSATION_IDENTITY_ONLY_REPORT_CAPABILITY, ProviderConversationIdentityReport,
 };
 use hmux_session_protocol::{AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY, AgentStartupGate};
+use hmux_session_protocol::{AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY, AgentTurnFailure};
 use serde::Serialize;
 use std::fmt;
 #[cfg(feature = "local-runtime")]
@@ -68,6 +69,11 @@ pub struct AgentStateReport {
     /// with `approval_required`. Hosts without
     /// `agent_state_report_approval_request_v1` receive the report without it.
     pub approval_request: Option<AgentApprovalRequest>,
+    /// Why the provider's turn ended on an API error, as the adapter read it
+    /// from the provider's failure event. Only beside `waiting` with `error`.
+    /// Hosts without `agent_state_report_turn_failure_v1` receive the report
+    /// without it.
+    pub turn_failure: Option<AgentTurnFailure>,
 }
 
 impl AgentStateReport {
@@ -81,6 +87,29 @@ impl AgentStateReport {
             self.activity = AgentRuntimeActivity::Working;
             self.working_ttl_ms
                 .get_or_insert(hmux_session_protocol::AGENT_STATE_REPORT_MAX_WORKING_TTL_MS);
+        }
+        self
+    }
+
+    /// The report a Host with these capabilities takes. Each optional
+    /// detail only says more about the same activity and attention, so a
+    /// Host that predates it receives the report without it: the same
+    /// waiting, input-required report without a startup gate, the same
+    /// approval without its request, the same error without why the turn
+    /// failed, and background work as the plain working report.
+    #[must_use]
+    pub fn for_host(mut self, supports: impl Fn(&str) -> bool) -> Self {
+        if !supports(AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY) {
+            self = self.without_background_work();
+        }
+        if !supports(AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY) {
+            self.startup_gate = None;
+        }
+        if !supports(AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY) {
+            self.approval_request = None;
+        }
+        if !supports(AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY) {
+            self.turn_failure = None;
         }
         self
     }
@@ -280,6 +309,18 @@ impl LocalSession {
                 "an approval request is reported only while waiting for approval",
             ));
         }
+        if report.turn_failure.is_some()
+            && (report.identity_only
+                || report.turn_completed
+                || report.background_work
+                || report.activity != AgentRuntimeActivity::Waiting
+                || report.attention != AgentRuntimeAttention::Error)
+        {
+            return Err(ClientError::transport(
+                "hmux_invalid_agent_state_report",
+                "a turn failure is reported only beside the error it ended with",
+            ));
+        }
         // Refuse before connecting when discovery already proves the Host
         // predates the capability. The authoritative check below still runs
         // because discovery can be stale.
@@ -304,34 +345,12 @@ impl LocalSession {
                 capability: PROVIDER_CONVERSATION_IDENTITY_CAPABILITY,
             });
         }
-        if !self
-            .descriptor()
-            .capabilities
-            .iter()
-            .any(|capability| capability == AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY)
-        {
-            report = report.without_background_work();
-        }
-        // The gate only names why the provider waits; a Host that predates it
-        // still receives the same waiting, input-required report.
-        if !self
-            .descriptor()
-            .capabilities
-            .iter()
-            .any(|capability| capability == AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY)
-        {
-            report.startup_gate = None;
-        }
-        // The request only says what the approval asks; a Host that predates
-        // it still receives the same waiting, approval-required report.
-        if !self
-            .descriptor()
-            .capabilities
-            .iter()
-            .any(|capability| capability == AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY)
-        {
-            report.approval_request = None;
-        }
+        report = report.for_host(|wanted| {
+            self.descriptor()
+                .capabilities
+                .iter()
+                .any(|capability| capability == wanted)
+        });
         let identified_completion = report.turn_completion_id.is_some();
         let causal = report.causality.is_some();
         let continuation = report
@@ -464,6 +483,9 @@ impl LocalSession {
         if report.approval_request.is_some() {
             optional_capabilities.push(AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY);
         }
+        if report.turn_failure.is_some() {
+            optional_capabilities.push(AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY);
+        }
         let mut connection = self.connect_with_options(
             ConnectionOptions::new(LocalAttachRole::Observer, authorization_proof_reference)
                 .with_optional_capabilities(&optional_capabilities),
@@ -519,15 +541,7 @@ impl LocalSession {
             });
         }
         // Discovery can be stale: the handshake decides what this Host gets.
-        if !connection.supports(AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY) {
-            report = report.without_background_work();
-        }
-        if !connection.supports(AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY) {
-            report.startup_gate = None;
-        }
-        if !connection.supports(AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY) {
-            report.approval_request = None;
-        }
+        report = report.for_host(|capability| connection.supports(capability));
         let request_id = next_report_request_id();
         let identity_only = report.identity_only;
         let expected_conversation_identity = report.conversation_identity.clone();
@@ -579,6 +593,7 @@ impl LocalSession {
                 background_work: report.background_work,
                 startup_gate: report.startup_gate,
                 approval_request: report.approval_request,
+                turn_failure: report.turn_failure,
             }))?;
 
         let receipt_started = Instant::now();
@@ -752,6 +767,7 @@ mod tests {
                 expected_observation: None,
                 background_work: false,
                 startup_gate: None,
+                turn_failure: None,
             },
             None,
         );
@@ -780,6 +796,7 @@ mod tests {
             expected_observation: None,
             background_work: true,
             startup_gate: None,
+            turn_failure: None,
         };
         let older = ended.clone().without_background_work();
         assert_eq!(older.activity, AgentRuntimeActivity::Working);
@@ -818,6 +835,7 @@ mod tests {
                 }),
                 background_work: false,
                 startup_gate: None,
+                turn_failure: None,
             },
             None,
         );
@@ -849,6 +867,7 @@ mod tests {
                 expected_observation: None,
                 background_work: false,
                 startup_gate: None,
+                turn_failure: None,
             },
             None,
         );
@@ -882,6 +901,7 @@ mod tests {
                 expected_observation: None,
                 background_work: false,
                 startup_gate: None,
+                turn_failure: None,
             },
             None,
         );
@@ -922,6 +942,7 @@ mod tests {
                 expected_observation: None,
                 background_work: false,
                 startup_gate: None,
+                turn_failure: None,
             },
             None,
         );
@@ -952,6 +973,78 @@ mod tests {
         assert_eq!(error.code(), "hmux_agent_state_report_source_mismatch");
     }
 
+    fn failed_turn_report() -> AgentStateReport {
+        AgentStateReport {
+            approval_request: None,
+            progress: None,
+            identity_only: false,
+            activity: AgentRuntimeActivity::Waiting,
+            attention: AgentRuntimeAttention::Error,
+            turn_completed: false,
+            turn_completion_id: None,
+            causality: Some(hmux_session_protocol::AgentStateReportCausality {
+                sequence: 7,
+                work_id: Some("work-1".into()),
+            }),
+            working_ttl_ms: None,
+            conversation_identity: None,
+            expected_observation: None,
+            background_work: false,
+            startup_gate: None,
+            turn_failure: Some(AgentTurnFailure::RateLimit),
+        }
+    }
+
+    /// A Host that predates the failure receives exactly the waiting, error
+    /// report it always has, whether discovery or the handshake says so.
+    #[test]
+    fn hosts_without_the_turn_failure_capability_get_the_plain_error_report() {
+        let report = failed_turn_report();
+        let current = report
+            .clone()
+            .for_host(|capability| capability == AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY);
+        assert_eq!(current, report);
+
+        let older = report.clone().for_host(|_| false);
+        assert_eq!(
+            older,
+            AgentStateReport {
+                turn_failure: None,
+                ..report
+            }
+        );
+    }
+
+    #[test]
+    fn a_turn_failure_is_reported_only_beside_the_error_it_ended_with() {
+        let session = session_with_capabilities(vec![
+            AGENT_STATE_REPORT_CAPABILITY.to_string(),
+            AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY.to_string(),
+        ]);
+        for invalid in [
+            AgentStateReport {
+                attention: AgentRuntimeAttention::None,
+                ..failed_turn_report()
+            },
+            AgentStateReport {
+                attention: AgentRuntimeAttention::InputRequired,
+                ..failed_turn_report()
+            },
+            AgentStateReport {
+                activity: AgentRuntimeActivity::Working,
+                attention: AgentRuntimeAttention::None,
+                ..failed_turn_report()
+            },
+            AgentStateReport {
+                turn_completed: true,
+                ..failed_turn_report()
+            },
+        ] {
+            let error = session.report_agent_state(invalid, None).unwrap_err();
+            assert_eq!(error.code(), "hmux_invalid_agent_state_report");
+        }
+    }
+
     #[test]
     fn old_hosts_refuse_identity_reports_before_any_connection() {
         let session = session_with_capabilities(vec![AGENT_STATE_REPORT_CAPABILITY.to_string()]);
@@ -976,6 +1069,7 @@ mod tests {
                 expected_observation: None,
                 background_work: false,
                 startup_gate: None,
+                turn_failure: None,
             },
             None,
         );
@@ -1015,6 +1109,7 @@ mod tests {
                 expected_observation: None,
                 background_work: false,
                 startup_gate: None,
+                turn_failure: None,
             },
             None,
         );

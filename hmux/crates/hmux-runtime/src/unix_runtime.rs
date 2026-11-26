@@ -312,6 +312,7 @@ const HOST_CAPABILITIES: &[&str] = &[
     hmux_host::local_protocol::AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY,
     hmux_host::local_protocol::AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY,
     hmux_host::local_protocol::AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY,
+    hmux_host::local_protocol::AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY,
     "screen_snapshot",
     "live_output",
     "terminal_input",
@@ -4843,6 +4844,9 @@ fn serve_client(
     let agent_state_report_approval_request = selected_capabilities.iter().any(|v| {
         v == hmux_host::local_protocol::AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY
     });
+    let agent_state_report_turn_failure = selected_capabilities.iter().any(|v| {
+        v == hmux_host::local_protocol::AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY
+    });
     let reconnect_cursor = selected_capabilities
         .iter()
         .any(|capability| capability == RECONNECT_RESUME_CAPABILITY)
@@ -5151,6 +5155,7 @@ fn serve_client(
             agent_state_report_background_work,
             agent_state_report_startup_gate,
             agent_state_report_approval_request,
+            agent_state_report_turn_failure,
             agent_state_report_causality,
             agent_state_report_observation_fence,
             provider_conversation_identity,
@@ -5217,6 +5222,7 @@ struct ClientPermissions {
     agent_state_report_background_work: bool,
     agent_state_report_startup_gate: bool,
     agent_state_report_approval_request: bool,
+    agent_state_report_turn_failure: bool,
     agent_state_report_causality: bool,
     agent_state_report_observation_fence: bool,
     provider_conversation_identity: bool,
@@ -5603,6 +5609,7 @@ fn client_read_loop(
                         background_work: permissions.agent_state_report_background_work,
                         startup_gate: permissions.agent_state_report_startup_gate,
                         approval_request: permissions.agent_state_report_approval_request,
+                        turn_failure: permissions.agent_state_report_turn_failure,
                     },
                     report,
                 );
@@ -6370,6 +6377,7 @@ mod tests {
             program_status: None,
             background_work: false,
             held_prompts: None,
+            turn_failure: None,
         });
         let ordinary = FrameBody::Detach(Detach { reason: None });
 
@@ -6419,6 +6427,7 @@ mod tests {
                 program_status: None,
                 background_work: false,
                 held_prompts: None,
+                turn_failure: None,
             }),
             provider_conversation_identity: Some(Box::new(
                 hmux_host::local_protocol::ProviderConversationIdentityProjection {

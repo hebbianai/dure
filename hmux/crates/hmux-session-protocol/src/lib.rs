@@ -55,9 +55,9 @@ pub use terminal_frames::{
     AgentRuntimeAttention, AgentRuntimeLifecycle, AgentRuntimeStateProjection,
     AgentRuntimeStateSource, AgentStartupGate, AgentStateReport, AgentStateReportCausality,
     AgentStateReportObservationFence, AgentStateReportOutcome, AgentStateReportReceipt,
-    ControlReceipt, ControlReceiptState, ControlRelease, ControlRequest, Detach, ErrorCode,
-    ErrorFrame, ExecutionLocation, ExecutionLocationProjection, ExecutionLocationSource, Exit,
-    HeldAgentPromptsProjection, Input, InputReceipt, InputReceiptState,
+    AgentTurnFailure, ControlReceipt, ControlReceiptState, ControlRelease, ControlRequest, Detach,
+    ErrorCode, ErrorFrame, ExecutionLocation, ExecutionLocationProjection, ExecutionLocationSource,
+    Exit, HeldAgentPromptsProjection, Input, InputReceipt, InputReceiptState,
     ManagedAuthorizationGrantReceipt, ManagedAuthorizationGrantRequest, ManagedProviderStop,
     ManagedProviderStopConversationFence, ManagedProviderStopQuiescenceFence,
     ManagedProviderStopReceipt, ManagedProviderStopReceiptState, OperationReceiptReason,
@@ -231,6 +231,12 @@ pub const AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY: &str = "agent_state_report
 /// approval elsewhere. Reporters omit it for Hosts that do not select it.
 pub const AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY: &str =
     "agent_state_report_approval_request_v1";
+/// Lets a reporter name why a provider turn ended on an API error: a usage
+/// limit, a rate limit or another provider failure. The Host keeps it beside
+/// `error` for that error episode, and admits a quiescence-fenced managed stop
+/// at the exact settled failure. Reporters omit it for Hosts that do not
+/// select it.
+pub const AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY: &str = "agent_state_report_turn_failure_v1";
 /// Lets a local same-user runtime broker obtain one short-lived, single-use
 /// proof for a managed attach. It is never relayed or written to discovery.
 pub const MANAGED_AUTHORIZATION_GRANT_CAPABILITY: &str = "managed_authorization_grant_v1";
