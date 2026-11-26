@@ -1,6 +1,6 @@
-import { codexUsageProfilesSync } from "@/lib/ipc";
+import { accountUsageProfilesSync } from "@/lib/ipc";
 import type { AccountProfile } from "@/types";
-import { codexUsageProfiles } from "./codexUsageSnapshots";
+import { accountUsageProfiles } from "./accountUsageProfiles";
 import type { UsageRefreshProvider } from "./recentUsageClient";
 
 const refreshPreparations: Partial<
@@ -9,7 +9,7 @@ const refreshPreparations: Partial<
 		(accounts: readonly AccountProfile[]) => Promise<unknown>
 	>
 > = {
-	codex: (accounts) => codexUsageProfilesSync(codexUsageProfiles(accounts)),
+	codex: (accounts) => accountUsageProfilesSync(accountUsageProfiles(accounts)),
 };
 
 /** Refresh collectors that require an account catalog before reading usage. */

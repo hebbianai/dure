@@ -34,7 +34,7 @@ vi.mock("@/lib/ipc", async (importOriginal) => ({
 	usageRefresh: (provider: string) => usageRefreshMock(provider),
 	claudeCollectorStatus: () => collectorStatusMock(),
 	claudeCollectorInstall: () => collectorInstallMock(),
-	codexUsageProfilesSync: () => Promise.resolve(),
+	accountUsageProfilesSync: () => Promise.resolve(),
 	accountLoginIdentity: (...args: unknown[]) =>
 		accountLoginIdentityMock(...args),
 }));

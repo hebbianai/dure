@@ -871,13 +871,15 @@ where
             .map_err(str::to_string)
     }
 
-    /// One look at a recovery pool: the app's latest reading for each account
-    /// and the accounts it must not move to, because the app found them signed
-    /// out or they sign in as the same provider account as the source.
+    /// One look at a recovery pool for an agent on `model`: the app's latest
+    /// reading for each account and the accounts it must not move to, because
+    /// the app found them signed out, found that model's own window used up,
+    /// or they sign in as the same provider account as the source.
     pub(crate) async fn observe_recovery_pool(
         &self,
         provider_id: &ProviderIdV1,
         source: &AgentExecutionProfileV1,
+        model: Option<&str>,
         accounts: &[ProviderRecoveryAccountV1],
         observed_at_ms: i64,
     ) -> RecoveryPoolObservationV1 {
@@ -911,6 +913,7 @@ where
                 });
             }
             if login.signed_in == Some(false)
+                || login.exhausted_for_model(model)
                 || (login.account.is_some() && login.account == source_account)
             {
                 pool.unusable.push(account.profile.clone());

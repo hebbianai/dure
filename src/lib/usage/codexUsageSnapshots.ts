@@ -1,33 +1,10 @@
-import type { CodexUsageProfileInput, CodexUsageSnapshot } from "@/lib/ipc";
+import type { CodexUsageSnapshot } from "@/lib/ipc";
 import type { ProviderUsage } from "@/lib/usage/usageMeter";
-import type { AccountProfile, Provider } from "@/types";
 
 /** One freshness rule for an observed usage reading, shared by the usage UI
  * and the usage-limit handoff policy so "fresh" means the same thing in both. */
 export const USAGE_OBSERVATION_FRESH_FOR_SECONDS = 30 * 60;
 const FRESH_FOR_SECONDS = USAGE_OBSERVATION_FRESH_FOR_SECONDS;
-
-/** usage UI와 수집 catalog가 같은 provider 계정 집합을 쓰게 한다. */
-function usageAccountsForProvider(
-	accounts: readonly AccountProfile[],
-	provider: Provider,
-): AccountProfile[] {
-	return accounts.filter((account) => account.provider === provider);
-}
-
-/** 기본 credential까지 포함한 backend 수집 catalog. credential 내용은 보내지 않는다. */
-export function codexUsageProfiles(
-	accounts: readonly AccountProfile[],
-): CodexUsageProfileInput[] {
-	return [
-		{ credentialId: null, directory: null },
-		...usageAccountsForProvider(accounts, "codex")
-			.map((account) => ({
-				credentialId: account.id,
-				directory: account.dir,
-			})),
-	];
-}
 
 export function codexSnapshotForCredential(
 	snapshots: readonly CodexUsageSnapshot[] | undefined,

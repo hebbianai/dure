@@ -14,8 +14,10 @@ use serde_json::Value;
 /// under the platform home, keyed by that directory's name ("default" for the
 /// provider's own login), as the app's account usage meter reads it.
 const CLAUDE_USAGE_CACHE: &str = ".dure/usage/claude-rate-limits";
-/// The app's Codex usage check keeps App Server snapshots by account ID in the
-/// application home, beside `accounts/`.
+/// The app's account usage check keeps each provider's latest readings by
+/// account ID in the application home, beside `accounts/`: Claude's from the
+/// account usage request, Codex's from App Server.
+const CLAUDE_USAGE_CHECK: &str = "claude-usage-snapshots.json";
 const CODEX_USAGE_CACHE: &str = "codex-usage-snapshots.json";
 const CODEX_NOT_SIGNED_IN: &str = "codex_usage_not_signed_in";
 const MAX_USAGE_CACHE_BYTES: u64 = 4 * 1024 * 1024;
@@ -34,6 +36,37 @@ pub(crate) struct ProviderLoginObservationV1 {
     pub(crate) account: Option<String>,
     /// False when the app's latest check found the login signed out.
     pub(crate) signed_in: Option<bool>,
+    /// Models whose own limit window the app's latest check found used up
+    /// and not yet reset, as the provider names them (for example "Fable").
+    pub(crate) exhausted_models: Vec<String>,
+}
+
+impl ProviderLoginObservationV1 {
+    /// Whether this login refuses an agent that runs `model` because that
+    /// model's own window is used up. Without a selected model the provider
+    /// picks one, so only windows over every model (in `usage`) apply.
+    pub(crate) fn exhausted_for_model(&self, model: Option<&str>) -> bool {
+        model.is_some_and(|model| {
+            self.exhausted_models
+                .iter()
+                .any(|limited| selects_model(model, limited))
+        })
+    }
+}
+
+/// Whether a model selection (`fable`, `claude-fable-5-2`, `opus[1m]`) runs
+/// the model a window names (`Fable 5.1`, `Opus`). Windows name a model by
+/// its family first; a selection names the family as one of its words.
+fn selects_model(selection: &str, model: &str) -> bool {
+    let Some(family) = model
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .find(|word| !word.is_empty())
+    else {
+        return false;
+    };
+    selection
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|word| word.eq_ignore_ascii_case(family))
 }
 
 /// Where one login keeps its provider state: a registered profile directory,
@@ -53,11 +86,19 @@ pub(crate) fn observe(
 ) -> ProviderLoginObservationV1 {
     match provider_id {
         "claude" => {
+            let (check, exhausted_models) = read_json(
+                &location.application_home.join(CLAUDE_USAGE_CHECK),
+                MAX_USAGE_CACHE_BYTES,
+            )
+            .map(|cache| claude_check(&cache, location.reference_ids, observed_at_ms))
+            .unwrap_or_default();
             let key = match location.profile_directory {
                 Some(directory) => directory.file_name().and_then(|name| name.to_str()),
                 None => Some("default"),
             };
-            let (usage, limit_resets_at_ms) = key
+            // The statusLine reading stays the fallback, and an active
+            // session's newer reading describes current use better.
+            let status_line = key
                 .and_then(|key| {
                     read_json(
                         &location
@@ -67,13 +108,17 @@ pub(crate) fn observe(
                         MAX_USAGE_CACHE_BYTES,
                     )
                 })
-                .and_then(|cache| claude_usage(&cache, observed_at_ms))
-                .map_or((None, None), |(used, captured_at_ms)| {
-                    (
-                        Some((used.map(|window| window.used), captured_at_ms)),
-                        used.and_then(|window| window.resets_at_ms),
-                    )
-                });
+                .and_then(|cache| claude_usage(&cache, observed_at_ms));
+            let (usage, limit_resets_at_ms) = match (check, status_line) {
+                (Some(check), Some(line)) => Some(if line.1 > check.1 { line } else { check }),
+                (check, line) => check.or(line),
+            }
+            .map_or((None, None), |(used, captured_at_ms)| {
+                (
+                    Some((used.map(|window| window.used), captured_at_ms)),
+                    used.and_then(|window| window.resets_at_ms),
+                )
+            });
             // Without CLAUDE_CONFIG_DIR, Claude Code keeps it in the home root.
             let record = location
                 .profile_directory
@@ -85,6 +130,7 @@ pub(crate) fn observe(
                 account: read_json(&record, MAX_LOGIN_RECORD_BYTES)
                     .and_then(|record| text(record.pointer("/oauthAccount/accountUuid"))),
                 signed_in: None,
+                exhausted_models,
             }
         }
         "codex" => {
@@ -199,19 +245,23 @@ fn claude_usage(cache: &Value, observed_at_ms: i64) -> Option<(Option<LimitWindo
     ))
 }
 
-/// The newest App Server snapshot among the login's account IDs (a null ID
-/// is the default login) and the newest check, which may have failed since.
-fn codex_check(
-    cache: &Value,
+/// One entry of the app's account usage check with its time in milliseconds.
+type CheckEntry<'a> = (i64, &'a Value);
+
+/// One login's entries in the app's account usage check: the newest
+/// successful reading among its account IDs (a null ID is the default login)
+/// with its capture time, and the newest attempt, which may have failed since.
+fn latest_check<'a>(
+    cache: &'a Value,
     reference_ids: &[String],
     observed_at_ms: i64,
-) -> ProviderLoginObservationV1 {
+) -> (Option<CheckEntry<'a>>, Option<CheckEntry<'a>>) {
     let Some(entries) = cache
         .get("snapshots")
         .and_then(Value::as_array)
         .filter(|_| cache.get("schemaVersion").and_then(Value::as_u64) == Some(1))
     else {
-        return ProviderLoginObservationV1::default();
+        return (None, None);
     };
     let login = entries
         .iter()
@@ -227,7 +277,72 @@ fn codex_check(
             .filter(|(at, _)| *at <= observed_at_ms)
             .max_by_key(|(at, _)| *at)
     };
-    let snapshot = newest("capturedAt");
+    (newest("capturedAt"), newest("attemptedAt"))
+}
+
+/// One window of a check reading, while it has not reset.
+fn check_window(
+    window: &Value,
+    used: &str,
+    reset: &str,
+    observed_at_ms: i64,
+) -> Option<LimitWindow> {
+    let resets_at_ms = match window.get(reset) {
+        None | Some(Value::Null) => None,
+        reset => Some(seconds_ms(reset).filter(|reset| *reset > observed_at_ms)?),
+    };
+    Some(LimitWindow {
+        used: percent(window.get(used))?,
+        resets_at_ms,
+    })
+}
+
+/// The account usage request's windows, each `{kind, model, usedPercent,
+/// resetsAt}`. The 5-hour and weekly windows over every model give the
+/// login's use, and the models whose own weekly window is full and has not
+/// reset, however old the reading, because use only grows until the reset.
+fn claude_check(
+    cache: &Value,
+    reference_ids: &[String],
+    observed_at_ms: i64,
+) -> (Option<(Option<LimitWindow>, i64)>, Vec<String>) {
+    let (snapshot, _) = latest_check(cache, reference_ids, observed_at_ms);
+    let Some((captured_at_ms, snapshot)) = snapshot else {
+        return (None, Vec::new());
+    };
+    let windows = snapshot
+        .get("windows")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let kind =
+        |window: &Value, kind: &str| window.get("kind").and_then(Value::as_str) == Some(kind);
+    let used = fuller(
+        windows
+            .iter()
+            .filter(|window| kind(window, "fiveHour") || kind(window, "weekly"))
+            .map(|window| check_window(window, "usedPercent", "resetsAt", observed_at_ms)),
+    );
+    let exhausted_models = windows
+        .iter()
+        .filter(|window| kind(window, "modelWeekly"))
+        .filter(|window| {
+            check_window(window, "usedPercent", "resetsAt", observed_at_ms)
+                .is_some_and(|window| window.used >= 100.0 && window.resets_at_ms.is_some())
+        })
+        .filter_map(|window| text(window.get("model")))
+        .collect();
+    (Some((used, captured_at_ms)), exhausted_models)
+}
+
+/// The login's newest App Server snapshot and whether the newest check, which
+/// may have failed since, found it signed out.
+fn codex_check(
+    cache: &Value,
+    reference_ids: &[String],
+    observed_at_ms: i64,
+) -> ProviderLoginObservationV1 {
+    let (snapshot, attempt) = latest_check(cache, reference_ids, observed_at_ms);
     let usage = snapshot.map(|(captured_at_ms, snapshot)| {
         let general = snapshot
             .get("rateLimits")
@@ -237,17 +352,7 @@ fn codex_check(
                     .iter()
                     .find(|limit| limit.get("limitId").and_then(Value::as_str) == Some("codex"))
             });
-        let window = |used: &str, reset: &str| {
-            let general = general?;
-            let resets_at_ms = match general.get(reset) {
-                None | Some(Value::Null) => None,
-                reset => Some(seconds_ms(reset).filter(|reset| *reset > observed_at_ms)?),
-            };
-            Some(LimitWindow {
-                used: percent(general.get(used))?,
-                resets_at_ms,
-            })
-        };
+        let window = |used: &str, reset: &str| check_window(general?, used, reset, observed_at_ms);
         let used = fuller([
             window("usedPercent", "resetsAt"),
             window("usedPercentWeekly", "weeklyResetsAt"),
@@ -265,15 +370,15 @@ fn codex_check(
         let used = used.filter(|window| !(has_credits && window.used >= 100.0));
         (used, captured_at_ms)
     });
-    let signed_out = newest("attemptedAt").is_some_and(|(attempted_at_ms, attempt)| {
+    let signed_out = attempt.is_some_and(|(attempted_at_ms, attempt)| {
         attempt.get("error").and_then(Value::as_str) == Some(CODEX_NOT_SIGNED_IN)
             && snapshot.is_none_or(|(captured_at_ms, _)| attempted_at_ms >= captured_at_ms)
     });
     ProviderLoginObservationV1 {
         usage: usage.map(|(used, captured_at_ms)| (used.map(|window| window.used), captured_at_ms)),
         limit_resets_at_ms: usage.and_then(|(used, _)| used?.resets_at_ms),
-        account: None,
         signed_in: signed_out.then_some(false),
+        ..ProviderLoginObservationV1::default()
     }
 }
 
@@ -336,6 +441,7 @@ mod tests {
                 limit_resets_at_ms: Some((NOW_S + 6000) * 1000),
                 account: Some("account-work".into()),
                 signed_in: None,
+                exhausted_models: Vec::new(),
             }
         );
         // A window that reset after the capture no longer describes use.
@@ -346,12 +452,87 @@ mod tests {
                 limit_resets_at_ms: Some((NOW_S + 6000) * 1000),
                 account: Some("account-work".into()),
                 signed_in: None,
+                exhausted_models: Vec::new(),
             }
         );
         let missing = application_home.join("accounts/claude-other");
         assert_eq!(
             observe_at(Some(&missing)),
             ProviderLoginObservationV1::default()
+        );
+    }
+
+    /// The app's account usage check reads every window; the statusLine
+    /// reading stays the fallback and wins while it is newer.
+    #[test]
+    fn claude_reads_the_app_check_by_account_id_with_its_model_windows() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        let application_home = home.join(".dure");
+        let profile = application_home.join("accounts/claude-work");
+        let window = |kind: &str, model: Value, used: f64, reset: Value| json!({"id": "w", "kind": kind, "model": model, "usedPercent": used, "resetsAt": reset});
+        write(
+            &application_home.join(CLAUDE_USAGE_CHECK),
+            &json!({"schemaVersion": 1, "snapshots": [
+                {"credentialId": "acc-work", "capturedAt": NOW_S - 7200, "attemptedAt": NOW_S - 30,
+                    "error": "claude_usage_login_expired", "windows": [
+                    window("fiveHour", Value::Null, 99.0, json!(NOW_S - 1)),
+                    window("weekly", Value::Null, 40.0, json!(NOW_S + 6000)),
+                    window("modelWeekly", json!("Fable 5.1"), 100.0, json!(NOW_S + 6000)),
+                    window("modelWeekly", json!("Opus"), 100.0, json!(NOW_S - 1)),
+                    window("modelWeekly", json!("Sonnet"), 80.0, json!(NOW_S + 6000)),
+                    window("modelWeekly", json!("Haiku"), 100.0, Value::Null),
+                    window("other", Value::Null, 100.0, json!(NOW_S + 6000)),
+                ]},
+                {"credentialId": null, "capturedAt": NOW_S - 30, "attemptedAt": NOW_S - 30,
+                    "error": null, "windows": [window("weekly", Value::Null, 15.0, Value::Null)]},
+            ]}),
+        );
+        write(
+            &home.join(CLAUDE_USAGE_CACHE).join("default.json"),
+            &json!({"captured_at": NOW_S - 600, "rate_limits": {
+                "seven_day": {"used_percentage": 70.0, "resets_at": NOW_S + 6000}}}),
+        );
+        let observe_at = |profile_directory, ids: &[&str]| {
+            let ids = ids.iter().map(|id| (*id).to_owned()).collect::<Vec<_>>();
+            observe(
+                "claude",
+                &ProviderLoginLocationV1 {
+                    application_home: &application_home,
+                    platform_home: home,
+                    profile_directory,
+                    reference_ids: &ids,
+                },
+                NOW_MS,
+            )
+        };
+        // A later failed check keeps the last reading; only a full model
+        // window that has not reset sets the login aside for that model.
+        let work = observe_at(Some(&profile), &["acc-work"]);
+        assert_eq!(work.usage, Some((Some(40.0), (NOW_S - 7200) * 1000)));
+        assert_eq!(work.limit_resets_at_ms, Some((NOW_S + 6000) * 1000));
+        assert_eq!(work.exhausted_models, ["Fable 5.1"]);
+        assert!(work.exhausted_for_model(Some("fable")));
+        assert!(work.exhausted_for_model(Some("claude-fable-5-2")));
+        assert!(work.exhausted_for_model(Some("FABLE[1m]")));
+        assert!(!work.exhausted_for_model(Some("sonnet")));
+        assert!(!work.exhausted_for_model(Some("opus")));
+        assert!(!work.exhausted_for_model(Some("fables")));
+        assert!(!work.exhausted_for_model(None));
+        // The check is newer than the statusLine reading, so it wins.
+        let default = observe_at(None, &[]);
+        assert_eq!(default.usage, Some((Some(15.0), (NOW_S - 30) * 1000)));
+        assert!(default.exhausted_models.is_empty());
+        // Without a check the statusLine reading still answers.
+        write(
+            &home.join(CLAUDE_USAGE_CACHE).join("claude-other.json"),
+            &json!({"captured_at": NOW_S - 60, "rate_limits": {
+                "seven_day": {"used_percentage": 55.0, "resets_at": NOW_S + 6000}}}),
+        );
+        let other = application_home.join("accounts/claude-other");
+        assert_eq!(
+            observe_at(Some(&other), &["acc-other"]).usage,
+            Some((Some(55.0), (NOW_S - 60) * 1000))
         );
     }
 
@@ -410,6 +591,7 @@ mod tests {
                 limit_resets_at_ms: None,
                 account: Some("chatgpt-work".into()),
                 signed_in: None,
+                exhausted_models: Vec::new(),
             }
         );
         let work = observe_at(Some(&profile), &["acc-work"]);
@@ -426,6 +608,7 @@ mod tests {
                 limit_resets_at_ms: Some((NOW_S + 600) * 1000),
                 account: Some("chatgpt-default".into()),
                 signed_in: None,
+                exhausted_models: Vec::new(),
             }
         );
     }

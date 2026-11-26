@@ -3230,6 +3230,23 @@ async fn initialize_structured_source_with_conversation(
     provider_id: ProviderIdV1,
     provider_conversation_ref: Option<&str>,
 ) -> (AgentRuntimeSelectionV1, AgentInteractionBindingV1) {
+    initialize_structured_source_on_model(
+        state,
+        agent_id,
+        provider_id,
+        provider_conversation_ref,
+        None,
+    )
+    .await
+}
+
+async fn initialize_structured_source_on_model(
+    state: &ServiceState,
+    agent_id: AgentIdV1,
+    provider_id: ProviderIdV1,
+    provider_conversation_ref: Option<&str>,
+    model: Option<&str>,
+) -> (AgentRuntimeSelectionV1, AgentInteractionBindingV1) {
     let source = AgentRuntimeSelectionV1 {
         schema_version: 1,
         agent_id: agent_id.clone(),
@@ -3237,7 +3254,7 @@ async fn initialize_structured_source_with_conversation(
         interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
         execution_profile: AgentExecutionProfileV1::ProviderDefault,
         permission_mode: ProviderPermissionModeV1::Default,
-        model: None,
+        model: model.map(|model| dure_app::AgentSpawnModelSelectionV1::parse(model).unwrap()),
         effort: None,
         revision: 1,
         selected_by_operation_id: None,

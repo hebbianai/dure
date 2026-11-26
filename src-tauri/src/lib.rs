@@ -9,7 +9,9 @@ mod app_instance;
 mod worktree_release;
 mod app_home;
 mod app_state_snapshot;
+mod account_usage_collector;
 mod claude_collector;
+mod claude_usage_reader;
 mod codex_usage_collector;
 mod codex_trust;
 mod conv;
@@ -1387,14 +1389,14 @@ fn ssh_find_file_candidates(
 #[tauri::command]
 async fn usage_recent_snapshot(
     runtime: tauri::State<'_, usage_recent_runtime::UsageRecentRuntime>,
-    collector: tauri::State<'_, codex_usage_collector::CodexUsageCollector>,
+    collector: tauri::State<'_, account_usage_collector::AccountUsageCollector>,
     refresh: Option<usage_recent_runtime::UsageRefreshProvider>,
 ) -> Result<usage::UsageRecentSnapshot, String> {
     if matches!(
         refresh,
         Some(usage_recent_runtime::UsageRefreshProvider::Codex)
     ) {
-        collector.refresh_all().await;
+        collector.codex().refresh().await;
     }
     let runtime = runtime.inner().clone();
     let mut snapshot = tauri::async_runtime::spawn_blocking(move || {
@@ -1406,7 +1408,7 @@ async fn usage_recent_snapshot(
     })
     .await
     .map_err(|error| format!("usage snapshot task failed: {error}"))?;
-    let account_snapshots = collector.snapshots();
+    let account_snapshots = collector.codex().snapshots();
     snapshot.five_hours.codex_account_snapshots = account_snapshots.clone();
     snapshot.twenty_four_hours.codex_account_snapshots = account_snapshots;
     Ok(snapshot)
@@ -1416,7 +1418,7 @@ async fn usage_recent_snapshot(
 async fn usage_recent(
     hours: u64,
     runtime: tauri::State<'_, usage_recent_runtime::UsageRecentRuntime>,
-    collector: tauri::State<'_, codex_usage_collector::CodexUsageCollector>,
+    collector: tauri::State<'_, account_usage_collector::AccountUsageCollector>,
 ) -> Result<usage::UsageReport, String> {
     let hours = hours.clamp(1, 24 * 30);
     let mut report = if hours == 5 || hours == 24 {
@@ -1430,7 +1432,7 @@ async fn usage_recent(
             .await
             .map_err(|error| format!("usage scan task failed: {error}"))?
     };
-    report.codex_account_snapshots = collector.snapshots();
+    report.codex_account_snapshots = collector.codex().snapshots();
     Ok(report)
 }
 
@@ -2240,7 +2242,7 @@ pub fn run() {
         .manage(backend_coordinator)
         .manage(provider_extension::DureAgentProviderState::default())
         .manage(diff_review_store::ReviewStoreState::default())
-        .manage(codex_usage_collector::CodexUsageCollector::default())
+        .manage(account_usage_collector::AccountUsageCollector::default())
         .manage(usage_recent_runtime::UsageRecentRuntime::default())
         .manage(plugin_state)
         .manage(plugin_permission_commands::DurePluginPermissionRuntime::default())
@@ -2517,7 +2519,7 @@ pub fn run() {
             system_font_families,
             usage_recent,
             usage_recent_snapshot,
-            codex_usage_collector::codex_usage_profiles_sync,
+            account_usage_collector::account_usage_profiles_sync,
             agent_naming::agent_name_suggestion,
             session_credentials::credential_session_bindings,
             claude_collector::claude_collector_status,

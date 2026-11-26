@@ -40,18 +40,64 @@ pub struct CodexRateLimitUsage {
     pub credits: Option<CodexCredits>,
 }
 
+/// One registered account's latest periodic usage check. `reading` is the
+/// provider's last successful observation, kept beside the check that
+/// produced it; a failed check records only its own attempt and error.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CodexUsageSnapshot {
+pub struct AccountUsageSnapshot<R> {
     pub credential_id: Option<String>,
-    /// 마지막 성공 시각. 실패한 probe는 이 값과 rate_limits를 보존한다.
+    /// 마지막 성공 시각. 실패한 probe는 이 값과 reading을 보존한다.
     pub captured_at: Option<u64>,
     pub attempted_at: Option<u64>,
     pub error: Option<String>,
+    #[serde(flatten)]
+    pub reading: R,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexUsageReading {
     pub rate_limits: Vec<CodexRateLimitUsage>,
     /// Earned usage-limit resets, separate from per-bucket workspace credits.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_limit_resets_available: Option<u64>,
+}
+
+pub type CodexUsageSnapshot = AccountUsageSnapshot<CodexUsageReading>;
+
+/// What a Claude limit window covers. Windows the account usage response
+/// names but Dure does not know yet are kept as `Other` under their name.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ClaudeUsageWindowKind {
+    /// The 5-hour session window over every model.
+    FiveHour,
+    /// The weekly window over every model.
+    Weekly,
+    /// One model's own weekly window.
+    ModelWeekly,
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeUsageWindow {
+    /// The response's name for the window, such as `seven_day_opus`.
+    pub id: String,
+    pub kind: ClaudeUsageWindowKind,
+    /// The model a `ModelWeekly` window limits, as Claude names it.
+    pub model: Option<String>,
+    pub used_percent: f64,
+    /// Epoch seconds; `None` when the provider reports no reset.
+    pub resets_at: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeUsageReading {
+    pub windows: Vec<ClaudeUsageWindow>,
 }
 
 #[derive(Serialize, Clone, Default)]
