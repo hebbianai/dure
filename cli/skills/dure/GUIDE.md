@@ -139,11 +139,16 @@ lead merges it, and that rule is in every worker brief from the first dispatch.
 A Run started by `dure run` from inside an agent's Dure terminal pane records
 that agent's exact Session as its parent, on the local backend. The receipt's
 `summary.parent` and `dure runs list/show --json` (`parent`) show the link.
+Started from a Chat agent's tool shell, where the chat runtime sets
+`DURE_AGENT_ID` (Claude and Codex), the Run records that Agent instead
+(`summary.parentAgent`, `parentAgent` in the Run list;
+`agent_spawn.parent_agent.v1`), and `dure wait --children` from the same shell
+finds those Runs.
 `--no-parent` starts an unlinked Run; `--parent AGENT` links it to another agent
-on the same backend by name, Agent ID or Session ID, and
-`--parent SESSION_ID --parent-workspace ID` needs no app. An explicit parent
-the backend can't record is refused before anything starts; the automatic link
-is skipped on such a backend.
+on the same backend by name, Agent ID or Session ID — a Chat agent by its Agent
+ID — and `--parent SESSION_ID --parent-workspace ID` needs no app. An explicit
+parent the backend can't record is refused before anything starts; the
+automatic link is skipped on such a backend.
 
 ```sh
 dure run --worktree fix-12 "fix #12"

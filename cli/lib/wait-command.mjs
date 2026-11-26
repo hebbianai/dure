@@ -17,7 +17,7 @@ import { listRunRecords, selectRunRecord } from "./run-agent-selection.mjs";
 import {
   ACTION_REQUIRED_CHILD_STATES,
   SETTLED_CHILD_STATES,
-  callerSessionParent,
+  callerParent,
   classifyChild,
   listChildRuns,
   registryParent,
@@ -52,7 +52,8 @@ Turn started proves the wake prompt began a provider turn, not inbox read or com
 Unsupported or unavailable provider evidence remains unknown; no messages are resent.
 Task: reads the exact delegated task/dispatch generation completed by 'dure workflow done'.
 Children: waits for the Runs this agent started (recorded by dure run as their parent).
-Without a parent argument, the parent is the agent whose terminal runs this command.
+Without a parent argument, the parent is the agent running this command: its terminal,
+or the Chat agent whose tool shell runs it.
 A child is settled when it finished a turn and is idle, exited, needs input or approval,
 or its launch failed or stopped short. all waits for every child, any for the first.
 Exit 1 when a settled child needs action. A chat-runtime child is read through its
@@ -181,8 +182,8 @@ function turnAdvanced(sequence, after) {
 
 function waitParent(options, registry, backend, environment) {
   if (options.query === undefined) {
-    const caller = callerSessionParent(environment);
-    if (!caller) invalid("No parent: run this inside an agent's terminal, or name it: dure wait --children all <agent>.");
+    const caller = callerParent(environment);
+    if (!caller) invalid("No parent: run this inside an agent, or name it: dure wait --children all <agent>.");
     return caller;
   }
   return options.workspaceId !== undefined

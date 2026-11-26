@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	agentRunParentKey,
 	createAgentRunLeadResolver,
 	parseAgentRunParentSessionV1,
 	parseAgentRunParentV1,
@@ -136,5 +137,63 @@ describe("createAgentRunLeadResolver", () => {
 				[agent("other", "s-lead")],
 			),
 		).toEqual({ runParent: recorded });
+	});
+});
+
+describe("a Chat agent as a Run's parent", () => {
+	const refuse = (message: string): never => {
+		throw new Error(message);
+	};
+
+	it("accepts exactly an Agent parent on a request and in the persisted projection", () => {
+		expect(
+			parseRequestedAgentRunParent({ agentId: "agent-coordinator" }, refuse),
+		).toEqual({ agentId: "agent-coordinator" });
+		expect(() =>
+			parseRequestedAgentRunParent(
+				{ agentId: "agent-coordinator", sessionId: "s-lead" },
+				refuse,
+			),
+		).toThrow("parent is invalid");
+		expect(() =>
+			parseRequestedAgentRunParent({ agentId: "has space" }, refuse),
+		).toThrow("parent is invalid");
+		expect(parseAgentRunParentV1({ agentId: "agent-coordinator" })).toEqual({
+			agentId: "agent-coordinator",
+		});
+		// A malformed parent only ungroups the Agent.
+		expect(
+			parseAgentRunParentV1({ agentId: "agent-coordinator", leadAgentId: "x" }),
+		).toBeUndefined();
+	});
+
+	it("records the Agent as it is and lists no Session lead for it", () => {
+		const coordinator = agent("agent-coordinator", undefined);
+		expect(
+			presentedAgentRunParent(
+				{ id: "work-1" },
+				{ agentId: "agent-coordinator" },
+				[coordinator],
+			),
+		).toEqual({ runParent: { agentId: "agent-coordinator" } });
+		// The relation facts read an Agent parent as it is; it names no
+		// Session for this resolver to look up.
+		const worker = agent("work-1", "s-1", { agentId: "agent-coordinator" });
+		expect(createAgentRunLeadResolver([coordinator, worker])(worker)).toBeUndefined();
+	});
+
+	it("keys an Agent parent apart from any Session parent", () => {
+		for (const [workspaceId, sessionId] of [
+			["agent", "a"],
+			["a", "agent"],
+			["ws", "a"],
+		]) {
+			expect(agentRunParentKey({ agentId: "a" })).not.toBe(
+				agentRunParentKey({ sessionId, workspaceId }),
+			);
+		}
+		expect(agentRunParentKey({ agentId: "a" })).toBe(
+			agentRunParentKey({ agentId: "a" }),
+		);
 	});
 });

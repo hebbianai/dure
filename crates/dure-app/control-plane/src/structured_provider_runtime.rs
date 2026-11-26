@@ -17,6 +17,13 @@ use crate::hmux_session_inspection::AgentActivityEvidence;
 use dure_app_sqlite::SqliteDomainStore;
 use hmux_client::ProviderStateEnvironment;
 
+/// Names the Dure Agent a Chat agent's own tool processes run for, so a
+/// `dure run` started from one of its tool shells can record that Agent as
+/// the new Run's parent. It is a fact the agent's tools read, not a rule the
+/// agent has to follow. Each structured provider sets it the one way its
+/// process tree passes environment to tool shells.
+pub(crate) const AGENT_ID_ENVIRONMENT_KEY: &str = "DURE_AGENT_ID";
+
 #[derive(Clone, Debug)]
 pub(crate) struct StructuredProviderOpenRequestV1 {
     pub agent_id: AgentIdV1,

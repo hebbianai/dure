@@ -90,6 +90,9 @@ const SERVER_CAPABILITIES: &[&str] = &[
     // `/agent/notify` shows one message from an agent or a command to the
     // person, under the Rust-owned rate limit in `agent_notice`.
     "agent.notify_v1",
+    // A Run presentation's `parent` may also be the Agent that started the
+    // Run (`{ agentId }`), a Chat agent with no Session of its own.
+    "agent.run_parent_agent_v1",
 ];
 fn claimed_request_timeout(action: &str) -> Duration {
     match action {
@@ -2780,7 +2783,8 @@ mod tests {
                 "hmux.attach.agent_runtime_v1",
                 "agent.run_parent_v1",
                 "agent.run_start_order_v1",
-                "agent.notify_v1"
+                "agent.notify_v1",
+                "agent.run_parent_agent_v1"
             ])
         );
         std::fs::remove_dir_all(directory).unwrap();

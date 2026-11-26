@@ -14,7 +14,7 @@ use crate::provider_turn_settings::ProviderTurnSettings;
 use crate::structured_provider_runtime::{
     StructuredProviderRuntimeErrorKindV1 as ErrorKind, StructuredProviderRuntimeErrorV1 as Error,
 };
-use dure_app::{AgentInteractionBindingV1, AgentTimelineStore};
+use dure_app::{AgentIdV1, AgentInteractionBindingV1, AgentTimelineStore};
 
 #[derive(serde::Deserialize)]
 struct InstructionConfiguration {
@@ -26,6 +26,28 @@ struct DeveloperInstructions {
     developer_instructions: Option<String>,
     #[serde(default)]
     mcp_servers: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+/// Per-thread configuration overrides. Codex passes its own process
+/// environment to MCP servers and tool shells only through configuration, so
+/// the Agent identity reaches tool shells through the shell environment
+/// policy, and the orchestration home reaches the installed Dure MCP server.
+fn thread_config(agent_id: &AgentIdV1, orchestration_home: Option<&Path>) -> serde_json::Value {
+    let mut config = serde_json::Map::new();
+    config.insert(
+        format!(
+            "shell_environment_policy.set.{}",
+            crate::structured_provider_runtime::AGENT_ID_ENVIRONMENT_KEY
+        ),
+        serde_json::Value::String(agent_id.to_string()),
+    );
+    if let Some(home) = orchestration_home {
+        config.insert(
+            "mcp_servers.dure-orchestration.env.DURE_ORCHESTRATION_HOME".into(),
+            serde_json::json!(home),
+        );
+    }
+    serde_json::Value::Object(config)
 }
 
 pub(crate) async fn attach<S: AgentTimelineStore + 'static>(
@@ -95,19 +117,16 @@ pub(crate) async fn attach<S: AgentTimelineStore + 'static>(
         None => ("thread/start", settings.thread_start_params(cwd)),
     };
     thread_params["developerInstructions"] = serde_json::Value::String(instructions);
-    if let Some(home) = conversation_service.backend_home()
-        && configuration
+    let orchestration_home = conversation_service.backend_home().filter(|_| {
+        configuration
             .config
             .mcp_servers
             .get("dure-orchestration")
             .and_then(|server| server.get("command"))
             .and_then(serde_json::Value::as_str)
             .is_some()
-    {
-        thread_params["config"] = serde_json::json!({
-            "mcp_servers.dure-orchestration.env.DURE_ORCHESTRATION_HOME": home,
-        });
-    }
+    });
+    thread_params["config"] = thread_config(&binding.agent_id, orchestration_home);
     let response = if driver_thread_attach {
         client
             .request(
@@ -193,5 +212,28 @@ impl<S: AgentTimelineStore + 'static> ManagedProviderConnection for CodexTimelin
     }
     fn cancel_drain(&self) {
         self.cancel_drain();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thread_config_gives_tool_shells_the_agent_id_and_the_mcp_server_its_home() {
+        let agent_id = AgentIdV1::new("agent-coordinator").unwrap();
+        assert_eq!(
+            thread_config(&agent_id, None),
+            serde_json::json!({
+                "shell_environment_policy.set.DURE_AGENT_ID": "agent-coordinator",
+            })
+        );
+        assert_eq!(
+            thread_config(&agent_id, Some(Path::new("/home/dure"))),
+            serde_json::json!({
+                "shell_environment_policy.set.DURE_AGENT_ID": "agent-coordinator",
+                "mcp_servers.dure-orchestration.env.DURE_ORCHESTRATION_HOME": "/home/dure",
+            })
+        );
     }
 }

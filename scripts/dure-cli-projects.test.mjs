@@ -865,6 +865,7 @@ describe("dure projects CLI", () => {
       presentation: "headless",
       interactionProfile: "native_cli",
       parent: null,
+      parentAgent: null,
       startupGate: null,
       error: null,
     });

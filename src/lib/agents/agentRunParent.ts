@@ -10,15 +10,45 @@ export interface AgentRunParentSessionV1 {
 	readonly workspaceId: string;
 }
 
-/** Client projection of a Run's parent. `leadAgentId` is the Agent that owned
- * the parent Session when this client first projected the Run, so the link
- * survives the lead being rehosted onto another Session. */
-export interface AgentRunParentV1 extends AgentRunParentSessionV1 {
-	readonly leadAgentId?: string;
+/** The Agent a Run was started from when that agent has no terminal Session
+ * of its own — the spawn request's `plan.request.parentAgent`, a Chat agent
+ * that started workers with `dure run` from its tool shell. */
+interface AgentRunParentAgentV1 {
+	readonly agentId: string;
 }
+
+/** A Run's parent as a presentation request carries it: the exact Session
+ * it was started from, or the Agent when it has none. */
+export type AgentRunParentRefV1 = AgentRunParentSessionV1 | AgentRunParentAgentV1;
+
+/** Client projection of a Run's parent. For a Session parent, `leadAgentId`
+ * is the Agent that owned the parent Session when this client first projected
+ * the Run, so the link survives the lead being rehosted onto another
+ * Session. An Agent parent names its lead directly. */
+export type AgentRunParentV1 =
+	| (AgentRunParentSessionV1 & { readonly leadAgentId?: string })
+	| AgentRunParentAgentV1;
 
 function token(value: unknown): value is string {
 	return typeof value === "string" && SAFE_TOKEN.test(value);
+}
+
+export function isAgentRunParentAgent(
+	parent: AgentRunParentRefV1 | AgentRunParentV1,
+): parent is AgentRunParentAgentV1 {
+	return "agentId" in parent;
+}
+
+/** The wire and persisted shape of an Agent parent: exactly `{ agentId }`. */
+function parseAgentRunParentAgentV1(
+	value: unknown,
+): AgentRunParentAgentV1 | undefined {
+	const candidate = asRecord(value);
+	return candidate &&
+		hasOnlyKeys(candidate, ["agentId"]) &&
+		token(candidate.agentId)
+		? { agentId: candidate.agentId }
+		: undefined;
 }
 
 /** The wire shape the CLI sends: exactly the spawn receipt's parent. */
@@ -39,6 +69,8 @@ export function parseAgentRunParentSessionV1(
 export function parseAgentRunParentV1(
 	value: unknown,
 ): AgentRunParentV1 | undefined {
+	const agent = parseAgentRunParentAgentV1(value);
+	if (agent) return agent;
 	const candidate = asRecord(value);
 	if (
 		!candidate ||
@@ -66,10 +98,13 @@ export interface RunParentedAgent {
 	readonly runtimeBinding?: AgentRunParentSessionV1;
 }
 
-/** One key per parent Session, shared by everything that groups a lead's
- * workers. */
-export function agentRunParentKey(parent: AgentRunParentSessionV1): string {
-	return `${parent.workspaceId}\u0000${parent.sessionId}`;
+/** One key per parent Session or parent Agent, shared by everything that
+ * groups a lead's workers. A Session key starts with its non-empty workspace
+ * token, so an Agent key, which starts with the separator, never equals one. */
+export function agentRunParentKey(parent: AgentRunParentRefV1): string {
+	return isAgentRunParentAgent(parent)
+		? `\u0000${parent.agentId}`
+		: `${parent.workspaceId}\u0000${parent.sessionId}`;
 }
 
 /** How a Run parent names a lead: `session` is the Agent bound to the parent
@@ -84,7 +119,9 @@ export interface AgentRunLead<A> {
  * first. A lead is the one other Agent whose runtime binding is the parent
  * Session; the Agent recorded at first projection follows, so the link
  * survives the lead being rehosted. A Session two other Agents claim names
- * no lead at all: which of them started the worker is unknown. */
+ * no lead at all: which of them started the worker is unknown. An Agent
+ * parent names its manager directly, and the relation facts read it as it is
+ * (agentRelationFacts.ts), so it lists no Session leads here. */
 export function createAgentRunLeadsResolver<A extends RunParentedAgent>(
 	agents: readonly A[],
 ): (agent: Pick<RunParentedAgent, "id" | "runParent">) => readonly AgentRunLead<A>[] {
@@ -100,7 +137,7 @@ export function createAgentRunLeadsResolver<A extends RunParentedAgent>(
 	}
 	return (agent) => {
 		const parent = agent.runParent;
-		if (!parent) return [];
+		if (!parent || isAgentRunParentAgent(parent)) return [];
 		const owners = (bySession.get(agentRunParentKey(parent)) ?? []).filter(
 			(owner) => owner.id !== agent.id,
 		);
@@ -120,8 +157,7 @@ export function createAgentRunLeadsResolver<A extends RunParentedAgent>(
 	};
 }
 
-/** Each worker's most direct lead, or none: the worker stays an ordinary
- * row. */
+/** Each worker's most direct Session lead, or none. */
 export function createAgentRunLeadResolver<A extends RunParentedAgent>(
 	agents: readonly A[],
 ): (agent: Pick<RunParentedAgent, "id" | "runParent">) => A | undefined {
@@ -130,26 +166,31 @@ export function createAgentRunLeadResolver<A extends RunParentedAgent>(
 }
 
 /** A presentation request's optional `parent`: absent stays absent, and
- * anything present must be exactly a parent Session. */
+ * anything present must be exactly a parent Session or a parent Agent. */
 export function parseRequestedAgentRunParent(
 	value: unknown,
 	refuse: (message: string) => never,
-): AgentRunParentSessionV1 | undefined {
+): AgentRunParentRefV1 | undefined {
 	if (value === undefined) return undefined;
-	return parseAgentRunParentSessionV1(value) ?? refuse("parent is invalid");
+	return (
+		parseAgentRunParentSessionV1(value) ??
+		parseAgentRunParentAgentV1(value) ??
+		refuse("parent is invalid")
+	);
 }
 
 /** The `runParent` of an Agent a Run presents, to spread into it. A parent
- * already recorded stays, so the lead it names survives a later rehost;
- * otherwise the requested Session is recorded with the Agent that owns it in
- * this client now. */
+ * already recorded stays, so the lead it names survives a later rehost; an
+ * Agent parent is recorded as it is; a requested Session is recorded with the
+ * Agent that owns it in this client now. */
 export function presentedAgentRunParent(
 	agent: Pick<RunParentedAgent, "id" | "runParent">,
-	parent: AgentRunParentSessionV1 | undefined,
+	parent: AgentRunParentRefV1 | undefined,
 	agents: readonly RunParentedAgent[],
 ): { runParent?: AgentRunParentV1 } {
 	if (agent.runParent) return { runParent: agent.runParent };
 	if (!parent) return {};
+	if (isAgentRunParentAgent(parent)) return { runParent: { agentId: parent.agentId } };
 	const lead = createAgentRunLeadResolver(agents)({
 		id: agent.id,
 		runParent: parent,

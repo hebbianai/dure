@@ -3,7 +3,7 @@ import {
 	sameAgentCanonicalSpawn,
 } from "@/lib/agents/agentCanonicalSpawn";
 import {
-	type AgentRunParentSessionV1,
+	type AgentRunParentRefV1,
 	parseRequestedAgentRunParent,
 	presentedAgentRunParent,
 } from "@/lib/agents/agentRunParent";
@@ -105,8 +105,9 @@ interface ManagedRunSpawnIdentity {
 	/** Exact effective managed-create key, normalized at the wire boundary. */
 	launchIdempotencyKey: string;
 	/** The Session the Run was started from, sent only to an app that
-	 * advertises `agent.run_parent_v1`. */
-	parent?: AgentRunParentSessionV1;
+	 * advertises `agent.run_parent_v1`, or the Agent it was started from, sent
+	 * only to an app that advertises `agent.run_parent_agent_v1`. */
+	parent?: AgentRunParentRefV1;
 	/** When the Run's spawn operation started, sent only to an app that
 	 * advertises `agent.run_start_order_v1`; orders a lead's workers. */
 	startedAtMs?: number;

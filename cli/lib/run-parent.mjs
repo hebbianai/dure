@@ -1,7 +1,10 @@
 import { selectAgents } from "./client-registry.mjs";
+import { CALLER_AGENT_ID_ENVIRONMENT } from "./contracts/caller-agent-environment.mjs";
 import {
+  AGENT_SPAWN_PARENT_AGENT_CAPABILITY,
   AGENT_SPAWN_PARENT_LINK_CAPABILITY,
   validSpawnParent,
+  validSpawnParentAgent,
 } from "./agent-spawn-query.mjs";
 
 export class RunParentError extends Error {
@@ -26,18 +29,34 @@ export function callerSessionParent(environment = process.env) {
   return validSpawnParent(parent) ? parent : null;
 }
 
-export function backendSupportsParentLink(backend) {
-  return backend?.profile?.expected?.capabilities?.includes(
-    AGENT_SPAWN_PARENT_LINK_CAPABILITY,
-  ) === true;
+/** The calling agent. A Chat agent's structured runtime names its Agent in
+ * DURE_AGENT_ID; inside that runtime HMUX_SESSION_ID, when set, is the
+ * runtime's own managed Session rather than a terminal the agent owns, so
+ * the Agent comes first. Otherwise the exact Hmux Session, or none. */
+export function callerParent(environment = process.env) {
+  const agent = { agentId: environment[CALLER_AGENT_ID_ENVIRONMENT] };
+  return validSpawnParentAgent(agent) ? agent : callerSessionParent(environment);
+}
+
+/** Whether the backend records this parent: a Session link, or an Agent. */
+export function backendSupportsParentLink(backend, parent) {
+  const capability = validSpawnParentAgent(parent)
+    ? AGENT_SPAWN_PARENT_AGENT_CAPABILITY
+    : AGENT_SPAWN_PARENT_LINK_CAPABILITY;
+  return backend?.profile?.expected?.capabilities?.includes(capability) === true;
 }
 
 function localBackend(backend) {
   return backend?.profile?.transport?.kind === "local";
 }
 
+function backendProfileId(backend) {
+  return backend?.profile?.transport?.kind === "ssh" ? backend.profile.id : "local";
+}
+
 /** Resolve an Agent name, project/name, Agent ID or Session ID through the
- * app's Agent list to the exact Session it runs in on this backend. */
+ * app's Agent list to the exact Session it runs in on this backend, or to
+ * the Agent itself when it is a Chat agent with no terminal Session. */
 export function registryParent(selector, registry, backend) {
   if (registry?.state !== "available") {
     fail(
@@ -54,19 +73,27 @@ export function registryParent(selector, registry, backend) {
         : `${matches.length} Agents match ${selector}. Use an Agent ID, or --parent SESSION_ID --parent-workspace ID.`,
     );
   }
-  const binding = matches[0].runtimeBinding;
+  const [agent] = matches;
+  const mismatch = () => fail(
+    "run_parent_backend_mismatch",
+    `${selector} runs on another backend. A parent must run on the same backend as its child.`,
+  );
+  // A Chat agent is linked by its Agent ID: its current runtime is a
+  // conversation, so any terminal binding it still carries is not where it
+  // runs now.
+  const chat = agent.interactionProfile;
+  const parentAgent = { agentId: agent.id };
+  if (chat?.kind === "structured_protocol" && validSpawnParentAgent(parentAgent)) {
+    if (chat.backendProfileId !== backendProfileId(backend)) mismatch();
+    return parentAgent;
+  }
+  const binding = agent.runtimeBinding;
   const parent = { sessionId: binding?.sessionId, workspaceId: binding?.workspaceId };
   if (!validSpawnParent(parent)) {
-    fail("run_parent_not_found", `${selector} has no terminal Session to link to.`);
+    fail("run_parent_not_found", `${selector} has no terminal Session or chat runtime to link to.`);
   }
   const source = backend?.profile?.transport?.kind === "ssh" ? "ssh" : "local";
-  if (binding.source !== source ||
-      binding.hostId !== (source === "ssh" ? backend.profile.id : "local")) {
-    fail(
-      "run_parent_backend_mismatch",
-      `${selector} runs on another backend. A parent must run on the same backend as its child.`,
-    );
-  }
+  if (binding.source !== source || binding.hostId !== backendProfileId(backend)) mismatch();
   return parent;
 }
 
@@ -74,9 +101,11 @@ export function registryParent(selector, registry, backend) {
  * Decide which agent a new Run records as its parent.
  * - --no-parent records none.
  * - --parent names one explicitly, and fails when it can't be recorded.
- * - Otherwise the calling agent's own Session is recorded when this process
- *   runs inside one on the local backend and the backend supports links.
- * Returns { parent, source }, where parent is undefined when none is sent.
+ * - Otherwise the calling agent is recorded when this process runs inside
+ *   one on the local backend and the backend supports the link: a Chat
+ *   agent by its Agent ID, a terminal agent by its own Session.
+ * Returns { parent, source }, where parent is an exact Session, an Agent
+ * ({ agentId }), or undefined when none is sent.
  */
 export function resolveRunParent({
   selector,
@@ -92,10 +121,10 @@ export function resolveRunParent({
     const parent = workspaceId !== undefined
       ? { sessionId: selector, workspaceId }
       : registryParent(selector, registry, backend);
-    if (!validSpawnParent(parent)) {
+    if (!validSpawnParent(parent) && !validSpawnParentAgent(parent)) {
       fail("run_parent_invalid", "The parent Session or workspace ID is invalid.");
     }
-    if (!backendSupportsParentLink(backend)) {
+    if (!backendSupportsParentLink(backend, parent)) {
       fail(
         "run_parent_unsupported",
         "The selected backend can't record a parent link. Update Dure on that host, or drop --parent.",
@@ -103,31 +132,39 @@ export function resolveRunParent({
     }
     return { parent, source: "explicit" };
   }
-  const caller = callerSessionParent(environment);
-  // An Hmux Session in this environment belongs to this machine's Host, so it
-  // is a parent only for Runs on the local backend.
+  const caller = callerParent(environment);
+  // The Hmux Session or Agent in this environment belongs to this machine's
+  // backend, so it is a parent only for Runs on the local backend.
   if (!caller || !localBackend(backend)) return { parent: undefined, source: "none" };
-  if (!backendSupportsParentLink(backend)) {
+  if (!backendSupportsParentLink(backend, caller)) {
     return { parent: undefined, source: "unsupported" };
   }
-  return { parent: caller, source: "caller_session" };
+  return { parent: caller, source: validSpawnParentAgent(caller) ? "caller_agent" : "caller_session" };
 }
 
 export function sameParent(left, right) {
   return left?.sessionId === right?.sessionId && left?.workspaceId === right?.workspaceId;
 }
 
+/** Whether a listed Run records this parent: the same Agent, or the same
+ * exact Session. */
+export function isChildOf(run, parent) {
+  return validSpawnParentAgent(parent)
+    ? run.parentAgent?.agentId === parent.agentId
+    : sameParent(run.parent, parent);
+}
+
 const MAX_CHILD_LISTING_PAGES = 64;
 
-/** Every Run record whose recorded parent is exactly this Session. The Run
- * list is paged by operation ID; a parent reads all of it once. */
+/** Every Run record whose recorded parent is exactly this Session or Agent.
+ * The Run list is paged by operation ID; a parent reads all of it once. */
 export async function listChildRuns({ parent, backend, listRuns, deadlineMs }) {
   const children = [];
   let cursor;
   for (let page = 0; page < MAX_CHILD_LISTING_PAGES; page += 1) {
     const listed = await listRuns({ backend, cursor, deadlineMs });
     if (listed.error) return { error: listed.error };
-    children.push(...listed.page.runs.filter((run) => sameParent(run.parent, parent)));
+    children.push(...listed.page.runs.filter((run) => isChildOf(run, parent)));
     cursor = listed.page.nextCursor;
     if (cursor === null) return { children };
   }

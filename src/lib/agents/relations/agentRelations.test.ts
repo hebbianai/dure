@@ -122,6 +122,21 @@ describe("buildAgentRelations", () => {
 		expect(relations.managedBy("old-lead")).toEqual([]);
 	});
 
+	it("shows the recorded parent Agent above every Session fact", () => {
+		const relations = buildAgentRelations(
+			["coordinator", "lead", "worker"],
+			[
+				edge("worker", "lead", "run_parent_session"),
+				edge("worker", "coordinator", "run_parent_agent"),
+			],
+		);
+		expect(relations.managerOf("worker")).toBe("coordinator");
+		expect(relations.managersOf("worker")).toEqual([
+			edge("worker", "coordinator", "run_parent_agent"),
+			edge("worker", "lead", "run_parent_session"),
+		]);
+	});
+
 	it("builds a very deep chain without recursion", () => {
 		const nodes = Array.from({ length: 20_000 }, (_, index) => `n${index}`);
 		const relations = buildAgentRelations(

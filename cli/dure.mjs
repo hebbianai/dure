@@ -2209,7 +2209,7 @@ Without account-selection support, omitted --account uses the provider default.
 The Run receipt executionProfile identifies the credential reference and generation.
 With --json the receipt starts with summary: agentId, sessionId, workspaceId, panelId,
 spaceId, state (the Run receipt state), presentation (the pane outcome),
-interactionProfile, parent, startupGate (login or workspace_trust when the provider is
+interactionProfile, parent, parentAgent, startupGate (login or workspace_trust when the provider is
 stopped at sign-in or at its folder-trust prompt) and error (stage, code and detail of the
 failure when the Run stopped short); a value the receipt cannot vouch for is null. The full receipt,
 presentation and registration follow unchanged. source.backend carries the backend
@@ -2227,7 +2227,8 @@ its own green pull request; review holds every one for a person's approval (a Gi
 approval, or the lead:approved label on the pull request) before the lead merges it, and
 puts that rule in every worker brief from the first dispatch. It requires --lead.
 Run from inside an agent's terminal pane on the local backend, the new Run records that
-agent's exact Session as its parent (summary.parent in --json). --no-parent records none.
+agent's exact Session as its parent (summary.parent in --json); run from a Chat agent's
+tool shell, it records that agent's ID (summary.parentAgent). --no-parent records none.
 --parent links another agent on the same backend by name, Agent ID or Session ID through
 the app's Agent list; with --parent-workspace it takes an exact Session ID. An explicit
 parent the backend can't record is refused before anything starts. The parent waits for

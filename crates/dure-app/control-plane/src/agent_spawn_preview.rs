@@ -33,6 +33,8 @@ struct AgentSpawnPreviewBody {
     interaction_preference: Option<AgentSpawnInteractionPreferenceV1>,
     #[serde(default)]
     parent: Option<AgentSpawnParentV1>,
+    #[serde(default)]
+    parent_agent: Option<AgentSpawnParentAgentV1>,
 }
 
 /// The interface a workflow agent step asks for, where no app states a
@@ -152,6 +154,7 @@ pub(super) async fn preview_agent_spawn(
         effort: incoming.effort,
         interaction_preference: incoming.interaction_preference,
         parent: incoming.parent,
+        parent_agent: incoming.parent_agent,
     };
     state
         .credential_profiles

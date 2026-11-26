@@ -25,7 +25,7 @@ function fixture() {
       HOME: join(root, "home"), CODEX_HOME: join(root, "codex"),
       CODEX_SQLITE_HOME: join(root, "canonical"), DURE_HOME: join(root, "dure"),
       HMUX_DISCOVERY_ROOT: join(root, "discovery"), DURE_HMUX_BIN: "/exact/hmux",
-      DURE_APP_CHANNEL: "qa-path", SHELL: shell,
+      DURE_APP_CHANNEL: "qa-path", DURE_AGENT_ID: "agent-caller", SHELL: shell,
       PATH: `${join(root, "npm")}:/usr/bin:/bin`,
       LOGIN_PROVIDER_PATH: `${join(root, "standalone")}:/usr/bin:/bin`,
     },
@@ -46,6 +46,9 @@ describe.skipIf(process.platform === "win32")("local backend provider environmen
     expect(launchEnvironment.DURE_APP_CHANNEL).toBe("qa-path");
     expect(launchEnvironment.HMUX_DISCOVERY_ROOT).toBeUndefined();
     expect(launchEnvironment.DURE_HMUX_BIN).toBeUndefined();
+    // A backend started from a Chat agent's tool shell must not pass that
+    // agent's identity to every process it launches.
+    expect(launchEnvironment.DURE_AGENT_ID).toBeUndefined();
     expect(environment.PATH).toContain("/npm:");
   });
 

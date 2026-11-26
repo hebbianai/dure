@@ -1,12 +1,13 @@
 // The client's relation facts, read from its Agents, and the forest they
 // build. Every edge today is a Run parent the client recorded when it
-// presented the Run (agentRunParent.ts), so nothing here reads a backend or
-// persists anything. The forest is rebuilt only when what it reads changes —
+// presented the Run (agentRunParent.ts) — the parent Agent, or the parent
+// Session's lead — so nothing here reads a backend or persists anything. The forest is rebuilt only when what it reads changes —
 // Agent ids and order, Run parents and runtime Sessions — so a title,
 // attention or output change never rebuilds it.
 import {
 	type AgentRunLead,
 	createAgentRunLeadsResolver,
+	isAgentRunParentAgent,
 	type RunParentedAgent,
 } from "@/lib/agents/agentRunParent";
 import {
@@ -23,13 +24,23 @@ const RUN_LEAD_SOURCE: Readonly<
 	recorded: "run_parent_recorded",
 };
 
-/** Every relation fact these Agents record, with its source. */
+/** Every relation fact these Agents record, with its source. A Run parent
+ * that names an Agent is that fact as it is; an Agent outside this client's
+ * list leaves the worker a root (buildAgentRelations). */
 export function agentRelationEdges(
 	agents: readonly RunParentedAgent[],
 ): AgentRelationEdge[] {
 	const leadsOf = createAgentRunLeadsResolver(agents);
 	const edges: AgentRelationEdge[] = [];
 	for (const agent of agents) {
+		const parent = agent.runParent;
+		if (parent && isAgentRunParentAgent(parent)) {
+			edges.push({
+				child: agent.id,
+				manager: parent.agentId,
+				source: "run_parent_agent",
+			});
+		}
 		for (const { lead, by } of leadsOf(agent)) {
 			edges.push({
 				child: agent.id,

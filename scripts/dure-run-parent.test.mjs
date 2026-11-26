@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   AGENT_SPAWN_CONVERSATION_OBSERVATION_CAPABILITY,
+  AGENT_SPAWN_PARENT_AGENT_CAPABILITY,
   AGENT_SPAWN_PARENT_LINK_CAPABILITY,
   backendObservesRunConversations,
   collectAgentSpawnQuery,
   readRunConversation,
 } from "../cli/lib/agent-spawn-query.mjs";
 import {
+  callerParent,
   callerSessionParent,
   classifyChild,
   listChildRuns,
@@ -21,6 +23,15 @@ import { hmuxSession } from "./lib/dure-session-test-fixture.mjs";
 const prompt = "never serialize this prompt";
 const PARENT = { sessionId: "session-lead", workspaceId: "workspace-lead" };
 const CALLER_ENV = { HMUX_SESSION_ID: PARENT.sessionId, HMUX_WORKSPACE_ID: PARENT.workspaceId };
+const PARENT_AGENT = { agentId: "agent-coordinator" };
+// A Chat agent's tool shell: its structured runtime names the Agent, and the
+// runtime's own managed Session may also be in the environment.
+const CHAT_CALLER_ENV = {
+  DURE_AGENT_ID: PARENT_AGENT.agentId,
+  HMUX_SESSION_ID: "codex-chat-runtime",
+  HMUX_WORKSPACE_ID: "workspace-runtime",
+};
+const BOTH_LINKS = [AGENT_SPAWN_PARENT_LINK_CAPABILITY, AGENT_SPAWN_PARENT_AGENT_CAPABILITY];
 
 function backend({ kind = "local", capabilities = [AGENT_SPAWN_PARENT_LINK_CAPABILITY] } = {}) {
   return {
@@ -117,6 +128,113 @@ describe("dure run records its parent", () => {
       });
       expect(report).toMatchObject({ kind: "dure.agent_spawn.error", error: { code: "backend_agent_spawn_identity_mismatch" } });
     }
+  });
+});
+
+describe("dure run from a Chat agent records its Agent", () => {
+  const chatAgent = {
+    id: PARENT_AGENT.agentId, name: "coordinator", sessionId: PARENT_AGENT.agentId,
+    interactionProfile: {
+      schemaVersion: 1, kind: "structured_protocol", backendProfileId: "local",
+      interactionSessionId: "interaction-coordinator",
+    },
+  };
+
+  it("takes the caller's Agent before the runtime's own managed Session", () => {
+    expect(callerParent(CHAT_CALLER_ENV)).toEqual(PARENT_AGENT);
+    expect(callerParent({ DURE_AGENT_ID: PARENT_AGENT.agentId })).toEqual(PARENT_AGENT);
+    expect(callerParent(CALLER_ENV)).toEqual(PARENT);
+    expect(callerParent({ DURE_AGENT_ID: "has space" })).toBeNull();
+    expect(resolveRunParent({ environment: CHAT_CALLER_ENV, backend: backend({ capabilities: BOTH_LINKS }) }))
+      .toEqual({ parent: PARENT_AGENT, source: "caller_agent" });
+  });
+
+  it("records nothing on an older backend, for another backend, or with --no-parent", () => {
+    // Without the capability the Run is started unlinked, without failing.
+    expect(resolveRunParent({ environment: CHAT_CALLER_ENV, backend: backend() }))
+      .toEqual({ parent: undefined, source: "unsupported" });
+    expect(resolveRunParent({ environment: CHAT_CALLER_ENV, backend: backend({ kind: "ssh", capabilities: BOTH_LINKS }) }))
+      .toEqual({ parent: undefined, source: "none" });
+    expect(resolveRunParent({ environment: CHAT_CALLER_ENV, noParent: true, backend: backend({ capabilities: BOTH_LINKS }) }))
+      .toEqual({ parent: undefined, source: "none" });
+  });
+
+  it("resolves --parent naming a Chat agent to its Agent ID", () => {
+    for (const selector of ["coordinator", PARENT_AGENT.agentId]) {
+      expect(resolveRunParent({
+        selector, registry: registry([chatAgent]), backend: backend({ capabilities: BOTH_LINKS }),
+      })).toEqual({ parent: PARENT_AGENT, source: "explicit" });
+    }
+    expect(() => resolveRunParent({ selector: "coordinator", registry: registry([chatAgent]), backend: backend() }))
+      .toThrow(expect.objectContaining({ code: "run_parent_unsupported" }));
+    expect(() => resolveRunParent({
+      selector: "coordinator", registry: registry([chatAgent]), backend: backend({ kind: "ssh", capabilities: BOTH_LINKS }),
+    })).toThrow(expect.objectContaining({ code: "run_parent_backend_mismatch" }));
+    const plain = { id: "agent-plain", name: "plain", sessionId: "agent-plain" };
+    expect(() => resolveRunParent({ selector: "plain", registry: registry([plain]), backend: backend({ capabilities: BOTH_LINKS }) }))
+      .toThrow(expect.objectContaining({ code: "run_parent_not_found" }));
+  });
+
+  it("sends the Agent as parentAgent and reads it back from the Run receipt", async () => {
+    const calls = [];
+    const value = receipt(request({ parentAgent: PARENT_AGENT }));
+    const report = await collectAgentSpawnQuery({
+      action: "preview",
+      ...request({ worktree: value.plan.request.worktree }),
+      parent: PARENT_AGENT,
+      prompt,
+      backend: backend({ capabilities: BOTH_LINKS }),
+      requestBackend: async (_profile, sent) => {
+        calls.push(sent);
+        return { backend: { id: "local-backend", generation: "g1", protocol: { major: 1, minor: 0 }, capabilities: [] }, result: { schemaVersion: 1, receipt: value } };
+      },
+    });
+    expect(report.kind, JSON.stringify(report)).toBe("dure.agent_spawn.preview");
+    expect(calls[0].body.parentAgent).toEqual(PARENT_AGENT);
+    expect("parent" in calls[0].body).toBe(false);
+    expect(calls[0].requiredCapabilities).toContain(AGENT_SPAWN_PARENT_AGENT_CAPABILITY);
+    expect(calls[0].requiredCapabilities).not.toContain(AGENT_SPAWN_PARENT_LINK_CAPABILITY);
+    expect(runReceiptSummary(report)).toMatchObject({ parent: null, parentAgent: PARENT_AGENT });
+  });
+
+  it("refuses a receipt that dropped the requested parent Agent", async () => {
+    const value = receipt(request({}));
+    const report = await collectAgentSpawnQuery({
+      action: "preview",
+      ...request({ worktree: value.plan.request.worktree }),
+      parent: PARENT_AGENT,
+      prompt,
+      backend: backend({ capabilities: BOTH_LINKS }),
+      requestBackend: async () => ({ backend: { id: "local-backend", generation: "g1", protocol: { major: 1, minor: 0 }, capabilities: [] }, result: { schemaVersion: 1, receipt: value } }),
+    });
+    expect(report).toMatchObject({ kind: "dure.agent_spawn.error", error: { code: "backend_agent_spawn_identity_mismatch" } });
+  });
+
+  it("lists the Runs a Chat agent started as its children", async () => {
+    const runs = [
+      run("a", { parent: undefined, parentAgent: PARENT_AGENT }),
+      run("b", { parent: undefined, parentAgent: { agentId: "agent-other" } }),
+      run("c"),
+    ];
+    const listRuns = vi.fn(async () => ({ page: { schemaVersion: 1, runs, nextCursor: null } }));
+    const listed = await listChildRuns({ parent: PARENT_AGENT, backend: backend(), listRuns });
+    expect(listed.children.map((child) => child.name)).toEqual(["a"]);
+    const bySession = await listChildRuns({ parent: PARENT, backend: backend(), listRuns });
+    expect(bySession.children.map((child) => child.name)).toEqual(["c"]);
+  });
+
+  it("waits on a Chat agent's own children from its tool shell", async () => {
+    const runs = [run("a", { parent: undefined, parentAgent: PARENT_AGENT, sessionId: undefined })];
+    const listRuns = vi.fn(async () => ({ page: { schemaVersion: 1, runs, nextCursor: null } }));
+    const report = await collectWait(parseWaitArguments(["--children", "all", "--timeout", "5"]), {
+      backend: backend(), sessionBackend: null, environment: CHAT_CALLER_ENV, listRuns,
+      querySession: vi.fn(), now: () => 0, pause: async () => {},
+    });
+    // The link is found; observing a chat child's turns is a later step.
+    expect(report).toMatchObject({
+      target: { parent: PARENT_AGENT },
+      state: "unknown", exitCode: 2, error: { code: "wait_children_unobservable" },
+    });
   });
 });
 

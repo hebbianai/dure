@@ -281,6 +281,7 @@ export function formatRunsCommand(report) {
     ...(report.run ? [
       `Operation: ${report.run.operationId}`,
       ...(report.run.parent ? [`Parent: ${report.run.parent.sessionId} --workspace ${report.run.parent.workspaceId}`] : []),
+      ...(report.run.parentAgent ? [`Parent: ${report.run.parentAgent.agentId}`] : []),
       `Open: dure runs open ${report.run.agentId} --space <space-id>`,
     ] : ["No Run record: launched, resumed or imported by the app.",
       `Open: dure runs open ${selected.agentId} --space <space-id>`]),

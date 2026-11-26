@@ -304,6 +304,15 @@ pub struct AgentSpawnParentV1 {
     pub workspace_id: String,
 }
 
+/// The Agent that started a Run when the caller has no terminal Session of
+/// its own (a Chat agent), as the caller reports it. Like the Session link it
+/// is a Run fact other commands read and grants no authority over either Run.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentSpawnParentAgentV1 {
+    pub agent_id: AgentIdV1,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentSpawnPreviewRequestV1 {
@@ -329,6 +338,8 @@ pub struct AgentSpawnPreviewRequestV1 {
     pub interaction_preference: Option<AgentSpawnInteractionPreferenceV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<AgentSpawnParentV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_agent: Option<AgentSpawnParentAgentV1>,
 }
 
 /// Caller-owned preview intent. An omitted permission override inherits from
@@ -359,6 +370,8 @@ pub struct AgentSpawnPreviewIntentV1 {
     pub interaction_preference: Option<AgentSpawnInteractionPreferenceV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<AgentSpawnParentV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_agent: Option<AgentSpawnParentAgentV1>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -585,6 +598,7 @@ pub fn create_agent_spawn_plan_from_defaults_v1(
             effort: draft.request.effort,
             interaction_preference: draft.request.interaction_preference,
             parent: draft.request.parent,
+            parent_agent: draft.request.parent_agent,
         },
         agent_id: draft.agent_id,
         workspace_id: draft.workspace_id,
@@ -623,6 +637,7 @@ pub fn validate_agent_spawn_plan_intent_v1(
             effort: draft.request.effort.clone(),
             interaction_preference: draft.request.interaction_preference,
             parent: draft.request.parent.clone(),
+            parent_agent: draft.request.parent_agent.clone(),
         },
         agent_id: draft.agent_id.clone(),
         workspace_id: draft.workspace_id.clone(),
@@ -1838,6 +1853,9 @@ fn plan_token(draft: &AgentSpawnPlanDraftV1) -> AgentSpawnPlanTokenV1 {
         hash_field(&mut hash, "parent_session", &parent.session_id);
         hash_field(&mut hash, "parent_workspace", &parent.workspace_id);
     }
+    if let Some(parent_agent) = draft.request.parent_agent.as_ref() {
+        hash_field(&mut hash, "parent_agent", parent_agent.agent_id.as_str());
+    }
     hash_field(&mut hash, "agent", draft.agent_id.as_str());
     hash_field(&mut hash, "workspace", draft.workspace_id.as_str());
     match &draft.launch {
@@ -2054,6 +2072,7 @@ mod tests {
                 effort: None,
                 interaction_preference: None,
                 parent: None,
+                parent_agent: None,
             },
             agent_id: AgentIdV1::new("agent-1").unwrap(),
             workspace_id: WorkspaceIdV1::new("workspace-1").unwrap(),
@@ -2424,6 +2443,71 @@ mod tests {
                 "sessionId": "session-lead",
                 "workspaceId": "workspace-lead",
                 "agentId": "agent-lead",
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parent_agent_binds_the_plan_token_and_leaves_existing_tokens_unchanged() {
+        let parent_agent = AgentSpawnParentAgentV1 {
+            agent_id: AgentIdV1::new("agent-coordinator").unwrap(),
+        };
+        let mut linked = draft();
+        linked.request.parent_agent = Some(parent_agent.clone());
+        let absent = create_agent_spawn_plan_v1(draft()).unwrap();
+        let linked = create_agent_spawn_plan_v1(linked).unwrap();
+
+        // An absent parent Agent stays out of the hash, so every plan drafted
+        // before the field existed keeps its token.
+        assert_eq!(
+            absent.plan_token.as_str(),
+            "sha256:86c1d20b95b068995c144845e8412f718a18493528b6d140ede705e6ae681b08"
+        );
+        assert_ne!(absent.plan_token, linked.plan_token);
+
+        let mut both = draft();
+        both.request.parent = Some(AgentSpawnParentV1 {
+            session_id: "session-lead".into(),
+            workspace_id: "workspace-lead".into(),
+        });
+        let session_only = create_agent_spawn_plan_v1(both.clone()).unwrap();
+        both.request.parent_agent = Some(parent_agent);
+        assert_ne!(
+            create_agent_spawn_plan_v1(both).unwrap().plan_token,
+            session_only.plan_token
+        );
+
+        let document = serde_json::to_value(&absent).unwrap();
+        assert!(document["request"].get("parentAgent").is_none());
+        let document = serde_json::to_value(&linked).unwrap();
+        assert_eq!(
+            document["request"]["parentAgent"],
+            json!({ "agentId": "agent-coordinator" })
+        );
+        assert_eq!(
+            serde_json::from_value::<AgentSpawnPlanV1>(document.clone()).unwrap(),
+            linked
+        );
+
+        // The link is bound into the token, so a stored plan can't be relinked.
+        let mut relinked = document;
+        relinked["request"]["parentAgent"]["agentId"] = json!("agent-other");
+        assert!(serde_json::from_value::<AgentSpawnPlanV1>(relinked).is_err());
+    }
+
+    #[test]
+    fn parent_agent_rejects_invalid_identities_and_unknown_fields() {
+        assert!(
+            serde_json::from_value::<AgentSpawnParentAgentV1>(json!({
+                "agentId": "has space",
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<AgentSpawnParentAgentV1>(json!({
+                "agentId": "agent-coordinator",
+                "sessionId": "session-lead",
             }))
             .is_err()
         );

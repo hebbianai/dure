@@ -280,6 +280,7 @@ fn request() -> AgentSpawnPreviewIntentV1 {
         effort: None,
         interaction_preference: None,
         parent: None,
+        parent_agent: None,
     }
 }
 

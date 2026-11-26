@@ -7,6 +7,7 @@ import {
   agentSpawnLaunchProjection,
   stoppedAtStartupGate,
   validSpawnParent,
+  validSpawnParentAgent,
 } from "./agent-spawn-query.mjs";
 export { resolveClientSpaceTarget as resolveRunPresentationTarget } from "./space-selection.mjs";
 import { parseAgentRuntimeInspectionEnvelope } from "./contracts/agent-runtime.mjs";
@@ -298,6 +299,7 @@ export function runReceiptSummary(report, presentation = null) {
     presentation: token(presentation?.state),
     interactionProfile,
     parent: validSpawnParent(plan?.request?.parent) ? plan.request.parent : null,
+    parentAgent: validSpawnParentAgent(plan?.request?.parentAgent) ? plan.request.parentAgent : null,
     startupGate: stoppedAtStartupGate(receipt),
     error: runReceiptError(receipt, token),
   };
@@ -323,9 +325,18 @@ export function appPresentsRunParent(descriptor) {
   return descriptor?.capabilities?.includes(RUN_PARENT_PRESENTATION_CAPABILITY) === true;
 }
 
-/** The receipt's parent, for an app that accepts it; an older app rejects
- * unknown request keys, so it gets none. */
+/** App capability: a presentation request's `parent` may also be the Agent
+ * that started the Run (`{ agentId }`), a Chat agent with no Session. */
+export const RUN_PARENT_AGENT_PRESENTATION_CAPABILITY = "agent.run_parent_agent_v1";
+
+/** The receipt's parent, for an app that accepts it: the parent Agent where
+ * the app reads one, else the parent Session. An older app rejects unknown
+ * request keys and shapes, so it gets only what it declares. */
 function presentedParent(request, descriptor) {
+  if (descriptor?.capabilities?.includes(RUN_PARENT_AGENT_PRESENTATION_CAPABILITY) === true &&
+      validSpawnParentAgent(request?.parentAgent)) {
+    return { parent: { agentId: request.parentAgent.agentId } };
+  }
   return appPresentsRunParent(descriptor) && validSpawnParent(request?.parent)
     ? { parent: { sessionId: request.parent.sessionId, workspaceId: request.parent.workspaceId } }
     : {};

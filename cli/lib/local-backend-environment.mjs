@@ -1,13 +1,16 @@
 import { spawnSync } from "node:child_process";
+import { CALLER_AGENT_ID_ENVIRONMENT } from "./contracts/caller-agent-environment.mjs";
 
 /** Environment for a new local backend generation. Runtime identities travel
- * in validated arguments, never inherited Hmux selector variables. */
+ * in validated arguments, never inherited Hmux selector variables, and the
+ * calling Chat agent's identity stays with the caller: a backend started from
+ * its tool shell would otherwise hand it to every process it launches. */
 export function localBackendServiceEnvironment(environment, platform = process.platform) {
   const result = Object.fromEntries(
     Object.entries(environment).filter(
       ([name]) => ![
         "DURE_HMUX_BIN", "DURE_HMUX_RUNTIME_BIN", "HEBBIAN_HMUX_RUNTIME",
-        "HMUX_DISCOVERY_ROOT", "HMUX_RUNTIME",
+        "HMUX_DISCOVERY_ROOT", "HMUX_RUNTIME", CALLER_AGENT_ID_ENVIRONMENT,
       ].includes(name),
     ),
   );
