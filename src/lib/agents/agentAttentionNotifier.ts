@@ -80,14 +80,14 @@ type NotificationSkip =
   | "muted"
   | "rate_limited";
 
-export type AgentNotificationDesktopReceipt =
+type AgentNotificationDesktopReceipt =
   | { status: "shown" }
   | { status: "disabled" }
   | { status: "permission_denied"; reason: "permission-denied" | "permission-not-requested" }
   | { status: "failed"; reason: string }
   | { status: "not_sent"; reason: NotificationSkip | "visible" | "throttled" };
 
-export type AgentNotificationPhoneReceipt =
+type AgentNotificationPhoneReceipt =
   /** Handed to the paired Hub's push path, which decides the recipients. */
   | { status: "queued" }
   | { status: "not_sent"; reason: NotificationSkip | "unsupported" | "no_event" };

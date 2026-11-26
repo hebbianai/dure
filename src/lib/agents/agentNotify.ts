@@ -19,9 +19,9 @@ import {
 } from "@/lib/ipc/notifications";
 import { useStore } from "@/store";
 
-export const AGENT_NOTIFY_ACTION = "agent.notify";
+const AGENT_NOTIFY_ACTION = "agent.notify";
 /** The rate-limit sender for a command run outside any agent. */
-export const PERSON_NOTICE_SENDER = "person";
+const PERSON_NOTICE_SENDER = "person";
 // Bounds what is handed to the admission; the exact limit is its own.
 const MAX_MESSAGE_UNITS = 4096;
 const MAX_SESSION_ID_LENGTH = 512;
