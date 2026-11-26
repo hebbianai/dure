@@ -126,6 +126,20 @@ impl SessionDescriptor {
             && self.terminal_epoch == fence.terminal_epoch
     }
 
+    /// Whether `process_id` names the provider process this exact Host
+    /// generation launched, while `generation_is_live` proves that exact
+    /// process generation still runs, so the id belongs to no later process.
+    /// A process that only inherited the provider's environment, such as a
+    /// background copy of the provider, never matches.
+    #[must_use]
+    pub fn names_live_provider_process(
+        &self,
+        process_id: u32,
+        generation_is_live: impl FnOnce(&ProcessDescriptor) -> bool,
+    ) -> bool {
+        self.provider_process.process_id == process_id && generation_is_live(&self.provider_process)
+    }
+
     /// An exited provider may leave descendants behind even after its exact
     /// Host and provider generations disappear. Replacement must keep treating
     /// that tombstone as live until an operator resolves the cleanup failure.

@@ -393,5 +393,157 @@ class ClaudeBackgroundWorkHostCompatibilityTest(unittest.TestCase):
         self.assertEqual(fallback["causality"], requests[0]["report"]["causality"])
 
 
+ANNOUNCING_RUNTIME = """#!/usr/bin/env python3
+import json, sys
+raw = sys.stdin.buffer.read()
+with open({log!r}, "a") as log:
+    log.write(raw[4:].decode("utf-8") + "\\n")
+body = json.dumps({response!r}).encode("utf-8")
+sys.stdout.buffer.write(len(body).to_bytes(4, "big") + body)
+"""
+
+
+class ClaudeConversationAnnouncementTest(unittest.TestCase):
+    """Claude moves its own process to another conversation for /clear,
+    /resume and /branch (SessionStart `clear`, `resume`, `fork`). A
+    background session copied with /fork is another Claude process with the
+    pane's fence, and reports SessionStart `fork` too."""
+
+    PANE = 41001
+    BACKGROUND = 41002
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="claude-hook-announcement-"))
+        self.state = self.root / "state"
+        self.log = self.root / "requests.jsonl"
+        self.response = {"state": "completed", "payload": "applied"}
+
+    def transcript(self, conversation_id):
+        path = self.root / "{}.jsonl".format(conversation_id)
+        path.write_text(json.dumps({"type": "user"}) + "\n")
+        return str(path)
+
+    def deliver(self, native, process, state=True):
+        """The request the broker received for one hook run by `process`."""
+        runtime = self.root / "hmux-runtime"
+        runtime.write_text(
+            ANNOUNCING_RUNTIME.format(log=str(self.log), response=self.response)
+        )
+        runtime.chmod(0o700)
+        original = hook.HMUX_RUNTIME_EXECUTABLE, hook.hook_parent_process
+        hook.HMUX_RUNTIME_EXECUTABLE = str(runtime)
+        hook.hook_parent_process = lambda: process
+        try:
+            hook.report_to_hmux(
+                "claude",
+                native,
+                FENCE,
+                hook.time.monotonic() + 5,
+                str(self.state) if state else None,
+            )
+        finally:
+            hook.HMUX_RUNTIME_EXECUTABLE, hook.hook_parent_process = original
+        return json.loads(self.log.read_text().splitlines()[-1])
+
+    def session_start(self, source, conversation_id, transcript=None, **extra):
+        native = {
+            "hook_event_name": "SessionStart",
+            "source": source,
+            "session_id": conversation_id,
+            "transcript_path": transcript
+            or str(self.root / "{}.jsonl".format(conversation_id)),
+        }
+        native.update(extra)
+        return native
+
+    def prompt(self, conversation_id):
+        return {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": conversation_id,
+            "prompt_id": "fixture-prompt-{}".format(conversation_id),
+            "transcript_path": self.transcript(conversation_id),
+        }
+
+    def test_clear_announces_its_conversation_once_the_transcript_exists(self):
+        cleared = self.deliver(self.session_start("clear", "conversation-cleared"), self.PANE)
+        self.assertNotIn("conversation_identity", cleared["report"])
+        self.assertNotIn("announcedByProcess", cleared)
+        first = self.deliver(self.prompt("conversation-cleared"), self.PANE)
+        self.assertEqual(
+            first["report"]["conversation_identity"]["conversation_id"],
+            "conversation-cleared",
+        )
+        self.assertEqual(first["announcedByProcess"], self.PANE)
+        # Delivered once, the announcement is spent.
+        later = self.deliver(self.prompt("conversation-cleared"), self.PANE)
+        self.assertNotIn("announcedByProcess", later)
+
+    def test_resume_and_branch_announce_with_their_session_start(self):
+        for source, conversation_id in (("resume", "conversation-resumed"), ("fork", "conversation-branch")):
+            with self.subTest(source=source):
+                started = self.deliver(
+                    self.session_start(source, conversation_id, self.transcript(conversation_id)),
+                    self.PANE,
+                )
+                self.assertEqual(
+                    started["report"]["conversation_identity"]["conversation_id"],
+                    conversation_id,
+                )
+                self.assertEqual(started["announcedByProcess"], self.PANE)
+
+    def test_each_process_announces_only_its_own_conversation(self):
+        self.deliver(self.session_start("clear", "conversation-cleared"), self.PANE)
+        copied = self.deliver(
+            self.session_start("fork", "conversation-copy", self.transcript("conversation-copy")),
+            self.BACKGROUND,
+        )
+        # The broker sees which process announced it, and that process is
+        # not the Host's provider.
+        self.assertEqual(copied["announcedByProcess"], self.BACKGROUND)
+        self.assertEqual(
+            self.deliver(self.prompt("conversation-cleared"), self.PANE)["announcedByProcess"],
+            self.PANE,
+        )
+        self.assertNotIn(
+            "announcedByProcess",
+            self.deliver(self.prompt("conversation-copy"), self.PANE),
+        )
+
+    def test_an_announcement_is_kept_until_a_report_carrying_it_is_delivered(self):
+        self.deliver(self.session_start("clear", "conversation-cleared"), self.PANE)
+        self.response = {
+            "state": "refused",
+            "payload": {"code": "hmux_agent_state_report_receipt_timeout", "message": "fixture"},
+        }
+        refused = self.deliver(self.prompt("conversation-cleared"), self.PANE)
+        self.assertEqual(refused["announcedByProcess"], self.PANE)
+        self.response = {"state": "completed", "payload": "applied"}
+        retried = self.deliver(self.prompt("conversation-cleared"), self.PANE)
+        self.assertEqual(retried["announcedByProcess"], self.PANE)
+
+    def test_nothing_is_announced_without_hook_state_a_process_or_the_main_agent(self):
+        self.deliver(self.session_start("clear", "conversation-stateless"), self.PANE, state=False)
+        self.assertNotIn(
+            "announcedByProcess",
+            self.deliver(self.prompt("conversation-stateless"), self.PANE, state=False),
+        )
+        self.deliver(self.session_start("clear", "conversation-unnamed"), None)
+        self.assertNotIn(
+            "announcedByProcess",
+            self.deliver(self.prompt("conversation-unnamed"), None),
+        )
+        self.deliver(
+            self.session_start("startup", "conversation-subagent", agent_id="fixture-subagent"),
+            self.PANE,
+        )
+        self.assertNotIn(
+            "announcedByProcess",
+            self.deliver(self.prompt("conversation-subagent"), self.PANE),
+        )
+
+    def test_the_hook_names_its_parent_as_the_claude_process(self):
+        self.assertEqual(hook.hook_parent_process(), hook.os.getppid())
+
+
 if __name__ == "__main__":
     unittest.main()

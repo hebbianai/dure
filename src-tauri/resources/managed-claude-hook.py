@@ -20,6 +20,7 @@ HOOK_SOURCE_SEQUENCE = (
     else time.monotonic_ns()
 )
 
+import hashlib
 import json
 import os
 import re
@@ -817,26 +818,130 @@ def older_host_report(request):
     )
 
 
-def report_to_hmux(provider_id, native, fence, deadline):
-    """Return an exact Host refusal code, or None when reporting did not refuse."""
+def hook_parent_process():
+    """The Claude process that ran this hook, or None.
+
+    Claude starts each hook command as its own child, and the script's `env`
+    shebang execs Python in place, so the parent is the Claude process the
+    event belongs to."""
+    try:
+        process = os.getppid()
+    except Exception:
+        return None
+    return process if isinstance(process, int) and process > 1 else None
+
+
+class ConversationAnnouncement:
+    """The conversation one Claude process's own SessionStart named, for one
+    exact Host generation.
+
+    Claude moves the same process to another conversation in place for
+    `/clear`, `/resume` and `/branch`, and writes no forward link from the old
+    transcript. A report that carries the announced conversation names the
+    process that announced it; the Hmux broker continues the Host's
+    conversation into it only when that process is the Host's own live
+    provider process. A background session copied with `/fork` inherits the
+    pane's fence and hook settings but runs in another process. The identity
+    can arrive with a later report than the SessionStart (`/clear` writes the
+    transcript once a prompt lands), so the hook keeps the announcement until
+    a report that carries it is delivered."""
+
+    def __init__(self, root, fence, process):
+        key = "\n".join(
+            [fence[field] for field in sorted(fence)] + [str(process)]
+        ).encode("utf-8")
+        self.directory = os.path.join(root, "hook-state")
+        self.path = os.path.join(
+            self.directory,
+            "claude-session-start-{}".format(hashlib.sha256(key).hexdigest()),
+        )
+
+    def remember(self, conversation_id):
+        staged = "{}.{}.tmp".format(self.path, os.getpid())
+        try:
+            os.makedirs(self.directory, mode=0o700, exist_ok=True)
+            with os.fdopen(
+                os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w"
+            ) as record:
+                record.write(conversation_id)
+            os.replace(staged, self.path)
+        except Exception:
+            try:
+                os.unlink(staged)
+            except Exception:
+                pass
+
+    def names(self, conversation_id):
+        try:
+            with open(self.path, "r", encoding="utf-8") as record:
+                return record.read(257) == conversation_id
+        except Exception:
+            return False
+
+    def forget(self):
+        try:
+            os.unlink(self.path)
+        except Exception:
+            pass
+
+
+def announce_conversation(request, native, fence, root):
+    """Name the Claude process that announced the report's conversation, and
+    return its announcement, or None."""
+    process = hook_parent_process()
+    if root is None or process is None:
+        return None
+    announcement = ConversationAnnouncement(root, fence, process)
+    # A subagent's SessionStart is about its own context, never about the
+    # conversation its process runs.
+    if native.get("hook_event_name") == "SessionStart" and not claude_subagent(native):
+        announcement.remember(native["session_id"])
+    identity = request["report"].get("conversation_identity")
+    if identity is None or not announcement.names(identity["conversation_id"]):
+        return None
+    request["announcedByProcess"] = process
+    return announcement
+
+
+def report_to_hmux(provider_id, native, fence, deadline, root=None):
+    """Return an exact Host refusal code, or None when reporting did not refuse.
+
+    `root` is where the hook may keep state, or None when it must not."""
+    announcement = None
     if provider_id == "codex":
         request = codex_report(native, fence, deadline)
     elif provider_id == "claude":
         request = claude_report(native, fence)
+        if request is not None:
+            announcement = announce_conversation(request, native, fence, root)
     else:
         return None
     if request is None:
         return None
-    refusal = deliver_to_hmux(request, deadline)
+    response = deliver_to_hmux(request, deadline)
     if (
-        refusal == "hmux_managed_agent_state_report_request_invalid"
+        broker_refusal(response) == "hmux_managed_agent_state_report_request_invalid"
         and request["schemaVersion"] == HMUX_AGENT_STATE_REPORT_BACKGROUND_WORK_SCHEMA_VERSION
     ):
-        refusal = deliver_to_hmux(older_host_report(request), deadline)
-    return refusal
+        response = deliver_to_hmux(older_host_report(request), deadline)
+    if announcement is not None and response is not None and response.get("state") == "completed":
+        announcement.forget()
+    return broker_refusal(response)
+
+
+def broker_refusal(response):
+    """The exact Host refusal code in a broker response, or None."""
+    if not isinstance(response, dict) or response.get("state") != "refused":
+        return None
+    failure = response.get("payload")
+    if not isinstance(failure, dict):
+        return None
+    code = failure.get("code")
+    return code if isinstance(code, str) else None
 
 
 def deliver_to_hmux(request, deadline):
+    """Return the broker's response, or None when it gave none."""
     runtime = HMUX_RUNTIME_EXECUTABLE
     if not os.path.isabs(runtime):
         return None
@@ -862,13 +967,7 @@ def deliver_to_hmux(request, deadline):
         if declared > MAX_DESCRIPTOR_BYTES or len(completed.stdout) != 4 + declared:
             return None
         response = json.loads(completed.stdout[4:].decode("utf-8"))
-        if not isinstance(response, dict) or response.get("state") != "refused":
-            return None
-        failure = response.get("payload")
-        if not isinstance(failure, dict):
-            return None
-        code = failure.get("code")
-        return code if isinstance(code, str) else None
+        return response if isinstance(response, dict) else None
     except Exception:
         return None
 
@@ -1063,7 +1162,7 @@ def main():
     ):
         return
     if os.path.isabs(HMUX_RUNTIME_EXECUTABLE):
-        report_to_hmux("claude", native, fence, deadline)
+        report_to_hmux("claude", native, fence, deadline, root if writable else None)
         return
     if len(body) > MAX_BODY_BYTES:
         body = slim_body(native)

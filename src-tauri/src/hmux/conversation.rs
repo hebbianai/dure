@@ -86,10 +86,7 @@ fn announces_successor(
             .zip(start.reporting_process)
             .is_some_and(|(descriptor, process)| {
                 descriptor.provider_id == "claude"
-                && descriptor.provider_process.process_id == process
-                // The exact generation the Host launched still runs, so
-                // its process id belongs to no later process.
-                && provider_generation_is_live(&descriptor.provider_process)
+                    && descriptor.names_live_provider_process(process, provider_generation_is_live)
             })
 }
 
