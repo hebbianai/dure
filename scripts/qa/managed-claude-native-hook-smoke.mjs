@@ -65,6 +65,7 @@ async function runProvider(scope, runtime, claude, existingHooks, publishedSetti
   let providerRequests = 0;
   let exactFence = false;
   let hasConversation = false;
+  let reportingProcess;
   const server = createServer((request, response) => {
     if (request.headers.authorization !== `Bearer ${token}`) {
       providerRequests += 1;
@@ -90,6 +91,7 @@ async function runProvider(scope, runtime, claude, existingHooks, publishedSetti
       if (request.url === "/hooks/claude" && body.hook_event_name === "SessionStart") {
         reports += 1;
         hasConversation = typeof body.session_id === "string" && body.session_id.length > 0;
+        reportingProcess = request.headers["x-hebbian-hook-parent-process-id"];
         exactFence = [
           ["session-id", "qa-only-session"], ["workspace-id", "qa-only-workspace"],
           ["runner-principal", "qa-only-principal"], ["runner-instance", "qa-only-runner"],
@@ -114,11 +116,14 @@ async function runProvider(scope, runtime, claude, existingHooks, publishedSetti
     assert.equal(code, 0, "Actual provider initialization failed");
     assert.equal(reports, 1, "No-Python native SessionStart must arrive exactly once");
     assert(exactFence && hasConversation, "Native identity or inherited fence is missing");
+    // The app tells the pane's own Claude process from another one that
+    // inherits its fence (a background session) by this process.
+    assert.equal(reportingProcess, String(child.pid), "The hook must name the Claude process that ran it");
     for (const { file, contents, marker } of originals) {
       assert.equal(await readFile(file, "utf8"), contents, "Existing hook configuration changed");
       assert.equal(await readFile(marker, "utf8"), "x", "Existing hook must execute exactly once");
     }
-    return { existingHooks, code, signal, reports, exactFence, hasConversation, providerRequests, preservedFiles: originals.length };
+    return { existingHooks, code, signal, reports, exactFence, hasConversation, reportingProcess, providerRequests, preservedFiles: originals.length };
   } finally {
     await new Promise(resolve => server.close(resolve));
   }
