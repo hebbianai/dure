@@ -46,3 +46,18 @@ it("carries a muted agent's mute and nothing for an unmuted one", () => {
 		JSON.stringify(sessionPresentation({ kind: "agent", notificationsMuted: false })),
 	).not.toContain("notificationsMuted");
 });
+
+it("names the row's Agent and its manager only when the relation owner knows them", () => {
+	expect(
+		sessionPresentation({ kind: "agent" }, undefined, undefined, {
+			agentId: "agent-worker",
+			managerAgentId: "agent-lead",
+		}),
+	).toMatchObject({ agentId: "agent-worker", managerAgentId: "agent-lead" });
+	const root = JSON.stringify(
+		sessionPresentation({ kind: "agent" }, undefined, undefined, { agentId: "agent-lead" }),
+	);
+	expect(root).toContain('"agentId":"agent-lead"');
+	expect(root).not.toContain("managerAgentId");
+	expect(JSON.stringify(sessionPresentation({ kind: "term" }))).not.toContain("agentId");
+});

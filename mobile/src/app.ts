@@ -2609,6 +2609,7 @@ export function startApp(root: HTMLElement): () => void {
         settings: () => leaveForHomeAction(() => setState({ screen: { kind: "settings" } })),
         refresh: () => void census(),
         hold: (row, anchor) => setState({ rowMenu: { sessionId: row.sessionId, anchor } }),
+        info: (row) => setState({ rowInfo: { sessionId: row.sessionId } }),
         answerApproval: (card, choice) => void answerHomeApproval(card, choice),
         readFinished: (cards) => finalResponses.observe(cards),
       },

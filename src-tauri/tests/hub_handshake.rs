@@ -281,6 +281,7 @@ impl CatalogSource for OneSession {
                 conversation: false,
                 background_work: false,
                 approval_answer: false,
+                failure: None,
                 box_id: "this-laptop".into(),
                 box_label: "내 노트북".into(),
             }],

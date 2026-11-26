@@ -1,7 +1,8 @@
 /**
- * Home's Recently finished section: the newest agents that finished a turn,
- * under Needs you and above the list, each with the first line of its last
- * answer, so a result is read without opening every agent.
+ * Home's Has a result section: the newest agents with a result from the last
+ * day, under Needs you and above the list, each with the first line of its
+ * last answer, so a result is read without opening every agent. Dure knows a
+ * turn finished, not that the work is done, so it never says "done".
  *
  * Which agents count is `homeProjection.recentlyFinished`; their answers are
  * read by `finalResponses.ts`. This file only draws the cards that have one:

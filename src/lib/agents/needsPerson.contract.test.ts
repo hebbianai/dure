@@ -48,5 +48,11 @@ describe("needs-person coverage", () => {
 		for (const file of ["lib/spaces/spacesHierarchy.ts", "lib/spaces/spacesViewProjection.ts"]) {
 			expect(source(file)).toContain("countsTowardNeedsPersonRollup(row)");
 		}
+		// The phone's home: its Needs you and its results read the same
+		// authority and predicate over what the computer reported.
+		const phoneHome = source("../mobile/src/homeProjection.ts");
+		expect(phoneHome).toContain("needsPersonOf(");
+		expect(phoneHome).toContain("currentEpochFailure(");
+		expect(phoneHome).toContain("hasResult(");
 	});
 });

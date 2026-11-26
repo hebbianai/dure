@@ -2749,6 +2749,7 @@ fn describe(
                 box_id: entry.box_id.clone(),
                 box_label: entry.box_label.clone(),
                 presentation: entry.presentation.clone(),
+                failure: entry.failure.clone(),
                 hmux_session_name: entry.session_name.clone(),
             })
             .chain(catalog.chat_sessions.iter().map(chat_session_row))
@@ -2822,6 +2823,8 @@ fn chat_session_row(entry: &dure_hub_protocol::agent_chat::HubChatSession) -> Hu
         box_id: entry.box_id.clone(),
         box_label: entry.box_label.clone(),
         presentation: entry.presentation.clone(),
+        // Not an Hmux session: the Host records no exit for it.
+        failure: None,
         hmux_session_name: None,
     }
 }
@@ -2899,6 +2902,11 @@ pub struct HubLayout {
 #[derive(Debug, Serialize)]
 pub struct HubProbeSession {
     pub presentation: Option<dure_hub_protocol::catalog::SessionPresentation>,
+    /// What the Host recorded when the provider exited on its own
+    /// (`HubCatalogEntry::failure`). The screen's needs-person authority
+    /// decides whether it describes the current process. None from an older
+    /// computer, for a remote session and for a chat-owned agent.
+    pub failure: Option<dure_hub_protocol::catalog::SessionFailureSummary>,
     #[serde(flatten)]
     pub session: RemoteSession,
     /// 붙일 수 있는지. `lifecycle` 문자열을 화면이 다시 해석하지 않는다는 뜻이고,
@@ -3357,6 +3365,91 @@ mod tests {
         let value = serde_json::to_value(row).expect("serializes");
         assert_eq!(value["agent_chat"], true);
         assert_eq!(value["session_id"], "agent-1");
+    }
+
+    /// Home's relations and needs-person cards read what the computer said:
+    /// the row's Agent and manager ids in its presentation, and the Host's
+    /// exit record beside it. A chat-owned agent has no Host exit to carry.
+    #[test]
+    fn a_row_carries_its_agent_ids_and_the_hosts_exit_record() {
+        use dure_hub_protocol::catalog::{
+            HubCatalogEntry, SessionFailureSummary, SessionPresentation,
+        };
+        let presentation = SessionPresentation {
+            agent_id: Some("agent-worker".into()),
+            manager_agent_id: Some("agent-lead".into()),
+            ..Default::default()
+        };
+        let failure = SessionFailureSummary {
+            code: "provider_exited_at_sign_in".into(),
+            terminal_epoch: "terminal-7".into(),
+            occurred_unix_ms: "1700000000000".into(),
+        };
+        let catalog = dure_hub_protocol::catalog::HubCatalog {
+            hub_catalog_version: dure_hub_protocol::catalog::HUB_CATALOG_VERSION,
+            sessions: vec![HubCatalogEntry {
+                session_id: "session-1".into(),
+                session_name: Some("codex-14".into()),
+                display_title: Some("Fix the build".into()),
+                presentation: Some(presentation.clone()),
+                workspace_id: "workspace-1".into(),
+                session_class: "managed".into(),
+                lifecycle: "exited".into(),
+                provider_id: "claude".into(),
+                runner_principal: "me".into(),
+                runner_instance: "runner".into(),
+                channel_epoch: "1".into(),
+                host_instance_id: "host".into(),
+                terminal_epoch: "terminal-7".into(),
+                capabilities: Vec::new(),
+                launch_program: None,
+                conversation: false,
+                background_work: false,
+                approval_answer: false,
+                failure: Some(failure.clone()),
+                box_id: "this-laptop".into(),
+                box_label: "Laptop".into(),
+            }],
+            unreachable: Vec::new(),
+            layout: None,
+            push_registration: None,
+            chat_sessions: vec![dure_hub_protocol::agent_chat::HubChatSession {
+                agent_id: "agent-chat".into(),
+                provider_id: "claude".into(),
+                display_title: None,
+                presentation: Some(presentation),
+                box_id: "this-laptop".into(),
+                box_label: "Laptop".into(),
+                watch: true,
+            }],
+        };
+        let ack = dure_hub_protocol::hello::HubHelloAck {
+            hub_hello_version: dure_hub_protocol::hello::HUB_HELLO_VERSION,
+            device_id: "device-1".into(),
+            device_label: "phone".into(),
+        };
+        let probe = describe("hub-1", "Laptop", false, ack, &catalog);
+        let [session, chat] = &probe.sessions[..] else {
+            panic!("two rows: {:?}", probe.sessions);
+        };
+        assert!(!session.ready);
+        assert_eq!(session.failure.as_ref(), Some(&failure));
+        assert_eq!(chat.failure, None);
+        let value = serde_json::to_value(session).expect("serializes");
+        assert_eq!(value["presentation"]["agentId"], "agent-worker");
+        assert_eq!(value["presentation"]["managerAgentId"], "agent-lead");
+        assert_eq!(
+            value["failure"],
+            serde_json::json!({
+                "code": "provider_exited_at_sign_in",
+                "terminal_epoch": "terminal-7",
+                "occurred_unix_ms": "1700000000000",
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(chat).unwrap()["failure"],
+            serde_json::Value::Null
+        );
     }
 
     #[test]

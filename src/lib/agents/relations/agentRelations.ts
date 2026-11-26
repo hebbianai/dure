@@ -18,6 +18,10 @@ const AGENT_RELATION_SOURCES = [
 	/** The Agent that owned that Session when this client first presented
 	 * the Run. */
 	"run_parent_recorded",
+	/** The display manager the agent's computer reported in its catalog
+	 * (`SessionPresentation.managerAgentId`). It is the phone's only fact:
+	 * the computer already chose among its own. */
+	"computer_reported",
 ] as const;
 
 export type AgentRelationSource = (typeof AGENT_RELATION_SOURCES)[number];

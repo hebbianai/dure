@@ -1,5 +1,5 @@
-/* The sections above home's list (`homeCard.ts`): Needs you and Recently
- * finished, on the list's own 12px gutter, each card headed by the agent's and
+/* The sections above home's list (`homeCard.ts`): Needs you and Has a
+ * result, on the list's own 12px gutter, each card headed by the agent's and
  * its project's names. */
 
 .home-cards {
@@ -25,6 +25,23 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+/* The names, between the agents above and what it manages. */
+.home-card__who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.home-card__path,
+.home-card__managed {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font: 400 11px/15px var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .home-card__names {

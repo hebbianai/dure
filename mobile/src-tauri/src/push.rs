@@ -892,6 +892,7 @@ mod tests {
                 conversation,
                 background_work: false,
                 approval_answer,
+                failure: None,
                 box_id: "this-laptop".into(),
                 box_label: "Laptop".into(),
             }

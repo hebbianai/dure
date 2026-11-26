@@ -23,6 +23,7 @@ use hmux_client::SessionDescriptor;
 // 읽어야 하고, 폰은 이 크레이트를 링크할 수 없기 때문이다(그쪽 머리말 참조).
 // 여기 남는 것은 hmux 서술자를 그 모양으로 옮기는 일뿐 — 그 변환은 hmux 타입을
 // 알아야 하고, 프로토콜 크레이트는 그것을 알지 않는다.
+use dure_hub_protocol::catalog::SessionFailureSummary;
 pub use dure_hub_protocol::catalog::{
     HUB_CATALOG_VERSION, HubCatalog, HubCatalogEntry, UnreachableBox, encode,
 };
@@ -69,6 +70,16 @@ pub fn entry_from(
             &descriptor.provider_id,
             &descriptor.lifecycle,
         ),
+        // Only what the phone's needs-person authority reads: the summary
+        // prose, the exit details and the correlation id stay here.
+        failure: descriptor
+            .failure
+            .as_ref()
+            .map(|failure| SessionFailureSummary {
+                code: failure.code.clone(),
+                terminal_epoch: failure.terminal_epoch.clone(),
+                occurred_unix_ms: failure.occurred_unix_ms.clone(),
+            }),
         box_id: box_id.to_string(),
         box_label: box_label.to_string(),
     }
@@ -101,6 +112,8 @@ pub fn remote_entry_from(
         conversation: false,
         background_work: false,
         approval_answer: false,
+        // The remote catalog carries no failure capsule yet.
+        failure: None,
         box_id: box_id.to_string(),
         box_label: box_label.to_string(),
     }
@@ -236,6 +249,49 @@ mod tests {
         let mut exited = claude;
         exited.lifecycle = hmux_client::SessionLifecycle::Exited;
         assert!(!entry_from(&exited, "this-laptop", "이 노트북").approval_answer);
+    }
+
+    /// The Host's record of a provider that exited on its own reaches the
+    /// phone as the three facts its needs-person authority reads, and nothing
+    /// else of it: the summary prose and the correlation id stay here.
+    #[test]
+    fn an_exit_the_host_recorded_travels_as_its_summary() {
+        assert_eq!(
+            entry_from(&descriptor(), "this-laptop", "이 노트북").failure,
+            None
+        );
+
+        let mut exited = descriptor();
+        exited.lifecycle = hmux_client::SessionLifecycle::Exited;
+        exited.failure = Some(hmux_client::SessionFailureDescriptor {
+            correlation_id: "correlation-secret".into(),
+            session_id: exited.session_id.clone(),
+            workspace_id: exited.workspace_id.clone(),
+            terminal_epoch: "terminal_1".into(),
+            code: "provider_exited_at_sign_in".into(),
+            phase: "running".into(),
+            summary: "Claude Code exited at its sign-in screen".into(),
+            exit_kind: "normal".into(),
+            exit_code: Some(0),
+            occurred_unix_ms: "1700000000000".into(),
+            retry_posture: "manual".into(),
+        });
+        let entry = entry_from(&exited, "this-laptop", "이 노트북");
+        assert_eq!(
+            entry.failure,
+            Some(SessionFailureSummary {
+                code: "provider_exited_at_sign_in".into(),
+                terminal_epoch: "terminal_1".into(),
+                occurred_unix_ms: "1700000000000".into(),
+            })
+        );
+        let rendered = serde_json::to_string(&entry).unwrap();
+        for kept in ["correlation-secret", "sign-in screen", "retry_posture"] {
+            assert!(
+                !rendered.contains(kept),
+                "{kept} left the desktop: {rendered}"
+            );
+        }
     }
 
     #[test]
