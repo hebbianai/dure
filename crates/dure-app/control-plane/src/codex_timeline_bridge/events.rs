@@ -170,6 +170,17 @@ where
         params: &Value,
     ) -> Result<(), AgentProviderCommandErrorV1> {
         let observed_at_ms = now_ms()?;
+        // The App Server reports its account's limits without a thread. The
+        // turn keeps the latest reset of a limit reported full: that limit
+        // refuses work until then, whichever limit stops the turn.
+        if method == "account/rateLimits/updated" {
+            if let Some(reset) = params.get("rateLimits").and_then(full_limit_reset_ms)
+                && let Some(turn) = self.active_turn.lock().await.as_mut()
+            {
+                turn.limit_resets_at_ms = turn.limit_resets_at_ms.max(Some(reset));
+            }
+            return Ok(());
+        }
         let active = self.active_turn.lock().await.clone();
         if method != "serverRequest/resolved"
             && !notification_belongs_to_thread(method, params, &self.thread_id)
@@ -317,6 +328,31 @@ where
                 let failure_reason = params.get("turn").and_then(turn_failure_reason);
                 let provider_turn =
                     notification_turn_id(method, params).and_then(provider_turn_identity);
+                // A turn stopped at a limit keeps when that limit resets, for
+                // backend recovery; the failure row is unchanged.
+                if matches!(
+                    failure_reason,
+                    Some(
+                        AgentTurnFailureReasonV1::UsageLimit | AgentTurnFailureReasonV1::RateLimit
+                    )
+                ) && let Some(resets_at_ms) =
+                    active.as_ref().and_then(|turn| turn.limit_resets_at_ms)
+                {
+                    mutations.push(AgentTimelineMutationV1::Append {
+                        item: self.item(
+                            "usage-limit-reset",
+                            AgentTimelineItemBodyV1::ProviderEvidence {
+                                namespace: "provider.codex".into(),
+                                kind: dure_app::AGENT_USAGE_LIMIT_RESET_EVIDENCE_KIND_V1.into(),
+                                value: json!({ "resetsAtMs": resets_at_ms }),
+                            },
+                            turn_id.clone(),
+                            client_message_id.clone(),
+                            None,
+                            observed_at_ms,
+                        )?,
+                    });
+                }
                 mutations.push(AgentTimelineMutationV1::Append {
                     item: self.item(
                         "turn-completed",

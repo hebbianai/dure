@@ -29,6 +29,7 @@ where
                     turn_id: intent.turn_id.clone(),
                     client_message_id: intent.client_message_id.clone(),
                     provider_turn_id: None,
+                    limit_resets_at_ms: None,
                 });
             }
             let response = self
