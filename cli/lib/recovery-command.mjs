@@ -38,10 +38,12 @@ Other results are JSON. accounts is an ordered array of {profile, name}; copy
 exact profiles from get --json.
 Use revision 0 for a new policy. Only explicitly allowed accounts are used.
 --continue-after-reset true (off unless given, so each put states it): when no
-allowed account is available and the provider reported when its limit resets
-(Claude Chat agents), the backend continues the same request once, a few
-minutes after the reset. If the limit still applies, recovery stops. status
-then shows resumeAtMs.
+allowed account is available and the provider reported when its limit resets,
+the backend continues the same request once, a few minutes after the reset.
+A Chat agent uses the reset its failed turn reported (Claude); a terminal agent
+uses the reset its login's usage meter last recorded and gets one prompt to
+continue in the same terminal. If the limit still applies, recovery stops.
+status then shows resumeAtMs for a Chat agent.
 Joining a workspace does not register or offer personal accounts. Unknown usage
 is eligible; optional observations contain {profile, usedPercent, observedAtMs}.
 Before switching, the backend also reads the usage the app last observed on

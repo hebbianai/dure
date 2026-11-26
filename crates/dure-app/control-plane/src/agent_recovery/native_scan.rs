@@ -2,10 +2,10 @@
 //!
 //! A Chat Agent's failure arrives as a conversation notification. A native
 //! terminal's failure lives only in its Hmux Host, so this scanner probes the
-//! Hosts of native Agents whose provider has recovery enabled, in bounded
-//! batches, and sends the owner each Agent that shows a settled limit
-//! failure. It decides nothing: the owner inspects the exact Host again under
-//! its per-Agent order before any attempt exists.
+//! Hosts of native Agents whose provider switches accounts or continues after
+//! a reset, in bounded batches, and sends the owner each Agent that shows a
+//! settled limit failure. It decides nothing: the owner inspects the exact
+//! Host again under its per-Agent order before any attempt exists.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
