@@ -372,6 +372,7 @@ describe("answering from home", () => {
 		dispose = startApp(root);
 		await settle();
 		activate?.({
+			hub: "qa-hub",
 			sessionId: "approve-me",
 			answer: { choice: "approve", attentionId: "attention-7", terminalEpoch: "epoch-approve-me" },
 		});
@@ -387,19 +388,21 @@ describe("answering from home", () => {
 		expect(card()).toBeNull();
 	});
 
-	it("answers nothing for an alert whose approval was replaced, and says so", async () => {
+	it("answers nothing for an alert whose approval was replaced, or that another computer raised, and says so", async () => {
 		dispose = startApp(root);
 		await settle();
 		const reads = native.hubOpen.mock.calls.length;
-		for (const answer of [
-			{ choice: "deny", attentionId: "attention-6", terminalEpoch: "epoch-approve-me" },
-			{ choice: "deny", attentionId: "attention-7", terminalEpoch: "epoch-earlier" },
+		for (const [hub, answer] of [
+			["qa-hub", { choice: "deny", attentionId: "attention-6", terminalEpoch: "epoch-approve-me" }],
+			["qa-hub", { choice: "deny", attentionId: "attention-7", terminalEpoch: "epoch-earlier" }],
+			// The very approval, but the alert came from another computer.
+			["other-hub", { choice: "deny", attentionId: "attention-7", terminalEpoch: "epoch-approve-me" }],
 		] as const) {
-			activate?.({ sessionId: "approve-me", answer });
+			activate?.({ hub, sessionId: "approve-me", answer });
 			await settle();
 		}
 		// Each press read the list once more before giving up.
-		expect(native.hubOpen.mock.calls.length).toBe(reads + 2);
+		expect(native.hubOpen.mock.calls.length).toBe(reads + 3);
 		expect(biometric.authenticate).not.toHaveBeenCalled();
 		expect(native.hubAgentApprovalAnswer).not.toHaveBeenCalled();
 		expect(root.textContent).toContain(t("notifications.push.answer.gone"));

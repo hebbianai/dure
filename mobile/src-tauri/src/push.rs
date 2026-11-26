@@ -1,5 +1,6 @@
 use crate::{
     hub_conversation::{ApprovalAnswerInput, PromptInput},
+    hub_store::HubEntry,
     CommandError, HubProbe,
 };
 use dure_hub_protocol::{
@@ -19,6 +20,9 @@ use tauri_plugin_notification::{Action, ActionType, NotificationExt};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PushActivation {
+    /// The paired computer the alert came from (`HubEntry::id`): another
+    /// computer may list an agent under the same key.
+    hub: String,
     /// The phone's catalog key for the agent (`PushId`).
     session_id: String,
     /// Allow once or Deny, pressed while approvals need Face ID: the screen
@@ -38,14 +42,44 @@ pub struct ActivationAnswer {
 
 impl PushActivation {
     /// The activation a tap on this delivered alert asks for, read from the
-    /// alert's whole JSON payload. None for an alert that names no agent.
-    pub fn from_payload(payload: &[u8]) -> Option<Self> {
-        PushAlertContext::from_payload(payload)
-            .session
-            .map(|session| Self {
-                session_id: session.into(),
-                answer: None,
-            })
+    /// alert's whole JSON payload. None for an alert that names no agent, or
+    /// no computer in `hubs`.
+    fn from_payload(payload: &[u8], hubs: &[HubEntry]) -> Option<Self> {
+        let context = PushAlertContext::from_payload(payload);
+        Some(Self {
+            hub: paired(hubs, context.hub.as_deref()?)?.id.clone(),
+            session_id: context.session?.into(),
+            answer: None,
+        })
+    }
+}
+
+/// The paired computer `hub` names (`HubEntry::id`), or None.
+///
+/// Every tap, answer and reply from an alert goes through here: an alert
+/// from a computer this phone does not hold, such as one it forgot, opens
+/// nothing and answers nothing. The push service fills in the alert's
+/// computer from the certificate that signed the request, so the computer
+/// cannot name another.
+fn paired<'a>(hubs: &'a [HubEntry], hub: &str) -> Option<&'a HubEntry> {
+    hubs.iter().find(|entry| entry.id == hub)
+}
+
+/// The computers this phone is paired with. Empty when the store cannot be
+/// read: no alert is then from a paired computer.
+fn paired_hubs(app: &tauri::AppHandle) -> Vec<HubEntry> {
+    crate::hub_store_path(app)
+        .ok()
+        .and_then(|path| crate::hub_store::load(&path).ok())
+        .map(|document| document.hubs)
+        .unwrap_or_default()
+}
+
+/// A tap on a delivered alert, or on a notice this phone posted about one:
+/// the screen opens its agent.
+pub fn open_from_alert(app: &tauri::AppHandle, payload: &[u8]) {
+    if let Some(activation) = PushActivation::from_payload(payload, &paired_hubs(app)) {
+        app.state::<PushActivations>().offer(activation);
     }
 }
 
@@ -133,8 +167,20 @@ impl AlertActions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FailureNotice {
     pub body: String,
-    /// The agent, so a tap on the notice opens it.
+    /// The agent and its computer, so a tap on the notice opens it.
     pub session: String,
+    pub hub: Option<String>,
+}
+
+impl FailureNotice {
+    /// The notice for an alert that names an agent, with this `body`.
+    fn about(context: &PushAlertContext, body: String) -> Option<Self> {
+        Some(Self {
+            body,
+            session: context.session.as_ref()?.as_str().to_string(),
+            hub: context.hub.clone(),
+        })
+    }
 }
 
 /// What an Allow once or Deny on an alert becomes.
@@ -154,15 +200,20 @@ enum AlertAnswer {
 
 fn alert_answer(
     context: &PushAlertContext,
+    hubs: &[HubEntry],
     actions: Option<&AlertActions>,
     choice: &'static str,
 ) -> AlertAnswer {
-    let Some((hub, session, approval)) = context.answerable() else {
+    let Some((hub, session, approval)) = context
+        .answerable()
+        .filter(|(hub, _, _)| paired(hubs, hub).is_some())
+    else {
         return AlertAnswer::Unanswerable;
     };
     // An unknown preference counts as Face ID: no answer skips a sheet it may need.
     if actions.is_none_or(|actions| actions.owner_check) {
         return AlertAnswer::Screen(PushActivation {
+            hub: hub.to_string(),
             session_id: session.as_str().to_string(),
             answer: Some(ActivationAnswer {
                 choice,
@@ -211,13 +262,9 @@ pub fn answer_from_alert(
 ) {
     let context = PushAlertContext::from_payload(payload);
     let actions = AlertActions::load_for(app);
-    let notice = |actions: Option<&AlertActions>| {
-        Some(FailureNotice {
-            body: actions?.failed.clone(),
-            session: context.session.as_ref()?.as_str().to_string(),
-        })
-    };
-    match alert_answer(&context, actions.as_ref(), choice) {
+    let notice =
+        |actions: Option<&AlertActions>| FailureNotice::about(&context, actions?.failed.clone());
+    match alert_answer(&context, &paired_hubs(app), actions.as_ref(), choice) {
         AlertAnswer::Screen(activation) => {
             app.state::<PushActivations>().offer(activation);
             done(None);
@@ -288,16 +335,12 @@ pub fn reply_from_alert(
     done: impl FnOnce(Option<FailureNotice>) + Send + 'static,
 ) {
     let context = PushAlertContext::from_payload(payload);
-    let failed = AlertActions::load_for(app).and_then(|actions| {
-        Some(FailureNotice {
-            body: actions.reply_failed,
-            session: context.session.as_ref()?.as_str().to_string(),
-        })
-    });
+    let failed = AlertActions::load_for(app)
+        .and_then(|actions| FailureNotice::about(&context, actions.reply_failed));
     if text.trim().is_empty() {
         return done(None);
     }
-    let Some((hub, session, reply)) = context.repliable() else {
+    let Some((hub, session, reply)) = reply_to(&context, &paired_hubs(app)) else {
         return done(failed);
     };
     let (app, hub, session, reply) = (app.clone(), hub.to_string(), session.clone(), reply.clone());
@@ -305,6 +348,18 @@ pub fn reply_from_alert(
         let landed = reply_here(&app, hub, &session, &reply, &text).await;
         done(if landed { None } else { failed });
     });
+}
+
+/// What a reply from this alert reaches: the agent and its process on a
+/// paired computer. None for an alert that takes no reply, or comes from a
+/// computer this phone does not hold.
+fn reply_to<'a>(
+    context: &'a PushAlertContext,
+    hubs: &[HubEntry],
+) -> Option<(&'a str, &'a PushId, &'a PushReply)> {
+    context
+        .repliable()
+        .filter(|(hub, _, _)| paired(hubs, hub).is_some())
 }
 
 async fn reply_here(
@@ -452,6 +507,32 @@ pub fn push_activations(
     activations.listen(Box::new(move |activation| channel.send(activation).is_ok()));
 }
 
+/// How long forgetting a computer waits for it to hear that alerts stop.
+#[cfg(target_os = "ios")]
+const FORGET_BUDGET: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Asks a computer about to be forgotten to stop sending this phone alerts,
+/// waiting at most [`FORGET_BUDGET`]. Best effort: a computer that is off or
+/// slow keeps its subscription until the epoch the forget raises supersedes
+/// its grant, so the forget never waits on it.
+pub async fn stop_alerts_before_forget(entry: HubEntry) {
+    #[cfg(target_os = "ios")]
+    {
+        let stopped = tauri::async_runtime::spawn_blocking(move || {
+            crate::push_sync::within(FORGET_BUDGET, move || crate::push_sync::stop_alerts(&entry))
+        })
+        .await;
+        if let Ok(Some(Err(detail))) = stopped {
+            eprintln!("A forgotten computer was not told to stop alerts: {detail}");
+        }
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        // Only iOS registers alerts with a computer: nothing to stop.
+        let _ = entry;
+    }
+}
+
 #[derive(Serialize)]
 pub struct PushSyncResult {
     supported: bool,
@@ -490,6 +571,18 @@ pub enum SyncCode {
     Refused(PushRefusal),
 }
 
+/// The preference a sync registers with `hubs`, or None to stop alerts: Off,
+/// or no computer left to send them. With none left, alerts stop as Off stops
+/// them and the token stops working, so no grant a forgotten computer still
+/// holds reaches this phone (#660).
+#[cfg(any(target_os = "ios", test))]
+fn registered_preference(
+    preference: Option<PushPreference>,
+    hubs: &[HubEntry],
+) -> Option<PushPreference> {
+    preference.filter(|_| !hubs.is_empty())
+}
+
 #[tauri::command]
 pub async fn sync_push_notifications(
     app: tauri::AppHandle,
@@ -512,33 +605,35 @@ pub async fn sync_push_notifications(
         };
         let generation = crate::device_reset::current_generation();
         let hubs = crate::hub_store::load(&crate::hub_store_path(&app)?)?.hubs;
-        let subscription = if let Some(preference) = preference {
-            if hubs.is_empty() {
-                return Ok(PushSyncResult {
-                    supported: true,
-                    outcomes: Vec::new(),
-                });
+        let subscription = match registered_preference(preference, &hubs) {
+            Some(preference) => {
+                let (token, environment) = crate::push_ios::register(&app).await.map_err(error)?;
+                Some(dure_hub_protocol::push::PushSubscription {
+                    token,
+                    environment,
+                    preference,
+                    language,
+                })
             }
-            let (token, environment) = crate::push_ios::register(&app).await.map_err(error)?;
-            Some(dure_hub_protocol::push::PushSubscription {
-                token,
-                environment,
-                preference,
-                language,
-            })
-        } else {
-            crate::push_ios::unregister(&app).map_err(error)?;
-            None
+            None => {
+                crate::push_ios::unregister(&app).map_err(error)?;
+                None
+            }
         };
         let push_root = crate::push_root(&app)?;
         let outcomes = tauri::async_runtime::spawn_blocking(move || {
-            // Made under the reset guard, so a key written after a reset
-            // cannot undo it.
+            // Loaded and readied under the reset guard, so a key or epoch
+            // written after a reset cannot undo it, and a forget's epoch rise
+            // is never read half done.
             let key = match &subscription {
-                Some(_) => {
+                Some(subscription) => {
                     let _guard = crate::device_reset::mutation_guard(generation)
                         .map_err(|failure| error(failure.to_string()))?;
-                    Some(crate::push_key::PushKey::load_or_create(&push_root).map_err(error)?)
+                    let mut key =
+                        crate::push_key::PushKey::load_or_create(&push_root).map_err(error)?;
+                    key.prepare_grants(&push_root, subscription.preference)
+                        .map_err(error)?;
+                    Some(key)
                 }
                 None => None,
             };
@@ -570,16 +665,41 @@ pub async fn sync_push_notifications(
 mod tests {
     use super::*;
 
+    /// The computer every alert in these tests comes from, as the phone
+    /// paired it.
+    fn hub() -> String {
+        dure_hub_protocol::fingerprint::of_der(b"hub")
+    }
+
+    fn paired_with(hub: &str) -> Vec<HubEntry> {
+        vec![HubEntry {
+            id: hub.to_string(),
+            box_label: "Laptop".into(),
+            endpoint: "192.168.0.12:47823".into(),
+            fingerprint: hub.to_string(),
+            token: "paired-token".into(),
+            relay_endpoint: Some("relay.example:8787".into()),
+            server_id: Some("server-1".into()),
+            push_registration: None,
+        }]
+    }
+
     #[test]
     fn a_tap_that_launched_the_app_waits_for_the_screen_and_the_latest_wins() {
         use std::sync::{Arc, Mutex};
+        let hubs = paired_with(&hub());
         let tap = |session: &str| {
             PushActivation::from_payload(
-                format!(r#"{{"aps":{{}},"dure":{{"session":"{session}"}}}}"#).as_bytes(),
+                format!(
+                    r#"{{"aps":{{}},"dure":{{"session":"{session}","hub":"{}"}}}}"#,
+                    hub()
+                )
+                .as_bytes(),
+                &hubs,
             )
             .unwrap()
         };
-        assert_eq!(PushActivation::from_payload(br#"{"aps":{}}"#), None);
+        assert_eq!(PushActivation::from_payload(br#"{"aps":{}}"#, &hubs), None);
         let activations = PushActivations::default();
         activations.offer(tap("agent-1"));
         activations.offer(tap("agent-2"));
@@ -604,7 +724,7 @@ mod tests {
     }
 
     fn approval_alert(owner_check: Option<bool>) -> (PushAlertContext, Option<AlertActions>) {
-        let hub = dure_hub_protocol::fingerprint::of_der(b"hub");
+        let hub = hub();
         let context = PushAlertContext::from_payload(
             format!(
                 r#"{{"aps":{{}},"dure":{{"session":"managed_1","hub":"{hub}","approval":{{"attentionId":"attention-3","terminalEpoch":"7"}}}}}}"#
@@ -634,11 +754,12 @@ mod tests {
             None
         );
 
+        let hubs = paired_with(&hub());
         let (context, actions) = approval_alert(Some(false));
         assert!(matches!(
-            alert_answer(&context, actions.as_ref(), "approve"),
-            AlertAnswer::Here { hub, session, approval }
-                if hub == dure_hub_protocol::fingerprint::of_der(b"hub")
+            alert_answer(&context, &hubs, actions.as_ref(), "approve"),
+            AlertAnswer::Here { hub: answered, session, approval }
+                if answered == hub()
                     && session.as_str() == "managed_1"
                     && approval.attention_id.as_str() == "attention-3"
         ));
@@ -646,8 +767,9 @@ mod tests {
         for owner_check in [Some(true), None] {
             let (context, actions) = approval_alert(owner_check);
             assert_eq!(
-                alert_answer(&context, actions.as_ref(), "deny"),
+                alert_answer(&context, &hubs, actions.as_ref(), "deny"),
                 AlertAnswer::Screen(PushActivation {
+                    hub: hub(),
                     session_id: "managed_1".into(),
                     answer: Some(ActivationAnswer {
                         choice: "deny",
@@ -661,9 +783,89 @@ mod tests {
             PushAlertContext::from_payload(br#"{"aps":{},"dure":{"session":"managed_1"}}"#);
         let (_, actions) = approval_alert(Some(false));
         assert_eq!(
-            alert_answer(&tap_only, actions.as_ref(), "approve"),
+            alert_answer(&tap_only, &hubs, actions.as_ref(), "approve"),
             AlertAnswer::Unanswerable
         );
+    }
+
+    /// #660: an alert from a computer this phone does not hold, such as one
+    /// it forgot, opens nothing and answers nothing, with or without Face ID.
+    #[test]
+    fn an_alert_from_a_computer_that_is_not_paired_opens_and_answers_nothing() {
+        let other = paired_with(&dure_hub_protocol::fingerprint::of_der(b"other"));
+        let tap = format!(
+            r#"{{"aps":{{}},"dure":{{"session":"managed_1","hub":"{}"}}}}"#,
+            hub()
+        );
+        assert_eq!(PushActivation::from_payload(tap.as_bytes(), &other), None);
+        assert_eq!(PushActivation::from_payload(tap.as_bytes(), &[]), None);
+        // An alert from a relay that names no computer is no paired computer's.
+        let unnamed = br#"{"aps":{},"dure":{"session":"managed_1"}}"#;
+        assert_eq!(
+            PushActivation::from_payload(unnamed, &paired_with(&hub())),
+            None
+        );
+        for owner_check in [Some(false), Some(true), None] {
+            let (context, actions) = approval_alert(owner_check);
+            assert_eq!(
+                alert_answer(&context, &other, actions.as_ref(), "approve"),
+                AlertAnswer::Unanswerable
+            );
+        }
+        let reply = PushAlertContext::from_payload(
+            format!(
+                r#"{{"aps":{{}},"dure":{{"session":"managed_1","hub":"{}","reply":{{"terminalEpoch":"7"}}}}}}"#,
+                hub()
+            )
+            .as_bytes(),
+        );
+        assert!(reply_to(&reply, &other).is_none());
+        assert!(reply_to(&reply, &paired_with(&hub())).is_some());
+    }
+
+    /// Forgetting the last computer stops alerts as Off does: the sync then
+    /// unregisters the token instead of registering it.
+    #[test]
+    fn with_no_computer_left_a_sync_stops_alerts_as_off_does() {
+        let hubs = paired_with(&hub());
+        for preference in [PushPreference::All, PushPreference::Approvals] {
+            assert_eq!(
+                registered_preference(Some(preference), &hubs),
+                Some(preference)
+            );
+            assert_eq!(registered_preference(Some(preference), &[]), None);
+        }
+        assert_eq!(registered_preference(None, &hubs), None);
+    }
+
+    /// A tap on the notice that an answer did not land opens the agent on
+    /// the computer the alert came from.
+    #[test]
+    fn a_failure_notice_names_the_alerts_computer_and_its_tap_opens_there() {
+        let (context, _) = approval_alert(Some(false));
+        let notice =
+            FailureNotice::about(&context, "Dure could not answer that approval.".into()).unwrap();
+        assert_eq!(
+            (notice.session.as_str(), notice.hub.as_deref()),
+            ("managed_1", Some(hub().as_str()))
+        );
+        // What `push_ios` posts and reads back when the notice is tapped.
+        let posted = serde_json::to_vec(&serde_json::json!({
+            dure_hub_protocol::push::PUSH_ALERT_CONTEXT_KEY: {
+                "session": notice.session, "hub": notice.hub,
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            PushActivation::from_payload(&posted, &paired_with(&hub())),
+            Some(PushActivation {
+                hub: hub(),
+                session_id: "managed_1".into(),
+                answer: None,
+            })
+        );
+        let unnamed = PushAlertContext::from_payload(br#"{"aps":{},"dure":{}}"#);
+        assert_eq!(FailureNotice::about(&unnamed, "body".into()), None);
     }
 
     /// A computer's catalog as the phone reads it: each session with whether
@@ -714,7 +916,7 @@ mod tests {
     fn a_reply_from_an_alert_is_the_composers_prompt_fenced_on_the_alerted_process() {
         assert_eq!(REPLY_ACTION, "dure.reply.send");
         assert_eq!(action_choice(REPLY_ACTION), None);
-        let hub = dure_hub_protocol::fingerprint::of_der(b"hub");
+        let hub = hub();
         let context = PushAlertContext::from_payload(
             format!(
                 r#"{{"aps":{{}},"dure":{{"session":"managed_1","hub":"{hub}","reply":{{"terminalEpoch":"7"}}}}}}"#

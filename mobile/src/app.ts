@@ -2624,7 +2624,8 @@ export function startApp(root: HTMLElement): () => void {
   async function openActivatedAgent(activation: PushActivation): Promise<void> {
     if (activation.answer) return answerActivatedApproval(activation);
     const screen = state.screen;
-    if (disposed || (screen.kind === "terminal" && screen.session.session_id === activation.sessionId)) return;
+    if (disposed || (screen.kind === "terminal" && screen.source.kind === "hub"
+      && screen.source.id === activation.hub && screen.session.session_id === activation.sessionId)) return;
     let row = activatedRow(listedRows(), activation);
     if (!row) {
       await census();
