@@ -70,7 +70,7 @@ export function installAgentTracker(): () => void {
 						knownActivity !== undefined && knownActivity !== "exited";
 					state.setAgentActivity(agent.id, "exited");
 					if (observedAlive) {
-						notifyAgentEvent(
+						void notifyAgentEvent(
 							agent.id,
 							"exited",
 							t("app.notifications.agentProcessExited"),

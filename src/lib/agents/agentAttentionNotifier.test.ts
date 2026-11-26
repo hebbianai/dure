@@ -415,7 +415,7 @@ describe("an agent the person muted", () => {
 
   it("sends no desktop notification and no phone push for any kind", () => {
     mocks.storeState.agents = [mutedAgent];
-    for (const kind of ["approval", "done", "input", "exited"] as const) {
+    for (const kind of ["approval", "done", "input", "exited", "message"] as const) {
       notifyAgentEvent("agent-a", kind, "Body", { eventId: `event-${kind}` });
       notifyAgentEvent("agent-a", kind, "Body");
     }
@@ -436,5 +436,94 @@ describe("an agent the person muted", () => {
     notifyAgentEvent("agent-a", "approval", "Approval", { eventId: "event-a" });
     expect(mocks.systemNotify).toHaveBeenCalledTimes(2);
     expect(mocks.pushAgentNotification).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("agent messages (dure notify)", () => {
+  it("shows the message beside the agent's visible pane, with its pane target and no phone push", async () => {
+    mocks.notifyPrefs.mockReturnValue({ enabled: true, agentMessage: true, suppressWhenVisible: true });
+    const receipt = await notifyAgentEvent("agent-a", "message", "Build is green", { eventId: "notify:n.1" });
+    expect(mocks.systemNotify).toHaveBeenCalledWith("Codex · Workspace", "Build is green", {
+      eventId: "notify:n.1",
+      paneTarget: { desktopId: "desktop-a", panelId: "agent:agent-a", windowLabel: "main" },
+    });
+    expect(mocks.pushAgentNotification).not.toHaveBeenCalled();
+    expect(receipt).toEqual({
+      agent: { id: "agent-a", name: "Codex", project: "Workspace" },
+      desktop: { status: "shown" },
+      phone: { status: "not_sent", reason: "unsupported" },
+    });
+  });
+
+  it("lets a dispatched worker's explicit message through", async () => {
+    mocks.storeState.agents = [{
+      id: "agent-a",
+      name: "Codex",
+      projectId: "project-a",
+      workflowDispatch: { schemaVersion: 1, taskId: "task-1", dispatchId: "dispatch-1", generation: 1 },
+    }];
+    mocks.notifyPrefs.mockReturnValue({ enabled: true, agentMessage: true });
+    expect((await notifyAgentEvent("agent-a", "message", "Done", { eventId: "notify:n.2" })).desktop)
+      .toEqual({ status: "shown" });
+  });
+
+  it("tells the sender that the person muted this agent", async () => {
+    mocks.storeState.agents = [{ id: "agent-a", name: "Codex", projectId: "project-a", notificationsMuted: true }];
+    mocks.notifyPrefs.mockReturnValue({ enabled: true, agentMessage: true });
+    expect(await notifyAgentEvent("agent-a", "message", "Hi", { eventId: "notify:n.6" })).toEqual({
+      agent: { id: "agent-a", name: "Codex", project: "Workspace" },
+      desktop: { status: "not_sent", reason: "muted" },
+      phone: { status: "not_sent", reason: "muted" },
+    });
+    expect(mocks.systemNotify).not.toHaveBeenCalled();
+  });
+
+  it("titles a message from outside any agent without naming an agent or a pane", async () => {
+    mocks.notifyPrefs.mockReturnValue({ enabled: true, agentMessage: true, suppressWhenVisible: true });
+    const receipt = await notifyAgentEvent(null, "message", "Backup finished", { eventId: "notify:n.3" });
+    expect(mocks.systemNotify).toHaveBeenCalledWith(
+      "notifications.agentMessage.personTitle",
+      "Backup finished",
+      { eventId: "notify:n.3", paneTarget: undefined },
+    );
+    expect(receipt).toEqual({
+      agent: null,
+      desktop: { status: "shown" },
+      phone: { status: "not_sent", reason: "no_agent" },
+    });
+  });
+
+  it.each([
+    { enabled: false, agentMessage: true },
+    { enabled: true, agentMessage: false },
+  ])("reports a disabled desktop for %o", async (prefs) => {
+    mocks.notifyPrefs.mockReturnValue(prefs);
+    const receipt = await notifyAgentEvent("agent-a", "message", "Hi", { eventId: "notify:n.4" });
+    expect(mocks.systemNotify).not.toHaveBeenCalled();
+    expect(receipt.desktop).toEqual({ status: "disabled" });
+  });
+
+  it.each([
+    [{ accepted: false, reason: "permission-denied" }, { status: "permission_denied", reason: "permission-denied" }],
+    [{ accepted: false, reason: "permission-not-requested" }, { status: "permission_denied", reason: "permission-not-requested" }],
+    [{ accepted: false, reason: "dispatch-failed" }, { status: "failed", reason: "dispatch-failed" }],
+    [{ accepted: false, reason: "backend-error" }, { status: "failed", reason: "backend-error" }],
+  ])("reports the native adapter's refusal %o", async (native, desktop) => {
+    mocks.notifyPrefs.mockReturnValue({ enabled: true, agentMessage: true });
+    mocks.systemNotify.mockResolvedValue(native);
+    expect((await notifyAgentEvent("agent-a", "message", "Hi", { eventId: "notify:n.5" })).desktop)
+      .toEqual(desktop);
+  });
+
+  it("reports what the existing kinds did through the same table", async () => {
+    mocks.notifyPrefs.mockReturnValue({ enabled: true, approvalRequired: true, agentExited: true, suppressWhenVisible: false });
+    expect(await notifyAgentEvent("agent-a", "approval", "Approval", { eventId: "event-a" })).toMatchObject({
+      desktop: { status: "shown" },
+      phone: { status: "queued" },
+    });
+    expect((await notifyAgentEvent("agent-a", "exited", "Exited")).phone)
+      .toEqual({ status: "not_sent", reason: "unsupported" });
+    expect((await notifyAgentEvent("missing", "approval", "Approval", { eventId: "event-b" })).desktop)
+      .toEqual({ status: "not_sent", reason: "no_agent" });
   });
 });

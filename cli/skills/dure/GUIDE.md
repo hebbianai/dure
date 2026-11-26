@@ -948,6 +948,44 @@ past it. Retry later or send a `--track` message; do not resend with
 A target whose runtime predates the guard receives ordinary input with a stderr
 warning; restarting that session enables the guard.
 
+## Tell the person something
+
+`dure notify` reaches the person, never another agent. It shows one short
+message as a desktop notification from the running Dure app on this computer,
+titled with your name and project; clicking it opens your pane (on macOS).
+Run outside an agent's pane, it is titled "Message from a command".
+
+```sh
+dure notify "Release v1.4 is published"
+dure notify "I need your decision on the schema migration; the options are in my pane" --json
+```
+
+Notify when the person has to act or would want to know now: a decision only
+they can make, a blocker you cannot clear, or the end of long work they are
+waiting on. Do not notify:
+
+- for progress, a finished turn, or an approval or input prompt: Dure already
+  notifies those;
+- to reach another agent: use `dure send` or the orchestration channel;
+- twice for the same outcome, or to repeat a message that was rate limited.
+
+A message is 1 to 280 characters. Line breaks are kept; other control
+characters and invisible characters that reorder or hide text are refused
+with exit 2. Each sender may send 3 at once, then 1 every 20 seconds, and at
+most 30 an hour; a rate-limited message is not shown and its receipt carries
+`retryAfterMs`. The command exits 0 only when the message was shown, and 1 when
+nothing was (notifications off, the person muted you, rate limited, failed, or
+no running app). A muted agent's messages are not shown: its receipt says
+`not_sent` with the reason `muted`. Do not retry or route around a mute.
+`--json` prints the receipt: `status` (`delivered`, `not_delivered` or
+`rate_limited`), `agent`, `desktop.status` and `phone.status`. The phone does
+not receive these messages yet.
+
+The sender is self-declared. As with `dure send`, any process of the same OS
+user can claim a pane's Session, so a notification does not prove who sent it.
+Agents on SSH or remote hosts cannot reach the app's loopback control and get a
+not-running error.
+
 ## Dispatch deadlines
 
 Use `dure orchestration invoke dispatch.deadline.set '<body-json>' --json`

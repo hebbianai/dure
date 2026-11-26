@@ -4179,6 +4179,8 @@ Usage:
                                       Send exact UTF-8 text; JSON describes delivery, not task completion
                                       --idempotency-key applies to the running app broker path
                                       Uncertain app-independent delivery is not retried automatically
+  dure notify <message...> [--json] Show the person a desktop notification from this agent
+                                      Rate limited per sender; exit 1 when nothing was shown
   dure enter <name>                Send Enter to submit the current prompt
   dure send-keys <name> <key...> [--json]
   dure send-keys <session-id> <key...> --workspace ID [--json]
@@ -4895,6 +4897,11 @@ async function main() {
     } finally {
       interruption.dispose();
     }
+    return;
+  }
+  if (cmd === "notify" || (cmd === "help" && rest[0] === "notify")) {
+    const { runNotifyCommand } = await import("./lib/notify-command.mjs");
+    process.exitCode = await runNotifyCommand(cmd === "help" ? ["--help"] : rest, { loadDescriptor: loadServer });
     return;
   }
   if (cmd === "send" || (cmd === "help" && rest[0] === "send")) {

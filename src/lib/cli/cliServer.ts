@@ -3,6 +3,7 @@ import { presentManagedRunProjectionInBackground } from "@/lib/cli/managedRunBac
 import { resolveCliRunAccount } from "@/lib/cli/cliRunAccount";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { addAgent } from "@/lib/agents/agentRegistration";
+import { dispatchCliAgentNotifyRequest } from "@/lib/agents/agentNotify";
 // Defer startup subscriptions until Tauri injects its IPC bridge.
 import { listenWhenReady as listen } from "@/lib/platform/tauriBridge";
 import { t } from "@/lib/i18n";
@@ -142,6 +143,11 @@ export async function startCliServer(
     stopPaneOwnerReporter = await installMountedPaneWindowReporter();
     unlistenRequests = await listen<CliRequest>("cli:request", async (e) => {
       const { reqId, action, params } = e.payload;
+      if (await dispatchCliAgentNotifyRequest(e.payload, {
+        claim: claimCliRequest,
+        complete: completeCliRequest,
+        isMainWindow: () => getCurrentWebviewWindow().label === "main",
+      })) return;
       if (await dispatchCliUnopenedAgentVisibility(e.payload, {
         claim: claimCliRequest,
         complete: completeCliRequest,

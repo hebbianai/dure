@@ -27,6 +27,23 @@ export const pushAgentNotification = (
 		provider: provider ?? null,
 	});
 
+/** Why the app refused a notice's text. The Rust admission owns the rules. */
+export type AgentNoticeTextRefusal =
+	| "empty"
+	| "too_long"
+	| "control_character"
+	| "format_character";
+
+export type AgentNoticeAdmission =
+	| { outcome: "admitted"; notice: string }
+	| { outcome: "rate_limited"; retryAfterMs: number }
+	| { outcome: "invalid"; reason: AgentNoticeTextRefusal };
+
+/** Asks the app's one notice admission to let `sender` show `text`: it checks
+ * the text and spends the sender's rate-limit budget. */
+export const agentNoticeAdmit = (sender: string, text: string) =>
+	invoke<AgentNoticeAdmission>("agent_notice_admit", { sender, text });
+
 export type NotificationAuthorization =
 	| "authorized"
 	| "denied"

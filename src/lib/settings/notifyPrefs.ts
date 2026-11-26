@@ -10,6 +10,8 @@ export interface NotifyPrefs {
   approvalRequired: boolean;
   /** 에이전트 세션 프로세스가 종료됐을 때 */
   agentExited: boolean;
+  /** An agent or a command sent the person a message with `dure notify`. */
+  agentMessage: boolean;
   /** 백그라운드 터미널이 벨(BEL)을 울렸을 때 */
   terminalBell: boolean;
   /** 알림 사운드 선택값 (시스템 기본음/무음 sentinel 또는 macOS 사운드 이름) */
@@ -47,6 +49,7 @@ export const DEFAULT_NOTIFY_PREFS: NotifyPrefs = {
   agentDone: true,
   approvalRequired: true,
   agentExited: true,
+  agentMessage: true,
   terminalBell: true,
   sound: NOTIFICATION_SOUND_SYSTEM,
   suppressWhenVisible: true,

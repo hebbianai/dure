@@ -40,6 +40,18 @@ A child settles when it has finished a turn and is idle, needs input or approval
 
 The parent doesn't have to wait to hear back. Each time a terminal child finishes a turn, needs input or approval, exits or is stopped, Dure sends one message to the parent's inbox and wakes it. A finished turn or exit includes the child's final response and any GitHub pull request links in it. Each result is sent once, even if Dure restarts. If the parent's own session has ended, nothing is sent.
 
+## Get a message from an agent
+
+An agent, or any command you run, can send you a desktop notification:
+
+```sh
+dure notify "Release notes are ready for review"
+```
+
+From an agent's pane the notification is titled with that agent and its project, and clicking it opens the agent on macOS. From anywhere else it is titled "Message from a command". A message is up to 280 characters. Each sender can send 3 at once, then 1 every 20 seconds, and at most 30 an hour. Turn them off with **Settings → Notifications → Messages from agents**, or for one agent with **Mute notifications** in its menu. The command exits 1 when nothing was shown, and `--json` prints what happened. Messages don't reach your phone yet.
+
+The sender is self-declared: as with `dure send`, any program running as your user can send a message as one of your agents. Agents on SSH or remote hosts can't reach the app and get an error saying it isn't running.
+
 ## Move between agents from a terminal
 
 `dure tui` lists your agents across Spaces with their state, account and project, including over SSH without the app. Select one and press Enter to attach. Press `Ctrl-\` then `d` to detach and return to the list; the agent keeps running. Without the app on that machine, the account reads `unknown` and the project is the name of the agent's working folder.
