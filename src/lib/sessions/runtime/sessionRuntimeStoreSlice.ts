@@ -6,6 +6,11 @@
 // and no-op semantics are unchanged.
 
 import type { AgentRuntimeLaunchPresentation } from "@/lib/agents/agentRuntimeLaunchPresentation";
+import {
+	applyStructuredAgentRuntimeUpdate,
+	type StructuredAgentRuntimeTiers,
+	type StructuredAgentRuntimeUpdate,
+} from "@/lib/agents/structuredAgentRuntime";
 import { compareDecimalStrings } from "@/lib/decimalString";
 import { mergeHmuxSessionMetadata } from "@/lib/hmux/identity/hmuxSessionMetadata";
 import type { HmuxAgentRuntimeState, HmuxSessionSummary } from "@/lib/ipc";
@@ -38,6 +43,9 @@ export interface SessionRuntimeStoreSlice {
 	sessionAgentRuntimeState: Record<string, HmuxAgentRuntimeState>;
 	/** Local stream lifetimes; an empty entry means the retained facts are unobserved. */
 	sessionAgentRuntimeObservers: Record<string, SessionAgentRuntimeObservers>;
+	/** The chat runtime's Host-like tier, by backend profile, present only
+	 * while that backend's activity subscription is live. */
+	structuredAgentRuntimeTiers: StructuredAgentRuntimeTiers;
 	/** Complete backend-committed launch selection keyed by registered Agent. */
 	agentRuntimeLaunchPresentation: Record<
 		string,
@@ -70,6 +78,12 @@ export interface SessionRuntimeStoreSlice {
 	setSessionAgentRuntimeState: (
 		sessionId: string,
 		state: HmuxAgentRuntimeState,
+	) => void;
+	/** Apply one activity subscription event to a backend's tier; `null`
+	 * withdraws the tier when its subscription ends. */
+	applyStructuredAgentRuntime: (
+		backendProfileId: string,
+		update: StructuredAgentRuntimeUpdate | null,
 	) => void;
 	setHmuxSessionMetadata: (session: HmuxSessionSummary) => void;
 	setHmuxSessionsMetadata: (sessions: readonly HmuxSessionSummary[]) => void;
@@ -131,6 +145,7 @@ export function createSessionRuntimeStoreSlice(
 		agentActivity: {},
 		sessionAgentRuntimeState: {},
 		sessionAgentRuntimeObservers: {},
+		structuredAgentRuntimeTiers: {},
 		agentRuntimeLaunchPresentation: {},
 		hmuxSessionMetadata: {},
 		terminalRefreshRequests: {},
@@ -217,6 +232,25 @@ export function createSessionRuntimeStoreSlice(
 				return sessionAgentRuntimeState === current.sessionAgentRuntimeState
 					? current
 					: { sessionAgentRuntimeState };
+			}),
+		applyStructuredAgentRuntime: (backendProfileId, update) =>
+			set((current) => {
+				const tiers = current.structuredAgentRuntimeTiers;
+				if (update === null) {
+					if (!(backendProfileId in tiers)) return current;
+					const next = { ...tiers };
+					delete next[backendProfileId];
+					return { structuredAgentRuntimeTiers: next };
+				}
+				return {
+					structuredAgentRuntimeTiers: {
+						...tiers,
+						[backendProfileId]: applyStructuredAgentRuntimeUpdate(
+							tiers[backendProfileId],
+							update,
+						),
+					},
+				};
 			}),
 		setHmuxSessionMetadata: (session) => setHmuxSessionsMetadata([session]),
 		setHmuxSessionsMetadata,

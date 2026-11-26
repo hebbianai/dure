@@ -1008,7 +1008,6 @@ mod tests {
                 attention_id: attention_id.map(|id| AgentInteractionRequestIdV1::new(id).unwrap()),
                 turn_completed: Some(CompletedTurn {
                     item_id: AgentTimelineItemIdV1::new("completed-3").unwrap(),
-                    sequence: 3,
                     final_response: Some("Done.".into()),
                 }),
                 latest_failure: Some(AgentTimelineItemIdV1::new("failed-2").unwrap()),

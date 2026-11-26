@@ -2336,3 +2336,78 @@ async fn runtime_replacement_leaves_finished_turns_alone() {
         .unwrap();
     assert_eq!(tail(&store).await.rows.len(), before.rows.len());
 }
+
+#[tokio::test]
+async fn bindings_page_in_order_and_the_newest_finished_turn_is_found_behind_later_rows() {
+    let directory = TempDir::new().unwrap();
+    let store = provision(&directory.path().join("dure.sqlite")).await;
+    let first = interaction_binding();
+    store
+        .upsert_agent(&AgentRecordV1 {
+            agent_id: AgentIdV1::new("agent-2").unwrap(),
+            workspace_id: WorkspaceIdV1::new("workspace-1").unwrap(),
+            provider_id: ProviderIdV1::new("provider.fake").unwrap(),
+            display_name: "Second".into(),
+            created_at_ms: 3,
+            updated_at_ms: 3,
+        })
+        .await
+        .unwrap();
+    let second = AgentInteractionBindingV1 {
+        interaction_session_id: AgentInteractionSessionIdV1::new("interaction-2").unwrap(),
+        agent_id: AgentIdV1::new("agent-2").unwrap(),
+        ..interaction_binding()
+    };
+    store.create_agent_interaction(&second).await.unwrap();
+    assert_eq!(
+        store.agent_interactions(None, 10).await.unwrap(),
+        vec![first.clone(), second.clone()]
+    );
+    assert_eq!(
+        store.agent_interactions(None, 1).await.unwrap(),
+        vec![first.clone()]
+    );
+    assert_eq!(
+        store
+            .agent_interactions(Some(&first.interaction_session_id), 10)
+            .await
+            .unwrap(),
+        vec![second]
+    );
+
+    assert_eq!(
+        store
+            .latest_agent_turn_completed(&first.interaction_session_id)
+            .await
+            .unwrap(),
+        None
+    );
+    store
+        .apply_agent_provider_event(&provider_event(
+            1,
+            vec![
+                session_lifecycle("started-1", AgentTimelineLifecycleStateV1::TurnStarted, 121),
+                session_lifecycle(
+                    "completed-1",
+                    AgentTimelineLifecycleStateV1::TurnCompleted,
+                    122,
+                ),
+                session_lifecycle("ready-1", AgentTimelineLifecycleStateV1::SessionReady, 123),
+            ],
+        ))
+        .await
+        .unwrap();
+    let rows = tail(&store).await.rows;
+    let completed = rows
+        .iter()
+        .find(|row| row.item.item_id.as_str() == "completed-1")
+        .unwrap();
+    assert_ne!(rows.last().unwrap().cursor, completed.cursor);
+    assert_eq!(
+        store
+            .latest_agent_turn_completed(&first.interaction_session_id)
+            .await
+            .unwrap(),
+        Some(completed.cursor.clone())
+    );
+}

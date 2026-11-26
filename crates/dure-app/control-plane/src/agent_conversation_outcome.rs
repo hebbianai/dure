@@ -109,9 +109,6 @@ impl ConversationActivity {
 pub(crate) struct CompletedTurn {
     /// The turn's `TurnCompleted` row.
     pub(crate) item_id: AgentTimelineItemIdV1,
-    /// That row's position in the conversation's timeline. It only grows
-    /// within one timeline, so a later finished turn has a larger one.
-    pub(crate) sequence: i64,
     /// The turn's last assistant message, when the tail holds it.
     pub(crate) final_response: Option<String>,
 }
@@ -151,23 +148,72 @@ impl ConversationOutcome {
     }
 
     /// What a client polling the conversation is told, such as `dure wait`.
-    /// `turnCompletedSequence` is the newest finished turn's position, so a
-    /// watcher that saw a smaller one in the same conversation and timeline
-    /// knows a turn finished since. It is null when the tail holds no
-    /// finished turn.
-    pub(crate) fn observation(&self, binding: &AgentInteractionBindingV1) -> Value {
+    /// `turnCompletedSequence` is the newest finished turn's position
+    /// ([`latest_turn_completed`]), so a watcher that saw a smaller one in
+    /// the same conversation and timeline knows a turn finished since. It is
+    /// null when no turn has finished.
+    pub(crate) fn observation(
+        &self,
+        binding: &AgentInteractionBindingV1,
+        latest_turn_completed: Option<i64>,
+    ) -> Value {
         let mut value = self.activity.observation();
         value["state"] = json!("observed");
         value["interactionSessionId"] = json!(binding.interaction_session_id.as_str());
         value["timelineEpoch"] = json!(binding.timeline_epoch.as_str());
         value["quiescent"] = json!(self.activity.quiescent);
-        value["turnCompletedSequence"] = json!(
-            self.turn_completed
-                .as_ref()
-                .map(|turn| turn.sequence.to_string())
-        );
+        value["turnCompletedSequence"] =
+            json!(latest_turn_completed.map(|sequence| sequence.to_string()));
         value
     }
+}
+
+/// Where an Agent's chat runtime stands, from its runtime projection.
+#[derive(Debug)]
+pub(crate) enum ChatRuntime {
+    /// It runs on this conversation, or is still being stopped: the
+    /// conversation is its state.
+    Running(AgentInteractionBindingV1),
+    /// A change of runtime is in progress.
+    Changing(AgentInteractionBindingV1),
+    /// The chat runtime was stopped.
+    Stopped(AgentInteractionBindingV1),
+}
+
+/// The chat runtime the Agent is on, or `None` while it runs in a terminal
+/// or has no managed runtime. It takes no Agent lock; a caller that must not
+/// race an operation holds one.
+pub(crate) async fn chat_runtime(
+    state: &ServiceState,
+    agent_id: &AgentIdV1,
+) -> Result<Option<ChatRuntime>, String> {
+    Ok(match read_locked(state, agent_id).await? {
+        AgentRuntimeObservedV1::Stable { authority, .. } => match *authority {
+            AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding } => {
+                Some(ChatRuntime::Running(binding))
+            }
+            AgentRuntimeBindingAuthorityV1::NativeCli { .. } => None,
+        },
+        AgentRuntimeObservedV1::Closed { close, .. } => {
+            let stopped = close.state == AgentRuntimeCloseStateV1::Stopped;
+            match close.intent.source_authority {
+                AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding } if stopped => {
+                    Some(ChatRuntime::Stopped(binding))
+                }
+                AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding } => {
+                    Some(ChatRuntime::Running(binding))
+                }
+                AgentRuntimeBindingAuthorityV1::NativeCli { .. } => None,
+            }
+        }
+        AgentRuntimeObservedV1::Transitioning { .. } => state
+            .store
+            .agent_interaction_for_agent(agent_id)
+            .await
+            .map_err(|_| "agent_runtime_observation_store_failed".to_string())?
+            .map(ChatRuntime::Changing),
+        AgentRuntimeObservedV1::Unmanaged => None,
+    })
 }
 
 /// The conversation the Agent runs on now, for a client that polls it. `None`
@@ -177,34 +223,30 @@ impl ConversationOutcome {
 pub(crate) async fn observe_agent(state: &ServiceState, agent_id: &AgentIdV1) -> Option<Value> {
     let observed = {
         let _guard = state.agent_operations.acquire(agent_id).await;
-        read_locked(state, agent_id).await
+        chat_runtime(state, agent_id).await
     };
     let binding = match observed {
-        Ok(AgentRuntimeObservedV1::Stable { authority, .. }) => match *authority {
-            AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding } => binding,
-            AgentRuntimeBindingAuthorityV1::NativeCli { .. } => return None,
-        },
-        Ok(AgentRuntimeObservedV1::Closed { close, .. })
-            if close.state == AgentRuntimeCloseStateV1::Stopped
-                && matches!(
-                    close.intent.source_authority,
-                    AgentRuntimeBindingAuthorityV1::StructuredProtocol { .. }
-                ) =>
-        {
-            return Some(json!({ "state": "stopped" }));
-        }
-        Ok(_) => return None,
+        Ok(Some(ChatRuntime::Running(binding))) => binding,
+        Ok(Some(ChatRuntime::Stopped(_))) => return Some(json!({ "state": "stopped" })),
+        Ok(Some(ChatRuntime::Changing(_)) | None) => return None,
         Err(code) => return Some(json!({ "state": "unavailable", "errorCode": code })),
     };
-    match read_tail(state, &binding, OUTCOME_TAIL_ROWS).await {
-        Ok(Some(page)) => Some(ConversationOutcome::from_page(&page).observation(&page.binding)),
-        // The conversation moved to another runtime since it was selected.
-        Ok(None) => None,
-        Err(_) => Some(json!({
+    let unavailable = || {
+        Some(json!({
             "state": "unavailable",
             "errorCode": "agent_conversation_observation_unavailable",
-        })),
-    }
+        }))
+    };
+    let page = match read_tail(state, &binding, OUTCOME_TAIL_ROWS).await {
+        Ok(Some(page)) => page,
+        // The conversation moved to another runtime since it was selected.
+        Ok(None) => return None,
+        Err(_) => return unavailable(),
+    };
+    let Ok(latest) = latest_turn_completed(state, &page.binding).await else {
+        return unavailable();
+    };
+    Some(ConversationOutcome::from_page(&page).observation(&page.binding, latest))
 }
 
 fn completed_turn(page: &AgentTimelinePageV1) -> Option<CompletedTurn> {
@@ -233,7 +275,6 @@ fn completed_turn(page: &AgentTimelinePageV1) -> Option<CompletedTurn> {
         });
     Some(CompletedTurn {
         item_id: completed.item.item_id.clone(),
-        sequence: completed.cursor.sequence,
         final_response,
     })
 }
@@ -278,6 +319,23 @@ pub(crate) async fn read_tail(
         }
         _ => None,
     })
+}
+
+/// The row of the newest finished turn in the binding's timeline, however
+/// far back it is; `None` when no turn has finished there. It grows exactly
+/// when a turn finishes, the way a Host's completed-turn count does, so a
+/// reader that compares two values sees each finished turn once however long
+/// the turn ran.
+pub(crate) async fn latest_turn_completed(
+    state: &ServiceState,
+    binding: &AgentInteractionBindingV1,
+) -> Result<Option<i64>, DomainStoreErrorV1> {
+    Ok(state
+        .store
+        .latest_agent_turn_completed(&binding.interaction_session_id)
+        .await?
+        .filter(|cursor| cursor.epoch == binding.timeline_epoch)
+        .map(|cursor| cursor.sequence))
 }
 
 #[cfg(test)]
@@ -411,7 +469,6 @@ mod tests {
             outcome.turn_completed,
             Some(CompletedTurn {
                 item_id: AgentTimelineItemIdV1::new("item-6").unwrap(),
-                sequence: 6,
                 final_response: Some("Done: https://github.com/o/r/pull/1".into()),
             })
         );
@@ -446,7 +503,7 @@ mod tests {
         rows.extend(turn(Some("Second answer")));
         let finished = page(rows);
         assert_eq!(
-            ConversationOutcome::from_page(&finished).observation(&finished.binding),
+            ConversationOutcome::from_page(&finished).observation(&finished.binding, Some(12)),
             json!({
                 "state": "observed",
                 "interactionSessionId": "interaction-1",
@@ -458,7 +515,7 @@ mod tests {
             })
         );
 
-        // A running turn whose tail holds no finished turn has no position.
+        // A conversation that has finished no turn has no position.
         let mut running = page(vec![
             message(AgentTimelineMessageRoleV1::User, "Fix it"),
             lifecycle(AgentTimelineLifecycleStateV1::TurnStarted),
@@ -467,7 +524,7 @@ mod tests {
             turn_id: AgentTurnIdV1::new("turn-1").unwrap(),
             client_message_id: AgentClientMessageIdV1::new("message-1").unwrap(),
         });
-        let observed = ConversationOutcome::from_page(&running).observation(&running.binding);
+        let observed = ConversationOutcome::from_page(&running).observation(&running.binding, None);
         assert_eq!(observed["activity"], "working");
         assert_eq!(observed["quiescent"], false);
         assert_eq!(observed["turnCompletedSequence"], Value::Null);

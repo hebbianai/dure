@@ -17,7 +17,105 @@ use super::{
 };
 
 const SUBSCRIBE_OPERATION: &str = "agent_conversation.subscribe";
+const ACTIVITY_SUBSCRIBE_OPERATION: &str = "agent_conversation.activity.subscribe";
+const ACTIVITY_CAPABILITY: &str = "agent_conversation.activity.v1";
+const ACTIVITY_TOPIC: &str = "agent_conversation.activity";
 const MAX_SUBSCRIPTIONS: usize = 64;
+
+/// What a subscription watches: one conversation's changes, or what every
+/// chat Agent on the backend is doing (the app's chat runtime tier). Both
+/// share admission, capacity, fences and recovery; only the operation, its
+/// capability, its topics and what a reconnect tells the subscriber differ.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SubscriptionKind {
+    Conversation { interaction_session_id: String },
+    Activity,
+}
+
+impl SubscriptionKind {
+    fn of(operation: &str, body: &Value) -> Result<Self, DureBackendTransportError> {
+        let invalid = || {
+            DureBackendTransportError::new(
+                "backend_subscription_invalid_request",
+                "the backend subscription request is invalid",
+            )
+        };
+        match operation {
+            SUBSCRIBE_OPERATION => body
+                .get("interactionSessionId")
+                .and_then(Value::as_str)
+                .filter(|value| super::valid_token(value, 160))
+                .map(|value| Self::Conversation {
+                    interaction_session_id: value.to_owned(),
+                })
+                .ok_or_else(invalid),
+            ACTIVITY_SUBSCRIBE_OPERATION => Ok(Self::Activity),
+            _ => Err(invalid()),
+        }
+    }
+
+    fn operation(&self) -> &'static str {
+        match self {
+            Self::Conversation { .. } => SUBSCRIBE_OPERATION,
+            Self::Activity => ACTIVITY_SUBSCRIBE_OPERATION,
+        }
+    }
+
+    fn capability(&self) -> &'static str {
+        match self {
+            Self::Conversation { .. } => SUBSCRIBE_CAPABILITY,
+            Self::Activity => ACTIVITY_CAPABILITY,
+        }
+    }
+
+    fn accepts(&self, topic: Option<&str>) -> bool {
+        match self {
+            Self::Conversation { .. } => matches!(
+                topic,
+                Some("agent_conversation.changed" | "agent_conversation.reset_required")
+            ),
+            Self::Activity => topic == Some(ACTIVITY_TOPIC),
+        }
+    }
+
+    /// What a subscriber is told after its subscription reconnected to a
+    /// new connection: a conversation must be read again, and the activity
+    /// tier receives the snapshot the new connection opened with.
+    fn reconnected(
+        &self,
+        seed: &DureBackendTransportResult,
+        request_id: &str,
+        subscription_id: &str,
+    ) -> Value {
+        json!({
+            "schemaVersion": 1,
+            "kind": "event",
+            "subscriptionId": subscription_id,
+            "backendId": seed.backend_id,
+            "backendGeneration": seed.backend_generation,
+            "event": self.reconnected_event(&seed.result, request_id),
+        })
+    }
+
+    fn reconnected_event(&self, seed_result: &Value, request_id: &str) -> Value {
+        match self {
+            Self::Conversation {
+                interaction_session_id,
+            } => json!({
+                "schemaVersion": 1,
+                "topic": "agent_conversation.reset_required",
+                "subscriptionRequestId": request_id,
+                "interactionSessionId": interaction_session_id,
+            }),
+            Self::Activity => json!({
+                "schemaVersion": 1,
+                "topic": ACTIVITY_TOPIC,
+                "subscriptionRequestId": request_id,
+                "agents": seed_result.get("agents").cloned().unwrap_or_else(|| json!([])),
+            }),
+        }
+    }
+}
 
 /// Who holds a subscription: a screen's window, whose subscriptions end
 /// when it closes, or native code (the phone hub's chat watch,
@@ -188,6 +286,7 @@ fn subscription_event(
     required: &[&str],
     request_id: &str,
     subscription_id: &str,
+    kind: &SubscriptionKind,
 ) -> Result<Value, DureBackendTransportError> {
     let wire: WireSubscriptionEvent = serde_json::from_slice(source).map_err(|_| {
         DureBackendTransportError::new(
@@ -208,10 +307,7 @@ fn subscription_event(
         || wire.kind != "dure.backend.event"
         || event.get("schemaVersion").and_then(Value::as_u64) != Some(1)
         || event.get("subscriptionRequestId").and_then(Value::as_str) != Some(request_id)
-        || !matches!(
-            topic,
-            Some("agent_conversation.changed" | "agent_conversation.reset_required")
-        )
+        || !kind.accepts(topic)
     {
         return Err(DureBackendTransportError::new(
             "backend_subscription_malformed_event",
@@ -241,25 +337,19 @@ fn send_terminal_error(
     }));
 }
 
-fn subscription_reset_required(
-    seed: &DureBackendTransportResult,
-    request_id: &str,
-    subscription_id: &str,
-    interaction_session_id: &str,
-) -> Value {
-    json!({
-        "schemaVersion": 1,
-        "kind": "event",
-        "subscriptionId": subscription_id,
-        "backendId": seed.backend_id,
-        "backendGeneration": seed.backend_generation,
-        "event": {
-            "schemaVersion": 1,
-            "topic": "agent_conversation.reset_required",
-            "subscriptionRequestId": request_id,
-            "interactionSessionId": interaction_session_id,
-        },
-    })
+/// One subscription request: what it watches and the body that opens it.
+struct SubscriptionRequest {
+    kind: SubscriptionKind,
+    body: Value,
+}
+
+impl SubscriptionRequest {
+    fn new(operation: &str, body: Value) -> Result<Self, DureBackendTransportError> {
+        Ok(Self {
+            kind: SubscriptionKind::of(operation, &body)?,
+            body,
+        })
+    }
 }
 
 struct SubscriptionAuthority {
@@ -273,11 +363,12 @@ fn resolve_subscription_authority(
     config: &super::RuntimeConfig,
     route: &DureBackendRouteV1,
     request_id: &str,
+    kind: &SubscriptionKind,
     body: &Value,
 ) -> Result<SubscriptionAuthority, DureBackendTransportError> {
     let selected = route_authority::select(root, config, route)?;
-    let required = required_capabilities(&selected, SUBSCRIBE_CAPABILITY)?;
-    let request = serialize_request(&selected, request_id, SUBSCRIBE_OPERATION, body, &required)?;
+    let required = required_capabilities(&selected, kind.capability())?;
+    let request = serialize_request(&selected, request_id, kind.operation(), body, &required)?;
     Ok(SubscriptionAuthority {
         selected,
         request,
@@ -290,10 +381,11 @@ fn resolve_following_subscription_authority(
     config: &super::RuntimeConfig,
     route: &DureBackendRouteV1,
     request_id: &str,
+    kind: &SubscriptionKind,
     body: &Value,
     previous: &SelectedProfile,
 ) -> Result<SubscriptionAuthority, DureBackendTransportError> {
-    let authority = resolve_subscription_authority(root, config, route, request_id, body)?;
+    let authority = resolve_subscription_authority(root, config, route, request_id, kind, body)?;
     if authority.selected.same_observation_target(previous) {
         Ok(authority)
     } else {
@@ -346,7 +438,7 @@ struct SubscriptionWorker {
     config: super::RuntimeConfig,
     request_id: String,
     subscription_id: String,
-    interaction_session_id: String,
+    kind: SubscriptionKind,
     channel: Box<dyn SubscriptionSink>,
     cancel: oneshot::Receiver<()>,
     subscriptions: Weak<ActiveSubscriptions>,
@@ -361,6 +453,7 @@ impl SubscriptionWorker {
                 &self.config,
                 &self.route,
                 &self.request_id,
+                &self.kind,
                 &self.body,
                 &self.authority.selected,
             ) {
@@ -410,6 +503,7 @@ impl SubscriptionWorker {
                             &self.config,
                             &self.route,
                             &self.request_id,
+                            &self.kind,
                             &self.body,
                             &self.authority.selected,
                         ) {
@@ -432,11 +526,10 @@ impl SubscriptionWorker {
                 Ok((connection, seed)) => {
                     let stale = std::mem::replace(&mut self.connection, connection);
                     self.authority = next_authority;
-                    let sent = self.channel.deliver(subscription_reset_required(
+                    let sent = self.channel.deliver(self.kind.reconnected(
                         &seed,
                         &self.request_id,
                         &self.subscription_id,
-                        &self.interaction_session_id,
                     ));
                     stale.close().await;
                     if !sent {
@@ -463,6 +556,7 @@ impl SubscriptionWorker {
                     &self.authority.required,
                     &self.request_id,
                     &self.subscription_id,
+                    &self.kind,
                 )
             }) {
                 Ok(message) => message,
@@ -492,6 +586,7 @@ impl SubscriptionWorker {
                         &self.config,
                         &self.route,
                         &self.request_id,
+                        &self.kind,
                         &self.body,
                         &self.authority.selected,
                     ) {
@@ -511,11 +606,10 @@ impl SubscriptionWorker {
                     {
                         Ok((connection, seed)) => {
                             let stale = std::mem::replace(&mut self.connection, connection);
-                            let reset = self.channel.deliver(subscription_reset_required(
+                            let reset = self.channel.deliver(self.kind.reconnected(
                                 &seed,
                                 &self.request_id,
                                 &self.subscription_id,
-                                &self.interaction_session_id,
                             ));
                             stale.close().await;
                             if !reset {
@@ -548,32 +642,23 @@ async fn open_subscription(
     route: &DureBackendRouteV1,
     subscription_id: &str,
     owner: impl Into<SubscriptionOwner>,
-    body: Value,
+    request: SubscriptionRequest,
     channel: impl SubscriptionSink,
 ) -> Result<DureBackendTransportResult, DureBackendTransportError> {
-    let interaction_session_id = body
-        .get("interactionSessionId")
-        .and_then(Value::as_str)
-        .filter(|value| super::valid_token(value, 160))
-        .map(str::to_owned);
     if !super::valid_token(subscription_id, 160) {
         return Err(DureBackendTransportError::new(
             "backend_subscription_invalid_request",
             "the backend subscription request is invalid",
         ));
     }
-    let Some(interaction_session_id) = interaction_session_id else {
-        return Err(DureBackendTransportError::new(
-            "backend_subscription_invalid_request",
-            "the backend subscription request is invalid",
-        ));
-    };
+    let SubscriptionRequest { kind, body } = request;
     let request_id = request_id()?;
     let mut authority =
-        resolve_subscription_authority(root, &state.config, route, &request_id, &body)?;
+        resolve_subscription_authority(root, &state.config, route, &request_id, &kind, &body)?;
     let cancel = reserve(&state.subscriptions, subscription_id, owner, &request_id)?;
     let opened = async {
-        authority = resolve_subscription_authority(root, &state.config, route, &request_id, &body)?;
+        authority =
+            resolve_subscription_authority(root, &state.config, route, &request_id, &kind, &body)?;
         match connect_subscription(&authority, &state.config, &request_id).await {
             Ok(opened) => Ok(opened),
             Err(error) if super::local_liveness_failure(&authority.selected, &error) => {
@@ -586,8 +671,14 @@ async fn open_subscription(
                     .wait_for_recovery(&ticket)
                     .await
                     .map_err(super::coordinator_error)?;
-                authority =
-                    resolve_subscription_authority(root, &state.config, route, &request_id, &body)?;
+                authority = resolve_subscription_authority(
+                    root,
+                    &state.config,
+                    route,
+                    &request_id,
+                    &kind,
+                    &body,
+                )?;
                 connect_subscription(&authority, &state.config, &request_id).await
             }
             Err(error) => Err(error),
@@ -640,7 +731,7 @@ async fn open_subscription(
         config: state.config.clone(),
         request_id,
         subscription_id,
-        interaction_session_id,
+        kind,
         channel: Box::new(channel),
         cancel,
         subscriptions,
@@ -690,7 +781,7 @@ pub(super) async fn open_native_subscription(
         route,
         &subscription_id,
         SubscriptionOwner::Native,
-        body,
+        SubscriptionRequest::new(SUBSCRIBE_OPERATION, body)?,
         sender,
     )
     .await?;
@@ -709,6 +800,7 @@ pub(crate) async fn dure_backend_subscribe(
     state: State<'_, DureBackendTransportState>,
     route: DureBackendRouteV1,
     subscription_id: String,
+    operation: Option<String>,
     body: Value,
     channel: Channel<Value>,
 ) -> Result<DureBackendTransportResult, DureBackendTransportError> {
@@ -719,7 +811,7 @@ pub(crate) async fn dure_backend_subscribe(
         &route,
         &subscription_id,
         window.label(),
-        body,
+        SubscriptionRequest::new(operation.as_deref().unwrap_or(SUBSCRIBE_OPERATION), body)?,
         channel,
     )
     .await
@@ -907,12 +999,16 @@ mod tests {
     fn subscription_events_keep_the_exact_request_and_backend_generation_fence() {
         let selected = selected();
         let required = [SUBSCRIBE_CAPABILITY, super::super::PERSISTENT_CAPABILITY];
+        let conversation = SubscriptionKind::Conversation {
+            interaction_session_id: "interaction-1".into(),
+        };
         let parsed = subscription_event(
             &event("request-1", "generation-1"),
             &selected,
             &required,
             "request-1",
             "subscription-1",
+            &conversation,
         )
         .unwrap();
         assert_eq!(parsed["kind"], "event");
@@ -924,6 +1020,7 @@ mod tests {
                 &required,
                 "request-1",
                 "subscription-1",
+                &conversation,
             )
             .is_err()
         );
@@ -934,8 +1031,114 @@ mod tests {
                 &required,
                 "request-1",
                 "subscription-1",
+                &conversation,
             )
             .is_err()
+        );
+    }
+
+    fn activity_event(request_id: &str, topic: &str) -> Vec<u8> {
+        let mut source: Value = serde_json::from_slice(&event(request_id, "generation-1")).unwrap();
+        source["event"] = json!({
+            "schemaVersion": 1,
+            "topic": topic,
+            "subscriptionRequestId": request_id,
+            "changes": [],
+            "removed": ["agent-1"],
+        });
+        serde_json::to_vec(&source).unwrap()
+    }
+
+    #[test]
+    fn each_kind_names_its_operation_and_capability_and_accepts_only_its_topics() {
+        let conversation = SubscriptionKind::of(
+            SUBSCRIBE_OPERATION,
+            &json!({ "schemaVersion": 1, "interactionSessionId": "interaction-1" }),
+        )
+        .unwrap();
+        assert_eq!(conversation.operation(), "agent_conversation.subscribe");
+        assert_eq!(conversation.capability(), "agent_conversation.subscribe.v7");
+        // The activity tier watches the whole backend: no conversation names it.
+        let activity =
+            SubscriptionKind::of(ACTIVITY_SUBSCRIBE_OPERATION, &json!({ "schemaVersion": 1 }))
+                .unwrap();
+        assert_eq!(activity, SubscriptionKind::Activity);
+        assert_eq!(
+            activity.operation(),
+            "agent_conversation.activity.subscribe"
+        );
+        assert_eq!(activity.capability(), "agent_conversation.activity.v1");
+        assert!(SubscriptionKind::of(SUBSCRIBE_OPERATION, &json!({ "schemaVersion": 1 })).is_err());
+        assert!(SubscriptionKind::of("agent_conversation.read", &json!({})).is_err());
+
+        let selected = selected();
+        let required = [ACTIVITY_CAPABILITY, super::super::PERSISTENT_CAPABILITY];
+        let parsed = subscription_event(
+            &activity_event("request-1", "agent_conversation.activity"),
+            &selected,
+            &required,
+            "request-1",
+            "subscription-1",
+            &activity,
+        );
+        // The fixture backend does not declare the activity capability.
+        assert!(parsed.is_err());
+        assert!(subscription_event(
+            &activity_event("request-1", "agent_conversation.activity"),
+            &selected,
+            &[SUBSCRIBE_CAPABILITY],
+            "request-1",
+            "subscription-1",
+            &activity,
+        )
+        .is_ok());
+        assert!(subscription_event(
+            &activity_event("request-1", "agent_conversation.changed"),
+            &selected,
+            &[SUBSCRIBE_CAPABILITY],
+            "request-1",
+            "subscription-1",
+            &activity,
+        )
+        .is_err());
+        assert!(subscription_event(
+            &activity_event("request-1", "agent_conversation.activity"),
+            &selected,
+            &[SUBSCRIBE_CAPABILITY],
+            "request-1",
+            "subscription-1",
+            &conversation,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn an_older_backend_refuses_the_activity_tier_before_anything_is_sent() {
+        let error = required_capabilities(&selected(), ACTIVITY_CAPABILITY).unwrap_err();
+        assert_eq!(error.code, "backend_transport_capability_missing");
+    }
+
+    #[test]
+    fn a_reconnected_activity_subscription_is_sent_the_new_snapshot() {
+        let agents = json!([{ "agentId": "agent-1", "lifecycle": "running" }]);
+        assert_eq!(
+            SubscriptionKind::Activity.reconnected_event(
+                &json!({ "schemaVersion": 1, "agents": agents }),
+                "request-2"
+            ),
+            json!({
+                "schemaVersion": 1,
+                "topic": "agent_conversation.activity",
+                "subscriptionRequestId": "request-2",
+                "agents": agents,
+            })
+        );
+        assert_eq!(
+            SubscriptionKind::Conversation {
+                interaction_session_id: "interaction-1".into()
+            }
+            .reconnected_event(&json!({ "schemaVersion": 1 }), "request-2")["topic"],
+            "agent_conversation.reset_required"
         );
     }
 
@@ -1111,10 +1314,14 @@ mod tests {
             &route,
             "subscription-quiet",
             "window-quiet",
-            json!({
-                "schemaVersion": 1,
-                "interactionSessionId": "interaction-1"
-            }),
+            SubscriptionRequest::new(
+                SUBSCRIBE_OPERATION,
+                json!({
+                    "schemaVersion": 1,
+                    "interactionSessionId": "interaction-1"
+                }),
+            )
+            .unwrap(),
             Channel::new(|_| Ok(())),
         )
         .await
@@ -1273,10 +1480,14 @@ mod tests {
             &route,
             "subscription-1",
             "window-1",
-            json!({
-                "schemaVersion": 1,
-                "interactionSessionId": "interaction-1"
-            }),
+            SubscriptionRequest::new(
+                SUBSCRIBE_OPERATION,
+                json!({
+                    "schemaVersion": 1,
+                    "interactionSessionId": "interaction-1"
+                }),
+            )
+            .unwrap(),
             Channel::new(move |body| {
                 if let InvokeResponseBody::Json(source) = body {
                     let _ = event_sender.send(serde_json::from_str::<Value>(&source)?);
@@ -1378,10 +1589,14 @@ mod tests {
             &route,
             "subscription-1",
             "window-1",
-            json!({
-                "schemaVersion": 1,
-                "interactionSessionId": "interaction-1"
-            }),
+            SubscriptionRequest::new(
+                SUBSCRIBE_OPERATION,
+                json!({
+                    "schemaVersion": 1,
+                    "interactionSessionId": "interaction-1"
+                }),
+            )
+            .unwrap(),
             Channel::new(move |body| {
                 if let InvokeResponseBody::Json(source) = body {
                     let _ = event_sender.send(serde_json::from_str::<Value>(&source)?);
@@ -1488,10 +1703,14 @@ mod tests {
             &route,
             "subscription-1",
             "window-1",
-            json!({
-                "schemaVersion": 1,
-                "interactionSessionId": "interaction-1"
-            }),
+            SubscriptionRequest::new(
+                SUBSCRIBE_OPERATION,
+                json!({
+                    "schemaVersion": 1,
+                    "interactionSessionId": "interaction-1"
+                }),
+            )
+            .unwrap(),
             Channel::new(move |body| {
                 if let InvokeResponseBody::Json(source) = body {
                     let _ = event_sender.send(serde_json::from_str::<Value>(&source)?);
@@ -1634,10 +1853,14 @@ done
             &route,
             "subscription-1",
             "window-1",
-            json!({
-                "schemaVersion": 1,
-                "interactionSessionId": "interaction-1"
-            }),
+            SubscriptionRequest::new(
+                SUBSCRIBE_OPERATION,
+                json!({
+                    "schemaVersion": 1,
+                    "interactionSessionId": "interaction-1"
+                }),
+            )
+            .unwrap(),
             Channel::new(|_| Ok(())),
         )
         .await

@@ -23,6 +23,7 @@ import {
   resolveAgentDisplayFromTiers,
   UNOBSERVED_AGENT_ACTIVITY,
 } from "@/lib/agents/agentStateModel";
+import { structuredAgentTierInputs } from "@/lib/agents/structuredAgentRuntime";
 import { managedLocalRuntimeLiveness } from "@/lib/terminal/hmuxManagedAttachConcurrency";
 import { hasSessionAgentRuntimeObservation } from "@/lib/sessions/runtime/sessionRuntimeStoreSlice";
 
@@ -268,22 +269,34 @@ function sameWaitStarts(
 
 function collectSources(): AgentAttentionSource[] {
   const st = useStore.getState();
-  return st.agents.map((agent) => ({
-    agentId: agent.id,
-    sessionId: agent.sessionId,
-    tiers: {
-      heuristic: st.agentActivity[agent.id] ?? UNOBSERVED_AGENT_ACTIVITY,
-      hmuxLiveness: managedLocalRuntimeLiveness(
-        agent.runtimeBinding,
-        st.hmuxSessionMetadata,
-      ),
+  return st.agents.map((agent) => {
+    const heuristic = st.agentActivity[agent.id];
+    // A chat Agent has no Host: its backend's chat runtime tier stands in for
+    // one, and every later rule treats both alike.
+    const semantic = structuredAgentTierInputs(
+      agent,
+      st.structuredAgentRuntimeTiers,
+      heuristic,
+    ) ?? {
       hmux: st.sessionAgentRuntimeState[agent.sessionId],
       hmuxObserved: hasSessionAgentRuntimeObservation(
         st.sessionAgentRuntimeState[agent.sessionId],
         st.sessionAgentRuntimeObservers[agent.sessionId],
       ),
-    },
-  }));
+    };
+    return {
+      agentId: agent.id,
+      sessionId: agent.sessionId,
+      tiers: {
+        heuristic: heuristic ?? UNOBSERVED_AGENT_ACTIVITY,
+        hmuxLiveness: managedLocalRuntimeLiveness(
+          agent.runtimeBinding,
+          st.hmuxSessionMetadata,
+        ),
+        ...semantic,
+      },
+    };
+  });
 }
 
 /** 감지자 설치 — 모든 창에서 1회 (dot/unread는 창별 스토어). 반환값으로 해제. */
@@ -343,7 +356,8 @@ export function installAgentAttentionWatch(): () => void {
       state.agentActivity !== previous.agentActivity ||
       state.hmuxSessionMetadata !== previous.hmuxSessionMetadata ||
       state.sessionAgentRuntimeState !== previous.sessionAgentRuntimeState ||
-      state.sessionAgentRuntimeObservers !== previous.sessionAgentRuntimeObservers
+      state.sessionAgentRuntimeObservers !== previous.sessionAgentRuntimeObservers ||
+      state.structuredAgentRuntimeTiers !== previous.structuredAgentRuntimeTiers
     ) {
       recompute();
     }

@@ -164,6 +164,73 @@ pub(crate) async fn binding_for_agent_on(
     row.map(binding_from_row).transpose()
 }
 
+pub(crate) async fn bindings_after(
+    pool: &SqlitePool,
+    after: Option<&AgentInteractionSessionIdV1>,
+    limit: usize,
+) -> Result<Vec<AgentInteractionBindingV1>, DomainStoreErrorV1> {
+    let limit = i64::try_from(limit)
+        .map_err(|_| storage("read_agent_interactions", "the page limit is too large"))?;
+    let rows = sqlx::query(
+        r#"
+        SELECT schema_version, interaction_session_id, agent_id, provider_id,
+               execution_profile_json, provider_conversation_ref, runtime_generation,
+               provider_epoch, timeline_epoch, binding_revision, history_complete,
+               created_at_ms, updated_at_ms
+        FROM agent_interaction_sessions
+        WHERE ?1 IS NULL OR interaction_session_id > ?1
+        ORDER BY interaction_session_id
+        LIMIT ?2
+        "#,
+    )
+    .bind(after.map(AgentInteractionSessionIdV1::as_str))
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| map_sqlx("read_agent_interactions", error))?;
+    rows.into_iter().map(binding_from_row).collect()
+}
+
+/// Reads backwards from the newest row of the current timeline, so it costs
+/// the rows since the last finished turn.
+pub(crate) async fn latest_turn_completed(
+    pool: &SqlitePool,
+    interaction_session_id: &AgentInteractionSessionIdV1,
+) -> Result<Option<AgentTimelineCursorV1>, DomainStoreErrorV1> {
+    let row = sqlx::query(
+        r#"
+        SELECT rows.timeline_epoch, rows.sequence
+        FROM agent_timeline_rows AS rows
+        JOIN agent_interaction_sessions AS sessions
+          ON sessions.interaction_session_id = rows.interaction_session_id
+         AND sessions.timeline_epoch = rows.timeline_epoch
+        WHERE rows.interaction_session_id = ?1
+          AND json_extract(rows.body_json, '$.type') = 'lifecycle'
+          AND json_extract(rows.body_json, '$.state') = 'turn_completed'
+        ORDER BY rows.sequence DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(interaction_session_id.as_str())
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| map_sqlx("read_agent_latest_turn_completed", error))?;
+    row.map(|row| {
+        Ok(AgentTimelineCursorV1 {
+            epoch: parse_id(
+                "agent_timeline_rows.timeline_epoch",
+                row.try_get("timeline_epoch")
+                    .map_err(|error| corrupt_row("agent_timeline_rows", error))?,
+                AgentTimelineEpochV1::new,
+            )?,
+            sequence: row
+                .try_get("sequence")
+                .map_err(|error| corrupt_row("agent_timeline_rows", error))?,
+        })
+    })
+    .transpose()
+}
+
 /// Runtime replacement is the durable proof that every still-open turn can
 /// never receive its terminal row: exactly one provider serves the session, so
 /// replacing it orphans whatever it left running. Converge those turns here,

@@ -1,5 +1,6 @@
 mod agent_checkpoint_binding;
 pub mod agent_conversation;
+mod agent_conversation_activity;
 pub mod agent_conversation_api;
 mod agent_conversation_history;
 mod agent_conversation_outcome;
@@ -4621,6 +4622,9 @@ async fn handle_connection(state: Arc<ServiceState>, stream: UnixStream) -> io::
         };
         if request.operation == agent_conversation_api::SUBSCRIBE_OPERATION {
             return agent_conversation_api::handle_subscription(state, reader, request).await;
+        }
+        if request.operation == agent_conversation_activity::SUBSCRIBE_OPERATION {
+            return agent_conversation_activity::handle_subscription(state, reader, request).await;
         }
         let request_id = request.request_id.clone();
         let request_operation = request.operation.clone();

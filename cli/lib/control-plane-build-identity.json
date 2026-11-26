@@ -6,6 +6,7 @@
     "apiVersion": "dure.control-plane-identity/v1",
     "kind": "dure.control_plane.identity",
     "capabilities": [
+      "agent_conversation.activity.v1",
       "agent_conversation.answer_pending",
       "agent_conversation.cancel_queued_turn",
       "agent_conversation.continue_turn",

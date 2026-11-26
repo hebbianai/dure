@@ -4,7 +4,8 @@
 pub fn is_durable_agent_observation(operation: &str) -> bool {
     matches!(
         operation,
-        "agent_conversation.inspect"
+        "agent_conversation.activity.subscribe"
+            | "agent_conversation.inspect"
             | "agent_conversation.read"
             | "agent_conversation.read_provider_history"
             | "agent_conversation.subscribe"
@@ -25,6 +26,7 @@ mod tests {
     #[test]
     fn classifies_durable_observations_without_admitting_mutations() {
         for operation in [
+            "agent_conversation.activity.subscribe",
             "agent_conversation.inspect",
             "agent_conversation.read",
             "agent_conversation.read_provider_history",
