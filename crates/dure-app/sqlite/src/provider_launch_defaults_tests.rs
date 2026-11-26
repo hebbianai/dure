@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use dure_app::{
     AGENT_SPAWN_SCHEMA_VERSION_V1, AgentExecutionProfileV1, AgentIdV1, AgentSpawnAuthorityV1,
@@ -319,6 +320,50 @@ async fn provider_admission_failure_rolls_back_the_atomic_spawn_plan() {
             .unwrap()
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn a_busy_spawn_plan_waits_for_the_writer_and_admits_once() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+        .await
+        .unwrap();
+    // Short waits over a long window, so the release below lands inside it.
+    const RETRY_UNTIL_RELEASED: &[Duration] = &[Duration::from_millis(25); 400];
+    let other = store.contending_writer(RETRY_UNTIL_RELEASED).await;
+    let lock = store.pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    let mut admissions = 0;
+    let mut preview = Box::pin(other.append_agent_spawn_plan_resolving_provider_defaults(
+        spawn_draft("busy"),
+        OperationEventIdV1::new("event-busy").unwrap(),
+        10,
+        |plan| {
+            admissions += 1;
+            Ok(plan)
+        },
+    ));
+
+    // With a zero busy timeout, a plan write that does not retry fails well
+    // within this wait.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(250), preview.as_mut())
+            .await
+            .is_err(),
+        "a plan that finds the write lock held must wait, not fail"
+    );
+    lock.rollback().await.unwrap();
+    let planned = preview.await.unwrap();
+    assert_eq!(planned.last_sequence, 1);
+    assert_eq!(admissions, 1);
+    assert_eq!(
+        store
+            .agent_spawn_receipt_by_idempotency_key("busy")
+            .await
+            .unwrap(),
+        Some(planned)
+    );
+    other.close().await;
+    store.close().await;
 }
 
 #[tokio::test]

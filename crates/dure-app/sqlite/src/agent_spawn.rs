@@ -10,11 +10,16 @@ use dure_app::{
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
+use crate::SqliteDomainStore;
 use crate::error::{corrupt_identifier, corrupt_row, map_sqlx, serialization, storage};
 use crate::schema::{begin_immediate, finish_transaction};
+use crate::session_checkout::commit_or_rollback;
 
+/// Plans a Run. Like every journal append, it waits out a write lock held past
+/// the busy timeout on the store's retry schedule; only the start is retried,
+/// so `admit` still runs at most once.
 pub(crate) async fn append_planned_resolving_provider_defaults<F>(
-    pool: &SqlitePool,
+    store: &SqliteDomainStore,
     draft: AgentSpawnPlanIntentDraftV1,
     event_id: OperationEventIdV1,
     recorded_at_ms: i64,
@@ -29,14 +34,12 @@ where
             reason: error.to_string(),
         }
     })?;
-    let mut connection = pool
-        .acquire()
-        .await
-        .map_err(|error| map_sqlx("preview_agent_spawn", error))?;
-    begin_immediate(&mut connection, "preview_agent_spawn").await?;
+    let mut transaction = store
+        .begin_immediate_with_retry("preview_agent_spawn")
+        .await?;
     let result = async {
         if let Some(operation_id) =
-            planned_operation_by_idempotency_key(&mut connection, &draft.request.idempotency_key)
+            planned_operation_by_idempotency_key(&mut transaction, &draft.request.idempotency_key)
                 .await?
         {
             return Err(DomainStoreErrorV1::IdempotencyConflict {
@@ -46,7 +49,7 @@ where
                 ),
             });
         }
-        let defaults = crate::provider_launch_defaults::read_on(&mut connection).await?;
+        let defaults = crate::provider_launch_defaults::read_on(&mut transaction).await?;
         let plan = create_agent_spawn_plan_from_defaults_v1(draft, &defaults).map_err(|error| {
             DomainStoreErrorV1::InvalidRecord {
                 field: "agentSpawnPlan",
@@ -69,23 +72,24 @@ where
             },
             recorded_at_ms,
         };
-        append_event_on(&mut connection, &event).await
+        append_event_on(&mut transaction, &event).await
     }
     .await;
-    finish_transaction(&mut connection, "preview_agent_spawn", result).await
+    commit_or_rollback(transaction, "preview_agent_spawn", result).await
 }
 
+/// Records one step of a Run. Each stage of an apply commits through here, so
+/// a write lock held past the busy timeout waits on the store's retry schedule
+/// instead of failing a Run whose worktree or session may already exist.
 pub(crate) async fn append_event(
-    pool: &SqlitePool,
+    store: &SqliteDomainStore,
     event: &AgentSpawnJournalEventV1,
 ) -> Result<AgentSpawnJournalReceiptV1, DomainStoreErrorV1> {
-    let mut connection = pool
-        .acquire()
-        .await
-        .map_err(|error| map_sqlx("append_agent_spawn_event", error))?;
-    begin_immediate(&mut connection, "append_agent_spawn_event").await?;
-    let result = append_event_on(&mut connection, event).await;
-    finish_transaction(&mut connection, "append_agent_spawn_event", result).await
+    let mut transaction = store
+        .begin_immediate_with_retry("append_agent_spawn_event")
+        .await?;
+    let result = append_event_on(&mut transaction, event).await;
+    commit_or_rollback(transaction, "append_agent_spawn_event", result).await
 }
 
 /// Durable catalog page, independent of runtime discovery and client panes.

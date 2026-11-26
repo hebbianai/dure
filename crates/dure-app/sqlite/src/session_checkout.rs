@@ -106,7 +106,8 @@ impl SqliteDomainStore {
     /// start on the store's schedule (see `retry_busy_start`). Nothing inside
     /// the transaction runs again, so a `FnOnce` reservation still executes at
     /// most once. The Agent binding and runtime selection a launch publishes
-    /// once its provider runs start the same way.
+    /// once its provider runs, and every agent spawn journal append, start the
+    /// same way.
     pub(crate) async fn begin_immediate_with_retry(
         &self,
         operation: &'static str,
