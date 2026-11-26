@@ -13,6 +13,11 @@ import {
 	type ShortcutOverrides,
 	shortcutChord,
 } from "@/lib/settings/shortcutBindings";
+import {
+	type TerminalCellBox,
+	type TerminalCellMetrics,
+	terminalCellSpanBox,
+} from "@/lib/terminal/geometry/terminalCellSpan";
 import type { DesktopPlatform } from "@/lib/workspace/desktop/desktopPlatform";
 import type { TerminalKeyEvent } from "./terminalKeyBindings";
 
@@ -103,27 +108,18 @@ export function terminalFindSummary(input: {
 	}
 }
 
-export interface TerminalFindHighlightBox {
-	readonly key: string;
-	readonly left: number;
-	readonly top: number;
-	readonly width: number;
-	readonly height: number;
+export interface TerminalFindHighlightBox extends TerminalCellBox {
 	readonly current: boolean;
 }
 
 /** Pixel boxes for the frame's highlight segments at the painted metrics. */
 export function terminalFindHighlightBoxes(
 	find: ViewportFind | undefined,
-	metrics: { readonly cellWidth: number; readonly rowHeight: number } | null,
+	metrics: TerminalCellMetrics | null,
 ): TerminalFindHighlightBox[] {
 	if (!find || !metrics || find.status !== FindStatus.MATCHED) return [];
 	return find.highlights.map((highlight) => ({
-		key: `${highlight.row}:${highlight.startColumn}`,
-		left: highlight.startColumn * metrics.cellWidth,
-		top: highlight.row * metrics.rowHeight,
-		width: (highlight.endColumn - highlight.startColumn) * metrics.cellWidth,
-		height: metrics.rowHeight,
+		...terminalCellSpanBox(highlight, metrics),
 		current: highlight.current,
 	}));
 }

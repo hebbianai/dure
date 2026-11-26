@@ -11,6 +11,7 @@ import {
 } from "@/contracts/terminalStateProtocol";
 import {
 	isTerminalLinkGesture,
+	isTerminalLinkModifier,
 	resolveTerminalLinkPath,
 	type TerminalLinkContext,
 	terminalLinkDestination,
@@ -181,9 +182,38 @@ describe("terminal viewport links", () => {
 	];
 
 	it("joins a soft-wrapped path and finds it from either physical row", () => {
-		const expected = { kind: "path", path: "src/x.ts", line: 3 };
+		const expected = {
+			link: { kind: "path", path: "src/x.ts", line: 3 },
+			// The cells it covers on each row it wraps over.
+			spans: [
+				{ row: 0, startColumn: 3, endColumn: 8 },
+				{ row: 1, startColumn: 0, endColumn: 5 },
+			],
+		};
 		expect(terminalViewportLinkAt(rows, tables, 0, 4)).toMatchObject(expected);
 		expect(terminalViewportLinkAt(rows, tables, 1, 2)).toMatchObject(expected);
+	});
+
+	it("covers both columns of a wide grapheme in the link", () => {
+		const wide = create(TerminalTablesSchema, {
+			graphemes: [..."see 界.md"].map((text) =>
+				create(GraphemeSchema, { text, displayWidth: text === "界" ? 2 : 1 }),
+			),
+			styles: [create(CellStyleSchema)],
+		});
+		const line = [
+			create(TerminalRowSchema, {
+				rowId: 1n,
+				logicalLineId: 1n,
+				logicalCellSpan: 9,
+				cells: cells(0, 8),
+				termination: RowTermination.HARD_BREAK,
+			}),
+		];
+		expect(terminalViewportLinkAt(line, wide, 0, 5)).toEqual({
+			link: { kind: "path", path: "界.md", start: 4, end: 8 },
+			spans: [{ row: 0, startColumn: 4, endColumn: 9 }],
+		});
 	});
 
 	it("maps columns past a wide grapheme and outside the text to nothing", () => {
@@ -221,6 +251,23 @@ describe("terminal link gestures", () => {
 				isTerminalLinkGesture({ ...pointer, metaKey: true }, platform),
 			).toBe(false);
 		}
+	});
+
+	it("holds the modifier without a button, with or without Shift", () => {
+		const keys = { metaKey: false, ctrlKey: false, altKey: false };
+		expect(isTerminalLinkModifier({ ...keys, metaKey: true }, "macos")).toBe(
+			true,
+		);
+		expect(isTerminalLinkModifier({ ...keys, ctrlKey: true }, "linux")).toBe(
+			true,
+		);
+		expect(isTerminalLinkModifier({ ...keys, ctrlKey: true }, "macos")).toBe(
+			false,
+		);
+		expect(
+			isTerminalLinkModifier({ ...keys, metaKey: true, altKey: true }, "macos"),
+		).toBe(false);
+		expect(isTerminalLinkModifier(keys, "windows")).toBe(false);
 	});
 
 	it("ignores plain, secondary-button and Alt clicks", () => {

@@ -16,6 +16,8 @@ interface StructuredTerminalSurfacePointerOptions {
 	readonly links: {
 		readonly begin: (event: PointerEvent) => boolean;
 		readonly ownsPointer: (pointerId: number) => boolean;
+		/** Follows the pointer for the link mark; null when it left. */
+		readonly track: (event: PointerEvent | null) => void;
 	};
 	readonly selection: {
 		readonly begin: (event: PointerEvent, reportClick: boolean) => boolean;
@@ -54,6 +56,7 @@ export function structuredTerminalSurfacePointerHandlers({
 			}
 		},
 		onPointerMove: (event: SurfacePointerEvent) => {
+			links.track(painted ? event.nativeEvent : null);
 			if (!painted) return;
 			if (links.ownsPointer(event.pointerId)) return;
 			if (selection.ownsPointer(event.pointerId)) return;
@@ -66,6 +69,9 @@ export function structuredTerminalSurfacePointerHandlers({
 				focusPaneInput();
 				issuePointer(event.nativeEvent, PointerKind.UP);
 			}
+		},
+		onPointerLeave: () => {
+			links.track(null);
 		},
 		onPointerCancel: (event: SurfacePointerEvent) => {
 			selection.cancel(event.pointerId);
