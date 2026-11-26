@@ -172,9 +172,8 @@ impl From<String> for SyncFailure {
     }
 }
 
-/// Registers `alerts` (None: alerts off) with every paired computer in turn.
-/// `dial` opens one fresh connection to a computer per request; `now` is
-/// Unix seconds.
+/// Registers `alerts` (None: alerts off) with every paired computer in turn,
+/// over each one's pinned TLS connection. `now` is Unix seconds.
 #[cfg(target_os = "ios")]
 pub(crate) fn synchronize(
     hubs: &[HubEntry],
@@ -191,6 +190,8 @@ pub(crate) fn synchronize(
     })
 }
 
+/// `synchronize` with the connection supplied: `dial` opens one fresh
+/// connection to a computer per request.
 fn register_all<S: Read + Write>(
     hubs: &[HubEntry],
     alerts: Option<Alerts<'_>>,
