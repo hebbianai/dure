@@ -24,14 +24,33 @@
 //! new key, the service challenges it, and the phone signs the challenge back.
 //! The key is a per-install pseudonymous identifier: the service sees its
 //! public half and nothing that names the person.
+//!
+//! # Taking a grant back
+//!
+//! Every grant carries the key's epoch, and the service refuses a grant whose
+//! epoch is lower than the newest one it has seen for the key. A grant that
+//! must end before it expires is ended by raising the epoch; the next sync
+//! carries the new epoch to the service through any computer still paired.
+//! The epoch rises when:
+//!
+//! - a computer leaves the paired store ([`supersede`]): grants it still
+//!   holds must stop working, even though it was never told;
+//! - the phone asks for fewer alerts than it already granted at this epoch
+//!   ([`PushKey::prepare_grants`]): a computer that missed the change must not
+//!   keep sending what the wider grant allowed. The widest preference granted
+//!   at the current epoch is recorded beside the epoch for this.
+//!
+//! Turning alerts on, or asking for more of them, keeps the epoch: no grant
+//! already given allows more than the new one.
 
 use crate::identity_store;
 use dure_hub_protocol::push::{
     grant_signing_input, push_key_id, PushGrant, PushGrantClaims, PushGrantClaimsRead, PushId,
-    PushNonce, PushSubscription, PUSH_GRANT_LIFETIME_SECS, PUSH_GRANT_VERSION,
+    PushNonce, PushPreference, PushSubscription, PUSH_GRANT_LIFETIME_SECS, PUSH_GRANT_VERSION,
 };
 use ring::rand::SystemRandom;
 use ring::signature::{EcdsaKeyPair, KeyPair as _, ECDSA_P256_SHA256_ASN1_SIGNING};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -49,6 +68,19 @@ const EPOCH_FILE: &str = "epoch";
 
 const FIRST_EPOCH: u64 = 1;
 
+/// The widest preference this key granted at an epoch ([`Granted`]). It is
+/// written before a grant for any other preference is signed.
+const GRANTED_FILE: &str = "granted.json";
+
+/// What [`GRANTED_FILE`] holds. A record for an older epoch than the current
+/// one means nothing was granted since the epoch rose.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Granted {
+    epoch: u64,
+    preference: PushPreference,
+}
+
 /// Where the push key lives, given the folder the platform gives the app for
 /// its configuration (`own_config`, which `shared_config::adopt` may move into
 /// the App Group) and for its local data (`local_data`). None when the
@@ -63,10 +95,13 @@ pub fn root_for(own_config: &Path, local_data: &Path) -> Option<PathBuf> {
     Some(own_config.with_file_name(name))
 }
 
-/// The key and the epoch its grants carry.
+/// The key, the epoch its grants carry, and the widest preference it
+/// granted at that epoch.
 pub struct PushKey {
     pair: EcdsaKeyPair,
     epoch: u64,
+    /// None: no grant at this epoch yet.
+    granted: Option<PushPreference>,
 }
 
 /// The private half never prints; the key id names the key.
@@ -76,6 +111,7 @@ impl std::fmt::Debug for PushKey {
             .debug_struct("PushKey")
             .field("key", &self.key_id().as_str())
             .field("epoch", &self.epoch)
+            .field("granted", &self.granted)
             .finish()
     }
 }
@@ -94,6 +130,7 @@ impl PushKey {
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(format!("Could not read this phone's alert key: {error}")),
         };
+        let minted = stored.is_none();
         let pair = match stored {
             Some(pair) => pair,
             None => {
@@ -106,9 +143,16 @@ impl PushKey {
                     .map_err(|_| "Could not read this phone's new alert key".to_string())?
             }
         };
+        let epoch = load_or_create_epoch(root)?;
         Ok(Self {
             pair,
-            epoch: load_or_create_epoch(root)?,
+            epoch,
+            // A key minted just now has signed nothing.
+            granted: if minted {
+                None
+            } else {
+                load_granted(root, epoch)
+            },
         })
     }
 
@@ -121,6 +165,37 @@ impl PushKey {
         self.epoch
     }
 
+    /// Readies this key to sign grants for `preference`, before any is
+    /// signed. Asking for fewer alerts than this epoch already granted
+    /// raises the epoch first, so the service refuses the wider grants.
+    /// Afterwards the record names exactly `preference`. Called under the
+    /// device reset guard, in the same hold as [`Self::load_or_create`].
+    pub fn prepare_grants(
+        &mut self,
+        root: &Path,
+        preference: PushPreference,
+    ) -> Result<(), String> {
+        if self
+            .granted
+            .is_some_and(|granted| wider(granted, preference))
+        {
+            self.epoch = raise_epoch(root, self.epoch)?;
+            self.granted = None;
+        }
+        if self.granted == Some(preference) {
+            return Ok(());
+        }
+        let record = Granted {
+            epoch: self.epoch,
+            preference,
+        };
+        let bytes = serde_json::to_vec(&record).map_err(|error| error.to_string())?;
+        identity_store::write_private_file(&root.join(GRANTED_FILE), &bytes)
+            .map_err(|error| error.to_string())?;
+        self.granted = Some(preference);
+        Ok(())
+    }
+
     /// A grant that lets the computer pinned as `hub` have alerts sent for
     /// `subscription` until [`PUSH_GRANT_LIFETIME_SECS`] after `now` (Unix
     /// seconds). `nonce` answers the service's challenge for this key.
@@ -131,6 +206,11 @@ impl PushKey {
         nonce: Option<PushNonce>,
         now: u64,
     ) -> Result<PushGrant, String> {
+        // Only what [`Self::prepare_grants`] recorded is signed, so a later
+        // narrower preference always knows to raise the epoch.
+        if self.granted != Some(subscription.preference) {
+            return Err("This phone's alert key was not readied for this alert preference".into());
+        }
         let claims = PushGrantClaims {
             version: PUSH_GRANT_VERSION,
             token: subscription.token.clone(),
@@ -164,6 +244,49 @@ impl PushKey {
     }
 }
 
+/// Ends every grant this install's key signed before now: the epoch rises,
+/// and the service refuses grants below it once the next sync carries it.
+/// `false` when no epoch was ever written, so no grant was ever signed.
+/// Called under the device reset guard.
+pub fn supersede(root: &Path) -> Result<bool, String> {
+    match fs::read_to_string(root.join(EPOCH_FILE)) {
+        Ok(text) => {
+            raise_epoch(root, parse_epoch(&text)?)?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("Could not read this phone's alert epoch: {error}")),
+    }
+}
+
+/// Whether a grant for `granted` allows alerts one for `wanted` does not.
+fn wider(granted: PushPreference, wanted: PushPreference) -> bool {
+    granted == PushPreference::All && wanted != PushPreference::All
+}
+
+fn raise_epoch(root: &Path, from: u64) -> Result<u64, String> {
+    let next = from
+        .checked_add(1)
+        .ok_or("This phone's alert epoch cannot rise any further")?;
+    identity_store::write_private_file(&root.join(EPOCH_FILE), next.to_string().as_bytes())
+        .map_err(|error| error.to_string())?;
+    Ok(next)
+}
+
+/// The widest preference granted at `epoch`. A record that cannot be read,
+/// or none at all from a key that signed before records were kept, could
+/// have allowed every alert.
+fn load_granted(root: &Path, epoch: u64) -> Option<PushPreference> {
+    let record = fs::read(root.join(GRANTED_FILE))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Granted>(&bytes).ok());
+    match record {
+        Some(record) if record.epoch < epoch => None,
+        Some(record) if record.epoch == epoch => Some(record.preference),
+        _ => Some(PushPreference::All),
+    }
+}
+
 /// The folder, made and excluded from backup before any key is written in it.
 fn prepare(root: &Path) -> Result<(), String> {
     fs::create_dir_all(root)
@@ -176,10 +299,7 @@ fn load_or_create_epoch(root: &Path) -> Result<u64, String> {
     match fs::read_to_string(&path) {
         // Never reset to the first epoch: a lower epoch than the service saw
         // is refused, so guessing low would stop every alert.
-        Ok(text) => text
-            .trim()
-            .parse()
-            .map_err(|_| "This phone's alert epoch is unreadable".to_string()),
+        Ok(text) => parse_epoch(&text),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             prepare(root)?;
             identity_store::write_private_file(&path, FIRST_EPOCH.to_string().as_bytes())
@@ -188,6 +308,12 @@ fn load_or_create_epoch(root: &Path) -> Result<u64, String> {
         }
         Err(error) => Err(format!("Could not read this phone's alert epoch: {error}")),
     }
+}
+
+fn parse_epoch(text: &str) -> Result<u64, String> {
+    text.trim()
+        .parse()
+        .map_err(|_| "This phone's alert epoch is unreadable".to_string())
 }
 
 /// A backup restored to another phone must not carry this phone's key there.
@@ -224,9 +350,7 @@ fn exclude_from_backup(_directory: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-    use dure_hub_protocol::push::{
-        ApnsEnvironment, PushLanguage, PushPreference, PUSH_GRANT_MAX_LIFETIME_SECS,
-    };
+    use dure_hub_protocol::push::{ApnsEnvironment, PushLanguage, PUSH_GRANT_MAX_LIFETIME_SECS};
     use ring::signature::{UnparsedPublicKey, ECDSA_P256_SHA256_ASN1};
 
     /// What the service does with a grant's signature, with the same
@@ -281,7 +405,9 @@ mod tests {
     #[test]
     fn a_minted_grant_names_this_computer_and_subscription_and_verifies() {
         let root = tempfile::tempdir().unwrap();
-        let key = PushKey::load_or_create(root.path()).unwrap();
+        let mut key = PushKey::load_or_create(root.path()).unwrap();
+        key.prepare_grants(root.path(), PushPreference::Approvals)
+            .unwrap();
         let hub = dure_hub_protocol::fingerprint::of_der(b"laptop");
         let now = 1_795_686_400;
         let nonce: PushNonce = "0123456789abcdef0123456789abcdef"
@@ -326,7 +452,9 @@ mod tests {
     #[test]
     fn a_pinned_value_that_is_not_a_fingerprint_is_never_signed() {
         let root = tempfile::tempdir().unwrap();
-        let key = PushKey::load_or_create(root.path()).unwrap();
+        let mut key = PushKey::load_or_create(root.path()).unwrap();
+        key.prepare_grants(root.path(), PushPreference::All)
+            .unwrap();
         assert!(key
             .mint_grant(
                 "SHA256:short",
@@ -335,6 +463,125 @@ mod tests {
                 1_795_686_400
             )
             .is_err());
+    }
+
+    /// What a sync does with the key under the reset guard: load it, then
+    /// ready it for the preference it is about to grant.
+    fn ready(root: &Path, preference: PushPreference) -> PushKey {
+        let mut key = PushKey::load_or_create(root).unwrap();
+        key.prepare_grants(root, preference).unwrap();
+        key
+    }
+
+    /// Each sync loads the key afresh, so every step reads the files back.
+    #[test]
+    fn the_epoch_rises_only_when_fewer_alerts_are_asked_for_than_were_granted() {
+        let root = tempfile::tempdir().unwrap();
+        let steps = [
+            // Alerts turned on with approvals only: the first grant.
+            (PushPreference::Approvals, FIRST_EPOCH),
+            // More alerts: no grant already given allows more.
+            (PushPreference::All, FIRST_EPOCH),
+            (PushPreference::All, FIRST_EPOCH),
+            // Fewer: the grants for every alert must stop working.
+            (PushPreference::Approvals, FIRST_EPOCH + 1),
+            (PushPreference::Approvals, FIRST_EPOCH + 1),
+            (PushPreference::All, FIRST_EPOCH + 1),
+            // Off in between loads no key and grants nothing, so turning
+            // alerts back on with fewer of them still ends the wider grants.
+            (PushPreference::Approvals, FIRST_EPOCH + 2),
+        ];
+        for (index, (preference, epoch)) in steps.into_iter().enumerate() {
+            let key = ready(root.path(), preference);
+            assert_eq!(key.epoch(), epoch, "step {index}: {preference:?}");
+            let grant = key
+                .mint_grant(
+                    &dure_hub_protocol::fingerprint::of_der(b"laptop"),
+                    &subscription(preference),
+                    None,
+                    1_795_686_400,
+                )
+                .unwrap();
+            let Ok(PushGrantClaimsRead::Known(claims)) = grant.read_claims() else {
+                panic!("a minted grant reads as known claims");
+            };
+            assert_eq!((claims.epoch, claims.preference), (epoch, preference));
+        }
+    }
+
+    /// Only what was readied is signed: a grant the record does not name
+    /// could not be taken back when the preference narrows later.
+    #[test]
+    fn a_grant_is_signed_only_for_the_preference_the_key_was_readied_for() {
+        let root = tempfile::tempdir().unwrap();
+        let hub = dure_hub_protocol::fingerprint::of_der(b"laptop");
+        let now = 1_795_686_400;
+        let mut key = PushKey::load_or_create(root.path()).unwrap();
+        assert!(key
+            .mint_grant(&hub, &subscription(PushPreference::Approvals), None, now)
+            .is_err());
+        key.prepare_grants(root.path(), PushPreference::All)
+            .unwrap();
+        assert!(key
+            .mint_grant(&hub, &subscription(PushPreference::Approvals), None, now)
+            .is_err());
+        assert!(key
+            .mint_grant(&hub, &subscription(PushPreference::All), None, now)
+            .is_ok());
+    }
+
+    /// A computer left the paired store: the epoch rises, and the next sync
+    /// grants the computers still paired at the new one.
+    #[test]
+    fn superseding_raises_the_epoch_and_starts_it_with_nothing_granted() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("push");
+        // No epoch yet: nothing was ever granted, and nothing is written.
+        assert_eq!(supersede(&folder), Ok(false));
+        assert!(!folder.exists());
+
+        ready(&folder, PushPreference::All);
+        assert_eq!(supersede(&folder), Ok(true));
+        let mut key = PushKey::load_or_create(&folder).unwrap();
+        assert_eq!(key.epoch(), FIRST_EPOCH + 1);
+        assert!(key
+            .mint_grant(
+                &dure_hub_protocol::fingerprint::of_der(b"laptop"),
+                &subscription(PushPreference::All),
+                None,
+                1_795_686_400,
+            )
+            .is_err());
+        // Nothing was granted at the new epoch, so fewer alerts need no
+        // second rise.
+        key.prepare_grants(&folder, PushPreference::Approvals)
+            .unwrap();
+        assert_eq!(key.epoch(), FIRST_EPOCH + 1);
+
+        fs::write(folder.join(EPOCH_FILE), b"seven").unwrap();
+        assert!(supersede(&folder).is_err());
+    }
+
+    /// A key that signed before the record existed, or whose record cannot
+    /// be read, may have granted every alert.
+    #[test]
+    fn a_key_without_a_readable_record_counts_as_having_granted_every_alert() {
+        let root = tempfile::tempdir().unwrap();
+        let first = PushKey::load_or_create(root.path()).unwrap();
+        assert_eq!(first.granted, None, "a key minted now has signed nothing");
+
+        let older = PushKey::load_or_create(root.path()).unwrap();
+        assert_eq!(older.granted, Some(PushPreference::All));
+        assert_eq!(
+            ready(root.path(), PushPreference::Approvals).epoch(),
+            FIRST_EPOCH + 1
+        );
+
+        fs::write(root.path().join(GRANTED_FILE), b"{").unwrap();
+        assert_eq!(
+            ready(root.path(), PushPreference::Approvals).epoch(),
+            FIRST_EPOCH + 2
+        );
     }
 
     #[cfg(unix)]
@@ -360,6 +607,15 @@ mod tests {
             .collect();
         files.sort();
         assert_eq!(files, [EPOCH_FILE, KEY_FILE]);
+        // The record of what was granted is private too.
+        ready(&folder, PushPreference::Approvals);
+        for file in [EPOCH_FILE, GRANTED_FILE] {
+            let mode = fs::metadata(folder.join(file))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600, "{file}: {mode:o}");
+        }
         // The private half never prints.
         let printed = format!("{first:?}");
         assert!(printed.contains(first.key_id().as_str()), "{printed}");

@@ -20,6 +20,13 @@
 //! lost connection: it is reported as `computer_unreachable` and retried on
 //! the next sync. It is never read as "an older computer" and never followed
 //! by a V1 request, which would register without a grant.
+//!
+//! # Alerts off for one computer
+//!
+//! Off asks every computer to stop ([`stop_with`]); forgetting a computer asks
+//! that one alone, first ([`stop_alerts`]). The forget does not wait for an
+//! answer longer than its budget ([`within`]): the epoch it raises is what
+//! takes the computer's grant back ([`crate::push_key::supersede`]).
 
 use crate::hub_client::{self, HubClientError};
 use crate::hub_store::HubEntry;
@@ -181,13 +188,39 @@ pub(crate) fn synchronize(
     challenges: &PushChallenges,
     now: u64,
 ) -> Vec<HubPushOutcome> {
-    register_all(hubs, alerts, challenges, now, CHALLENGE_WAIT, |entry| {
-        let relay = entry
-            .relay_endpoint
-            .as_deref()
-            .zip(entry.server_id.as_deref());
-        hub_client::dial_tls(&entry.endpoint, relay, &entry.fingerprint)
-    })
+    register_all(hubs, alerts, challenges, now, CHALLENGE_WAIT, dial)
+}
+
+/// Asks one computer to stop sending this phone alerts, as Off asks every
+/// computer: the computer about to be forgotten.
+#[cfg(target_os = "ios")]
+pub(crate) fn stop_alerts(entry: &HubEntry) -> Result<(), String> {
+    stop_with(entry, || dial(entry)).map_err(|failure| failure.detail)
+}
+
+/// A fresh pinned TLS connection to the computer, through its relay.
+#[cfg(target_os = "ios")]
+fn dial(
+    entry: &HubEntry,
+) -> Result<rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>, HubClientError> {
+    let relay = entry
+        .relay_endpoint
+        .as_deref()
+        .zip(entry.server_id.as_deref());
+    hub_client::dial_tls(&entry.endpoint, relay, &entry.fingerprint)
+}
+
+/// What `work` returns if it finishes within `budget`. Work that takes
+/// longer goes on in the background, and what it returns is dropped.
+pub(crate) fn within<T: Send + 'static>(
+    budget: Duration,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let _ = sender.send(work());
+    });
+    receiver.recv_timeout(budget).ok()
 }
 
 /// `synchronize` with the connection supplied: `dial` opens one fresh
@@ -240,13 +273,12 @@ fn register_with<S: Read + Write>(
     wait: Duration,
     mut dial: impl FnMut() -> Result<S, HubClientError>,
 ) -> Result<(), SyncFailure> {
-    if !speaks_v2(entry) {
-        let subscription = alerts.map(|alerts| alerts.subscription.clone());
-        return register_v1(&mut dial()?, &entry.token, subscription);
-    }
     let Some(Alerts { subscription, key }) = alerts else {
-        return settled(register_v2(&mut dial()?, &entry.token, None)?);
+        return stop_with(entry, dial);
     };
+    if !speaks_v2(entry) {
+        return register_v1(&mut dial()?, &entry.token, Some(subscription.clone()));
+    }
     let registration = |nonce| {
         key.mint_grant(&entry.fingerprint, subscription, nonce, now)
             .map(|grant| PushRegistration {
@@ -271,6 +303,19 @@ fn register_with<S: Read + Write>(
         challenges.answered(&own, &nonce);
     }
     settled(second)
+}
+
+/// Alerts off for one computer: V2 `None` when it advertised V2, V1 `None`
+/// otherwise.
+fn stop_with<S: Read + Write>(
+    entry: &HubEntry,
+    mut dial: impl FnMut() -> Result<S, HubClientError>,
+) -> Result<(), SyncFailure> {
+    if speaks_v2(entry) {
+        settled(register_v2(&mut dial()?, &entry.token, None)?)
+    } else {
+        register_v1(&mut dial()?, &entry.token, None)
+    }
 }
 
 /// V1: the subscription alone. Every refusal a computer that reads only V1
@@ -453,9 +498,12 @@ mod tests {
         }
     }
 
+    /// A key readied for [`subscription`]'s preference, as a sync readies it.
     fn key() -> (tempfile::TempDir, PushKey) {
         let root = tempfile::tempdir().unwrap();
-        let key = PushKey::load_or_create(root.path()).unwrap();
+        let mut key = PushKey::load_or_create(root.path()).unwrap();
+        key.prepare_grants(root.path(), PushPreference::Approvals)
+            .unwrap();
         (root, key)
     }
 
@@ -774,6 +822,49 @@ mod tests {
                 "computer_update",
                 "rate_limited"
             ])
+        );
+    }
+
+    /// The computer about to be forgotten hears what Off would tell it, in
+    /// the version it advertised, and nothing else.
+    #[test]
+    fn a_computer_about_to_be_forgotten_is_told_to_stop_in_the_version_it_reads() {
+        for (advertised, request, reply) in [
+            (
+                Some(PUSH_REGISTRATION_VERSION),
+                HubRequest::UpdatePushSubscriptionV2 { registration: None },
+                v2(PushRegistrationResult::Saved { expires_at: None }),
+            ),
+            (
+                None,
+                HubRequest::UpdatePushSubscriptionV1 { subscription: None },
+                v1(PushSubscriptionResult::Saved),
+            ),
+        ] {
+            let mut desk = Desk::answering([reply]);
+            stop_with(&computer(advertised), || desk.dial()).unwrap();
+            assert_eq!(desk.requests(), [request]);
+        }
+        // One that cannot be reached says so, and is asked nothing more.
+        let mut nobody = Desk::default();
+        let failure =
+            stop_with(&computer(Some(PUSH_REGISTRATION_VERSION)), || nobody.dial()).unwrap_err();
+        assert_eq!(failure.code, Some(SyncCode::ComputerUnreachable));
+        assert!(nobody.sent.is_empty());
+    }
+
+    #[test]
+    fn work_that_outlasts_its_budget_is_not_waited_for() {
+        assert_eq!(within(Duration::from_secs(5), || 7), Some(7));
+        let started = Instant::now();
+        let slow = within(Duration::from_millis(20), || {
+            std::thread::sleep(Duration::from_secs(2));
+        });
+        assert_eq!(slow, None);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
         );
     }
 

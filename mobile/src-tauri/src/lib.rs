@@ -62,7 +62,7 @@ use relay::{RelayError, RelayTarget};
 use serde::Serialize;
 use server_store::{ServerDocument, ServerEntry, ServerStoreError};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 use terminal_attach::{AttachedSession, LiveAttach};
 
@@ -1156,6 +1156,9 @@ pub(crate) fn remember_push_registration(
 /// 알아보고 그 지문의 기록을 모두 거둔 참이므로, 같은 키로 다시 짝지으면 방금
 /// 지운 신원이 되살아난다. 새 키로 시작하는 것이 "기기 초기화한 폰" 과 같은
 /// 상태다.
+///
+/// The hub entry leaves through [`unpair_hub`], as a forget's does, so the
+/// push epoch rises with it (#660).
 fn forget_pairing_grant(
     app: &AppHandle,
     hub_id: &str,
@@ -1172,11 +1175,7 @@ fn forget_pairing_grant(
         identity_store::forget(&keys, id)?;
     }
 
-    let hubs = hub_store_path(app)?;
-    let mut stored = hub_store::load(&hubs)?;
-    if hub_store::remove(&mut stored, hub_id) {
-        hub_store::save(&hubs, &stored)?;
-    }
+    unpair_hub(&hub_store_path(app)?, &push_root(app)?, hub_id)?;
 
     identity_store::forget_pairing_identity(&keys)?;
     Ok(())
@@ -2583,15 +2582,22 @@ fn hub_list(app: AppHandle) -> Result<Vec<HubRow>, CommandError> {
 ///
 /// 노트북 쪽 등록까지 지우지는 않는다 — 그건 노트북의 기기 목록에서 취소한다.
 /// 여기서 지우는 것은 이 폰이 기억하고 있던 것뿐이다.
+///
+/// Alerts from that computer end too (#660). Before the entry goes, the
+/// computer is asked to stop sending them, best effort and briefly
+/// ([`push::stop_alerts_before_forget`]): an unreachable computer never holds
+/// up the forget. The removal then raises the push epoch ([`unpair_hub`]),
+/// and the screen's sync to the computers still paired carries it to the
+/// push service, which then refuses the grant the forgotten one may keep.
 #[tauri::command]
-fn hub_forget(app: AppHandle, id: String) -> Result<bool, CommandError> {
+async fn hub_forget(app: AppHandle, id: String) -> Result<bool, CommandError> {
     let generation = device_reset::current_generation();
+    if let Ok(entry) = hub_target(&app, &id) {
+        push::stop_alerts_before_forget(entry).await;
+    }
     let _guard = device_reset::mutation_guard(generation)?;
-    let path = hub_store_path(&app)?;
-    let mut document = hub_store::load(&path)?;
-    let removed = hub_store::remove(&mut document, &id);
+    let removed = unpair_hub(&hub_store_path(&app)?, &push_root(&app)?, &id)?;
     if removed {
-        hub_store::save(&path, &document)?;
         // 잊으라고 한 컴퓨터의 구조가 남아서 목록을 계속 묶으면 안 된다.
         //
         // 여기서 실패해도 오류가 아니다. 위에서 **이미 지웠고** 그것이 이 명령이
@@ -2606,6 +2612,28 @@ fn hub_forget(app: AppHandle, id: String) -> Result<bool, CommandError> {
         }
     }
     Ok(removed)
+}
+
+/// Takes computer `id` out of the paired store in `hubs`. `true` when it was
+/// there.
+///
+/// The push epoch in `push_root` rises first ([`push_key::supersede`]): a
+/// computer no longer paired keeps no grant to send this phone alerts, and
+/// an epoch that cannot rise keeps the computer listed rather than claim it
+/// was cut off. Every removal of a paired computer goes through here. Called
+/// under the device reset guard.
+fn unpair_hub(hubs: &Path, push_root: &Path, id: &str) -> Result<bool, CommandError> {
+    let mut document = hub_store::load(hubs)?;
+    if !document.hubs.iter().any(|entry| entry.id == id) {
+        return Ok(false);
+    }
+    push_key::supersede(push_root).map_err(|message| CommandError {
+        code: "push_epoch_failed".to_string(),
+        message,
+    })?;
+    hub_store::remove(&mut document, id);
+    hub_store::save(hubs, &document)?;
+    Ok(true)
 }
 
 /// 폰이 기억하고 있는 묶음 전체. 허브 id → 그 노트북의 사이드바 모양.
@@ -3231,6 +3259,68 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn paired(id: &str, label: &str) -> hub_store::HubEntry {
+        hub_store::HubEntry {
+            id: id.to_string(),
+            box_label: label.to_string(),
+            endpoint: "192.168.0.12:47823".to_string(),
+            fingerprint: id.to_string(),
+            token: "token-1".to_string(),
+            relay_endpoint: Some("relay.example:8787".to_string()),
+            server_id: Some("server-1".to_string()),
+            push_registration: Some(dure_hub_protocol::push::PUSH_REGISTRATION_VERSION),
+        }
+    }
+
+    /// #660: a forgotten computer keeps no grant. The push epoch rises
+    /// before its entry leaves the store, and an epoch that cannot rise
+    /// keeps the computer listed.
+    #[test]
+    fn unpairing_a_computer_raises_the_push_epoch_before_its_entry_goes() {
+        use dure_hub_protocol::push::PushPreference;
+        let root = tempfile::tempdir().unwrap();
+        let hubs = root.path().join("config").join(hub_store::HUB_STORE_FILE);
+        let push = root.path().join("push");
+        let [early, laptop, desktop] = [b"early".as_slice(), b"laptop", b"desktop"]
+            .map(dure_hub_protocol::fingerprint::of_der);
+        let mut document = hub_store::HubDocument::default();
+        for (id, label) in [
+            (&early, "Early"),
+            (&laptop, "Laptop"),
+            (&desktop, "Desktop"),
+        ] {
+            hub_store::upsert(&mut document, paired(id, label)).unwrap();
+        }
+        hub_store::save(&hubs, &document).unwrap();
+        let epoch = || push_key::PushKey::load_or_create(&push).unwrap().epoch();
+
+        // Before any alert was granted there is no epoch to raise.
+        assert!(!unpair_hub(&hubs, &push, "SHA256:unknown").unwrap());
+        assert!(unpair_hub(&hubs, &push, &early).unwrap());
+        assert!(!push.exists());
+
+        let mut key = push_key::PushKey::load_or_create(&push).unwrap();
+        key.prepare_grants(&push, PushPreference::All).unwrap();
+        assert_eq!(epoch(), 1);
+        assert!(unpair_hub(&hubs, &push, &laptop).unwrap());
+        assert_eq!(epoch(), 2);
+        let left: Vec<_> = hub_store::load(&hubs)
+            .unwrap()
+            .hubs
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect();
+        assert_eq!(left, std::slice::from_ref(&desktop));
+        // A computer no longer listed raises nothing.
+        assert!(!unpair_hub(&hubs, &push, &laptop).unwrap());
+        assert_eq!(epoch(), 2);
+
+        std::fs::write(push.join("epoch"), b"seven").unwrap();
+        let refused = unpair_hub(&hubs, &push, &desktop).unwrap_err();
+        assert_eq!(refused.code, "push_epoch_failed");
+        assert_eq!(hub_store::load(&hubs).unwrap().hubs.len(), 1);
+    }
 
     /// A chat-owned agent reaches the screen as a row it opens on Chat, keyed
     /// by the agent id its layout seat uses, after the computer's sessions.
