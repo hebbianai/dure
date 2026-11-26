@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { appServerMissingReceipt, collectRunRecordStop, formatAgentStopReport, stopsRunRecord }
-  from "../cli/lib/agent-stop-command.mjs";
+import { appServerMissingReceipt, collectRunRecordStop, formatAgentStopReport, parseAgentStopCommand,
+  stopsRunRecord } from "../cli/lib/agent-stop-command.mjs";
 import { BackendTransportError } from "../cli/lib/backend-transport.mjs";
 
 const backend = { profile: { id: "local", transport: { kind: "local" } } };
@@ -80,12 +80,12 @@ describe("stopping a Run the app has not opened", () => {
     const f = stopWith({}, [run, second]);
     const report = await f.stop("nightly-review");
     expect(report).toMatchObject({ ok: false, error: { code: "run_selector_ambiguous", candidates: [
-      { agentId: run.agentId, retry: ["stop", run.agentId, "--yes"] },
-      { agentId: second.agentId, retry: ["stop", second.agentId, "--yes"] },
+      { agentId: run.agentId, retry: ["stop", run.agentId, "--backend", "local", "--yes"] },
+      { agentId: second.agentId, retry: ["stop", second.agentId, "--backend", "local", "--yes"] },
     ] } });
     expect(f.operations()).toEqual(["agent_spawn.list"]);
     expect(formatAgentStopReport({ ...report, apiVersion: "dure.agent-stop/v1" }, "nightly-review"))
-      .toContain("dure 'stop' 'agent-scheduled-2' '--yes'");
+      .toContain("dure 'stop' 'agent-scheduled-2' '--backend' 'local' '--yes'");
   });
 
   it("stops the launched Run when a same-named launch stopped before its Agent had a runtime", async () => {
@@ -101,9 +101,23 @@ describe("stopping a Run the app has not opened", () => {
     expect(f.bodies()[1]).toEqual({ schemaVersion: 1, agentId: stopped.agentId });
   });
 
-  it("returns the app's answer when the backend has no Run record either", async () => {
+  it("returns the app's answer, naming the backend that has no Run record either", async () => {
     const f = stopWith({}, []);
-    expect(await f.stop("ghost")).toBe(appReceipt);
+    const report = await f.stop("ghost");
+    expect(report).toMatchObject({ ok: false, error: { code: "pane_not_found" } });
+    expect(report.error.message).toBe(`${appReceipt.error.message} No Run record on backend local matches ghost ` +
+      "either; for a Run on another backend, select it with --backend ID.");
+  });
+
+  it("selects the Run record's backend with --backend, as a client stops a remote headless Run", () => {
+    expect(parseAgentStopCommand(["agent-scheduled-1", "--backend", "remote", "--yes"]))
+      .toEqual({ rest: ["stop", "agent-scheduled-1"], backend: "remote", yes: true });
+    expect(parseAgentStopCommand(["--name", "agent-scheduled-1", "--backend", "remote", "--yes"]))
+      .toMatchObject({ name: "agent-scheduled-1", backend: "remote" });
+    for (const args of [["agent-scheduled-1", "--backend"], ["agent-scheduled-1", "--backend", "--yes"],
+      ["agent-scheduled-1", "--backend", "a", "--backend", "b"]]) {
+      expect(() => parseAgentStopCommand(args)).toThrow("Usage:");
+    }
   });
 
   it("fails with the receipt when the backend retains the runtime", async () => {
