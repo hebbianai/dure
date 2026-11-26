@@ -141,7 +141,7 @@ async fn runtime_is_stopped(state: &ServiceState, agent_id: &AgentIdV1) -> bool 
     state.is_mutation_authority()
         && match read_locked(state, agent_id).await {
             Ok(AgentRuntimeObservedV1::Transitioning { transition, .. }) => transition.is_dormant(),
-            Ok(AgentRuntimeObservedV1::Closed(close)) => {
+            Ok(AgentRuntimeObservedV1::Closed { close, .. }) => {
                 close.state == AgentRuntimeCloseStateV1::Stopped
             }
             _ => false,

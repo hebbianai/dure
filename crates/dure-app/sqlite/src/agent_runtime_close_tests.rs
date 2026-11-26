@@ -4,9 +4,9 @@ use dure_app::{
     AgentInteractionBindingV1, AgentInteractionProfileV1, AgentInteractionSessionIdV1,
     AgentProviderRuntimeFenceV1, AgentRecordV1, AgentRuntimeBindingAuthorityV1,
     AgentRuntimeCloseAdvanceRequestV1, AgentRuntimeCloseAdvanceV1, AgentRuntimeCloseIntentV1,
-    AgentRuntimeCloseStateV1, AgentRuntimeCloseStoppedTransitionV1, AgentRuntimeCloseStore,
-    AgentRuntimeReplacementAuthorityUpdateV1, AgentRuntimeReplacementV1, AgentRuntimeSelectionV1,
-    AgentRuntimeTargetFailureKindV1, AgentRuntimeTargetFailureV1,
+    AgentRuntimeCloseOwnerV1, AgentRuntimeCloseStateV1, AgentRuntimeCloseStoppedTransitionV1,
+    AgentRuntimeCloseStore, AgentRuntimeReplacementAuthorityUpdateV1, AgentRuntimeReplacementV1,
+    AgentRuntimeSelectionV1, AgentRuntimeTargetFailureKindV1, AgentRuntimeTargetFailureV1,
     AgentRuntimeTransitionAdvanceRequestV1, AgentRuntimeTransitionAdvanceV1,
     AgentRuntimeTransitionEffectAuthorizationV1, AgentRuntimeTransitionIntentV1,
     AgentRuntimeTransitionRepairRequestV1, AgentRuntimeTransitionStore,
@@ -513,6 +513,13 @@ async fn agent_removal_close_cannot_be_bypassed_by_a_native_successor() {
         })
         .await
         .unwrap();
+    assert_eq!(
+        store
+            .agent_runtime_close_owner(&close_operation)
+            .await
+            .unwrap(),
+        AgentRuntimeCloseOwnerV1::RuntimeStop
+    );
     sqlx::query(
         r#"
         INSERT INTO agent_dispatch_stops (
@@ -540,6 +547,14 @@ async fn agent_removal_close_cannot_be_bypassed_by_a_native_successor() {
     .execute(&store.pool)
     .await
     .unwrap();
+    assert_eq!(
+        store
+            .agent_runtime_close_owner(&close_operation)
+            .await
+            .unwrap(),
+        AgentRuntimeCloseOwnerV1::AgentRemoval,
+        "a Dispatch stop owns the close it retired the runtime through"
+    );
 
     let mut connection = store.pool.acquire().await.unwrap();
     let error = agent_runtime_close::ensure_runtime_successor_source_on(

@@ -204,7 +204,7 @@ pub(super) async fn ensure(state: &ServiceState, body: BindingEnsureBody) -> Res
             }
             _ => return Err("agent_checkpoint_binding_runtime_owned".into()),
         },
-        agent_runtime_projection::AgentRuntimeObservedV1::Closed(_)
+        agent_runtime_projection::AgentRuntimeObservedV1::Closed { .. }
         | agent_runtime_projection::AgentRuntimeObservedV1::Transitioning { .. } => {
             return Err("agent_checkpoint_binding_runtime_owned".into());
         }

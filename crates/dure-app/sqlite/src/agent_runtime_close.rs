@@ -1,9 +1,9 @@
 use dure_app::{
     AgentIdV1, AgentRuntimeBindingAuthorityV1, AgentRuntimeCloseAdvanceRequestV1,
-    AgentRuntimeCloseIntentV1, AgentRuntimeCloseRecordV1, AgentRuntimeCloseStateV1,
-    AgentRuntimeCloseStore, AgentRuntimeSelectionV1, AgentRuntimeTransitionRecordV1,
-    AgentRuntimeTransitionStateV1, DomainStoreErrorV1, DomainStoreFuture, OperationIdV1,
-    advance_agent_runtime_close_v1,
+    AgentRuntimeCloseIntentV1, AgentRuntimeCloseOwnerV1, AgentRuntimeCloseRecordV1,
+    AgentRuntimeCloseStateV1, AgentRuntimeCloseStore, AgentRuntimeSelectionV1,
+    AgentRuntimeTransitionRecordV1, AgentRuntimeTransitionStateV1, DomainStoreErrorV1,
+    DomainStoreFuture, OperationIdV1, advance_agent_runtime_close_v1,
 };
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqliteConnection, SqlitePool};
@@ -62,6 +62,49 @@ impl AgentRuntimeCloseStore for crate::SqliteDomainStore {
             .await
         })
     }
+
+    fn agent_runtime_close_owner<'a>(
+        &'a self,
+        close_operation_id: &'a OperationIdV1,
+    ) -> DomainStoreFuture<'a, AgentRuntimeCloseOwnerV1> {
+        Box::pin(async move {
+            let mut connection = self
+                .pool
+                .acquire()
+                .await
+                .map_err(|error| map_sqlx("read_agent_runtime_close_owner", error))?;
+            close_owner_on(&mut connection, close_operation_id).await
+        })
+    }
+}
+
+/// Agent removal owns a close it attached a removal plan to, and so does a
+/// Dispatch stop that retired the runtime through it.
+async fn close_owner_on(
+    connection: &mut SqliteConnection,
+    close_operation_id: &OperationIdV1,
+) -> Result<AgentRuntimeCloseOwnerV1, DomainStoreErrorV1> {
+    let removal_owned = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT EXISTS (
+            SELECT 1
+            FROM agent_dispatch_stops
+            WHERE runtime_close_operation_id = ?1
+        ) OR EXISTS (
+            SELECT 1 FROM agent_runtime_closes
+            WHERE operation_id = ?1 AND removal_json IS NOT NULL
+        )
+        "#,
+    )
+    .bind(close_operation_id.as_str())
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|error| map_sqlx("read_agent_runtime_close_owner", error))?;
+    Ok(if removal_owned == 0 {
+        AgentRuntimeCloseOwnerV1::RuntimeStop
+    } else {
+        AgentRuntimeCloseOwnerV1::AgentRemoval
+    })
 }
 
 async fn transition_follows_close_on(
@@ -356,23 +399,10 @@ async fn ensure_stopped_source_on(
             "successor does not supersede the effective runtime close",
         ));
     }
-    let dispatch_owned = sqlx::query_scalar::<_, i64>(
-        r#"
-        SELECT EXISTS (
-            SELECT 1
-            FROM agent_dispatch_stops
-            WHERE runtime_close_operation_id = ?1
-        ) OR EXISTS (
-            SELECT 1 FROM agent_runtime_closes
-            WHERE operation_id = ?1 AND removal_json IS NOT NULL
-        )
-        "#,
-    )
-    .bind(close.intent.operation_id.as_str())
-    .fetch_one(&mut *connection)
-    .await
-    .map_err(|error| map_sqlx("authorize_agent_runtime_successor", error))?;
-    if dispatch_owned != 0 {
+    if !close_owner_on(connection, &close.intent.operation_id)
+        .await?
+        .admits_successor()
+    {
         return Err(identity_conflict(
             "agent runtime close",
             source.agent_id.as_str(),

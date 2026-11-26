@@ -142,7 +142,7 @@ async fn advance_locked(state: &ServiceState, agent_id: &AgentIdV1) -> Result<bo
         AgentRuntimeObservedV1::Transitioning { transition, .. } => {
             transition.intent.operation_id == operation_id
         }
-        AgentRuntimeObservedV1::Closed(_) | AgentRuntimeObservedV1::Unmanaged => false,
+        AgentRuntimeObservedV1::Closed { .. } | AgentRuntimeObservedV1::Unmanaged => false,
     };
     if !owns_runtime {
         return stop(state, &record, AgentRecoveryStopV1::Superseded).await;

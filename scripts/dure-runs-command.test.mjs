@@ -1258,6 +1258,32 @@ describe("Closed Agents", () => {
     expect(f.requestBackend.mock.calls.at(-1)[1].body).toMatchObject({ expectedSourceRevision: 4, targetInteractionProfile: "native_cli" });
   });
 
+  it("never offers an in-place restart for an Agent that dure stop removed, and names the conversation to continue", async () => {
+    const f = closedFixture();
+    Object.assign(f.closed, { closedBy: "agent_removal", providerConversationRef: "conversation-closed" });
+    const resume = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name] } });
+    expect(resume).toMatchObject({ ok: false, error: { code: "rehost_native_source_unavailable" } });
+    expect(resume.error.message).toContain("stopped and removed, for example by dure stop, so it cannot restart in place");
+    expect(resume.error.message).toContain(
+      `dure runs resume --conversation conversation-closed --provider claude --project ${f.entry.projectId}`);
+    expect(formatRunsCommand(resume)).not.toContain("Restart: dure 'runtime' 'switch'");
+    const accountSwitch = await collectRunsCommand({ ...f, opts: { rest: ["switch-account", f.entry.name], account: "work", confirmRestart: true } });
+    expect(accountSwitch).toMatchObject({ ok: false, error: { code: "account_switch_source_unavailable" } });
+    expect(accountSwitch.error.message).toContain("cannot restart in place");
+    expect(f.requestBackend.mock.calls.map((call) => call[1].operation)).not.toContain("agent_runtime.transition");
+
+    delete f.closed.providerConversationRef;
+    const unresumable = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name] } });
+    expect(unresumable.error.message).toContain("It retained no provider conversation to continue.");
+  });
+
+  it("still restarts a close the runtime stop owns", async () => {
+    const f = closedFixture();
+    f.closed.closedBy = "runtime_stop";
+    const preview = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name] } });
+    expect(preview.recovery.continuation).toMatchObject({ kind: "runtime_restart", expectedSourceRevision: 4 });
+  });
+
   it("explains a close that has not stopped instead of a generic source error", async () => {
     const f = closedFixture("admitted");
     const resume = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name], confirmRestart: true } });
