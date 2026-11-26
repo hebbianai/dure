@@ -11,7 +11,7 @@ const SESSION: &str = "ses_history";
 /// An OpenCode server that pages its session's messages newest first, at
 /// most `page_size` messages per page, and records each request it answered.
 struct FakeOpenCode {
-    messages: Arc<StdMutex<Vec<Value>>>,
+    messages: Arc<StdMutex<Vec<SerializedMessage>>>,
     requests: Arc<StdMutex<Vec<String>>>,
     port: u16,
     server: tokio::task::JoinHandle<()>,
@@ -21,7 +21,7 @@ impl FakeOpenCode {
     async fn start(messages: Vec<Value>, page_size: usize) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let messages = Arc::new(StdMutex::new(messages));
+        let messages = Arc::new(StdMutex::new(serialized(messages)));
         let requests = Arc::new(StdMutex::new(Vec::new()));
         let server = tokio::spawn({
             let messages = Arc::clone(&messages);
@@ -41,7 +41,6 @@ impl FakeOpenCode {
                     let (status, headers, body) =
                         answer(&target, &messages.lock().unwrap(), page_size);
                     requests.lock().unwrap().push(target);
-                    let body = body.to_string();
                     // A client that stops reading an oversized answer closes
                     // the connection before the whole body is written.
                     let _ = socket.write_all(format!("HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{headers}\r\n{body}", body.len()).as_bytes()).await;
@@ -57,7 +56,7 @@ impl FakeOpenCode {
     }
 
     fn push(&self, messages: Vec<Value>) {
-        self.messages.lock().unwrap().extend(messages);
+        self.messages.lock().unwrap().extend(serialized(messages));
     }
 
     /// The message pages requested since the last call, as `limit` and
@@ -80,10 +79,27 @@ impl Drop for FakeOpenCode {
     }
 }
 
-fn answer(target: &str, messages: &[Value], page_size: usize) -> (u16, String, Value) {
+/// A message's id and its JSON, serialized once, since some are larger than
+/// the client reads of one record.
+struct SerializedMessage {
+    id: String,
+    json: String,
+}
+
+fn serialized(messages: Vec<Value>) -> Vec<SerializedMessage> {
+    messages
+        .into_iter()
+        .map(|message| SerializedMessage {
+            id: message["info"]["id"].as_str().unwrap().to_owned(),
+            json: message.to_string(),
+        })
+        .collect()
+}
+
+fn answer(target: &str, messages: &[SerializedMessage], page_size: usize) -> (u16, String, String) {
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
     match path {
-        "/permission" | "/question" => (200, String::new(), json!([])),
+        "/permission" | "/question" => (200, String::new(), "[]".into()),
         _ if path == format!("/session/{SESSION}/message") => {
             let mut limit = None;
             let mut end = messages.len();
@@ -102,23 +118,28 @@ fn answer(target: &str, messages: &[Value], page_size: usize) -> (u16, String, V
             } else {
                 String::new()
             };
-            (200, headers, json!(messages[start..end]))
+            let page = messages[start..end]
+                .iter()
+                .map(|message| message.json.as_str())
+                .collect::<Vec<_>>();
+            (200, headers, format!("[{}]", page.join(",")))
         }
         _ => match path
             .strip_prefix(&format!("/session/{SESSION}/message/"))
-            .and_then(|id| messages.iter().find(|message| message["info"]["id"] == id))
+            .and_then(|id| messages.iter().find(|message| message.id == id))
         {
-            Some(message) => (200, String::new(), message.clone()),
-            None => (404, String::new(), Value::Null),
+            Some(message) => (200, String::new(), message.json.clone()),
+            None => (404, String::new(), "null".into()),
         },
     }
 }
 
 /// The user message and the assistant's answer of one imported turn. The
-/// answer of an `oversized` turn alone is over the client's response bound.
+/// answer of an `oversized` turn is over the bound of one record, which the
+/// client reads of one message.
 fn turn(index: usize, oversized: bool) -> Vec<Value> {
     let text = if oversized {
-        "A".repeat(9 * 1024 * 1024)
+        "A".repeat(64 * 1024 * 1024)
     } else {
         format!("Answer {index}")
     };
@@ -443,6 +464,57 @@ async fn a_newest_message_too_large_to_read_still_fails_the_attach() {
         ("opencode_session_unavailable", "Limit")
     );
     assert!(conversation(&service, &binding).await.is_empty());
+}
+
+/// An answer larger than an answer of several messages, as OpenCode keeps a
+/// message whose `read` tool attached a large image or PDF.
+fn large_answer() -> String {
+    "A".repeat(9 * 1024 * 1024)
+}
+
+#[tokio::test]
+async fn a_message_larger_than_a_page_opens_in_chat_as_one_record() {
+    let (_temporary, service, binding) = conversation_fixture().await;
+    let mut messages = turns(0..1);
+    messages.extend(turn_answered(1, large_answer()));
+    messages.extend(turns(2..4));
+    let server = FakeOpenCode::start(messages, 100).await;
+    let bridge = bridge(&server, &binding, &service).await;
+
+    // Before, that message was over the client's bound even alone, so a
+    // boundary row stood in its place.
+    bridge.hydrate().await.unwrap();
+
+    let mut expected = prompts_and_answers(0..1);
+    expected.extend(["Prompt 1".into(), "clipped answer".into()]);
+    expected.extend(prompts_and_answers(2..4));
+    assert_eq!(conversation(&service, &binding).await, expected);
+    assert!(history_complete(&service, &binding).await);
+}
+
+#[tokio::test]
+async fn a_live_message_larger_than_a_page_keeps_chat_connected() {
+    let (_temporary, service, binding) = conversation_fixture().await;
+    let server = FakeOpenCode::start(turns(0..2), 100).await;
+    let bridge = bridge(&server, &binding, &service).await;
+    bridge.hydrate().await.unwrap();
+    let changed = |id: &str| json!({"type": "message.updated", "properties": {"info": {"id": id, "sessionID": SESSION}}});
+
+    // Before, reading the changed message failed, which ended the live
+    // event loop, so Chat disconnected in the middle of the turn.
+    server.push(turn_answered(2, large_answer()));
+    bridge.handle_event(&changed("msg_user0002")).await.unwrap();
+    bridge
+        .handle_event(&changed("msg_answer0002"))
+        .await
+        .unwrap();
+
+    let mut expected = prompts_and_answers(0..2);
+    expected.extend(["Prompt 2".into(), "clipped answer".into()]);
+    assert_eq!(conversation(&service, &binding).await, expected);
+    // A reattach while that message is the newest reads it again.
+    bridge.hydrate().await.unwrap();
+    assert_eq!(conversation(&service, &binding).await, expected);
 }
 
 #[tokio::test]
