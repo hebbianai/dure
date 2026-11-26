@@ -20,8 +20,10 @@ vi.mock("@/lib/ipc/notifications", () => ({
 	}),
 }));
 vi.mock("@/lib/settings/notify", () => ({ systemNotify: vi.fn() }));
+const platform = vi.hoisted(() => ({ current: "macos" as "macos" | "windows" }));
 vi.mock("@/lib/workspace/desktop/desktopPlatform", () => ({
-	isMacPlatform: () => true,
+	isMacPlatform: () => platform.current === "macos",
+	detectDesktopPlatform: () => platform.current,
 }));
 
 import { NotificationsPage } from "@/components/settings/NotificationsPage";
@@ -30,6 +32,7 @@ import { DEFAULT_NOTIFY_PREFS, useStore } from "@/store";
 
 afterEach(() => {
 	cleanup();
+	platform.current = "macos";
 	useStore.setState({ notifyPrefs: { ...DEFAULT_NOTIFY_PREFS } });
 });
 
@@ -47,6 +50,21 @@ describe("NotificationsPage", () => {
 		render(<NotificationsPage />);
 		expect(screen.getByText("승인 필요")).toBeTruthy();
 		expect(screen.getByText("Agent 세션 종료")).toBeTruthy();
+	});
+
+	it("Dock 배지 스위치가 알림 스위치와 따로 배지 설정을 바꾼다", () => {
+		render(<NotificationsPage />);
+		fireEvent.click(screen.getByText("Dock 배지"));
+		expect(useStore.getState().notifyPrefs).toMatchObject({
+			appIconBadge: false,
+			enabled: true,
+		});
+	});
+
+	it("Dock이 없는 플랫폼에서는 Dock 배지 스위치를 보여 주지 않는다", () => {
+		platform.current = "windows";
+		render(<NotificationsPage />);
+		expect(screen.queryByText("Dock 배지")).toBeNull();
 	});
 
 	it("페이지를 감싸던 720px 카드를 더 이상 그리지 않는다", () => {

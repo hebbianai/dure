@@ -16,6 +16,9 @@ export interface NotifyPrefs {
   sound: string;
   /** 해당 패널을 보고 있으면 알림 생략 (기존 동작) */
   suppressWhenVisible: boolean;
+  /** Keeps the Needs you count on the app icon. Independent of `enabled`:
+   *  the badge is the cue left for people who mute notifications. */
+  appIconBadge: boolean;
 }
 
 export const NOTIFICATION_SOUND_SYSTEM = "__system__";
@@ -47,6 +50,7 @@ export const DEFAULT_NOTIFY_PREFS: NotifyPrefs = {
   terminalBell: true,
   sound: NOTIFICATION_SOUND_SYSTEM,
   suppressWhenVisible: true,
+  appIconBadge: true,
 };
 
 /** 누적 활동 통계 (설정 '통계 및 사용량' 상단 카드). 앱이 켜진 이후부터 집계 —

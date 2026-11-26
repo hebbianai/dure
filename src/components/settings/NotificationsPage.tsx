@@ -5,6 +5,7 @@ import { SelectField, SelectOption } from "@/components/ui/select-field";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { supportsAppIconBadge } from "@/lib/agents/appIconBadge";
 import { t } from "@/lib/i18n";
 import {
 	type NativeNotificationStatus,
@@ -294,6 +295,16 @@ export function NotificationsPage() {
 					checked={np.suppressWhenVisible}
 					onCheckedChange={(v) => set({ suppressWhenVisible: v })}
 				/>
+
+				{supportsAppIconBadge() && (
+					<SwitchRow
+						className="border-t border-border py-6"
+						title={t("settings.notifications.appIconBadge.title")}
+						desc={t("settings.notifications.appIconBadge.desc")}
+						checked={np.appIconBadge}
+						onCheckedChange={(v) => set({ appIconBadge: v })}
+					/>
+				)}
 
 				{/* Not in the mockup. Kept because when the macOS permission is
 				    not-determined, this block's "request permission" is the only way

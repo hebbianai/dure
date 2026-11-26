@@ -762,6 +762,8 @@ export const settings: Record<string, string> = {
 	"settings.stats.usage.startTitle": "开始跟踪 Token",
 	"settings.stats.title": "统计与用量",
 	"settings.notifications.suppressFocused.desc": "如果你已在查看触发通知的窗格，则跳过该通知。",
+	"settings.notifications.appIconBadge.title": "程序坞标记",
+	"settings.notifications.appIconBadge.desc": "即使关闭了通知，也会在程序坞的 Dure 图标上显示待处理的代理数量。",
 	"settings.providers.capability.resumeById": "恢复指定会话",
 	"settings.appearance.scheme.import.readFailed": "无法读取文件",
 	"settings.appearance.scheme.import.readFailedCheckPath": "无法读取文件 — 请检查路径",

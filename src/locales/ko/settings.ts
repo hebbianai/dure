@@ -526,6 +526,8 @@ export const settings: Record<string, string> = {
 	"settings.stats.usage.startTitle": "토큰 추적 시작",
 	"settings.stats.title": "통계 및 사용량",
 	"settings.notifications.suppressFocused.desc": "트리거한 패널을 이미 보고 있으면 알림을 건너뜁니다.",
+	"settings.notifications.appIconBadge.title": "Dock 배지",
+	"settings.notifications.appIconBadge.desc": "알림을 꺼 두어도 주의가 필요한 agent 수를 Dock의 Dure 아이콘에 표시합니다.",
 	"settings.providers.capability.resumeById": "특정 대화 재개",
 	"settings.appearance.scheme.import.readFailed": "파일을 읽을 수 없습니다",
 	"settings.appearance.scheme.import.readFailedCheckPath": "파일을 읽을 수 없습니다 — 경로를 확인해주세요",

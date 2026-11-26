@@ -762,6 +762,8 @@ export const settings: Record<string, string> = {
 	"settings.stats.usage.startTitle": "トークン追跡を開始",
 	"settings.stats.title": "統計と使用量",
 	"settings.notifications.suppressFocused.desc": "通知の発生元パネルを既に表示している場合は通知をスキップします。",
+	"settings.notifications.appIconBadge.title": "Dock バッジ",
+	"settings.notifications.appIconBadge.desc": "通知をオフにしていても、要対応の agent の数を Dock の Dure アイコンに表示します。",
 	"settings.providers.capability.resumeById": "特定の会話を再開",
 	"settings.appearance.scheme.import.readFailed": "ファイルを読み取れません",
 	"settings.appearance.scheme.import.readFailedCheckPath": "ファイルを読み取れません — パスを確認してください",

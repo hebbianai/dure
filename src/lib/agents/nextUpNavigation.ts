@@ -99,7 +99,8 @@ export function revealAgent(agentId: string): boolean {
 	return true;
 }
 
-function readNextUp(): NextUp {
+/** The next-up order as the stores hold it now, for readers outside React. */
+export function readNextUp(): NextUp {
 	const attention = useAgentAttention.getState();
 	return deriveNextUp({
 		agentIds: useStore.getState().agents.map((agent) => agent.id),
