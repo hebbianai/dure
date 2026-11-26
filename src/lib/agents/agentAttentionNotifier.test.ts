@@ -64,6 +64,8 @@ function mountedPane(panelId: string, component = "agent", params: Record<string
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // A new main window opens on Work; these cases act on the Spaces deck.
+  useWindowSidebarStore.getState().setTab("spaces");
   vi.stubGlobal("document", { hasFocus: () => true });
   mocks.isMainWindow.mockReturnValue(true);
   const api = mountedPane("agent:agent-a");

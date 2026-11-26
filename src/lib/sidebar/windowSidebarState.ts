@@ -14,10 +14,13 @@ export interface WindowSidebarSnapshot {
 	pluginSelection: PluginSidebarSelection | null;
 }
 
+/** A main window with no saved presentation opens on Work, the overview of
+ * every agent. A saved window keeps its tab: a snapshot without one, from a
+ * build before Work, reads as Spaces (normalizeSidebarTab). */
 export const MAIN_WINDOW_SIDEBAR_DEFAULT: WindowSidebarSnapshot = {
 	open: true,
 	width: 300,
-	tab: "spaces",
+	tab: "work",
 	pluginSelection: null,
 };
 

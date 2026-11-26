@@ -36,6 +36,8 @@ function paneApi() {
 
 describe("useAgentPaneAttentionAck", () => {
 	beforeEach(() => {
+		// A new main window opens on Work; these cases act on the Spaces deck.
+		useWindowSidebarStore.getState().setTab("spaces");
 		useAgentAttention.setState({
 			episodes: { "agent-1": 3 },
 			acks: {},

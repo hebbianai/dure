@@ -13,6 +13,9 @@ import {
 	parseWorkViewState,
 	serializeWorkViewState,
 	type WorkViewState,
+	withoutPin,
+	withPin,
+	withPinMoved,
 } from "@/lib/work/workViewState";
 
 const WORK_VIEW_STORAGE_KEY = "dure-main-window-work-view";
@@ -24,6 +27,9 @@ export interface WorkViewStore extends WorkViewState {
 	setDepth: (depth: WorkDepth) => void;
 	setGrouping: (grouping: WorkGrouping) => void;
 	setResultsOpen: (open: boolean) => void;
+	pin: (agentId: string) => void;
+	unpin: (agentId: string) => void;
+	movePin: (agentId: string, offset: -1 | 1) => void;
 }
 
 export function createWorkViewStore(
@@ -36,6 +42,14 @@ export function createWorkViewStore(
 		setDepth: (depth) => set({ depth }),
 		setGrouping: (grouping) => set({ grouping }),
 		setResultsOpen: (resultsOpen) => set({ resultsOpen }),
+		pin: (agentId) =>
+			set((current) => ({ pinned: withPin(current.pinned, agentId) })),
+		unpin: (agentId) =>
+			set((current) => ({ pinned: withoutPin(current.pinned, agentId) })),
+		movePin: (agentId, offset) =>
+			set((current) => ({
+				pinned: withPinMoved(current.pinned, agentId, offset),
+			})),
 	}));
 	if (save) {
 		store.subscribe((current, previous) => {
@@ -43,7 +57,8 @@ export function createWorkViewStore(
 				current.selected === previous.selected &&
 				current.depth === previous.depth &&
 				current.grouping === previous.grouping &&
-				current.resultsOpen === previous.resultsOpen
+				current.resultsOpen === previous.resultsOpen &&
+				current.pinned === previous.pinned
 			) {
 				return;
 			}
@@ -52,6 +67,7 @@ export function createWorkViewStore(
 				depth: current.depth,
 				grouping: current.grouping,
 				resultsOpen: current.resultsOpen,
+				pinned: current.pinned,
 			});
 		});
 	}

@@ -35,6 +35,9 @@ import { useWindowSidebarStore } from "@/lib/sidebar/windowSidebarStore";
 import { DEFAULT_TERMINAL_FONT_SIZE } from "@/lib/terminal/renderer/terminalFont";
 import { DEFAULT_UI_PREFS, useStore } from "@/store";
 
+// A new main window opens on Work; these cases act on the Spaces deck.
+beforeEach(() => useWindowSidebarStore.getState().setTab("spaces"));
+
 afterEach(() => {
 	mocks.api = undefined;
 	vi.clearAllMocks();

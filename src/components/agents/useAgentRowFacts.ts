@@ -57,6 +57,22 @@ function agentRowTitle(
 	});
 }
 
+/** The title every row shows for each of `agentIds`, in the same order;
+ * undefined for an id no registered Agent has. */
+export function useAgentRowTitles(
+	agentIds: readonly string[],
+): readonly (string | undefined)[] {
+	return useStore(
+		useShallow((state) => {
+			const agents = agentIndexOf(state.agents);
+			return agentIds.map((id) => {
+				const agent = agents.get(id);
+				return agent ? agentRowTitle(agent, state) : undefined;
+			});
+		}),
+	);
+}
+
 export function useAgentRowFacts(
 	agentId: string,
 	{ below, ...placement }: AgentRowPlacement,
@@ -85,14 +101,10 @@ export function useAgentRowFacts(
 		() => relations.chain(agentId, below),
 		[relations, agentId, below],
 	);
-	const path = useStore(
-		useShallow((state) => {
-			const agents = agentIndexOf(state.agents);
-			return managerIds.flatMap((id) => {
-				const manager = agents.get(id);
-				return manager ? [agentRowTitle(manager, state)] : [];
-			});
-		}),
+	const managerTitles = useAgentRowTitles(managerIds);
+	const path = useMemo(
+		() => managerTitles.filter((title) => title !== undefined),
+		[managerTitles],
 	);
 	const managed = useAgentManagedSummary(agentId);
 	const prompt = useMemo(

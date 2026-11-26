@@ -215,6 +215,8 @@ function dispatchSplitRight() {
 }
 
 beforeEach(() => {
+	// A new main window opens on Work; these cases act on the Spaces deck.
+	useWindowSidebarStore.getState().setTab("spaces");
 	const state = useStore.getState();
 	previousState = {
 		activeSpaceId: state.activeSpaceId,

@@ -247,9 +247,9 @@ function WorkRow({
 
 /** One Agent's row, reporting it the way every row does, with the Work
  * view's result window: a result since the start of the day. Under its
- * manager (Expand all) the indentation shows the path, so the row names
- * only the managers below that one. */
-function WorkAgentRow({
+ * manager (Expand all, or a detail's managed list) the indentation or the
+ * list shows the path, so the row names only the managers below that one. */
+export function WorkAgentRow({
 	agentId,
 	under,
 	spaceName,
