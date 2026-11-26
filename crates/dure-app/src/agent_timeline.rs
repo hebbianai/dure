@@ -424,6 +424,25 @@ pub enum AgentTimelineItemBodyV1 {
 }
 
 impl AgentTimelineItemBodyV1 {
+    /// The boundary that opens the newest window of a longer provider
+    /// history. With the transcript offset where the window starts, it is
+    /// placed there, so a reader pages the older history before it; without
+    /// it, it says only that older history precedes the window.
+    pub fn history_window(transcript_start: Option<i64>) -> Self {
+        match transcript_start {
+            Some(start) if start > 0 => Self::HistoryBoundary {
+                reason: PROVIDER_TRANSCRIPT_WINDOW_HISTORY_BOUNDARY_V1.into(),
+                requested_after_provider_sequence: 0,
+                dropped_through_provider_sequence: start,
+            },
+            _ => Self::HistoryBoundary {
+                reason: PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1.into(),
+                requested_after_provider_sequence: 0,
+                dropped_through_provider_sequence: 1,
+            },
+        }
+    }
+
     /// The boundary a continued timeline shows where it leaves out provider
     /// history between the rows it held and the history it continues with.
     /// With the transcript offsets where the held rows' records end and the

@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
 publish = false
-description = "Provider-owned Claude Code and Codex transcript reads shared by Dure and Hmux"
+description = "Provider-owned Claude Code, Codex and Pi transcript reads shared by Dure and Hmux"
 
 # Deliberately lean: serde and std. The desktop links this through
 # `dure-provider-profile`, and `hmux mobile-gateway` links it on every server

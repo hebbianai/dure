@@ -1136,8 +1136,7 @@ mod tests {
             ["Prompt 2", "Prompt 3", "Prompt 4", "Prompt 5"]
         );
         let older = dure_provider_profile::transcript::read_roots_activity_page(
-            &home.join("projects"),
-            &home.join("sessions"),
+            &dure_provider_profile::transcript::TranscriptRoots::in_state_directory(&home),
             "codex",
             "thread-history",
             starts[1],
@@ -1368,8 +1367,7 @@ mod tests {
     /// and `before` of the thread's rollout.
     fn gap_page(home: &std::path::Path, (after, before): (i64, i64)) -> Vec<String> {
         dure_provider_profile::transcript::read_roots_activity_page(
-            &home.join("projects"),
-            &home.join("sessions"),
+            &dure_provider_profile::transcript::TranscriptRoots::in_state_directory(home),
             "codex",
             "thread-history",
             u64::try_from(before).unwrap(),

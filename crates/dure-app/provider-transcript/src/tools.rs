@@ -298,12 +298,55 @@ pub fn codex_tool_events(value: &Value) -> Vec<ToolEvent> {
     }]
 }
 
+/// Pi records each call as a `toolCall` part of a reply and its result as a
+/// `toolResult` message, the way its Chat timeline shows them.
+#[must_use]
+pub fn pi_tool_events(value: &Value) -> Vec<ToolEvent> {
+    let Some(message) = crate::pi::pi_message(value) else {
+        return Vec::new();
+    };
+    match message.get("role").and_then(Value::as_str) {
+        Some("assistant") => message
+            .get("content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|part| part.get("type").and_then(Value::as_str) == Some("toolCall"))
+            .filter_map(|part| {
+                let name = part
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.is_empty() && name.len() <= MAX_TOOL_ID_BYTES)?;
+                Some(ToolEvent::Call {
+                    call_id: tool_id(part.get("id"))?,
+                    name: name.to_owned(),
+                    state: ProviderToolState::Running,
+                    input: part.get("arguments").map_or(Value::Null, bounded_input),
+                })
+            })
+            .collect(),
+        Some("toolResult") => tool_id(message.get("toolCallId"))
+            .map(|call_id| ToolEvent::Result {
+                call_id,
+                state: if message.get("isError").and_then(Value::as_bool) == Some(true) {
+                    ProviderToolState::Failed
+                } else {
+                    ProviderToolState::Completed
+                },
+            })
+            .into_iter()
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// The tool parser of a provider whose transcript this crate reads.
 #[must_use]
 pub fn tool_events_for(provider: &str) -> Option<ToolEventParser> {
     match provider {
         "claude" => Some(claude_tool_events),
         "codex" => Some(codex_tool_events),
+        "pi" => Some(pi_tool_events),
         _ => None,
     }
 }

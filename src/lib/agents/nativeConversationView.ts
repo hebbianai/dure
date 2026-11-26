@@ -4,8 +4,8 @@ import { nativeAgentTranscriptSource } from "../../../cli/lib/agent-transcript.m
 
 export interface NativeConversationViewAvailabilityV1 {
 	/** This pane can offer the observer Conversation at all: a local
-	 * Claude/Codex terminal, judged from what is known at mount rather than
-	 * from the runtime binding a freshly launched Agent records later. */
+	 * Claude, Codex or Pi terminal, judged from what is known at mount rather
+	 * than from the runtime binding a freshly launched Agent records later. */
 	offered: boolean;
 	/** The Conversation can be shown now: a live managed terminal whose
 	 * recorded conversation belongs to the running generation. */

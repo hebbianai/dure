@@ -34,6 +34,9 @@ struct Projection {
     /// extends with what Pi appended after them. `None` until the attach
     /// reads the session's newest window.
     entries: Option<Entries>,
+    /// Whether the timeline holds any turn, which a window of the session's
+    /// history then continues rather than opens.
+    holds_turns: bool,
 }
 
 struct PiTimelineBridge<S> {
@@ -102,6 +105,7 @@ async fn attach_inner<S: AgentTimelineStore + 'static>(
             turn_id: turn.turn_id,
             client_message_id: turn.client_message_id,
         }),
+        holds_turns: existing.rows.iter().any(|row| row.item.turn_id.is_some()),
         ..Default::default()
     };
     for row in &existing.rows {
@@ -221,9 +225,9 @@ impl<S: AgentTimelineStore + 'static> PiTimelineBridge<S> {
         }
         let mut history = project(&entries, &projection.anchors)?;
         let meets_timeline = self.journal.holds_any(&history.items).await;
-        self.journal
-            .append_once(history.take_items(meets_timeline)?)
-            .await?;
+        let items = history.take_items(meets_timeline, projection.holds_turns)?;
+        projection.holds_turns |= items.iter().any(|item| item.turn_id.is_some());
+        self.journal.append_once(items).await?;
         if !state.busy() {
             if let Some(active) = projection.active.clone() {
                 if history.completed.contains(&active.client_message_id) {

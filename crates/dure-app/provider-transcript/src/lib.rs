@@ -14,15 +14,17 @@ use std::{
 };
 mod accounts;
 mod claude_local_command;
+mod pi;
 mod tools;
 pub use accounts::{
     ProviderStateRoots, account_profile_directories, newest_conversation_file, read_newest,
 };
 use claude_local_command::{ClaudeLocalCommand, claude_local_command};
+pub use pi::{find_pi_conversation, pi_turn};
 pub use tools::{
     MAX_TOOL_CALLS, MAX_TOOL_INPUT_BYTES, MAX_TOOL_OUTPUT_BYTES, ProviderConversationActivity,
     ProviderToolCall, ProviderToolState, ToolEvent, ToolEventParser, bounded_input,
-    claude_tool_events, codex_tool_events, tool_events_for,
+    claude_tool_events, codex_tool_events, pi_tool_events, tool_events_for,
 };
 
 const MAX_SESSION_BYTES: u64 = 1024 * 1024;
@@ -322,6 +324,9 @@ pub fn provider_final_response(provider: &str, value: &Value) -> Option<String> 
                 .filter(|(role, _)| *role == ConversationTurnRole::Agent)
                 .map(|(_, text)| text)
         }
+        "pi" if pi::pi_final_reply(value) => pi_turn(value)
+            .filter(|(role, _)| *role == ConversationTurnRole::Agent)
+            .map(|(_, text)| text),
         _ => None,
     }
 }
@@ -397,14 +402,31 @@ fn activity_window(
     })
 }
 
-type TurnParser = fn(&Value) -> Option<(ConversationTurnRole, String)>;
+pub type TurnParser = fn(&Value) -> Option<(ConversationTurnRole, String)>;
 
 fn provider_parsers(provider: &str) -> Result<(TurnParser, ToolEventParser), String> {
+    let parser = turn_parser(provider)
+        .ok_or_else(|| "provider transcript export is unsupported".to_string())?;
+    let tool_events = tool_events_for(provider)
+        .ok_or_else(|| "provider transcript export is unsupported".to_string())?;
+    Ok((parser, tool_events))
+}
+
+/// The turn parser of a provider whose transcript this crate reads.
+#[must_use]
+pub fn turn_parser(provider: &str) -> Option<TurnParser> {
     match provider {
-        "claude" => Ok((claude_turn, claude_tool_events)),
-        "codex" => Ok((codex_turn, codex_tool_events)),
-        _ => Err("provider transcript export is unsupported".to_string()),
+        "claude" => Some(claude_turn),
+        "codex" => Some(codex_turn),
+        "pi" => Some(pi_turn),
+        _ => None,
     }
+}
+
+/// Whether a provider's transcript is a tree whose reader shows one branch of
+/// it, the conversation's, rather than every record: Pi's (see [`pi`]).
+fn follows_branch(provider: &str) -> bool {
+    provider == "pi"
 }
 
 #[derive(Clone, Copy)]
@@ -547,7 +569,12 @@ fn read_window(
         (0, &bytes[..])
     };
     let records_start = offset;
-    let mut lossless = true;
+    // In a tree, only the conversation's branch: a branch left behind is no
+    // part of what the conversation says.
+    let branch = follows_branch(provider)
+        .then(|| pi::branch(&mut file, bytes, records_start, before))
+        .transpose()?;
+    let mut lossless = !branch.as_ref().is_some_and(|branch| branch.broken);
     let mut final_response = None;
     let mut records = VecDeque::<WindowRecord>::new();
     let (mut output_bytes, mut entry_count) = (0usize, 0usize);
@@ -559,6 +586,12 @@ fn read_window(
     for raw in bytes.split_inclusive(|byte| *byte == b'\n') {
         let record_offset = offset;
         offset += raw.len() as u64;
+        if branch
+            .as_ref()
+            .is_some_and(|branch| !branch.records.contains(&record_offset))
+        {
+            continue;
+        }
         let raw = raw.strip_suffix(b"\n").unwrap_or(raw);
         let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
         if raw.iter().all(u8::is_ascii_whitespace) {
@@ -642,12 +675,34 @@ fn read_window(
             };
         }
     }
+    // Older records the bounds left out of the range, or, in a tree, the
+    // branch's older entries. The page before a branch continues it from the
+    // parent of the branch's oldest entry here, so that is where it ends.
+    let more = match &branch {
+        Some(branch) => {
+            if branch.continues && start == 0 {
+                // The parent the branch names is nowhere in the file.
+                lossless = false;
+            }
+            branch.continues && start > after
+        }
+        None => start > after,
+    };
     if !trimmed {
-        cut = records
-            .front()
-            .map_or(records_start, |record| record.offset);
+        cut = match &branch {
+            Some(branch) => match branch.oldest {
+                Some(oldest) => oldest,
+                None if more => {
+                    return Err("provider transcript branch continues before one page".to_string());
+                }
+                None => records_start,
+            },
+            None => records
+                .front()
+                .map_or(records_start, |record| record.offset),
+        };
     }
-    let older_cursor = (start > after || trimmed).then(|| {
+    let older_cursor = (more || trimmed).then(|| {
         // A record longer than the read window leaves no whole record in it;
         // the older page then starts inside that record.
         if cut >= end {
@@ -751,26 +806,48 @@ fn settle_last_turn(
     Ok(())
 }
 
+/// Where each provider keeps its conversations' transcripts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TranscriptRoots {
+    pub claude_projects: PathBuf,
+    pub codex_sessions: PathBuf,
+    pub pi_sessions: PathBuf,
+}
+
+impl TranscriptRoots {
+    /// The roots under one provider state directory, the one a backend names
+    /// a provider's state with: a credential profile's directory (Claude's
+    /// `CLAUDE_CONFIG_DIR`, Codex's `CODEX_HOME`) or the provider's default,
+    /// `~/.claude`, `~/.codex` or `~/.pi`. Only the provider's own root is
+    /// ever looked in.
+    #[must_use]
+    pub fn in_state_directory(home: &Path) -> Self {
+        Self {
+            claude_projects: home.join("projects"),
+            codex_sessions: home.join("sessions"),
+            pi_sessions: home.join("agent").join("sessions"),
+        }
+    }
+}
+
 pub fn read_roots(
-    claude_projects: &Path,
-    codex_sessions: &Path,
+    roots: &TranscriptRoots,
     provider: &str,
     conversation_id: &str,
 ) -> Result<ProviderConversationTranscript, String> {
     let (parse, _) = provider_parsers(provider)?;
-    let path = conversation_path(claude_projects, codex_sessions, provider, conversation_id)?;
+    let path = conversation_path(roots, provider, conversation_id)?;
     transcript_from_file(&path, provider, conversation_id, parse)
 }
 
 /// [`read_roots`] with the tool calls between the messages.
 pub fn read_roots_activity(
-    claude_projects: &Path,
-    codex_sessions: &Path,
+    roots: &TranscriptRoots,
     provider: &str,
     conversation_id: &str,
 ) -> Result<ProviderConversationActivity, String> {
     provider_parsers(provider)?;
-    let path = conversation_path(claude_projects, codex_sessions, provider, conversation_id)?;
+    let path = conversation_path(roots, provider, conversation_id)?;
     activity_from_file(&path, provider, conversation_id)
 }
 
@@ -784,15 +861,14 @@ pub fn read_roots_activity(
 /// that reaches `after` names no older cursor, so paging stops there and
 /// joins the older rows exactly.
 pub fn read_roots_activity_page(
-    claude_projects: &Path,
-    codex_sessions: &Path,
+    roots: &TranscriptRoots,
     provider: &str,
     conversation_id: &str,
     before: u64,
     after: u64,
 ) -> Result<ProviderConversationActivity, String> {
     provider_parsers(provider)?;
-    let path = conversation_path(claude_projects, codex_sessions, provider, conversation_id)?;
+    let path = conversation_path(roots, provider, conversation_id)?;
     activity_window(
         &path,
         provider,
@@ -804,8 +880,7 @@ pub fn read_roots_activity_page(
 }
 
 fn conversation_path(
-    claude_projects: &Path,
-    codex_sessions: &Path,
+    roots: &TranscriptRoots,
     provider: &str,
     conversation_id: &str,
 ) -> Result<PathBuf, String> {
@@ -814,9 +889,10 @@ fn conversation_path(
     }
     let path = match provider {
         "claude" => {
-            find_claude_conversation(claude_projects, conversation_id).map(|(_, path)| path)
+            find_claude_conversation(&roots.claude_projects, conversation_id).map(|(_, path)| path)
         }
-        "codex" => codex_rollout(codex_sessions, conversation_id),
+        "codex" => codex_rollout(&roots.codex_sessions, conversation_id),
+        "pi" => find_pi_conversation(&roots.pi_sessions, conversation_id),
         _ => return Err("provider transcript export is unsupported".to_string()),
     };
     path.ok_or_else(|| "provider conversation was not found".to_string())
@@ -1050,8 +1126,7 @@ const MAX_SESSION_SETTINGS_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
 /// configuration, or only in the session, so a relaunch cannot recover it
 /// from configuration. Both providers record it on every turn instead.
 pub fn read_session_settings_roots(
-    claude_projects: &Path,
-    codex_sessions: &Path,
+    roots: &TranscriptRoots,
     provider: &str,
     conversation_id: &str,
 ) -> Result<ProviderSessionSettings, String> {
@@ -1060,7 +1135,7 @@ pub fn read_session_settings_roots(
         "codex" => codex_turn_settings,
         _ => return Err("provider session settings are unsupported".to_string()),
     };
-    let path = conversation_path(claude_projects, codex_sessions, provider, conversation_id)?;
+    let path = conversation_path(roots, provider, conversation_id)?;
     let content = bounded_suffix(&path, MAX_SESSION_SETTINGS_SOURCE_BYTES)
         .ok_or_else(|| "read provider transcript".to_string())?;
     Ok(content

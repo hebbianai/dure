@@ -75,8 +75,7 @@ pub(super) async fn read(
     let before = body.before;
     let activity = tokio::task::spawn_blocking(move || {
         transcript::read_roots_activity_page(
-            &home.join("projects"),
-            &home.join("sessions"),
+            &transcript::TranscriptRoots::in_state_directory(&home),
             &provider,
             &conversation,
             before,

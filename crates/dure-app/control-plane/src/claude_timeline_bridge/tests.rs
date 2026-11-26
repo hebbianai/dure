@@ -1591,8 +1591,7 @@ async fn a_second_chat_session_after_a_long_terminal_places_the_gap_between_them
 
     // The page a view reads into the gap holds the Terminal turn between.
     let between = dure_provider_profile::transcript::read_roots_activity_page(
-        &home.join("projects"),
-        &temp_dir.path().join("no-codex-sessions"),
+        &dure_provider_profile::transcript::TranscriptRoots::in_state_directory(&home),
         "claude",
         "session-claude-1",
         window_start as u64,
