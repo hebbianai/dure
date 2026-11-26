@@ -48,7 +48,18 @@ describe("AgentRow", () => {
 		render(<AgentRow row={row} variant="line" />);
 		const button = screen.getByRole("button");
 		expect(button.getAttribute("data-variant")).toBe("line");
+		expect(button.textContent).toContain("coordinator › lead ›");
 		expect(button.textContent).toContain("Fix the build");
+		expect(button.textContent).toContain(
+			[
+				activityLabel("blocked"),
+				"repo",
+				"Review",
+				t("agents.row.manages", { n: 4 }),
+				t("agents.row.managedNeedYou", { n: 1 }),
+				t("agents.row.managedWorking", { n: 2 }),
+			].join(" · "),
+		);
 		expect(button.textContent).not.toContain(t("agents.row.approval", { tool: "Bash" }));
 	});
 

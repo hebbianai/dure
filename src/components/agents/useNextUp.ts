@@ -1,15 +1,12 @@
 // Store wiring for the next-up chip: the list, its shortcut and where each
 // row leads. The chip itself only renders what these hooks return; each
-// row's own facts come from useAgentRowFacts.
+// row's own facts come from useAgentRowFacts. A manager's team line reads
+// the same order and the same row destinations.
 import { useEffect, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useNeedsPerson } from "@/components/agents/useNeedsPerson";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
-import {
-	deriveNextUp,
-	type NextUp,
-	nextUpEntries,
-} from "@/lib/agents/nextUp";
+import { deriveNextUp, type NextUp } from "@/lib/agents/nextUp";
 import { agentRevealTargets, goToNextUp } from "@/lib/agents/nextUpNavigation";
 import {
 	chordToLabels,
@@ -66,18 +63,23 @@ export function useNextUpKeys(): string[] {
 	}, [overrides]);
 }
 
-/** The Space each row leads to, named only when going there leaves the Space
- * on screen. Pane locations are read once per change, not once per row. */
-export function useNextUpSpaceNames(nextUp: NextUp): ReadonlyMap<string, string> {
+/** The Space each listed agent's row leads to, named only when going there
+ * leaves the Space on screen. Pane locations are read once per change, not
+ * once per row; pass a memoized list. */
+export function useAgentRevealSpaceNames(
+	agentIds: readonly string[],
+): ReadonlyMap<string, string> {
 	const activeSpaceId = useStore((state) => state.activeSpaceId);
 	const spaces = useStore((state) => state.spaces);
 	const layouts = useStore((state) => state.layouts);
 	const hidden = useHiddenPanes((state) => state.hidden);
 	return useMemo(() => {
-		const targets = agentRevealTargets(
-			nextUpEntries(nextUp).map((entry) => entry.agentId),
-			{ activeSpaceId, spaces, layouts, hidden },
-		);
+		const targets = agentRevealTargets(agentIds, {
+			activeSpaceId,
+			spaces,
+			layouts,
+			hidden,
+		});
 		const names = new Map<string, string>();
 		for (const [agentId, { desktopId }] of targets) {
 			if (desktopId === activeSpaceId) continue;
@@ -85,5 +87,5 @@ export function useNextUpSpaceNames(nextUp: NextUp): ReadonlyMap<string, string>
 			if (name) names.set(agentId, name);
 		}
 		return names;
-	}, [nextUp, activeSpaceId, spaces, layouts, hidden]);
+	}, [agentIds, activeSpaceId, spaces, layouts, hidden]);
 }

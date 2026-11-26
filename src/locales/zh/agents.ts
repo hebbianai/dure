@@ -28,6 +28,7 @@ export const agents: Record<string, string> = {
 	"agents.row.manages": "管理 {n} 个",
 	"agents.row.managedNeedYou": "{n} 个待处理",
 	"agents.row.managedWorking": "{n} 个工作中",
+	"agents.team.label": "它管理的智能体",
 	"agents.goal.label": "目标",
 	"agents.goal.objective": "目标内容",
 	"agents.goal.hint": "希望智能体朝什么目标工作？",

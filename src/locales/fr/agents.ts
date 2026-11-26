@@ -28,6 +28,7 @@ export const agents: Record<string, string> = {
 	"agents.row.manages": "Gère {n}",
 	"agents.row.managedNeedYou": "{n} à traiter",
 	"agents.row.managedWorking": "{n} au travail",
+	"agents.team.label": "Agents qu’il gère",
 	"agents.goal.label": "Objectif",
 	"agents.goal.objective": "Description de l’objectif",
 	"agents.goal.hint": "Quel objectif l’agent doit-il poursuivre ?",

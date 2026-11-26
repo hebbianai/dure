@@ -47,7 +47,9 @@ function activityText(activity: AgentRowActivity): string {
 	}
 }
 
-function managedText(managed: AgentRowManagedSummary): string {
+/** What an agent manages, in one line: the same words on its row and on its
+ * team line. */
+export function agentRowManagedText(managed: AgentRowManagedSummary): string {
 	return [
 		t("agents.row.manages", { n: managed.count }),
 		managed.needsPerson > 0
@@ -85,12 +87,13 @@ export function AgentRow({
 		.filter(Boolean)
 		.join(" · ");
 	const path = row.path?.join(" › ");
-	const managed = row.managed ? managedText(row.managed) : undefined;
+	const managed = row.managed ? agentRowManagedText(row.managed) : undefined;
 	const activity = row.activity ? activityText(row.activity) : undefined;
 	const select = onSelect ? () => onSelect(row.agentId) : undefined;
 	const dot = <ActivityDot activity={row.dot.state} unread={row.dot.unread} />;
 
 	if (variant === "line") {
+		const trailing = [meta, managed].filter(Boolean).join(" · ");
 		return (
 			<button
 				type="button"
@@ -106,8 +109,10 @@ export function AgentRow({
 					</span>
 				)}
 				<span className="min-w-0 flex-1 truncate text-foreground">{row.title}</span>
-				{meta && (
-					<span className="min-w-0 shrink truncate text-muted-foreground">{meta}</span>
+				{trailing && (
+					<span className="min-w-0 shrink truncate text-muted-foreground">
+						{trailing}
+					</span>
 				)}
 			</button>
 		);

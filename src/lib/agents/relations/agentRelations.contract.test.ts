@@ -1,6 +1,6 @@
 // Coverage contract: every surface that says who manages whom reads the one
-// relation owner, so Spaces' lead nesting, worker pane placement and the row
-// paths cannot disagree about an agent's manager.
+// relation owner, so Spaces' lead nesting, worker pane placement, the row
+// paths and a manager's team line cannot disagree about an agent's manager.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -44,7 +44,11 @@ describe("relation coverage", () => {
 			"relations.managerOf(worker.id)",
 		);
 		const rowFacts = source("components/agents/useAgentRowFacts.ts");
-		expect(rowFacts).toContain("relations.chain(agentId)");
+		expect(rowFacts).toContain("relations.chain(agentId, below)");
 		expect(rowFacts).toContain("useAgentManagedSummary(agentId)");
+		const teamLine = source("components/agents/AgentTeamLine.tsx");
+		expect(teamLine).toContain("useAgentManagedSummary(agentId)");
+		expect(teamLine).toContain("useAgentRelations()");
+		expect(teamLine).toContain("agentTeamMembers(");
 	});
 });

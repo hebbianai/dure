@@ -8,6 +8,7 @@ import {
 	isAgentUnread,
 } from "@/lib/agents/agentAttentionStore";
 import { compareWaitStart, hasResult } from "@/lib/agents/agentResult";
+import type { AgentRowFacts } from "@/lib/agents/agentRowModel";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
 import type { NeedsPersonMap, NeedsPersonReason } from "@/lib/agents/needsPerson";
 
@@ -91,6 +92,25 @@ export function deriveNextUp(facts: NextUpFacts): NextUp {
 
 export function nextUpEntries(nextUp: NextUp): NextUpEntry[] {
 	return [...nextUp.needsYou, ...nextUp.results];
+}
+
+/** Where a Next up entry stands, for its row: why it is listed and since
+ * when, in the needs-person and has-result vocabulary every row shares. */
+export function nextUpRowPlacement(
+	entry: NextUpEntry,
+): Pick<AgentRowFacts, "state" | "needsPerson" | "hasResult" | "sinceMs"> {
+	return {
+		state: entry.state,
+		...(entry.reason === "result"
+			? { hasResult: true }
+			: {
+					needsPerson: {
+						reason: entry.reason,
+						...(entry.signIn ? { signIn: entry.signIn } : {}),
+					},
+				}),
+		...(entry.sinceMs === undefined ? {} : { sinceMs: entry.sinceMs }),
+	};
 }
 
 /** The agent after the one in focus, in list order, wrapping around. A

@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo } from "react";
+import { AgentTeamLine } from "@/components/agents/AgentTeamLine";
 import { NativeAgentBackgroundWork } from "@/components/agents/NativeAgentBackgroundWork";
 import { AgentPendingRequestCard } from "@/components/agents/chat/AgentPendingRequestCard";
 import { TranscriptContents } from "@/components/agents/chat/AgentChatTimelineRows";
@@ -285,6 +286,7 @@ export function NativeAgentChatView({
 					}
 				/>
 			) : null}
+			<AgentTeamLine agentId={agent.id} />
 			<ChatComposerShell
 				onSubmit={() => void submit()}
 				notices={

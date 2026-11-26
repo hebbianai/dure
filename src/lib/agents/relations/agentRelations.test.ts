@@ -43,6 +43,20 @@ describe("buildAgentRelations", () => {
 		expect(relations.managedBy("f")).toEqual([]);
 	});
 
+	it("names the path below an agent the chain passes through", () => {
+		const relations = buildAgentRelations(
+			["a", "b", "c", "d", "x"],
+			[edge("b", "a"), edge("c", "b"), edge("d", "c")],
+		);
+		expect(relations.chain("d", "a")).toEqual(["b", "c"]);
+		expect(relations.chain("d", "b")).toEqual(["c"]);
+		// Managed directly: nothing between them.
+		expect(relations.chain("d", "c")).toEqual([]);
+		// Not below it: the whole chain.
+		expect(relations.chain("d", "x")).toEqual(["a", "b", "c"]);
+		expect(relations.chain("d", "d")).toEqual(["a", "b", "c"]);
+	});
+
 	it("lists a wide fan-out in start order whatever order the facts came in", () => {
 		const workers = Array.from({ length: 50 }, (_, index) => `w${index}`);
 		const relations = buildAgentRelations(

@@ -1,20 +1,29 @@
 import { Popover } from "radix-ui";
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import {
+	type ReactNode,
+	useEffect,
+	useId,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { AgentRow } from "@/components/agents/AgentRow";
+import { useAgentRowFacts } from "@/components/agents/useAgentRowFacts";
 import {
-	type AgentRowPlacement,
-	useAgentRowFacts,
-} from "@/components/agents/useAgentRowFacts";
-import {
+	useAgentRevealSpaceNames,
 	useNextUp,
 	useNextUpKeys,
 	useNextUpShortcut,
-	useNextUpSpaceNames,
 } from "@/components/agents/useNextUp";
 import { Kbd } from "@/components/ui/kbd";
 import { Titled } from "@/components/ui/tooltip";
 import { agentRowModel } from "@/lib/agents/agentRowModel";
-import type { NextUp, NextUpEntry } from "@/lib/agents/nextUp";
+import {
+	type NextUp,
+	type NextUpEntry,
+	nextUpEntries,
+	nextUpRowPlacement,
+} from "@/lib/agents/nextUp";
 import { revealAgent } from "@/lib/agents/nextUpNavigation";
 import { t } from "@/lib/i18n";
 import { MENU_GLASS_FILL_CLASS, MENU_SIDE_OFFSET } from "@/lib/ui/menuSurface";
@@ -134,7 +143,11 @@ function NextUpList({
 	nextUp: NextUp;
 	onSelect: (agentId: string) => void;
 }) {
-	const spaceNames = useNextUpSpaceNames(nextUp);
+	const agentIds = useMemo(
+		() => nextUpEntries(nextUp).map((entry) => entry.agentId),
+		[nextUp],
+	);
+	const spaceNames = useAgentRevealSpaceNames(agentIds);
 	return (
 		<div className="min-h-0 overflow-y-auto">
 			{SECTIONS.map(({ key, heading }) =>
@@ -176,27 +189,6 @@ function NextUpSection({
 	);
 }
 
-/** Where a Next up entry stands, for its row: why it is listed and since
- * when, in the needs-person and has-result vocabulary every row shares. */
-function nextUpPlacement(
-	entry: NextUpEntry,
-	spaceName: string | undefined,
-): AgentRowPlacement {
-	return {
-		state: entry.state,
-		...(entry.reason === "result"
-			? { hasResult: true }
-			: {
-					needsPerson: {
-						reason: entry.reason,
-						...(entry.signIn ? { signIn: entry.signIn } : {}),
-					},
-				}),
-		...(entry.sinceMs === undefined ? {} : { sinceMs: entry.sinceMs }),
-		...(spaceName ? { spaceName } : {}),
-	};
-}
-
 function NextUpRow({
 	entry,
 	spaceName,
@@ -206,7 +198,10 @@ function NextUpRow({
 	spaceName: string | undefined;
 	onSelect: (agentId: string) => void;
 }) {
-	const facts = useAgentRowFacts(entry.agentId, nextUpPlacement(entry, spaceName));
+	const facts = useAgentRowFacts(entry.agentId, {
+		...nextUpRowPlacement(entry),
+		...(spaceName ? { spaceName } : {}),
+	});
 	if (!facts) return null;
 	return (
 		<li>

@@ -28,6 +28,7 @@ export const agentsEnglishTranslations: Record<string, string> = {
 	"agents.row.manages": "Manages {n}",
 	"agents.row.managedNeedYou": "{n} need you",
 	"agents.row.managedWorking": "{n} working",
+	"agents.team.label": "Agents it manages",
 	"agents.goal.label": "Goal",
 	"agents.goal.objective": "Objective",
 	"agents.goal.hint": "What should the agent work toward?",
