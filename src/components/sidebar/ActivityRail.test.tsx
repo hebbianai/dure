@@ -11,6 +11,11 @@ import { useWindowSidebarStore } from "@/lib/sidebar/windowSidebarStore";
 import { t } from "@/lib/i18n";
 import { useStore } from "@/store";
 import {
+	agentFixture,
+	hmuxSessionMetadataFixture,
+	managedAgentFixture,
+} from "@/test/agentFixtures";
+import {
 	dismissUpdateNotice,
 	resetUpdateNotices,
 	updateNoticeSnapshot,
@@ -101,18 +106,53 @@ describe("ActivityRail", () => {
 		expect(collapsed).toContain("text-sidebar-foreground");
 	});
 
-	it("badges the Spaces item with the count of sessions needing a human", () => {
+	it("badges the Spaces item with the agents the needs-person map holds", () => {
+		const previous = useStore.getState();
+		useStore.setState({
+			agents: [
+				agentFixture({ id: "a1" }),
+				agentFixture({ id: "a2" }),
+				agentFixture({ id: "a3" }),
+				managedAgentFixture({ id: "a4" }),
+			],
+			hmuxSessionMetadata: hmuxSessionMetadataFixture({
+				failure: {
+					correlationId: "failure_1",
+					sessionId: "session-1",
+					workspaceId: "workspace-1",
+					terminalEpoch: "terminal-1",
+					code: "provider_exited",
+					phase: "provider_runtime",
+					summary: "Managed provider exited with status 1.",
+					exitKind: "provider_error",
+					exitCode: 1,
+					occurredUnixMs: "1700000000000",
+					retryPosture: "never",
+				},
+			}),
+		});
+		// An agent no longer registered is never counted.
 		useAgentAttention.setState({
-			displayStates: { a1: "blocked", a2: "input", a3: "working" },
+			displayStates: {
+				a1: "blocked",
+				a2: "input",
+				a3: "working",
+				a4: "exited",
+				gone: "error",
+			},
 		});
 		try {
 			render(<ActivityRail onOpenSettings={vi.fn()} />);
 			const spacesItem = screen.getByRole("button", {
-				name: /스페이스 · 주의 필요 2개/,
+				name: /스페이스 · 주의 필요 3개/,
 			});
-			expect(spacesItem.textContent).toContain("2");
+			expect(spacesItem.textContent).toContain("3");
 		} finally {
 			useAgentAttention.setState({ displayStates: {} });
+			useStore.setState({
+				agents: previous.agents,
+				hmuxSessionMetadata: previous.hmuxSessionMetadata,
+			});
 		}
 	});
 

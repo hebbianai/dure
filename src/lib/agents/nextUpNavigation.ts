@@ -1,5 +1,6 @@
 import type { DockviewApi } from "dockview-react";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
+import { readNeedsPerson } from "@/lib/agents/needsPersonFacts";
 import {
 	deriveNextUp,
 	type NextUp,
@@ -104,12 +105,12 @@ export function readNextUp(): NextUp {
 	const attention = useAgentAttention.getState();
 	return deriveNextUp({
 		agentIds: useStore.getState().agents.map((agent) => agent.id),
+		needsPerson: readNeedsPerson(),
 		displayStates: attention.displayStates,
 		episodes: attention.episodes,
 		acks: attention.acks,
 		episodeKinds: attention.episodeKinds,
 		episodeAt: attention.episodeAt,
-		waitingSince: attention.waitingSince,
 	});
 }
 

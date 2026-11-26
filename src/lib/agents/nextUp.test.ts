@@ -1,34 +1,50 @@
 import { describe, expect, it } from "vitest";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
+import { deriveNeedsPerson, type NeedsPersonFailure } from "@/lib/agents/needsPerson";
 import {
 	deriveNextUp,
-	NEXT_UP_REASON_BY_STATE,
 	type NextUpFacts,
 	nextUpEntries,
 	nextUpTarget,
 } from "@/lib/agents/nextUp";
-import { ATTENTION_DISPLAY_STATES } from "@/lib/spaces/spacesStateFilter";
 
-function facts(overrides: Partial<NextUpFacts>): NextUpFacts {
-	return {
+type Overrides = Partial<Omit<NextUpFacts, "needsPerson">> & {
+	waitingSince?: Record<string, number>;
+	failures?: Record<string, NeedsPersonFailure>;
+};
+
+/** Next up over the needs-person map the window derives from the same facts. */
+function facts({ waitingSince = {}, failures = {}, ...overrides }: Overrides): NextUpFacts {
+	const base = {
 		agentIds: [],
 		displayStates: {},
 		episodes: {},
 		acks: {},
 		episodeKinds: {},
 		episodeAt: {},
-		waitingSince: {},
 		...overrides,
+	};
+	return {
+		...base,
+		needsPerson: deriveNeedsPerson(
+			base.agentIds.map((id) => ({ id })),
+			{ displayStates: base.displayStates, waitingSince, failures },
+		),
+	};
+}
+
+function exitCapsule(patch: Partial<NeedsPersonFailure> = {}): NeedsPersonFailure {
+	return {
+		sessionId: "session-1",
+		workspaceId: "workspace-1",
+		terminalEpoch: "terminal-1",
+		code: "provider_exited",
+		occurredUnixMs: "1500",
+		...patch,
 	};
 }
 
 describe("deriveNextUp", () => {
-	it("names every display state that needs a human, and only those", () => {
-		expect(new Set(Object.keys(NEXT_UP_REASON_BY_STATE))).toEqual(
-			ATTENTION_DISPLAY_STATES,
-		);
-	});
-
 	it("lists Host attention oldest wait first, with unobserved starts ahead", () => {
 		const nextUp = deriveNextUp(
 			facts({
@@ -49,7 +65,56 @@ describe("deriveNextUp", () => {
 			{ agentId: "failed", reason: "error", state: "error", sinceMs: 2_000 },
 			{ agentId: "late", reason: "approval", state: "blocked", sinceMs: 3_000 },
 		]);
-		expect(nextUp.finished).toEqual([]);
+		expect(nextUp.results).toEqual([]);
+	});
+
+	it("lists an unexpected exit by the Host's exit time, with its sign-in cause", () => {
+		const nextUp = deriveNextUp(
+			facts({
+				agentIds: ["approval", "crashed", "signedOut", "stopped"],
+				displayStates: {
+					approval: "blocked",
+					crashed: "exited",
+					signedOut: "exited",
+					stopped: "exited",
+				},
+				waitingSince: { approval: 2_000 },
+				episodes: { stopped: 1 },
+				episodeKinds: { stopped: "done" },
+				failures: {
+					crashed: exitCapsule(),
+					signedOut: exitCapsule({
+						code: "provider_exited_at_sign_in",
+						occurredUnixMs: "2500",
+					}),
+				},
+			}),
+		);
+		expect(nextUp.needsYou).toEqual([
+			{ agentId: "crashed", reason: "unexpected_exit", state: "exited", sinceMs: 1_500 },
+			{ agentId: "approval", reason: "approval", state: "blocked", sinceMs: 2_000 },
+			{
+				agentId: "signedOut",
+				reason: "unexpected_exit",
+				state: "exited",
+				sinceMs: 2_500,
+				signIn: true,
+			},
+		]);
+		// A stop someone asked for leaves no capsule: its last turn is a result.
+		expect(nextUp.results.map((entry) => entry.agentId)).toEqual(["stopped"]);
+	});
+
+	it("lists exactly the agents the needs-person map holds", () => {
+		const nextUp = deriveNextUp(
+			facts({
+				agentIds: ["unresolved"],
+				failures: { unresolved: exitCapsule() },
+			}),
+		);
+		expect(nextUp.needsYou).toEqual([
+			{ agentId: "unresolved", reason: "unexpected_exit", state: "unknown", sinceMs: 1_500 },
+		]);
 	});
 
 	it("breaks equal waits by agent order", () => {
@@ -62,7 +127,7 @@ describe("deriveNextUp", () => {
 		expect(nextUp.needsYou.map((item) => item.agentId)).toEqual(["b", "a"]);
 	});
 
-	it("keeps an unread finished turn until work resumes", () => {
+	it("keeps an unread result until work resumes", () => {
 		const states: Record<string, AgentDisplayState> = {
 			resting: "waiting",
 			unobserved: "unknown",
@@ -95,17 +160,17 @@ describe("deriveNextUp", () => {
 				episodeAt: { resting: 4_000, exited: 5_000 },
 			}),
 		);
-		expect(nextUp.finished).toEqual([
-			{ agentId: "unobserved", reason: "finished", state: "unknown" },
-			{ agentId: "resting", reason: "finished", state: "waiting", sinceMs: 4_000 },
-			{ agentId: "exited", reason: "finished", state: "exited", sinceMs: 5_000 },
+		expect(nextUp.results).toEqual([
+			{ agentId: "unobserved", reason: "result", state: "unknown" },
+			{ agentId: "resting", reason: "result", state: "waiting", sinceMs: 4_000 },
+			{ agentId: "exited", reason: "result", state: "exited", sinceMs: 5_000 },
 		]);
 	});
 
 	it("skips agents the watcher has not resolved", () => {
 		expect(deriveNextUp(facts({ agentIds: ["a"] }))).toEqual({
 			needsYou: [],
-			finished: [],
+			results: [],
 		});
 	});
 });
@@ -126,7 +191,7 @@ describe("nextUpTarget", () => {
 		expect(nextUpTarget(entries, "elsewhere")?.agentId).toBe("a");
 	});
 
-	it("steps past the focused agent through needs-you and then finished", () => {
+	it("steps past the focused agent through needs-you and then results", () => {
 		expect(nextUpTarget(entries, "a")?.agentId).toBe("b");
 		expect(nextUpTarget(entries, "b")?.agentId).toBe("c");
 		expect(nextUpTarget(entries, "c")?.agentId).toBe("a");
