@@ -22,7 +22,9 @@ use crate::structured_provider_runtime::{
 
 use crate::provider_timeline_journal::{ProviderTimelineJournal, digest, now_ms};
 
+mod history;
 mod projection;
+use history::*;
 use projection::*;
 
 #[derive(Default)]
@@ -30,6 +32,9 @@ struct Projection {
     turns: BTreeMap<String, TurnContext>,
     pending: BTreeMap<String, (PendingKind, Value)>,
     accepted_turn: Option<String>,
+    /// When the oldest message of the history window the attach read was
+    /// created.
+    history_starts_at_ms: Option<i64>,
 }
 
 pub(crate) struct OpenCodeTimelineBridge<S> {
@@ -111,8 +116,31 @@ pub(crate) async fn attach<S: AgentTimelineStore + 'static>(
     })
 }
 
+impl Projection {
+    /// A provider message that completed the accepted Dure turn releases it.
+    fn observe_completion(&mut self, completed_user: Option<&String>) {
+        if completed_user.is_some() && completed_user == self.accepted_turn.as_ref() {
+            self.accepted_turn = None;
+        }
+    }
+
+    /// Whether a changed message is older than the history window, so the
+    /// timeline holds it already or leaves it out behind a boundary.
+    /// Appending it would place it after newer rows.
+    fn precedes_history(&self, message: &Value) -> bool {
+        let created = message
+            .pointer("/info/time/created")
+            .and_then(Value::as_i64);
+        matches!((created, self.history_starts_at_ms), (Some(created), Some(start)) if created < start)
+    }
+}
+
 impl<S: AgentTimelineStore + 'static> OpenCodeTimelineBridge<S> {
     async fn hydrate(&self) -> Result<(), CommandError> {
+        self.hydrate_within(HistoryWindowBounds::ATTACH).await
+    }
+
+    async fn hydrate_within(&self, bounds: HistoryWindowBounds) -> Result<(), CommandError> {
         let mut projection = self.projection.lock().await;
         let existing = self.journal.existing_rows().await?;
         projection.accepted_turn = existing
@@ -130,14 +158,23 @@ impl<S: AgentTimelineStore + 'static> OpenCodeTimelineBridge<S> {
                     });
             }
         }
-        for message in self
-            .client
-            .messages(&self.session)
-            .await
-            .map_err(provider_error)?
-        {
-            self.project_message(&mut projection, &message).await?;
+        let held = existing
+            .rows
+            .iter()
+            .map(|row| row.item.item_id.clone())
+            .collect();
+        let window = history_window(
+            self.client.message_pages(&self.session),
+            &mut projection.turns,
+            &held,
+            bounds,
+        )
+        .await?;
+        for completed_user in &window.completed_users {
+            projection.observe_completion(Some(completed_user));
         }
+        projection.history_starts_at_ms = window.starts_at_ms;
+        self.journal.append_once(window.items).await?;
         self.sync_pending(&mut projection).await?;
         self.journal
             .append_once(vec![item(
@@ -179,11 +216,12 @@ impl<S: AgentTimelineStore + 'static> OpenCodeTimelineBridge<S> {
         projection: &mut Projection,
         message: &Value,
     ) -> Result<(), CommandError> {
+        if projection.precedes_history(message) {
+            return Ok(());
+        }
         let (items, completed_user) = message_items(message, &mut projection.turns)?;
         self.journal.append_once(items).await?;
-        if completed_user.as_ref() == projection.accepted_turn.as_ref() {
-            projection.accepted_turn = None;
-        }
+        projection.observe_completion(completed_user.as_ref());
         Ok(())
     }
 
@@ -453,6 +491,9 @@ impl<S: AgentTimelineStore + 'static> AgentProviderCommands for OpenCodeTimeline
         })
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 fn user_message_id(client: &AgentClientMessageIdV1) -> String {
     format!("msg_dure_{}", digest(client.as_str()))

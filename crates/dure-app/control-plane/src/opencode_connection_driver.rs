@@ -218,7 +218,8 @@ pub(crate) fn automatically_answers(
         }
 }
 
-fn ready_port(line: &str) -> Option<u16> {
+/// The port of the loopback server `opencode serve` reports it listens on.
+pub(crate) fn ready_port(line: &str) -> Option<u16> {
     line.strip_prefix("opencode server listening on http://127.0.0.1:")?
         .parse()
         .ok()
