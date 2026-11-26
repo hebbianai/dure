@@ -635,6 +635,26 @@ async fn execute_prepared_stage(
                         launch_idempotency_key,
                         session,
                     } = launch_receipt;
+                    // The provider is already running. Its session-start hook
+                    // opens the Session's durable inbox only once an Agent
+                    // binds the Session, so the binding is recorded before
+                    // the launch prompt watch, which can last seconds.
+                    if let Err((error_code, cause)) =
+                        persist_native_runtime_selection(store, &receipt, &session).await
+                    {
+                        return append(
+                            store,
+                            &receipt,
+                            AgentSpawnJournalEventBodyV1::StageFailed {
+                                stage: AgentSpawnStageV1::RuntimeLaunch,
+                                attempt,
+                                error_code,
+                                error_detail: unbound_session_detail(&session, &cause),
+                                may_have_written: None,
+                            },
+                        )
+                        .await;
+                    }
                     if let Some(gate) = &startup_gate {
                         // The Host owns what the agent is doing. Without this
                         // report it shows a merely waiting agent while the
@@ -653,38 +673,20 @@ async fn execute_prepared_stage(
                             });
                     }
                     let initial_prompt_accepted = launch_prompt_carried && startup_gate.is_none();
-                    match persist_native_runtime_selection(store, &receipt, &session).await {
-                        Ok(()) => {
-                            append(
-                                store,
-                                &receipt,
-                                AgentSpawnJournalEventBodyV1::StageCommitted {
-                                    attempt,
-                                    evidence: AgentSpawnStageEvidenceV1::RuntimeLaunch {
-                                        session,
-                                        launch_idempotency_key: Some(launch_idempotency_key),
-                                        initial_prompt_accepted,
-                                        startup_gate,
-                                    },
-                                },
-                            )
-                            .await
-                        }
-                        Err((error_code, cause)) => {
-                            append(
-                                store,
-                                &receipt,
-                                AgentSpawnJournalEventBodyV1::StageFailed {
-                                    stage: AgentSpawnStageV1::RuntimeLaunch,
-                                    attempt,
-                                    error_code,
-                                    error_detail: unbound_session_detail(&session, &cause),
-                                    may_have_written: None,
-                                },
-                            )
-                            .await
-                        }
-                    }
+                    append(
+                        store,
+                        &receipt,
+                        AgentSpawnJournalEventBodyV1::StageCommitted {
+                            attempt,
+                            evidence: AgentSpawnStageEvidenceV1::RuntimeLaunch {
+                                session,
+                                launch_idempotency_key: Some(launch_idempotency_key),
+                                initial_prompt_accepted,
+                                startup_gate,
+                            },
+                        },
+                    )
+                    .await
                 }
                 Ok(_) => {
                     append(
