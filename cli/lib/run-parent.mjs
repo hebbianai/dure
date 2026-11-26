@@ -1,4 +1,4 @@
-import { matchingAgents } from "./client-registry.mjs";
+import { selectAgents } from "./client-registry.mjs";
 import {
   AGENT_SPAWN_PARENT_LINK_CAPABILITY,
   validSpawnParent,
@@ -45,8 +45,7 @@ export function registryParent(selector, registry, backend) {
       `The app's Agent list is unavailable to resolve ${selector}. Use --parent SESSION_ID --parent-workspace ID.`,
     );
   }
-  const byId = registry.agents.filter((agent) => agent.id === selector);
-  const matches = byId.length ? byId : matchingAgents(registry, selector);
+  const matches = selectAgents(registry, selector);
   if (matches.length !== 1) {
     fail(
       matches.length === 0 ? "run_parent_not_found" : "run_parent_ambiguous",
@@ -157,16 +156,19 @@ export const ACTION_REQUIRED_CHILD_STATES = new Set([
 ]);
 
 /**
- * Classify one child from its Run record and the Host's observation of its
- * Session. A child is settled when it has finished at least one turn and is
- * idle, its provider exited, it waits for input or approval, or its launch
- * failed or stopped short. Silence and terminal output are never evidence.
+ * Classify one child from its Run record and its observation: the backend's
+ * reading of the chat conversation it runs on now, otherwise the Host's
+ * observation of its Session. A child is settled when it has finished at
+ * least one turn and is idle, its provider exited, it waits for input or
+ * approval, or its launch failed or stopped short. Silence and terminal
+ * output are never evidence.
  */
-export function classifyChild(run, sessionReport) {
+export function classifyChild(run, sessionReport, conversation) {
   if (LAUNCH_FAILED.has(run.launchState)) return { state: "launch_failed" };
   // A launch that stopped short waits for someone to inspect or retry it.
   if (LAUNCH_INCOMPLETE.has(run.launchState)) return { state: "launch_incomplete" };
   if (run.launchState !== "succeeded") return { state: "launching" };
+  if (conversation) return classifyConversation(conversation);
   if (typeof run.sessionId !== "string") {
     return { state: "unobservable", reason: "chat_runtime" };
   }
@@ -188,4 +190,19 @@ export function classifyChild(run, sessionReport) {
     return { state: "turn_completed", turnCompletedCount };
   }
   return { state: "working", turnCompletedCount };
+}
+
+/** A chat child, from the backend's reading of its conversation. A finished
+ * turn is named by its position in the conversation, which only grows. */
+function classifyConversation(conversation) {
+  if (conversation.state === "unavailable") {
+    return { state: "working", reason: "observation_unavailable" };
+  }
+  if (conversation.state === "stopped") return { state: "exited" };
+  const { attention, turnCompletedSequence } = conversation;
+  if (attention !== "none") return { state: "attention_required", attention, turnCompletedSequence };
+  if (conversation.quiescent && turnCompletedSequence !== null) {
+    return { state: "turn_completed", turnCompletedSequence };
+  }
+  return { state: "working", turnCompletedSequence };
 }

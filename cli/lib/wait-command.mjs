@@ -2,14 +2,18 @@ import { deferredWake } from "./deferred-wake.mjs";
 import { MESSAGE_NOT_STORED, queryTrackedMessage, readMessageTracking } from "./tracked-message.mjs";
 import { parseArgs } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
-import { matchingAgents } from "./client-registry.mjs";
-import { collectAgentSpawnQuery } from "./agent-spawn-query.mjs";
+import { selectAgents } from "./client-registry.mjs";
+import {
+  backendObservesRunConversations,
+  collectAgentSpawnQuery,
+  readRunConversation,
+} from "./agent-spawn-query.mjs";
 import { collectSessionQuery } from "./session-query.mjs";
 import { boundedString, decimal, sameGeneration } from "./session-runtime-projection.mjs";
 import { readDelegatedWorkflow } from "./workflow-completion.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
 import { CommandExit } from "./process-exit.mjs";
-import { listRunRecords } from "./run-agent-selection.mjs";
+import { listRunRecords, selectRunRecord } from "./run-agent-selection.mjs";
 import {
   ACTION_REQUIRED_CHILD_STATES,
   SETTLED_CHILD_STATES,
@@ -33,6 +37,10 @@ Response: waits for the next Host-reported completed-turn count after the initia
 snapshot. For a fast response or resuming a wait, use --after-turn and --terminal-epoch
 from an earlier 'dure inspect <session> --workspace ID --json' or wait result.
 Names resolve once; an explicit session ID plus --workspace needs no app registry.
+An agent with no terminal Session in the app's list is found by its Run record
+(Agent ID or name): a chat-runtime agent completes when its conversation records
+its next finished turn, and a terminal Run is read through the Session it started
+in. This needs a backend with agent_spawn.conversation_observation.v1.
 Rehosting changes the target generation and cannot complete the old wait.
 Response end does not prove a particular prompt was accepted or a task succeeded.
 
@@ -47,7 +55,9 @@ Children: waits for the Runs this agent started (recorded by dure run as their p
 Without a parent argument, the parent is the agent whose terminal runs this command.
 A child is settled when it finished a turn and is idle, exited, needs input or approval,
 or its launch failed or stopped short. all waits for every child, any for the first.
-Exit 1 when a settled child needs action. Chat-runtime children can't be observed yet.
+Exit 1 when a settled child needs action. A chat-runtime child is read through its
+conversation on a backend with agent_spawn.conversation_observation.v1; on an older
+backend it is unobservable.
 
 JSON is one dure.wait/v1 result with the target, observation and outcome.
 Unknown response results include exact inspect/resume argv in nextAction;
@@ -108,31 +118,65 @@ export function parseWaitArguments(args) {
   };
 }
 
-function responseTarget(options, registry, backend) {
-  if (options.workspaceId) return { sessionId: options.query, workspaceId: options.workspaceId };
-  if (registry?.state !== "available") invalid("The name projection is unavailable or incomplete; use an exact session ID with --workspace.");
-  const matches = matchingAgents(registry, options.query);
-  if (matches.length !== 1) invalid("Select one Agent name, project/name, or exact session ID with --workspace.");
-  const binding = matches[0].runtimeBinding;
-  if (!binding || !boundedString(binding.sessionId) || !boundedString(binding.workspaceId)) {
-    throw Object.assign(new Error("No native Session binding is available for this Agent."), { code: "wait_runtime_unavailable" });
+/** The Run record of the agent a selector names, or undefined when none does. */
+async function agentRun(selector, { backend, listRuns, deadlineMs }) {
+  const listed = await listRuns({ backend, selector, deadlineMs });
+  if (listed.error) {
+    throw Object.assign(new Error(listed.error.message ?? "The backend's Run records are unavailable."),
+      { code: listed.error.code });
   }
-  const source = backend?.profile?.transport.kind === "ssh" ? "ssh" : "local";
-  if (binding.source !== source || binding.hostId !== (source === "ssh" ? backend.profile.id : "local")) {
-    invalid("Select the binding's exact backend with --backend, or use an explicit session ID and --workspace.");
-  }
-  return { sessionId: binding.sessionId, workspaceId: binding.workspaceId };
+  const selected = await selectRunRecord({ page: listed.page, selector, backend,
+    requestBackend: performBackendProfileRequest, retry: (agentId) => ["wait", agentId] });
+  if (selected.error) invalid(selected.error.message + " " + selected.error.candidates.map((run) => run.agentId).join(", "));
+  return selected.run;
 }
 
-async function listRunsWithin({ backend, cursor, deadlineMs }) {
+/** What a response wait reads: the agent's terminal Session, or the chat
+ * conversation of an agent a Run started. The app's Agent list names a
+ * Session; otherwise the backend's Run record names the agent and the runtime
+ * it runs on now. */
+async function responseTarget(options, { registry, backend, listRuns, observeRun }) {
+  if (options.workspaceId) return { sessionId: options.query, workspaceId: options.workspaceId };
+  const registryAvailable = registry?.state === "available";
+  const matches = registryAvailable ? selectAgents(registry, options.query) : [];
+  if (matches.length > 1) invalid("Select one Agent name, project/name, or exact session ID with --workspace.");
+  const binding = matches[0]?.runtimeBinding;
+  if (binding && boundedString(binding.sessionId) && boundedString(binding.workspaceId)) {
+    const source = backend?.profile?.transport.kind === "ssh" ? "ssh" : "local";
+    if (binding.source !== source || binding.hostId !== (source === "ssh" ? backend.profile.id : "local")) {
+      invalid("Select the binding's exact backend with --backend, or use an explicit session ID and --workspace.");
+    }
+    return { sessionId: binding.sessionId, workspaceId: binding.workspaceId };
+  }
+  if (backendObservesRunConversations(backend)) {
+    const deadlineMs = options.deadlineMs;
+    const run = await agentRun(matches[0]?.id ?? options.query, { backend, listRuns, deadlineMs });
+    if (run) {
+      const conversation = await observeRun({ backend, operationId: run.operationId, deadlineMs });
+      if (conversation) return { agentId: run.agentId, operationId: run.operationId };
+      if (boundedString(run.sessionId)) return { sessionId: run.sessionId, workspaceId: run.workspaceId };
+    }
+  }
+  if (!registryAvailable) invalid("The name projection is unavailable or incomplete; use an exact session ID with --workspace.");
+  if (matches.length !== 1) invalid("Select one Agent name, project/name, or exact session ID with --workspace.");
+  throw Object.assign(new Error("No native Session binding is available for this Agent."), { code: "wait_runtime_unavailable" });
+}
+
+async function listRunsWithin({ backend, cursor, selector, deadlineMs }) {
   try {
     return await listRunRecords({
       backend: { ...backend, transportOptions: { ...backend.transportOptions, deadlineMs } },
-      requestBackend: performBackendProfileRequest, cursor,
+      requestBackend: performBackendProfileRequest, cursor, selector,
     });
   } catch (error) {
     return { error: { code: error.code ?? "wait_observation_failed", message: error.message } };
   }
+}
+
+/** A finished turn after the one the wait started from. The position only
+ * grows within one conversation timeline. */
+function turnAdvanced(sequence, after) {
+  return sequence !== null && (after === null || BigInt(sequence) > BigInt(after));
 }
 
 function waitParent(options, registry, backend, environment) {
@@ -153,7 +197,7 @@ export async function collectWait(options, {
   registry, backend, hmuxCommand, sessionBackend = backend,
   queryMessage = queryTrackedMessage, tracking,
   querySession = collectSessionQuery, queryRun = collectAgentSpawnQuery, queryTask = readDelegatedWorkflow,
-  listRuns = listRunsWithin, environment = process.env,
+  listRuns = listRunsWithin, observeRun = readRunConversation, environment = process.env,
   signal, now = () => performance.now(), pause = (ms) => sleep(ms, undefined, { signal }),
 } = {}) {
   const startedAt = now();
@@ -192,10 +236,14 @@ export async function collectWait(options, {
     if (subject === "children" && options.query === undefined) target = { parent: waitParent(options, registry, backend, environment), ...target };
     if (backend?.error) throw backend.error;
     if (subject === "response") {
-      target = { ...responseTarget(options, registry, backend),
-        ...(options.afterTurn === undefined ? {} : { afterTurn: options.afterTurn, terminalEpoch: options.terminalEpoch }),
-      };
+      target = await responseTarget(options, { registry, backend, listRuns, observeRun });
+      if (options.afterTurn !== undefined) {
+        if (target.agentId !== undefined) invalid("--after-turn and --terminal-epoch resume a terminal Session's wait; this agent runs on the chat runtime.");
+        target = { ...target, afterTurn: options.afterTurn, terminalEpoch: options.terminalEpoch };
+      }
     }
+    const watchesConversation = subject === "response" && target.agentId !== undefined;
+    const observesConversations = backendObservesRunConversations(backend);
     if (subject === "children" && !target.parent) target = { parent: waitParent(options, registry, backend, environment), ...target };
     while (!signal?.aborted) {
       const remaining = options.timeoutMs - (now() - startedAt);
@@ -222,13 +270,20 @@ export async function collectWait(options, {
           return result("unknown", 2, "wait_children_not_found", "No Run records name this agent as their parent. Runs started with --no-parent, by an older Dure, or on another backend are not linked.");
         }
         const states = await Promise.all(children.map(async (run) => {
-          const observed = classifyChild(run).state === "unobservable" || run.launchState !== "succeeded"
+          const launched = run.launchState === "succeeded";
+          // The backend names the chat conversation a child runs on now;
+          // any other child is read through its terminal Session.
+          const conversation = launched && observesConversations
+            ? await observeRun({ backend, operationId: run.operationId, deadlineMs })
+              .catch((error) => ({ state: "unavailable", errorCode: error.code ?? "wait_observation_failed" }))
+            : undefined;
+          const observed = conversation || !launched || typeof run.sessionId !== "string"
             ? undefined
             : await querySession({ action: "show", sessionId: run.sessionId, workspaceId: run.workspaceId, hmuxCommand, backend: sessionBackend, deadlineMs })
               .catch((error) => ({ error: { code: error.code ?? "wait_observation_failed" } }));
           return { agentId: run.agentId, name: run.name, operationId: run.operationId,
             sessionId: run.sessionId ?? null, workspaceId: run.workspaceId, launchState: run.launchState,
-            ...classifyChild(run, observed) };
+            ...classifyChild(run, observed, conversation) };
         }));
         if (signal?.aborted) break;
         observation = { children: states };
@@ -239,7 +294,7 @@ export async function collectWait(options, {
             : result("completed", 0);
         }
         if (states.every((child) => SETTLED_CHILD_STATES.has(child.state) || child.state === "unobservable")) {
-          return result("unknown", 2, "wait_children_unobservable", "Every child still unsettled can't be observed by dure wait (chat runtime or no response observation). Read it with dure transcript AGENT_ID or dure read.");
+          return result("unknown", 2, "wait_children_unobservable", "Every child still unsettled can't be observed by dure wait: a chat-runtime child on a backend that can't report its conversation, or a terminal without a response observation. Read it with dure transcript AGENT_ID or dure read.");
         }
         await pause(Math.min(1000, Math.max(1, options.timeoutMs - (now() - startedAt))));
         continue;
@@ -250,7 +305,9 @@ export async function collectWait(options, {
           ? await queryRun({ action: "status", ...target, backend, deadlineMs })
           : subject === "task"
             ? await queryTask({ ...target, backend, deadlineMs })
-            : await querySession({ action: "show", sessionId: target.sessionId, workspaceId: target.workspaceId, hmuxCommand, backend, deadlineMs });
+            : watchesConversation
+              ? { conversation: await observeRun({ backend, operationId: target.operationId, deadlineMs }) }
+              : await querySession({ action: "show", sessionId: target.sessionId, workspaceId: target.workspaceId, hmuxCommand, backend, deadlineMs });
       } catch (error) {
         report = { error: { code: error.code ?? "wait_observation_failed", message: error.message } };
       }
@@ -284,6 +341,27 @@ export async function collectWait(options, {
         observation = report.receipt;
         if (observation.status === "completed") return result("completed", 0);
         if (observation.status === "start_failed") return result("failed", 1, "wait_task_start_failed", "The delegated task could not start.");
+      } else if (watchesConversation) {
+        const { conversation } = report;
+        diagnostic = {
+          reason: conversation?.state === "observed" ? "awaiting_completed_turn"
+            : conversation ? "observation_unavailable" : "conversation_unobserved",
+          observedAtDurationMs: Math.max(0, Math.round(now() - startedAt)),
+        };
+        if (conversation?.state === "stopped") return result("unknown", 2, "wait_response_exited", "The agent's chat runtime stopped without an observed response completion; its response outcome is unknown.");
+        // Between runtimes or after a failed read, look again; the last
+        // observation stays and nothing is inferred from the gap.
+        if (conversation?.state === "observed") {
+          if (target.interactionSessionId !== undefined &&
+              (target.interactionSessionId !== conversation.interactionSessionId ||
+                target.timelineEpoch !== conversation.timelineEpoch)) return result("unknown", 2, "wait_generation_changed", "The agent's conversation was replaced. The old response is not completed by a replacement.");
+          target.interactionSessionId ??= conversation.interactionSessionId;
+          target.timelineEpoch ??= conversation.timelineEpoch;
+          if (target.afterTurnSequence === undefined) target.afterTurnSequence = conversation.turnCompletedSequence;
+          observation = conversation;
+          if (turnAdvanced(conversation.turnCompletedSequence, target.afterTurnSequence)) return result("completed", 0);
+          if (conversation.attention !== "none") return result("unknown", 2, "wait_response_attention_required", "The agent requests attention; inspect its input, approval or error before continuing.");
+        }
       } else {
         const { runtime, liveness } = report.session;
         diagnostic = {

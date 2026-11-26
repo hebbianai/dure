@@ -17,6 +17,14 @@ export function agentsInSession(registry, sessionId) {
   return registry.agents.filter((agent) => agent.sessionId === sessionId || agent.remoteTmux === sessionId);
 }
 
+/** The Agents a selector names. An exact Agent ID wins over names and
+ * Session IDs. */
+export function selectAgents(registry, selector) {
+  if (!Array.isArray(registry?.agents)) return [];
+  const byId = registry.agents.filter((agent) => agent.id === selector);
+  return byId.length ? byId : matchingAgents(registry, selector);
+}
+
 /** Names select a presentation record, not runtime identity or liveness. */
 export function matchingAgents(registry, query) {
   if (!query || !Array.isArray(registry?.agents)) return [];

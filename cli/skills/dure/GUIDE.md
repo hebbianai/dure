@@ -159,7 +159,12 @@ child with `state` (`turn_completed`, `attention_required`, `exited`,
 Exit 0 met, 1 met but a settled child needs action, 2 unknown (no linked
 children, or the rest can't be observed), 124 deadline. An idle child that has
 finished a turn counts as settled, so after you send a child more work, wait on
-that child with `dure wait <child>` instead. Chat-runtime children are
+that child with `dure wait AGENT_ID` instead; it follows a child on either
+runtime and, without the app, finds it by its Run record. A chat-runtime child
+is read through its committed conversation: a finished turn is named by
+`turnCompletedSequence`, its position in the conversation, where a terminal
+child reports `turnCompletedCount`. A backend without
+`agent_spawn.conversation_observation.v1` reports chat-runtime children
 `unobservable`; read them with `dure transcript AGENT_ID`. Links grant nothing:
 stopping a parent does not stop its children yet.
 
@@ -224,8 +229,8 @@ the best available split; this does not create another Space or rearrange the
 existing layout. Explicit split directions and drop positions are respected.
 Outside a provable pane, the Run remains headless. A headless Run uses the
 provider's chat runtime when the host has one and has no Session; read it with
-`dure transcript <agent-id>` and inspect it with `dure runs show <agent-id>`,
-not `dure read`. A local Run the connected app adopts stays a terminal
+`dure transcript <agent-id>`, inspect it with `dure runs show <agent-id>` and
+wait for its next finished turn with `dure wait <agent-id>`, not `dure read`. A local Run the connected app adopts stays a terminal
 session. If that exact Session
 is visible in multiple Spaces, specify `--space`; Dure will not guess. A pane
 failure never replays or stops a successful Run: `dure run` exits 3 with

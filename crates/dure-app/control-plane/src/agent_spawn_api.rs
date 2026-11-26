@@ -30,6 +30,10 @@ pub(crate) struct AgentSpawnStatusBody {
     pub(crate) operation_id: Option<OperationIdV1>,
     #[serde(default)]
     pub(crate) idempotency_key: Option<String>,
+    /// Adds what the Run's agent is doing now on the chat runtime, for a
+    /// watcher such as `dure wait` (`agent_spawn.conversation_observation.v1`).
+    #[serde(default)]
+    pub(crate) observe_conversation: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -934,6 +938,7 @@ mod tests {
                 schema_version: AGENT_SPAWN_SCHEMA_VERSION_V1,
                 operation_id: None,
                 idempotency_key: Some("spawn-request-1".into()),
+                observe_conversation: false,
             },
         )
         .await
