@@ -465,8 +465,21 @@ where
     {
         let intent: AgentStartTurnIntentV1 = serde_json::from_value(body.clone())
             .map_err(|_| AgentConversationApiErrorV1::RequestInvalid)?;
-        let receipt = self.service.enqueue_turn(&intent).await?;
+        let receipt = self.enqueue_turn_intent(&intent).await?;
         Ok(json!({ "schemaVersion": 1, "receipt": receipt }))
+    }
+
+    /// Queues input for the conversation's next turn, as a client's queued
+    /// send does. The store's error is kept so a caller can tell a replay of
+    /// the same input key from other conflicts.
+    pub(crate) async fn enqueue_turn_intent(
+        &self,
+        intent: &AgentStartTurnIntentV1,
+    ) -> Result<dure_app::AgentQueuedTurnRecordV1, AgentConversationErrorV1>
+    where
+        S: dure_app::AgentQueuedTurnStore,
+    {
+        self.service.enqueue_turn(intent).await
     }
 
     async fn inspect_input(&self, body: &Value) -> Result<Value, AgentConversationApiErrorV1>

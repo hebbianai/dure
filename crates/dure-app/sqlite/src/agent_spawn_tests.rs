@@ -892,7 +892,7 @@ async fn durable_run_catalog_survives_reopen_and_pages_without_client_or_runtime
 }
 
 #[tokio::test]
-async fn parent_linked_operations_list_only_succeeded_runs_with_a_parent() {
+async fn parent_linked_operations_list_only_succeeded_runs_with_a_parent_session_or_agent() {
     let root = tempfile::tempdir().unwrap();
     let store = SqliteDomainStore::open(database_path(&root)).await.unwrap();
     let linked = |id: &str| {
@@ -909,9 +909,24 @@ async fn parent_linked_operations_list_only_succeeded_runs_with_a_parent() {
         });
         create_agent_spawn_plan_v1(draft).unwrap()
     };
+    // A Chat agent has no Session; the Run records the Agent instead.
+    let agent_linked = |id: &str| {
+        let mut draft = spawn_draft(
+            id,
+            id,
+            false,
+            &format!("agent-{id}"),
+            AgentSpawnWorktreePolicyV1::ProjectRoot,
+        );
+        draft.request.parent_agent = Some(dure_app::AgentSpawnParentAgentV1 {
+            agent_id: AgentIdV1::new("agent-coordinator").unwrap(),
+        });
+        create_agent_spawn_plan_v1(draft).unwrap()
+    };
     for plan in [
         linked("child-a"),
         spawn_plan("unlinked", "unlinked", false),
+        agent_linked("child-ab"),
         linked("child-b"),
     ] {
         for event in successful_events(&plan) {
@@ -930,7 +945,7 @@ async fn parent_linked_operations_list_only_succeeded_runs_with_a_parent() {
         .unwrap();
     assert_eq!(
         all.iter().map(OperationIdV1::as_str).collect::<Vec<_>>(),
-        ["child-a", "child-b"]
+        ["child-a", "child-ab", "child-b"]
     );
     let first = store
         .parent_linked_agent_spawn_operations(None, 1)

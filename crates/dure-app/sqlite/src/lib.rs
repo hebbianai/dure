@@ -163,7 +163,8 @@ impl SqliteDomainStore {
         agent_spawn::list_receipts(&self.pool, after, selector).await
     }
 
-    /// Succeeded Runs with a recorded parent, paged by operation ID.
+    /// Succeeded Runs with a recorded parent Session or parent Agent, paged
+    /// by operation ID.
     pub async fn parent_linked_agent_spawn_operations(
         &self,
         after: Option<&OperationIdV1>,

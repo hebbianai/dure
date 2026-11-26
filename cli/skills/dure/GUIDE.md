@@ -185,7 +185,17 @@ a terminal child, `dure transcript AGENT_ID` for a chat child). Read it with the
 installed dure-orchestration tools. Each outcome is sent once, also across a
 backend restart. Only a parent whose managed Session is still running and
 enrolled in the inbox receives Messages; a parent that restarted into a new
-Session, or runs on the chat runtime itself, is not covered yet.
+Session is not covered yet.
+
+A parent on the chat runtime (a Run linked by `parentAgent`) gets the same text
+as queued input in its conversation instead
+(`agent_spawn.child_result_delivery.parent_agent.v1`). It never interrupts a
+running turn: it waits in the conversation's queue, behind any input already
+there, and starts the parent's next turn once no turn is running and no request
+waits for an answer. A parent moved into its Terminal reads it in that
+Session's inbox, and a stopped parent gets the child's newest outcome after it
+runs again. A backend without that capability reports nothing to a chat
+parent; use `dure wait --children` there.
 
 `--project` and `--path` are mutually exclusive. Both select an existing backend
 registration. `--path` selects the deepest registered project containing that
