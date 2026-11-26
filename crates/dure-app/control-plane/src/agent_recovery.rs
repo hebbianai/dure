@@ -39,11 +39,29 @@ const NATIVE_CONTINUATION: &str = "Your previous turn stopped at a usage limit. 
 /// after the account switch committed.
 const NATIVE_TARGET_READY_TIMEOUT_MS: i64 = 120_000;
 
+/// What automatic recovery holds for an Agent after one step.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AgentRecoveryHoldV1 {
+    /// No recovery owns the conversation's next turn.
+    Released,
+    /// Recovery owns the next turn: a switch or send is underway or retained.
+    Owned,
+    /// Recovery owns the next turn and sends it on the same account at this
+    /// Unix millisecond, once the provider's limit has reset.
+    WaitsUntil(i64),
+}
+
+impl AgentRecoveryHoldV1 {
+    pub(crate) fn owns(self) -> bool {
+        self != Self::Released
+    }
+}
+
 async fn stop(
     state: &ServiceState,
     record: &AgentRecoveryAttemptV1,
     reason: AgentRecoveryStopV1,
-) -> Result<bool, &'static str> {
+) -> Result<AgentRecoveryHoldV1, &'static str> {
     let stopped = state
         .store
         .stop_agent_recovery(record.attempt_id(), &reason)
@@ -52,16 +70,19 @@ async fn stop(
     stopped_result(stopped.stopped())
 }
 
-fn stopped_result(reason: Option<&AgentRecoveryStopV1>) -> Result<bool, &'static str> {
+fn stopped_result(
+    reason: Option<&AgentRecoveryStopV1>,
+) -> Result<AgentRecoveryHoldV1, &'static str> {
     match reason {
         Some(AgentRecoveryStopV1::Exhausted) => Err("agent_recovery_accounts_exhausted"),
         Some(AgentRecoveryStopV1::Failed { .. }) => Err("agent_recovery_failed"),
-        Some(AgentRecoveryStopV1::Superseded) | None => Ok(false),
+        Some(AgentRecoveryStopV1::Superseded) | None => Ok(AgentRecoveryHoldV1::Released),
     }
 }
 
 /// Whether the provider's recovery policy still covers this failure and
-/// still offers the attempt's target account.
+/// still permits the attempt's plan: its target account, or continuing on
+/// the same account after the reported reset.
 async fn policy_allows(
     state: &ServiceState,
     record: &AgentRecoveryAttemptV1,
@@ -71,18 +92,9 @@ async fn policy_allows(
         .provider_recovery_policy(record.provider_id())
         .await
         .map_err(|_| "agent_recovery_store_failed")?;
-    Ok(policy.as_ref().is_some_and(|policy| {
-        policy.enabled
-            && policy
-                .activated_at_ms
-                .is_some_and(|at| at <= record.failure_created_at_ms())
-            && record.target().is_some_and(|target| {
-                policy
-                    .accounts
-                    .iter()
-                    .any(|account| account.profile == target.profile)
-            })
-    }))
+    Ok(policy
+        .as_ref()
+        .is_some_and(|policy| record.permitted_by(policy)))
 }
 
 const REPAIR_REQUIRED: &str = "agent_runtime_repair_required";
@@ -252,14 +264,15 @@ async fn may_start(
             && page.goal.as_ref().map(|goal| goal.revision) == record.goal_revision))
 }
 
-/// True means this failure still owns automatic continuation. Human queue
-/// admission retains priority in the caller, including when recovery stops.
+/// Whether this failure still owns automatic continuation, and until when it
+/// waits. Human queue admission retains priority in the caller, including
+/// when recovery stops.
 pub(crate) async fn advance(
     state: &ServiceState,
     agent_id: &AgentIdV1,
-) -> Result<bool, &'static str> {
+) -> Result<AgentRecoveryHoldV1, &'static str> {
     if !state.is_mutation_authority() || !pro_features::available() {
-        return Ok(false);
+        return Ok(AgentRecoveryHoldV1::Released);
     }
     // Recovery and manual runtime changes use the same per-Agent order.
     let _agent_guard = state.agent_operations.acquire(agent_id).await;
@@ -284,7 +297,10 @@ pub(crate) async fn advance(
     result
 }
 
-async fn advance_locked(state: &ServiceState, agent_id: &AgentIdV1) -> Result<bool, &'static str> {
+async fn advance_locked(
+    state: &ServiceState,
+    agent_id: &AgentIdV1,
+) -> Result<AgentRecoveryHoldV1, &'static str> {
     let observed_at_ms = now_ms().map_err(|_| "agent_recovery_clock_unavailable")?;
     let native = observe_native_failure(state, agent_id, observed_at_ms).await?;
     let Some(mut record) = state
@@ -293,7 +309,7 @@ async fn advance_locked(state: &ServiceState, agent_id: &AgentIdV1) -> Result<bo
         .await
         .map_err(|_| "agent_recovery_store_failed")?
     else {
-        return Ok(false);
+        return Ok(AgentRecoveryHoldV1::Released);
     };
     // Each pass returns or sets one more login aside, so the pool bounds it.
     let operation_id = loop {
@@ -350,6 +366,8 @@ async fn advance_locked(state: &ServiceState, agent_id: &AgentIdV1) -> Result<bo
             None if !may_start(state, &record, after_failed_target).await? => {
                 return stop(state, &record, AgentRecoveryStopV1::Superseded).await;
             }
+            // A same-account continuation after a reset has no target to check.
+            None if record.resume_at_ms().is_some() => {}
             None => {
                 record = check_target(state, record).await?;
                 if record.stopped().is_some() {
@@ -357,6 +375,13 @@ async fn advance_locked(state: &ServiceState, agent_id: &AgentIdV1) -> Result<bo
                 }
             }
             _ => {}
+        }
+        if let (None, Some(resume_at_ms)) = (record.target(), record.resume_at_ms()) {
+            // The same runtime continues; only the provider's reset is awaited.
+            if observed_at_ms < resume_at_ms {
+                return Ok(AgentRecoveryHoldV1::WaitsUntil(resume_at_ms));
+            }
+            break operation_id;
         }
         if transition
             .is_some_and(|transition| transition.state == AgentRuntimeTransitionStateV1::Committed)
@@ -406,11 +431,13 @@ async fn advance_locked(state: &ServiceState, agent_id: &AgentIdV1) -> Result<bo
         AgentRecoveryAttemptV1::Conversation(record) => record,
     };
     match state.agent_conversations.start_recovery_turn(&record).await {
-        Ok(Some(receipt)) if receipt.state == AgentTurnEffectStateV1::Accepted => Ok(true),
+        Ok(Some(receipt)) if receipt.state == AgentTurnEffectStateV1::Accepted => {
+            Ok(AgentRecoveryHoldV1::Owned)
+        }
         Ok(Some(_)) => Err("agent_recovery_turn_unconfirmed"),
-        Ok(None) => Ok(false),
+        Ok(None) => Ok(AgentRecoveryHoldV1::Released),
         // The runtime owner publishes readiness when startup recovery finishes.
-        Err(AgentConversationApiErrorV1::RuntimeUnavailable) => Ok(true),
+        Err(AgentConversationApiErrorV1::RuntimeUnavailable) => Ok(AgentRecoveryHoldV1::Owned),
         Err(error) => {
             stop(
                 state,
@@ -522,10 +549,12 @@ async fn continue_native(
     state: &ServiceState,
     record: &AgentNativeRecoveryRecordV1,
     operation_id: &OperationIdV1,
-) -> Result<bool, &'static str> {
+) -> Result<AgentRecoveryHoldV1, &'static str> {
     let attempt = AgentRecoveryAttemptV1::Native(Box::new(record.clone()));
     match &record.continuation {
-        AgentNativeRecoveryContinuationV1::Delivered { .. } => return Ok(false),
+        AgentNativeRecoveryContinuationV1::Delivered { .. } => {
+            return Ok(AgentRecoveryHoldV1::Released);
+        }
         // A claim found on replay may already have reached the terminal.
         AgentNativeRecoveryContinuationV1::Claimed { .. } => {
             return stop(
@@ -547,7 +576,7 @@ async fn continue_native(
         .filter(|transition| transition.state == AgentRuntimeTransitionStateV1::Committed)
     else {
         // The runtime journal still owns the switch; wake again later.
-        return Ok(true);
+        return Ok(AgentRecoveryHoldV1::Owned);
     };
     // A target Host that cannot answer yet is not ready; the selection still
     // decides whether recovery owns the Agent.
@@ -606,7 +635,7 @@ async fn continue_native(
             )
             .await;
         }
-        return Ok(true);
+        return Ok(AgentRecoveryHoldV1::Owned);
     };
     let delivery_idempotency_key = format!("recovery:{}", record.attempt_id);
     let claimed = state
@@ -619,7 +648,7 @@ async fn continue_native(
             delivery_idempotency_key: delivery_idempotency_key.clone(),
         })
     {
-        return Ok(false);
+        return Ok(AgentRecoveryHoldV1::Released);
     }
     let request = WorkflowPromptDeliveryRequestV1 {
         runtime_kind_id: RuntimeKindIdV1::new("runtime.hmux")
@@ -638,7 +667,7 @@ async fn continue_native(
                 .settle_native_agent_recovery_continuation(&record.attempt_id, Some(&evidence))
                 .await
                 .map_err(|_| "agent_recovery_store_failed")?;
-            Ok(true)
+            Ok(AgentRecoveryHoldV1::Owned)
         }
         Err(failure) if !failure.may_have_written => {
             state
@@ -646,7 +675,7 @@ async fn continue_native(
                 .settle_native_agent_recovery_continuation(&record.attempt_id, None)
                 .await
                 .map_err(|_| "agent_recovery_store_failed")?;
-            Ok(true)
+            Ok(AgentRecoveryHoldV1::Owned)
         }
         Err(failure) => {
             stop(

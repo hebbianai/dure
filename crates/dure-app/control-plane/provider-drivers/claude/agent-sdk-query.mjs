@@ -108,6 +108,29 @@ const LEGACY_USAGE_LIMIT_RESULT_PREFIXES = Object.freeze([
 	"Claude AI usage limit reached",
 ]);
 
+// A provider reset further out than its longest window is not one.
+const MAX_RESET_AHEAD_MS = 8 * 24 * 60 * 60 * 1000;
+
+/** Unix seconds a provider reported for a limit reset, as milliseconds, or
+ * undefined when absent or implausible. */
+function resetMs(seconds) {
+	if (!Number.isSafeInteger(seconds) || seconds <= 0) return undefined;
+	const ms = seconds * 1000;
+	return ms - Date.now() <= MAX_RESET_AHEAD_MS ? ms : undefined;
+}
+
+/** When the limit that refused the turn resets: the SDK's rejected rate-limit
+ * reading first, then the legacy "Claude AI usage limit reached|<epoch>"
+ * result. Only this number crosses the boundary, never the text. */
+function usageLimitResetsAtMs(message, rejectedResetsAtMs) {
+	if (rejectedResetsAtMs !== undefined) return rejectedResetsAtMs;
+	const text = typeof message.result === "string" ? message.result : "";
+	const [prefix, epoch] = text.split("|");
+	return LEGACY_USAGE_LIMIT_RESULT_PREFIXES.includes(prefix) && /^\d{1,12}$/u.test(epoch ?? "")
+		? resetMs(Number(epoch))
+		: undefined;
+}
+
 function usageLimitResultPrefixes(sdkPrefixes) {
 	return Object.freeze([
 		...LEGACY_USAGE_LIMIT_RESULT_PREFIXES,
@@ -972,6 +995,13 @@ export function createClaudeAgentSdkQueryFactory({
 					return;
 				}
 			}
+			// A rejected reading names the reset of the limit that refuses the
+			// turn; a later allowed reading means it no longer does.
+			if (message.type === "rate_limit_event" && activeTurn) {
+				const info = message.rate_limit_info;
+				activeTurn.rejectedResetsAtMs =
+					info?.status === "rejected" ? resetMs(info.resetsAt) : undefined;
+			}
 			if (message.type === "result") {
 				if (!activeTurn) throw adapterError("result_without_turn");
 				const turn = activeTurn;
@@ -1010,6 +1040,9 @@ export function createClaudeAgentSdkQueryFactory({
 				if (summary.isError) {
 					const failure = adapterError("turn_failed");
 					failure.reason = summary.failureReason;
+					if (failure.reason === "usage_limit" || failure.reason === "rate_limit") {
+						failure.resetsAtMs = usageLimitResetsAtMs(message, turn.rejectedResetsAtMs);
+					}
 					turn.reject(failure);
 				} else {
 					turn.resolve(summary);

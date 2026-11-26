@@ -35,10 +35,24 @@ fn policy() -> ProviderRecoveryPolicyPutV1 {
             name: reference.into(),
         })
         .collect(),
+        continue_after_reset: false,
     }
 }
 
 async fn initialized(path: &std::path::Path) -> SqliteDomainStore {
+    initialized_with(
+        path,
+        policy(),
+        vec![super::failure::failure_row(1, Some("usage_limit"))],
+    )
+    .await
+}
+
+async fn initialized_with(
+    path: &std::path::Path,
+    policy: ProviderRecoveryPolicyPutV1,
+    failure: Vec<dure_app::AgentTimelineMutationV1>,
+) -> SqliteDomainStore {
     let store = provision(path).await;
     let binding = interaction_binding();
     store
@@ -58,15 +72,12 @@ async fn initialized(path: &std::path::Path) -> SqliteDomainStore {
         .await
         .unwrap();
     store
-        .put_provider_recovery_policy(&policy(), 100)
+        .put_provider_recovery_policy(&policy, 100)
         .await
         .unwrap();
     store.record_agent_turn_intent(&start_turn()).await.unwrap();
     store
-        .apply_agent_provider_event(&provider_event(
-            1,
-            vec![super::failure::failure_row(1, Some("usage_limit"))],
-        ))
+        .apply_agent_provider_event(&provider_event(1, failure))
         .await
         .unwrap();
     store
@@ -1299,4 +1310,149 @@ async fn selection_skips_every_id_of_the_source_or_a_set_aside_login() {
     .await
     .unwrap();
     assert_eq!(picked, None, "the alias of a set-aside login is that login");
+}
+
+/// Only continuing after a reset is on: no account may be switched to.
+fn continue_policy() -> ProviderRecoveryPolicyPutV1 {
+    ProviderRecoveryPolicyPutV1 {
+        enabled: false,
+        accounts: Vec::new(),
+        continue_after_reset: true,
+        ..policy()
+    }
+}
+
+fn reset_evidence(
+    sequence: i64,
+    client_message_id: &str,
+    resets_at_ms: i64,
+) -> dure_app::AgentTimelineMutationV1 {
+    dure_app::AgentTimelineMutationV1::Append {
+        item: dure_app::AgentTimelineItemDraftV1 {
+            item_id: dure_app::AgentTimelineItemIdV1::new(format!("reset-{sequence}")).unwrap(),
+            turn_id: None,
+            client_message_id: Some(AgentClientMessageIdV1::new(client_message_id).unwrap()),
+            provider_message_id: None,
+            body: dure_app::AgentTimelineItemBodyV1::ProviderEvidence {
+                namespace: "provider.claude".into(),
+                kind: dure_app::AGENT_USAGE_LIMIT_RESET_EVIDENCE_KIND_V1.into(),
+                value: serde_json::json!({ "resetsAtMs": resets_at_ms }),
+            },
+            created_at_ms: 200 + sequence,
+        },
+    }
+}
+
+fn limit_failure(sequence: i64, client_message_id: &str) -> dure_app::AgentTimelineMutationV1 {
+    dure_app::AgentTimelineMutationV1::Append {
+        item: dure_app::AgentTimelineItemDraftV1 {
+            item_id: dure_app::AgentTimelineItemIdV1::new(format!("failure-{sequence}")).unwrap(),
+            turn_id: None,
+            client_message_id: Some(AgentClientMessageIdV1::new(client_message_id).unwrap()),
+            provider_message_id: None,
+            body: dure_app::AgentTimelineItemBodyV1::Lifecycle {
+                state: dure_app::AgentTimelineLifecycleStateV1::TurnFailed,
+                detail: Some("usage_limit".into()),
+            },
+            created_at_ms: 200 + sequence,
+        },
+    }
+}
+
+#[tokio::test]
+async fn a_reported_reset_resends_once_on_the_same_account_and_never_waits_twice() {
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("reset.sqlite");
+    let input = start_turn().client_message_id;
+    let store = initialized_with(
+        &path,
+        continue_policy(),
+        vec![
+            reset_evidence(1, input.as_str(), 10_000),
+            limit_failure(2, input.as_str()),
+        ],
+    )
+    .await;
+    let record = prepare(&store).await;
+    assert_eq!(record.target, None);
+    assert_eq!(record.stopped, None);
+    let resume_at_ms = record.resume_at_ms.unwrap();
+    assert!((70_000..=190_000).contains(&resume_at_ms), "{resume_at_ms}");
+    let observed = store
+        .latest_agent_recovery(&record.source.agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed.resume_at_ms, Some(resume_at_ms));
+    // Before the reset nothing is sent and the wait keeps its intent,
+    // across a restart too.
+    assert!(
+        store
+            .prepare_agent_recovery_turn(&record.attempt_id, resume_at_ms - 1)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    store.close().await;
+    let store = SqliteDomainStore::open(&path).await.unwrap();
+    assert_eq!(prepare(&store).await, record);
+    let sent = store
+        .prepare_agent_recovery_turn(&record.attempt_id, resume_at_ms)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(sent.intent.input, start_turn().input);
+    assert_eq!(
+        sent.intent.runtime,
+        runtime(1),
+        "the same account continues"
+    );
+    // Still limited after the reset: the resent turn fails again and
+    // recovery stops for a person instead of waiting a second time.
+    store
+        .apply_agent_provider_event(&provider_event(
+            2,
+            vec![
+                reset_evidence(3, sent.intent.client_message_id.as_str(), 400_000),
+                limit_failure(4, sent.intent.client_message_id.as_str()),
+            ],
+        ))
+        .await
+        .unwrap();
+    let again = store
+        .prepare_agent_recovery(&record.source.agent_id, resume_at_ms + 1_000, None)
+        .await
+        .unwrap()
+        .and_then(AgentRecoveryAttemptV1::into_conversation)
+        .unwrap();
+    assert_ne!(again.attempt_id, record.attempt_id);
+    assert_eq!(again.resume_at_ms, None);
+    assert_eq!(again.stopped, Some(AgentRecoveryStopV1::Exhausted));
+}
+
+#[tokio::test]
+async fn a_limit_without_a_reported_reset_or_the_switch_off_stops_as_exhausted() {
+    for (policy, with_reset) in [
+        (continue_policy(), false),
+        (
+            ProviderRecoveryPolicyPutV1 {
+                continue_after_reset: false,
+                enabled: true,
+                accounts: Vec::new(),
+                ..policy()
+            },
+            true,
+        ),
+    ] {
+        let root = TempDir::new().unwrap();
+        let input = start_turn().client_message_id;
+        let mut failure = vec![limit_failure(2, input.as_str())];
+        if with_reset {
+            failure.insert(0, reset_evidence(1, input.as_str(), 10_000));
+        }
+        let store = initialized_with(&root.path().join("exhausted.sqlite"), policy, failure).await;
+        let record = prepare(&store).await;
+        assert_eq!(record.resume_at_ms, None);
+        assert_eq!(record.stopped, Some(AgentRecoveryStopV1::Exhausted));
+    }
 }

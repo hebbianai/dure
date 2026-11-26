@@ -25,6 +25,14 @@ CREATE TABLE IF NOT EXISTS agent_recoveries (
 "#;
 pub(crate) const RECOVERY_BY_AGENT: &str =
     "CREATE INDEX IF NOT EXISTS agent_recoveries_agent ON agent_recoveries(agent_id)";
+/// A reported reset further out than the longest provider window is not one.
+const MAX_RESET_AHEAD_MS: i64 = 8 * 24 * 60 * 60 * 1000;
+/// Continuations of agents limited on one account spread out after the reset
+/// instead of all landing on its first second.
+const RESET_JITTER_MIN_MS: i64 = 60 * 1000;
+const RESET_JITTER_SPAN_MS: i64 = 2 * 60 * 1000;
+/// Recovery turns are followed back this far to find an earlier wait.
+const MAX_RECOVERY_CHAIN: usize = 16;
 
 fn encode<T: serde::Serialize>(value: &T) -> Result<String, DomainStoreErrorV1> {
     serde_json::to_string(value).map_err(|error| serialization("agent recovery", error))
@@ -73,6 +81,70 @@ async fn save_on(
     .await
     .map_err(|error| map_sqlx("save_agent_recovery", error))?;
     Ok(())
+}
+
+/// The reset the provider reported for the failed turn, from the evidence
+/// its runtime recorded before the failure in the same turn.
+async fn reported_reset_on(
+    connection: &mut SqliteConnection,
+    source: &dure_app::AgentInteractionBindingV1,
+    failure: &dure_app::AgentTimelineFailureV1,
+) -> Result<Option<i64>, DomainStoreErrorV1> {
+    let reset = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT json_extract(evidence.body_json, '$.value.resetsAtMs') FROM agent_timeline_rows AS failed \
+        JOIN agent_timeline_rows AS evidence ON evidence.interaction_session_id = failed.interaction_session_id \
+        AND evidence.timeline_epoch = failed.timeline_epoch AND evidence.sequence < failed.sequence \
+        AND evidence.client_message_id = failed.client_message_id \
+        WHERE failed.interaction_session_id = ?1 AND failed.item_id = ?2 \
+        AND json_extract(evidence.body_json, '$.type') = 'provider_evidence' \
+        AND json_extract(evidence.body_json, '$.kind') = ?3 \
+        AND json_type(evidence.body_json, '$.value.resetsAtMs') = 'integer' \
+        ORDER BY evidence.sequence DESC LIMIT 1",
+    )
+    .bind(source.interaction_session_id.as_str())
+    .bind(failure.item_id.as_str())
+    .bind(dure_app::AGENT_USAGE_LIMIT_RESET_EVIDENCE_KIND_V1)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| map_sqlx("read_recovery_reported_reset", error))?;
+    Ok(reset.flatten().filter(|reset| {
+        *reset > failure.created_at_ms && *reset - failure.created_at_ms <= MAX_RESET_AHEAD_MS
+    }))
+}
+
+/// Whether the failed turn was sent by a chain of recovery turns that
+/// already waited for a reset. Each recovery turn is sent under its attempt id.
+async fn chain_waited_on(
+    connection: &mut SqliteConnection,
+    source: &dure_app::AgentInteractionBindingV1,
+    failure: &dure_app::AgentTimelineFailureV1,
+) -> Result<bool, DomainStoreErrorV1> {
+    let mut item_id = failure.item_id.clone();
+    for _ in 0..MAX_RECOVERY_CHAIN {
+        let Some(parent) = sqlx::query_scalar::<_, String>(
+            "SELECT recoveries.record_json FROM agent_timeline_rows AS failed \
+            JOIN agent_recoveries AS recoveries \
+            ON recoveries.attempt_id IN (failed.turn_id, failed.client_message_id) \
+            WHERE failed.interaction_session_id = ?1 AND failed.item_id = ?2 LIMIT 1",
+        )
+        .bind(source.interaction_session_id.as_str())
+        .bind(item_id.as_str())
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(|error| map_sqlx("read_recovery_chain", error))?
+        else {
+            return Ok(false);
+        };
+        // Only a conversation attempt sends a timeline turn.
+        let Some(parent) = decode(&parent)?.into_conversation() else {
+            return Ok(false);
+        };
+        if parent.resume_at_ms.is_some() {
+            return Ok(true);
+        }
+        item_id = parent.failure.item_id;
+    }
+    Ok(true)
 }
 
 async fn prepare_on(
@@ -214,7 +286,8 @@ async fn prepare_conversation_on(
         &source.timeline_epoch,
         &failure.item_id,
     ))?;
-    let attempt_id = format!("recovery-{:x}", Sha256::digest(identity.as_bytes()));
+    let digest = Sha256::digest(identity.as_bytes());
+    let attempt_id = format!("recovery-{digest:x}");
     if let Some(record) = read_on(connection, &attempt_id).await? {
         return Ok(record.into_conversation());
     }
@@ -222,10 +295,7 @@ async fn prepare_conversation_on(
     else {
         return Ok(None);
     };
-    if !policy.enabled
-        || policy
-            .activated_at_ms
-            .is_none_or(|at| failure.created_at_ms < at)
+    if !policy.active_at(failure.created_at_ms)
         || !source.history_complete
         || active_turn_for_session(connection, &source)
             .await?
@@ -278,14 +348,34 @@ async fn prepare_conversation_on(
         failure.created_at_ms,
     )
     .await?;
-    let target = crate::provider_recovery_usage::select_on(
-        connection,
-        &policy.accounts,
-        &source.execution_profile,
-        &[],
-        observed_at_ms,
-    )
-    .await?;
+    let target = if policy.enabled {
+        crate::provider_recovery_usage::select_on(
+            connection,
+            &policy.accounts,
+            &source.execution_profile,
+            &[],
+            observed_at_ms,
+        )
+        .await?
+    } else {
+        None
+    };
+    // With no account to switch to, the same account continues once after
+    // the reset its provider reported, unless this chain already waited.
+    let resume_at_ms = if target.is_none() && policy.continue_after_reset {
+        match reported_reset_on(connection, &source, &failure).await? {
+            Some(reset) if !chain_waited_on(connection, &source, &failure).await? => {
+                let jitter = i64::from(u16::from_be_bytes([digest[0], digest[1]]))
+                    * RESET_JITTER_SPAN_MS
+                    / i64::from(u16::MAX);
+                // A reset already behind a late backend is due at once.
+                Some(reset + RESET_JITTER_MIN_MS + jitter)
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
     let goal = crate::agent_goals::read_on(connection, agent_id).await?;
     if is_goal_continuation
         && goal
@@ -305,9 +395,11 @@ async fn prepare_conversation_on(
         is_goal_continuation,
         goal_revision,
         policy_revision: policy.revision,
-        stopped: target.is_none().then_some(AgentRecoveryStopV1::Exhausted),
+        stopped: (target.is_none() && resume_at_ms.is_none())
+            .then_some(AgentRecoveryStopV1::Exhausted),
         target,
         unusable_targets: Vec::new(),
+        resume_at_ms,
         continuation: None,
         created_at_ms: observed_at_ms,
     };
@@ -331,7 +423,10 @@ async fn prepare_turn_on(
     if let Some(request) = &record.continuation {
         return prepare_continuation_on(connection, request).await;
     }
-    if record.stopped.is_some() {
+    // Not due yet is not superseded: the wait keeps its intent.
+    if record.stopped.is_some()
+        || (record.target.is_none() && record.resume_at_ms.is_some_and(|at| observed_at_ms < at))
+    {
         return Ok(None);
     }
     let binding = binding_for_agent_on(connection, &record.source.agent_id).await?;
@@ -342,26 +437,41 @@ async fn prepare_turn_on(
     let goal_revision = goal.as_ref().map(|goal| goal.revision);
     let operation_id =
         operation_id.map_err(|error| corrupt_identifier("recovery operation identity", error))?;
-    let still_authorized = record.target.as_ref().is_some_and(|target| {
-        policy.as_ref().is_some_and(|policy| {
-            policy.enabled
-                && policy
-                    .activated_at_ms
-                    .is_some_and(|at| at <= record.failure.created_at_ms)
-                && policy
-                    .accounts
-                    .iter()
-                    .any(|account| account.profile == target.profile)
-        }) && selection.as_ref().is_some_and(|selection| {
-            selection.selected_by_operation_id.as_ref() == Some(&operation_id)
-                && Some(selection.revision) == record.source_selection_revision.checked_add(1)
-                && selection.execution_profile == target.execution_profile()
-        }) && binding.as_ref().is_some_and(|binding| {
+    // A switch sends on the runtime its own transition selected; a
+    // continuation after a reset sends, once due, on the unchanged source.
+    let runtime_ready = match (&record.target, record.resume_at_ms) {
+        (Some(target), _) => {
+            selection.as_ref().is_some_and(|selection| {
+                selection.selected_by_operation_id.as_ref() == Some(&operation_id)
+                    && Some(selection.revision) == record.source_selection_revision.checked_add(1)
+                    && selection.execution_profile == target.execution_profile()
+            }) && binding
+                .as_ref()
+                .is_some_and(|binding| binding.execution_profile == target.execution_profile())
+        }
+        (None, Some(_)) => {
+            selection.as_ref().is_some_and(|selection| {
+                selection.revision == record.source_selection_revision
+                    && selection.execution_profile == record.source.execution_profile
+            }) && binding
+                .as_ref()
+                .is_some_and(|binding| binding.execution_profile == record.source.execution_profile)
+        }
+        (None, None) => false,
+    };
+    let still_authorized = runtime_ready
+        && policy.as_ref().is_some_and(|policy| {
+            policy.permits(
+                record.failure.created_at_ms,
+                record.target.as_ref(),
+                record.resume_at_ms.is_some(),
+            )
+        })
+        && binding.as_ref().is_some_and(|binding| {
             binding.interaction_session_id == record.source.interaction_session_id
                 && binding.timeline_epoch == record.source.timeline_epoch
-                && binding.execution_profile == target.execution_profile()
         })
-    }) && goal_revision == record.goal_revision
+        && goal_revision == record.goal_revision
         && (!record.is_goal_continuation
             || goal
                 .as_ref()
@@ -541,6 +651,7 @@ pub(crate) async fn latest_on(
         attempt_id: record.attempt_id,
         failure_item_id: record.failure.item_id,
         target: record.target,
+        resume_at_ms: record.resume_at_ms,
         stopped: record.stopped,
         turn_state,
         created_at_ms: record.created_at_ms,
@@ -609,7 +720,8 @@ impl AgentRecoveryStore for SqliteDomainStore {
         Box::pin(async move {
             let rows = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!("SELECT DISTINCT sessions.agent_id FROM agent_interaction_sessions AS sessions \
                 JOIN provider_recovery_policies AS policies ON sessions.provider_id = policies.provider_id \
-                WHERE json_extract(policies.record_json, '$.enabled') = 1 \
+                WHERE (json_extract(policies.record_json, '$.enabled') = 1 \
+                OR json_extract(policies.record_json, '$.continueAfterReset') = 1) \
                 UNION SELECT agent_id FROM agent_recoveries WHERE {UNFINISHED}")))
                 .fetch_all(&self.pool).await.map_err(|error| map_sqlx("agents_with_recovery", error))?;
             rows.into_iter()

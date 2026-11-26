@@ -117,6 +117,9 @@ export interface ProviderSpec {
    * structured Chat. The UI uses this only for visibility; the backend is
    * still the mutation authority. */
   structuredChat?: boolean;
+  /** The provider's Chat runtime records when a refused turn's usage limit
+   * resets, so backend recovery can continue that turn once after it. */
+  limitResetContinuation?: boolean;
   short?: string;
 }
 

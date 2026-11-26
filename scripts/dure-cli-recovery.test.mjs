@@ -47,6 +47,25 @@ test("recovery settings use the selected backend and exact policy revision witho
   assert.equal(f.output[0].policy.revision, 4);
 });
 
+test("continuing after a reset is sent only when on and requires its capability", async () => {
+  const requests = [];
+  const f = fixture(async (_, request) => {
+    requests.push(request);
+    return { result: { schemaVersion: 1, policy: { revision: 1 } } };
+  });
+  for (const value of ["true", "false"]) {
+    assert.equal(await runRecoveryCommand(["put", "claude", "--enabled", "false", "--accounts", "[]",
+      "--expected-revision", "0", "--continue-after-reset", value], f.options), true);
+  }
+  assert.deepEqual(requests.map(({ body, requiredCapabilities }) =>
+    [body.continueAfterReset, requiredCapabilities]), [
+    [true, ["account_recovery.v1", "account_recovery.continue_after_reset.v1"]],
+    [undefined, ["account_recovery.v1"]],
+  ]);
+  assert.throws(() => parseRecoveryCommand(["put", "claude", "--enabled", "false", "--accounts",
+    "[]", "--expected-revision", "0", "--continue-after-reset", "yes"]));
+});
+
 test("a lost mutation response exposes the same retry identity and does not retry or change accounts", async () => {
   let calls = 0;
   const f = fixture(async () => { calls++; throw new Error("connection closed"); });

@@ -7,6 +7,8 @@ export const settingsEnglishTranslations = {
 	"settings.recovery.orderHint": "Accounts with lower observed usage are preferred. This order breaks ties and orders accounts with unknown usage. Automatic recovery stops when no allowed account is available.",
 	"settings.recovery.title": "Automatic account recovery · Beta",
 	"settings.recovery.description": "When a conversation reaches its usage limit, the server switches to an allowed account and continues the same request, even with Dure closed.",
+	"settings.recovery.continueAfterReset": "Continue when the limit resets",
+	"settings.recovery.continueAfterResetDescription": "When no allowed account is available and the provider reported when its limit resets, the server continues the same request once, a few minutes after the reset, even with Dure closed. If the limit still applies, the conversation waits for you.",
 	"settings.recovery.server": "Server",
 	"settings.recovery.provider": "Provider",
 	"settings.recovery.accounts": "Allow these accounts for automatic recovery on this server.",

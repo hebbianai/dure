@@ -4,6 +4,8 @@ export const settings: Record<string, string> = {
 	"settings.recovery.orderHint": "Les comptes avec une utilisation observée plus faible sont prioritaires. Cet ordre départage les égalités et les comptes à utilisation inconnue. La récupération automatique s’arrête si aucun compte autorisé n’est disponible.",
 	"settings.recovery.title": "Récupération automatique des comptes · Beta",
 	"settings.recovery.description": "Lorsqu’une conversation atteint sa limite d’utilisation, le serveur passe à un compte autorisé et poursuit la même demande, même si Dure est fermé.",
+	"settings.recovery.continueAfterReset": "Reprendre quand la limite est réinitialisée",
+	"settings.recovery.continueAfterResetDescription": "Si aucun compte autorisé n’est disponible et que le fournisseur a indiqué quand sa limite est réinitialisée, le serveur reprend la même demande une fois, quelques minutes après la réinitialisation, même si Dure est fermé. Si la limite s’applique toujours, la conversation vous attend.",
 	"settings.recovery.server": "Serveur",
 	"settings.recovery.provider": "Fournisseur",
 	"settings.recovery.accounts": "Autoriser ces comptes pour la récupération automatique sur ce serveur.",

@@ -355,7 +355,9 @@ export function StructuredAgentPanel({
 		performAccountSwitch,
 	});
 	const handoffDecision =
-		handoffView.kind === "decided" || handoffView.kind === "failed"
+		handoffView.kind === "decided" ||
+		handoffView.kind === "failed" ||
+		handoffView.kind === "continues"
 			? handoffView.decision
 			: undefined;
 	const presentedAccountFailure =
@@ -472,6 +474,8 @@ export function StructuredAgentPanel({
 										resend: resendLastMessage !== undefined,
 									}
 								: null,
+						continuesAtMs:
+							handoffView.kind === "continues" ? handoffView.atMs : null,
 					}
 				: null,
 		},

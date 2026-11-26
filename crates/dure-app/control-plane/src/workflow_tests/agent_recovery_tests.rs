@@ -167,6 +167,17 @@ async fn recovery_pool_fixture(
     credential_unavailable: &[&str],
     prepare_host: impl FnOnce(&mut ServiceState, &Path) -> bool,
 ) -> (TempDir, Arc<ServiceState>, Arc<RecoveryRuntime>, AgentIdV1) {
+    recovery_pool_fixture_with(accounts, credential_unavailable, prepare_host, None).await
+}
+
+/// With `reset_at_ms`, only continuing after a reset is on, and the failed
+/// turn carries the reset its provider reported, as the Claude bridge records it.
+async fn recovery_pool_fixture_with(
+    accounts: &[&str],
+    credential_unavailable: &[&str],
+    prepare_host: impl FnOnce(&mut ServiceState, &Path) -> bool,
+    reset_at_ms: Option<i64>,
+) -> (TempDir, Arc<ServiceState>, Arc<RecoveryRuntime>, AgentIdV1) {
     let (root, mut state, _, _) = fixture(Vec::new()).await;
     make_fixture_mutation_authority(&mut state);
     state.agent_providers = Arc::new(provider_extension::test_structured_agent_provider_registry(
@@ -220,6 +231,8 @@ async fn recovery_pool_fixture(
             name: format!("Shared account {reference}"),
         });
     }
+    // A reset fixture fails ten minutes ago, after recovery was turned on.
+    let failed_at_ms = now_ms().unwrap() - reset_at_ms.map_or(0, |_| 10 * 60 * 1000);
     state
         .store
         .put_provider_recovery_policy(
@@ -228,10 +241,11 @@ async fn recovery_pool_fixture(
                 provider_id: provider_id.clone(),
                 expected_revision: 0,
                 idempotency_key: "enable-recovery".into(),
-                enabled: true,
+                enabled: reset_at_ms.is_none(),
                 accounts: pool,
+                continue_after_reset: reset_at_ms.is_some(),
             },
-            now_ms().unwrap(),
+            failed_at_ms - 1,
         )
         .await
         .unwrap();
@@ -268,6 +282,36 @@ async fn recovery_pool_fixture(
         requested_at_ms: now_ms().unwrap(),
     };
     state.store.record_agent_turn_intent(&input).await.unwrap();
+    let mut mutations = Vec::new();
+    if let Some(resets_at_ms) = reset_at_ms {
+        mutations.push(dure_app::AgentTimelineMutationV1::Append {
+            item: dure_app::AgentTimelineItemDraftV1 {
+                item_id: dure_app::AgentTimelineItemIdV1::new("limited-reset").unwrap(),
+                turn_id: None,
+                client_message_id: Some(input.client_message_id.clone()),
+                provider_message_id: None,
+                body: dure_app::AgentTimelineItemBodyV1::ProviderEvidence {
+                    namespace: "provider.claude".into(),
+                    kind: dure_app::AGENT_USAGE_LIMIT_RESET_EVIDENCE_KIND_V1.into(),
+                    value: json!({ "resetsAtMs": resets_at_ms }),
+                },
+                created_at_ms: failed_at_ms,
+            },
+        });
+    }
+    mutations.push(dure_app::AgentTimelineMutationV1::Append {
+        item: dure_app::AgentTimelineItemDraftV1 {
+            item_id: dure_app::AgentTimelineItemIdV1::new("limited-failure").unwrap(),
+            turn_id: Some(input.turn_id),
+            client_message_id: Some(input.client_message_id),
+            provider_message_id: None,
+            body: dure_app::AgentTimelineItemBodyV1::Lifecycle {
+                state: dure_app::AgentTimelineLifecycleStateV1::TurnFailed,
+                detail: Some("usage_limit".into()),
+            },
+            created_at_ms: failed_at_ms,
+        },
+    });
     service
         .commit_provider_event(&dure_app::AgentProviderEventCommitV1 {
             schema_version: 1,
@@ -278,19 +322,7 @@ async fn recovery_pool_fixture(
             },
             source_fingerprint: "quota-fixture".into(),
             recorded_at_ms: now_ms().unwrap(),
-            mutations: vec![dure_app::AgentTimelineMutationV1::Append {
-                item: dure_app::AgentTimelineItemDraftV1 {
-                    item_id: dure_app::AgentTimelineItemIdV1::new("limited-failure").unwrap(),
-                    turn_id: Some(input.turn_id),
-                    client_message_id: Some(input.client_message_id),
-                    provider_message_id: None,
-                    body: dure_app::AgentTimelineItemBodyV1::Lifecycle {
-                        state: dure_app::AgentTimelineLifecycleStateV1::TurnFailed,
-                        detail: Some("usage_limit".into()),
-                    },
-                    created_at_ms: now_ms().unwrap(),
-                },
-            }],
+            mutations,
         })
         .await
         .unwrap();
@@ -525,6 +557,7 @@ async fn pending_recovery_does_not_reopen_a_conversation_closed_by_a_person() {
         !crate::agent_recovery::advance(&state, &agent_id)
             .await
             .unwrap()
+            .owns()
     );
     assert_eq!(runtime.opens.load(Ordering::SeqCst), 0);
     assert!(runtime.commands.inputs.lock().unwrap().is_empty());
@@ -573,6 +606,7 @@ async fn pending_recovery_survives_startup_reattachment_of_the_same_source_conve
         crate::agent_recovery::advance(&state, &agent_id)
             .await
             .unwrap()
+            .owns()
     );
     assert_eq!(runtime.opens.load(Ordering::SeqCst), 1);
     assert_eq!(runtime.commands.inputs.lock().unwrap().len(), 1);
@@ -730,7 +764,7 @@ async fn continuation_advances_an_agent_without_a_conversation() {
         .unwrap();
     assert_eq!(
         crate::agent_conversation::continuation::advance(&state, &agent_id, None).await,
-        Ok(())
+        Ok(None)
     );
 }
 
@@ -823,7 +857,11 @@ async fn a_target_that_fails_to_start_moves_the_conversation_to_the_next_account
         recovery_pool_fixture(&["broken", "working"], &["broken"], |_, _| false).await;
     let advanced = crate::agent_recovery::advance(&state, &agent_id).await;
     let record = recovery_record(&state, &agent_id).await;
-    assert_eq!(advanced, Ok(true), "{record:?}");
+    assert_eq!(
+        advanced,
+        Ok(crate::agent_recovery::AgentRecoveryHoldV1::Owned),
+        "{record:?}"
+    );
     // One source stop, then the failed target's journal is replaced in place.
     assert_eq!(runtime.stops.load(Ordering::SeqCst), 1);
     assert_eq!(runtime.opens.load(Ordering::SeqCst), 2);
@@ -934,7 +972,11 @@ async fn recovery_skips_signed_out_full_and_same_logins_the_app_observed() {
     .await;
     let advanced = crate::agent_recovery::advance(&state, &agent_id).await;
     let record = recovery_record(&state, &agent_id).await;
-    assert_eq!(advanced, Ok(true), "{record:?}");
+    assert_eq!(
+        advanced,
+        Ok(crate::agent_recovery::AgentRecoveryHoldV1::Owned),
+        "{record:?}"
+    );
     assert_eq!(
         reference_ids(&record.unusable_targets),
         ["signed-out", "same-login"]
@@ -971,9 +1013,67 @@ async fn recovery_skips_a_login_its_provider_reports_signed_out() {
         .await;
     let advanced = crate::agent_recovery::advance(&state, &agent_id).await;
     let record = recovery_record(&state, &agent_id).await;
-    assert_eq!(advanced, Ok(true), "{record:?}");
+    assert_eq!(
+        advanced,
+        Ok(crate::agent_recovery::AgentRecoveryHoldV1::Owned),
+        "{record:?}"
+    );
     assert_eq!(reference_ids(&record.unusable_targets), ["expired"]);
     assert_eq!(runtime.stops.load(Ordering::SeqCst), 1);
     assert_eq!(runtime.opens.load(Ordering::SeqCst), 1);
     assert_eq!(selected_reference(&state, &agent_id).await, "working");
+}
+
+#[tokio::test]
+async fn a_limited_turn_waits_for_its_reported_reset_without_sending() {
+    let reset_at_ms = now_ms().unwrap() + 60 * 60 * 1000;
+    let (_root, state, runtime, agent_id) =
+        recovery_pool_fixture_with(&[], &[], |_, _| false, Some(reset_at_ms)).await;
+    let hold = crate::agent_recovery::advance(&state, &agent_id)
+        .await
+        .unwrap();
+    let crate::agent_recovery::AgentRecoveryHoldV1::WaitsUntil(resume_at_ms) = hold else {
+        panic!("expected a wait for the reset: {hold:?}");
+    };
+    assert!(hold.owns(), "the wait keeps a goal from taking the turn");
+    assert!(
+        (reset_at_ms + 60_000..=reset_at_ms + 180_000).contains(&resume_at_ms),
+        "{resume_at_ms} vs {reset_at_ms}"
+    );
+    assert!(runtime.commands.inputs.lock().unwrap().is_empty());
+    let read = request_over_test_connection(
+        Arc::clone(&state),
+        "agent_recovery.read",
+        "account_recovery.v1",
+        json!({ "schemaVersion": 1, "agentId": agent_id }),
+    )
+    .await;
+    assert_eq!(read["result"]["recovery"]["resumeAtMs"], resume_at_ms);
+    assert!(read["result"]["recovery"]["stopped"].is_null());
+}
+
+#[tokio::test]
+async fn the_continuation_worker_resends_once_on_the_same_account_after_the_reset() {
+    let reset_at_ms = now_ms().unwrap() - 5 * 60 * 1000;
+    let (_root, state, runtime, agent_id) =
+        recovery_pool_fixture_with(&[], &[], |_, _| false, Some(reset_at_ms)).await;
+    let source = state
+        .store
+        .agent_interaction_for_agent(&agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let worker = tokio::spawn(crate::agent_conversation::continuation::run(Arc::clone(
+        &state,
+    )));
+    let observed = wait_for_accepted(&state, &runtime.commands).await;
+    worker.abort();
+    let _ = worker.await;
+    observed.unwrap();
+    let inputs = runtime.commands.inputs.lock().unwrap().clone();
+    assert_eq!(inputs.len(), 1);
+    assert_eq!(inputs[0].input, "Create the requested marketing draft");
+    assert_eq!(inputs[0].runtime, source.runtime, "no account switch");
+    assert_eq!(runtime.opens.load(Ordering::SeqCst), 0);
+    assert_eq!(runtime.stops.load(Ordering::SeqCst), 0);
 }

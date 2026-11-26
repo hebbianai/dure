@@ -157,6 +157,7 @@ export const agents: Record<string, string> = {
 	"agents.chat.recovery.signIn": "再度サインイン…",
 	"agents.chat.recovery.handedOff": "{from} が使用量の上限に達したため {to} に切り替えました。",
 	"agents.chat.recovery.handedOffTo": "使用量の上限により {to} に切り替えました。",
+	"agents.chat.recovery.continuesAt": "上限がリセットされたら {time} に続行します。",
 	"agents.chat.recovery.resend": "最後のメッセージを再送",
 	"agents.chat.lifecycle.turn_interrupted": "セッション再起動によりターン中断",
 	"agents.chat.lifecycle.turn_started": "ターン開始",

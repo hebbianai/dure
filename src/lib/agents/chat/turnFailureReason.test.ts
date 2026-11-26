@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	continuationTimeLabel,
 	latestTurnFailure,
 	parseTurnFailureReason,
 	turnFailureRecoveries,
@@ -58,5 +59,15 @@ describe("latestTurnFailure", () => {
 			reason: "provider_error",
 			recoveries: [],
 		});
+	});
+});
+
+describe("continuationTimeLabel", () => {
+	it("reads as a clock time today and adds the weekday on another day", () => {
+		const now = new Date(2026, 10, 26, 1, 0).getTime();
+		const today = new Date(2026, 10, 26, 3, 10).getTime();
+		const tomorrow = new Date(2026, 10, 27, 3, 10).getTime();
+		expect(continuationTimeLabel(today, "en", now)).toBe("3:10 AM");
+		expect(continuationTimeLabel(tomorrow, "en", now)).toBe("Fri 3:10 AM");
 	});
 });

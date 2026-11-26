@@ -25,6 +25,7 @@ export function useAccountRecoverySettings(
 	const [provider, setProvider] = useState<Provider>("codex");
 	const [observed, setSnapshot] = useState<RecoverySettingsSnapshot>();
 	const [enabled, setEnabled] = useState(false);
+	const [continueAfterReset, setContinueAfterReset] = useState(false);
 	const [selected, setSelected] = useState<string[]>([]);
 	const [error, setError] = useState<string>();
 	const [loading, setLoading] = useState(false);
@@ -67,6 +68,7 @@ export function useAccountRecoverySettings(
 				if (!current) return;
 				setSnapshot(next);
 				setEnabled(next.policy?.enabled ?? false);
+				setContinueAfterReset(next.policy?.continueAfterReset ?? false);
 				setSelected(
 					next.policy?.accounts.map((account) => account.profile.referenceId) ??
 						[],
@@ -144,6 +146,7 @@ export function useAccountRecoverySettings(
 					idempotencyKey: `recovery-${crypto.randomUUID()}`,
 					enabled,
 					accounts: permitted,
+					continueAfterReset,
 				},
 				snapshot.routeAuthority,
 			);
@@ -176,6 +179,8 @@ export function useAccountRecoverySettings(
 		setProvider,
 		enabled,
 		setEnabled,
+		continueAfterReset,
+		setContinueAfterReset,
 		selected,
 		setSelected,
 		options: [...options].map(([id, name]) => ({ id, name })),

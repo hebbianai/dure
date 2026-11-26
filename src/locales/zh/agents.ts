@@ -157,6 +157,7 @@ export const agents: Record<string, string> = {
 	"agents.chat.recovery.signIn": "重新登录…",
 	"agents.chat.recovery.handedOff": "{from} 达到用量上限，已切换到 {to}。",
 	"agents.chat.recovery.handedOffTo": "因用量上限已切换到 {to}。",
+	"agents.chat.recovery.continuesAt": "将在上限重置后于 {time} 继续。",
 	"agents.chat.recovery.resend": "重新发送最后一条消息",
 	"agents.chat.lifecycle.turn_interrupted": "轮次因会话重启而中断",
 	"agents.chat.lifecycle.turn_started": "轮次已开始",

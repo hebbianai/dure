@@ -32,6 +32,9 @@ export const PROVIDERS = {
     basic: true,
     workflowDelegate: true,
     structuredChat: true,
+    // Its Chat runtime records when a refused turn's usage limit resets, so
+    // the backend can continue that turn once after the reset.
+    limitResetContinuation: true,
     loginCmd: "claude auth login",
     modelFlag: "--model",
     headlessFlag: "-p",

@@ -4,6 +4,8 @@ export const settings: Record<string, string> = {
 	"settings.recovery.orderHint": "优先使用已观测用量较低的账号。用量相同或未知时按此顺序选择。没有可用的允许账号时，自动恢复停止。",
 	"settings.recovery.title": "自动账户恢复 · Beta",
 	"settings.recovery.description": "当对话达到使用上限时，服务器会切换到允许的账户并继续同一请求，即使关闭 Dure 也会继续。",
+	"settings.recovery.continueAfterReset": "在上限重置后继续",
+	"settings.recovery.continueAfterResetDescription": "当没有可用的允许账户且提供方报告了上限的重置时间时，服务器会在重置几分钟后将同一请求继续一次，即使关闭 Dure 也会继续。如果上限仍然生效，对话将等待你处理。",
 	"settings.recovery.server": "服务器",
 	"settings.recovery.provider": "提供商",
 	"settings.recovery.accounts": "选择允许在此服务器上用于自动恢复的账户。",

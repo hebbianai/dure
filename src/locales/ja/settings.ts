@@ -4,6 +4,8 @@ export const settings: Record<string, string> = {
 	"settings.recovery.orderHint": "確認された使用量が少ないアカウントを優先します。同じ使用量または使用量不明のアカウントにはこの順序を使います。利用できる許可済みアカウントがない場合、自動復旧を停止します。",
 	"settings.recovery.title": "アカウントの自動復旧 · Beta",
 	"settings.recovery.description": "会話が使用量の上限に達すると、サーバーが許可されたアカウントに切り替えて同じリクエストを続行します。Dureを閉じても続行されます。",
+	"settings.recovery.continueAfterReset": "上限がリセットされたら続行",
+	"settings.recovery.continueAfterResetDescription": "許可されたアカウントがなく、プロバイダーが上限のリセット時刻を報告した場合、サーバーはリセットの数分後に同じリクエストを一度だけ続行します。Dureを閉じても続行されます。それでも上限に達している場合、会話はあなたを待ちます。",
 	"settings.recovery.server": "サーバー",
 	"settings.recovery.provider": "プロバイダー",
 	"settings.recovery.accounts": "このサーバーで自動復旧に使用するアカウントを選択してください。",

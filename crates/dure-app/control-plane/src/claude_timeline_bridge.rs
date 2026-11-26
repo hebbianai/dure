@@ -1055,6 +1055,30 @@ fn map_event(
         "turn_completed" | "turn_failed" => {
             let client_message_id =
                 client_message_id(string(payload, "clientMessageId", "turn_terminal_invalid")?)?;
+            // When the provider said its limit resets, that time stays in the
+            // failed turn for backend recovery; the failure row is unchanged.
+            if event.kind == "turn_failed"
+                && let Some(resets_at_ms) = payload
+                    .get("resetsAtMs")
+                    .and_then(Value::as_i64)
+                    .filter(|value| *value > 0)
+            {
+                mutations.push(AgentTimelineMutationV1::Append {
+                    item: item(
+                        identity,
+                        event.sequence,
+                        "usage-limit-reset",
+                        AgentTimelineItemBodyV1::ProviderEvidence {
+                            namespace: "provider.claude".into(),
+                            kind: dure_app::AGENT_USAGE_LIMIT_RESET_EVIDENCE_KIND_V1.into(),
+                            value: json!({ "resetsAtMs": resets_at_ms }),
+                        },
+                        Some(client_message_id.clone()),
+                        None,
+                        observed_at_ms,
+                    )?,
+                });
+            }
             mutations.push(AgentTimelineMutationV1::Append {
                 item: item(
                     identity,

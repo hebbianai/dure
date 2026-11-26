@@ -17,6 +17,8 @@ export interface RecoveryPolicy {
 	revision: number;
 	enabled: boolean;
 	accounts: RecoveryAccount[];
+	/** Continue the same request once when the reported limit resets. */
+	continueAfterReset: boolean;
 	activatedAtMs: number | null;
 	updatedAtMs: number;
 }
@@ -24,6 +26,9 @@ export interface RecoveryObservation {
 	attemptId: string;
 	failureItemId: string;
 	target: RecoveryAccount | null;
+	/** Only while the same account waits for its reported limit reset:
+	 * when it continues. */
+	resumeAtMs?: number;
 	stopped:
 		| { kind: "exhausted" | "superseded" }
 		| { kind: "failed"; code: string }
@@ -81,6 +86,7 @@ export function parseRecoveryPolicy(
 			"revision",
 			"enabled",
 			"accounts",
+			"continueAfterReset",
 			"activatedAtMs",
 			"updatedAtMs",
 		]) ||
@@ -88,6 +94,10 @@ export function parseRecoveryPolicy(
 		typeof policy.providerId !== "string" ||
 		!nonNegativeInteger(policy.revision) ||
 		typeof policy.enabled !== "boolean" ||
+		// Absent when off, as backends that predate it send the policy.
+		![undefined, true, false].includes(
+			policy.continueAfterReset as boolean | undefined,
+		) ||
 		!Array.isArray(policy.accounts) ||
 		!(
 			policy.activatedAtMs === null || nonNegativeInteger(policy.activatedAtMs)
@@ -108,6 +118,7 @@ export function parseRecoveryPolicy(
 		revision: policy.revision,
 		enabled: policy.enabled,
 		accounts: accounts as RecoveryAccount[],
+		continueAfterReset: policy.continueAfterReset === true,
 		activatedAtMs: policy.activatedAtMs,
 		updatedAtMs: policy.updatedAtMs,
 	};
@@ -126,6 +137,7 @@ export function parseRecoveryObservation(
 			"attemptId",
 			"failureItemId",
 			"target",
+			"resumeAtMs",
 			"stopped",
 			"turnState",
 			"createdAtMs",
@@ -133,6 +145,9 @@ export function parseRecoveryObservation(
 		!isDureDomainIdV1(observation.attemptId) ||
 		!isDureDomainIdV1(observation.failureItemId) ||
 		target === undefined ||
+		// Present only while the same account waits for its reset.
+		(observation.resumeAtMs !== undefined &&
+			(target !== null || !nonNegativeInteger(observation.resumeAtMs))) ||
 		!nonNegativeInteger(observation.createdAtMs) ||
 		![null, "prepared", "accepted", "failed", "uncertain"].includes(
 			observation.turnState as string | null,
@@ -152,6 +167,9 @@ export function parseRecoveryObservation(
 		attemptId: observation.attemptId,
 		failureItemId: observation.failureItemId,
 		target,
+		...(observation.resumeAtMs !== undefined
+			? { resumeAtMs: observation.resumeAtMs as number }
+			: {}),
 		stopped: observation.stopped as RecoveryObservation["stopped"],
 		turnState: observation.turnState as RecoveryObservation["turnState"],
 		createdAtMs: observation.createdAtMs,

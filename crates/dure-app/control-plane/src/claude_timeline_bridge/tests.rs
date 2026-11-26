@@ -1594,3 +1594,55 @@ async fn an_unanswered_chat_prompt_shows_once_after_a_terminal_round_trip() {
     );
     assert!(page.binding.history_complete);
 }
+
+#[test]
+fn a_reported_reset_stays_with_the_failed_turn_before_its_failure() {
+    let session = AgentInteractionSessionIdV1::new("interaction-claude-1").unwrap();
+    let failed = |payload: Value| {
+        map_event(
+            &session,
+            &identity(),
+            &ClaudeDch1ProviderEvent {
+                sequence: 7,
+                kind: "turn_failed".into(),
+                payload,
+            },
+            1_000,
+        )
+        .unwrap()
+        .mutations
+    };
+    let mutations = failed(json!({
+        "clientMessageId": "client-claude-1",
+        "reason": "usage_limit",
+        "resetsAtMs": 1_800_000_000_000_i64,
+    }));
+    let [
+        AgentTimelineMutationV1::Append { item: evidence },
+        AgentTimelineMutationV1::Append { item: terminal },
+    ] = mutations.as_slice()
+    else {
+        panic!("expected evidence then the failure: {mutations:?}");
+    };
+    assert_eq!(
+        evidence.body,
+        AgentTimelineItemBodyV1::ProviderEvidence {
+            namespace: "provider.claude".into(),
+            kind: dure_app::AGENT_USAGE_LIMIT_RESET_EVIDENCE_KIND_V1.into(),
+            value: json!({ "resetsAtMs": 1_800_000_000_000_i64 }),
+        }
+    );
+    assert_eq!(evidence.client_message_id, terminal.client_message_id);
+    assert_eq!(
+        terminal.body,
+        AgentTimelineItemBodyV1::Lifecycle {
+            state: AgentTimelineLifecycleStateV1::TurnFailed,
+            detail: Some("usage_limit".into()),
+        }
+    );
+    // Without a reported reset the failure is all the turn records.
+    assert_eq!(
+        failed(json!({ "clientMessageId": "client-claude-1", "reason": "usage_limit" })).len(),
+        1
+    );
+}

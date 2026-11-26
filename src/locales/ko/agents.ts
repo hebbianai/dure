@@ -156,6 +156,7 @@ export const agents: Record<string, string> = {
 	"agents.chat.recovery.signIn": "다시 로그인…",
 	"agents.chat.recovery.handedOff": "{from}이(가) 사용량 한도에 닿아 {to}(으)로 전환했습니다.",
 	"agents.chat.recovery.handedOffTo": "사용량 한도로 {to}(으)로 전환했습니다.",
+	"agents.chat.recovery.continuesAt": "한도가 초기화되면 {time}에 이어서 진행합니다.",
 	"agents.chat.recovery.resend": "마지막 메시지 다시 보내기",
 	"agents.chat.lifecycle.turn_interrupted": "세션 재시작으로 응답 중단됨",
 	"agents.chat.lifecycle.turn_started": "응답 시작됨",

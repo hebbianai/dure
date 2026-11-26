@@ -15,7 +15,8 @@ export const RECOVERY_HELP = `dure recovery — automatic account recovery on th
 
   dure recovery get PROVIDER [--backend ID] [--json]
   dure recovery put PROVIDER --enabled true|false --accounts JSON
-                            --expected-revision N [--idempotency-key KEY] [--backend ID]
+                            --expected-revision N [--continue-after-reset true|false]
+                            [--idempotency-key KEY] [--backend ID]
   dure recovery status AGENT_ID [--backend ID]
   dure recovery observe --observations JSON [--backend ID]
 
@@ -36,6 +37,11 @@ known).
 Other results are JSON. accounts is an ordered array of {profile, name}; copy
 exact profiles from get --json.
 Use revision 0 for a new policy. Only explicitly allowed accounts are used.
+--continue-after-reset true (off unless given, so each put states it): when no
+allowed account is available and the provider reported when its limit resets
+(Claude Chat agents), the backend continues the same request once, a few
+minutes after the reset. If the limit still applies, recovery stops. status
+then shows resumeAtMs.
 Joining a workspace does not register or offer personal accounts. Unknown usage
 is eligible; optional observations contain {profile, usedPercent, observedAtMs}.
 Before switching, the backend also reads the usage the app last observed on
@@ -66,7 +72,8 @@ export function parseRecoveryCommand(args) {
   const allowed = [
     "--backend",
     ...(action === "put"
-      ? ["--enabled", "--accounts", "--expected-revision", "--idempotency-key"]
+      ? ["--enabled", "--accounts", "--expected-revision", "--idempotency-key",
+        "--continue-after-reset"]
       : []),
     ...(action === "observe" ? ["--observations"] : []),
   ];
@@ -85,6 +92,7 @@ export function parseRecoveryCommand(args) {
   if (action === "put") {
     const revision = Number(options["--expected-revision"]);
     if (!["true", "false"].includes(options["--enabled"]) ||
+        !["true", "false", undefined].includes(options["--continue-after-reset"]) ||
         !/^\d+$/u.test(options["--expected-revision"] ?? "") ||
         !Number.isSafeInteger(revision)) throw new Error(RECOVERY_HELP);
     const accounts = JSON.parse(options["--accounts"] ?? "null");
@@ -93,6 +101,8 @@ export function parseRecoveryCommand(args) {
       schemaVersion: 1, providerId: target, expectedRevision: revision,
       idempotencyKey: options["--idempotency-key"] ?? `recovery-${randomUUID()}`,
       enabled: options["--enabled"] === "true", accounts,
+      // Sent only when on, so a backend that predates it accepts the rest.
+      ...(options["--continue-after-reset"] === "true" ? { continueAfterReset: true } : {}),
     };
   } else if (action === "observe") {
     const observations = JSON.parse(options["--observations"] ?? "null");
@@ -106,6 +116,8 @@ export function parseRecoveryCommand(args) {
     action, backend: options["--backend"], body, json,
     operation: action === "status" ? "agent_recovery.read"
       : `provider_recovery.${action === "observe" ? "observe_usage" : action}`,
+    requiredCapabilities: ["account_recovery.v1",
+      ...(body.continueAfterReset ? ["account_recovery.continue_after_reset.v1"] : [])],
   };
 }
 
@@ -131,7 +143,7 @@ export async function runRecoveryCommand(args, {
     if (backend.error) throw backend.error;
     const response = await requestBackend(backend.profile, {
       operation: command.operation, body: command.body,
-      requiredCapabilities: ["account_recovery.v1"],
+      requiredCapabilities: command.requiredCapabilities,
     }, backend.transportOptions);
     if (command.action !== "get") {
       output(JSON.stringify(response.result));

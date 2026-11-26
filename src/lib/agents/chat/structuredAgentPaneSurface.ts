@@ -33,6 +33,9 @@ interface StructuredAgentPaneRecoveryV1 {
 		/** The failed message can be sent again with one click. */
 		readonly resend: boolean;
 	} | null;
+	/** The backend continues the failed turn at this Unix millisecond, once
+	 * the provider's limit has reset. */
+	readonly continuesAtMs: number | null;
 }
 
 export interface StructuredAgentPanePresentationV1 {
@@ -132,9 +135,18 @@ function parseRecovery(
 	const candidate = record(value);
 	if (
 		!candidate ||
-		!hasOnlyKeys(candidate, ["switchAccountTarget", "signIn", "handedOff"]) ||
+		!hasOnlyKeys(candidate, [
+			"switchAccountTarget",
+			"signIn",
+			"handedOff",
+			"continuesAtMs",
+		]) ||
 		!nullableText(candidate.switchAccountTarget, ID_LIMIT) ||
-		typeof candidate.signIn !== "boolean"
+		typeof candidate.signIn !== "boolean" ||
+		!(
+			candidate.continuesAtMs === null ||
+			nonNegativeInteger(candidate.continuesAtMs)
+		)
 	)
 		return undefined;
 	let handedOff: StructuredAgentPaneRecoveryV1["handedOff"] = null;
@@ -161,6 +173,7 @@ function parseRecovery(
 		switchAccountTarget: candidate.switchAccountTarget as string | null,
 		signIn: candidate.signIn,
 		handedOff,
+		continuesAtMs: candidate.continuesAtMs as number | null,
 	};
 }
 

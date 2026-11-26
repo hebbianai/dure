@@ -6,9 +6,14 @@ use crate::{
     AgentContinueTurnRequestV1, AgentExecutionProfileV1, AgentIdV1, AgentInteractionBindingV1,
     AgentInteractionProfileV1, AgentTimelineFailureV1, AgentTurnEffectReceiptV1,
     AgentTurnFailureReasonV1, DomainIdErrorV1, DomainStoreFuture, OperationIdV1,
-    ProviderCredentialProfileV1, ProviderIdV1, ProviderRecoveryAccountV1,
+    ProviderCredentialProfileV1, ProviderIdV1, ProviderRecoveryAccountV1, ProviderRecoveryPolicyV1,
     WorkflowPromptDeliveryEvidenceV1, agent_runtime_transition_identity,
 };
+
+/// The provider evidence kind a runtime records in the failed turn, before
+/// its failure, with `{"resetsAtMs": <unix ms>}`: when the provider said the
+/// limit that refused the turn resets.
+pub const AGENT_USAGE_LIMIT_RESET_EVIDENCE_KIND_V1: &str = "usage_limit_reset";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -28,6 +33,11 @@ pub struct AgentRecoveryRecordV1 {
     /// start. Selection skips them for the rest of the attempt.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unusable_targets: Vec<ProviderCredentialProfileV1>,
+    /// With no target, when the same account resends the input: the reset
+    /// the provider reported for this failure plus a stable jitter. A turn
+    /// sent this way never waits again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_at_ms: Option<i64>,
     /// Once present, the existing turn-effect receipt owns the send outcome.
     pub continuation: Option<AgentContinueTurnRequestV1>,
     pub stopped: Option<AgentRecoveryStopV1>,
@@ -210,6 +220,25 @@ impl AgentRecoveryAttemptV1 {
             Self::Native(record) => record.native_failure.observed_at_ms,
         }
     }
+
+    /// With no target, when the same account continues after its reset.
+    #[must_use]
+    pub fn resume_at_ms(&self) -> Option<i64> {
+        match self {
+            Self::Conversation(record) => record.resume_at_ms,
+            Self::Native(_) => None,
+        }
+    }
+
+    /// Whether `policy` still permits this attempt's plan.
+    #[must_use]
+    pub fn permitted_by(&self, policy: &ProviderRecoveryPolicyV1) -> bool {
+        policy.permits(
+            self.failure_created_at_ms(),
+            self.target(),
+            self.resume_at_ms().is_some(),
+        )
+    }
 }
 
 fn runtime_attempt_at(attempt_id: &str, index: usize) -> String {
@@ -236,6 +265,10 @@ pub struct AgentRecoveryObservationV1 {
     pub attempt_id: String,
     pub failure_item_id: crate::AgentTimelineItemIdV1,
     pub target: Option<ProviderRecoveryAccountV1>,
+    /// Present only for a same-account continuation after the limit resets,
+    /// so clients that predate it read an unchanged observation otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_at_ms: Option<i64>,
     pub stopped: Option<AgentRecoveryStopV1>,
     pub turn_state: Option<crate::AgentTurnEffectStateV1>,
     pub created_at_ms: i64,
