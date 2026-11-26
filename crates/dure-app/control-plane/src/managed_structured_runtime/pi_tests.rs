@@ -106,22 +106,7 @@ fn live_pi_opens_a_long_terminal_conversation_in_chat() {
             assert!(bytes > 64 * 1024 * 1024, "the Terminal history is {bytes} bytes");
             let agent = AgentIdV1::new("agent-pi-scale-0").unwrap();
             let chat = settings("fixture/model-a", "low");
-            store
-                .initialize_agent_runtime_selection(&AgentRuntimeSelectionV1 {
-                    schema_version: 1,
-                    agent_id: agent.clone(),
-                    provider_id: ProviderIdV1::new("pi").unwrap(),
-                    interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
-                    execution_profile: AgentExecutionProfileV1::ProviderDefault,
-                    permission_mode: chat.permission_mode.clone(),
-                    model: chat.model.clone(),
-                    effort: chat.effort.clone(),
-                    revision: 1,
-                    selected_by_operation_id: None,
-                    updated_at_ms: 4,
-                })
-                .await
-                .unwrap();
+            select_chat(&store, &agent, &chat).await;
 
             let opening = std::time::Instant::now();
             let binding = manager
@@ -175,6 +160,149 @@ fn live_pi_opens_a_long_terminal_conversation_in_chat() {
             );
             manager.stop_binding(&binding, false).await.unwrap();
         });
+}
+
+/// A Terminal Agent's Pi conversation in which the person ran `!` and `!!`
+/// shell commands, moved into Chat. Pi records each as a `bashExecution`
+/// message with no content. Chat shows them as the command lines the person
+/// ran, and its next prompt reaches a model that has the `!` command's output
+/// in its context and not the `!!` one's
+/// (`scripts/qa/pi-provider-conformance.mjs` checks the model's side).
+#[test]
+#[ignore = "requires isolated actual Pi, deterministic model backend and Hmux fixture"]
+fn live_pi_opens_a_terminal_conversation_with_shell_commands_in_chat() {
+    let root = env_path("DURE_QA_PI_RUNTIME_ROOT").join("shell");
+    tests::owner_directory(&root);
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let (store, service, manager) = fixture(
+                &root,
+                false,
+                ManagedProviderKind::Pi,
+                env_path("DURE_QA_PI_BIN"),
+            )
+            .await;
+            let session = "9d3b6a52-2f1e-4c8b-8a47-5e0f1c2d3b64";
+            let workspace = root.join("workspace-0");
+            record_terminal_conversation(&workspace, session, 1).await;
+            run_shell_commands(
+                &workspace,
+                session,
+                &[
+                    ("printf DURE_PI_SHELL_OUTPUT", false),
+                    ("printf DURE_PI_PRIVATE_OUTPUT", true),
+                ],
+            )
+            .await;
+            let agent = AgentIdV1::new("agent-pi-scale-0").unwrap();
+            let chat = settings("fixture/model-a", "low");
+            select_chat(&store, &agent, &chat).await;
+
+            let binding = manager
+                .open_runtime(open_request(&agent, Some(session.into()), &chat))
+                .await
+                .expect("a Terminal conversation with shell commands opens in Chat");
+            assert_eq!(
+                conversation(&service, &binding).await,
+                [
+                    "Terminal prompt 0",
+                    "! printf DURE_PI_SHELL_OUTPUT",
+                    "!! printf DURE_PI_PRIVATE_OUTPUT",
+                ]
+            );
+
+            let intent = turn_intent(
+                &binding,
+                "after-shell",
+                "DURE_PI_SHELL_CONTEXT continue after the shell commands.",
+            );
+            service
+                .start_turn(bridge(&manager, &binding).await.as_ref(), &intent)
+                .await
+                .unwrap();
+            wait_completed(&service, &binding, &intent.turn_id).await;
+            assert_eq!(
+                conversation(&service, &binding)
+                    .await
+                    .last()
+                    .map(String::as_str),
+                Some("DURE_PI_SHELL_CONTEXT continue after the shell commands."),
+                "a Chat prompt follows the shell commands"
+            );
+            manager.stop_binding(&binding, false).await.unwrap();
+        });
+}
+
+/// Selects Chat for the fixture's Agent with `chat`'s settings.
+async fn select_chat(store: &SqliteDomainStore, agent: &AgentIdV1, chat: &ProviderTurnSettings) {
+    store
+        .initialize_agent_runtime_selection(&AgentRuntimeSelectionV1 {
+            schema_version: 1,
+            agent_id: agent.clone(),
+            provider_id: ProviderIdV1::new("pi").unwrap(),
+            interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
+            execution_profile: AgentExecutionProfileV1::ProviderDefault,
+            permission_mode: chat.permission_mode.clone(),
+            model: chat.model.clone(),
+            effort: chat.effort.clone(),
+            revision: 1,
+            selected_by_operation_id: None,
+            updated_at_ms: 4,
+        })
+        .await
+        .unwrap();
+}
+
+/// Runs each command in `session` as the person's `!` input, or `!!` input
+/// when it is `excluded` from the model's context, the way Pi's Terminal runs
+/// it: through Pi's RPC `bash` command, which Pi records with the same call.
+async fn run_shell_commands(workspace: &Path, session: &str, commands: &[(&str, bool)]) {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let mut pi = tokio::process::Command::new(env_path("DURE_QA_PI_BIN"))
+        .args(["--mode", "rpc", "--session", session])
+        .current_dir(workspace)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut stdin = pi.stdin.take().unwrap();
+    let mut stdout = BufReader::new(pi.stdout.take().unwrap()).lines();
+    for (index, (command, excluded)) in commands.iter().enumerate() {
+        let request = json!({
+            "id": format!("shell-{index}"),
+            "type": "bash",
+            "command": command,
+            "excludeFromContext": excluded,
+        });
+        stdin
+            .write_all(format!("{request}\n").as_bytes())
+            .await
+            .unwrap();
+        let response = timeout(Duration::from_secs(20), async {
+            loop {
+                let line = stdout.next_line().await.unwrap().expect("Pi answers");
+                let Ok(record) = serde_json::from_str::<serde_json::Value>(&line) else {
+                    continue;
+                };
+                if record["type"] == "response" && record["id"] == request["id"] {
+                    break record;
+                }
+            }
+        })
+        .await
+        .expect("Pi runs the shell command");
+        assert_eq!(response["success"], json!(true), "{response}");
+    }
+    drop(stdin);
+    let status = timeout(Duration::from_secs(20), pi.wait())
+        .await
+        .expect("Pi exits when its input closes")
+        .unwrap();
+    assert!(status.success());
 }
 
 /// Records `count` turns of `session` in `workspace` and returns the size of

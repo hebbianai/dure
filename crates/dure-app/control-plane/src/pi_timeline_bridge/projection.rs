@@ -180,6 +180,12 @@ pub(super) fn project(
                 .get("timestamp")
                 .and_then(Value::as_i64)
                 .ok_or_else(|| protocol_error("Pi message timestamp missing"))?;
+            // Pi records four message roles. A role it may add later is left
+            // out, as an entry type the projection does not know is.
+            let turn_role = matches!(role, "user" | "assistant" | "toolResult");
+            if role == "bashExecution" {
+                items.push(shell_command(id, message, at)?);
+            }
             let mut imported_user = false;
             if role == "user" {
                 context = Some(if let Some(owned) = next.take() {
@@ -197,7 +203,7 @@ pub(super) fn project(
             }
             // In a window, the entries before its oldest prompt end a turn
             // whose prompt the window left out. They show without that turn.
-            if context.is_some() || before.is_some() {
+            if turn_role && (context.is_some() || before.is_some()) {
                 let turn = context.as_ref();
                 if let Some(context) = turn.filter(|_| role == "user") {
                     items.push(lifecycle(
@@ -294,6 +300,29 @@ pub(super) fn project(
         completed,
         omits_older: before.is_some(),
     })
+}
+
+/// A command the person ran in Pi itself (`!`, or `!!` to keep it out of the
+/// model's context) instead of sending a prompt. It shows as that command
+/// line, as Claude's shell input does. It belongs to no turn: Pi holds it back
+/// while a turn runs and records it after the turn's last message. What it
+/// printed stays out of the person's message.
+fn shell_command(id: &str, message: &Value, at: i64) -> Result<AgentTimelineItemDraftV1, Error> {
+    let prefix = if message.get("excludeFromContext") == Some(&Value::Bool(true)) {
+        "!!"
+    } else {
+        "!"
+    };
+    item(
+        &format!("entry:{id}:0"),
+        None,
+        Some(id),
+        AgentTimelineItemBodyV1::Message {
+            role: AgentTimelineMessageRoleV1::User,
+            markdown: format!("{prefix} {}", field(message, "command")?.trim()),
+        },
+        at,
+    )
 }
 
 impl ProjectedHistory {
@@ -800,6 +829,93 @@ mod tests {
                 "dure-turn TurnCompleted",
             ]
         );
+    }
+
+    /// A `!` or `!!` command the person ran in Pi is a `bashExecution`
+    /// message with no content. It shows as that command line, outside any
+    /// turn, and what it printed stays out. A message role the projection
+    /// does not know is left out instead of failing the whole history, which
+    /// fails the attach and every later sync.
+    #[test]
+    fn shell_commands_show_as_the_command_line_the_person_ran() {
+        let shell = |id: &str, parent: &str, command: &str, excluded: bool| json!({"id":id,"parentId":parent,"type":"message","message":{"role":"bashExecution","command":command,"output":"dure\n","exitCode":0,"cancelled":false,"truncated":false,"timestamp":10,"excludeFromContext":excluded}});
+        let mut entries = session(2);
+        entries.splice(
+            4..4,
+            [
+                shell("shell", "answer-0", "echo dure\n", false),
+                shell("private", "shell", "echo private", true),
+                json!({"id":"future","parentId":"private","type":"message","message":{"role":"futureRole","timestamp":11}}),
+            ],
+        );
+        entries[7]["parentId"] = json!("future");
+        let first = json!({"id":"first","parentId":null,"type":"message","message":{"role":"bashExecution","command":"ls","output":"","exitCode":0,"cancelled":false,"truncated":false,"timestamp":0}});
+        entries[0]["parentId"] = json!("first");
+        entries.insert(0, first);
+        let history = project(&window(&entries, 0), &BTreeMap::new()).unwrap();
+        assert_eq!(
+            shown(&history.items),
+            [
+                "- ! ls",
+                "pi-turn-prompt-0 TurnStarted",
+                "pi-turn-prompt-0 Prompt 0",
+                "pi-turn-prompt-0 tool-0 Running",
+                "pi-turn-prompt-0 tool-0 Completed",
+                "pi-turn-prompt-0 Answer 0",
+                "pi-turn-prompt-0 TurnCompleted",
+                "- ! echo dure",
+                "- !! echo private",
+                "pi-turn-prompt-1 TurnStarted",
+                "pi-turn-prompt-1 Prompt 1",
+                "pi-turn-prompt-1 tool-1 Running",
+                "pi-turn-prompt-1 tool-1 Completed",
+                "pi-turn-prompt-1 Answer 1",
+                "pi-turn-prompt-1 TurnCompleted",
+            ]
+        );
+        let command = history
+            .items
+            .iter()
+            .find(|item| {
+                item.provider_message_id
+                    .as_ref()
+                    .is_some_and(|id| id.as_str() == "pi-shell")
+            })
+            .unwrap();
+        assert!(matches!(
+            command.body,
+            AgentTimelineItemBodyV1::Message {
+                role: AgentTimelineMessageRoleV1::User,
+                ..
+            }
+        ));
+        assert_eq!(command.client_message_id, None);
+
+        // A prompt Dure sends after them still gets its own turn.
+        let context = TurnContext {
+            turn_id: AgentTurnIdV1::new("dure-turn").unwrap(),
+            client_message_id: AgentClientMessageIdV1::new("dure-client").unwrap(),
+        };
+        let anchors = BTreeMap::from([(
+            context.client_message_id.clone(),
+            PromptAnchor {
+                context: context.clone(),
+                previous_leaf: Some("future".into()),
+                runtime: AgentProviderRuntimeFenceV1 {
+                    runtime_generation: "runtime".into(),
+                    provider_epoch: "epoch".into(),
+                },
+            },
+        )]);
+        let history = project(&window(&entries, 0), &anchors).unwrap();
+        assert_eq!(
+            history
+                .accepted
+                .get(&context.client_message_id)
+                .map(String::as_str),
+            Some("prompt-1")
+        );
+        assert!(history.completed.contains(&context.client_message_id));
     }
 
     /// Only a window that leaves out history the timeline does not hold opens
