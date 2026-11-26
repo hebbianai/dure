@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
+import { useAgentRelations } from "@/components/agents/useAgentRelations";
 import { useNeedsPerson } from "@/components/agents/useNeedsPerson";
 import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
 import {
@@ -6,7 +7,6 @@ import {
 	useAgentAttention,
 } from "@/lib/agents/agentAttentionStore";
 import { agentNotificationsMuted } from "@/lib/agents/agentNotificationMute";
-import { createAgentRunLeadResolver } from "@/lib/agents/agentRunParent";
 import { presentedAgentDisplayState } from "@/lib/agents/agentStateModel";
 import { needsPersonReason } from "@/lib/agents/needsPerson";
 import {
@@ -104,10 +104,8 @@ export function useSpaces() {
 		() => new Map(agents.map((agent, index) => [agent.id, index])),
 		[agents],
 	);
-	const resolveRunLead = useMemo(
-		() => createAgentRunLeadResolver(agents),
-		[agents],
-	);
+	// Spaces nest one level: a row's lead is its display manager.
+	const relations = useAgentRelations();
 	const desktopOrder = useMemo(
 		() => spaces.map((desktop) => desktop.id),
 		[spaces],
@@ -289,7 +287,7 @@ export function useSpaces() {
 				: undefined;
 			// Where a chosen title stands, the provider's moves to the info line.
 			const explicitAgentTitle = agent ? chosenAgentTitle(agent) : undefined;
-			const leadAgentId = agent ? resolveRunLead(agent)?.id : undefined;
+			const leadAgentId = agent ? relations.managerOf(agent.id) : undefined;
 			const title = agent
 				? resolveAgentPaneTitle({
 						agent,
@@ -443,7 +441,7 @@ export function useSpaces() {
 		titleRevision,
 		agentById,
 		agentStartOrder,
-		resolveRunLead,
+		relations,
 		sessionCwd,
 		sessionTitle,
 		sessionAgentPin,

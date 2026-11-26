@@ -5,6 +5,7 @@
 // imports no store, i18n or React, so the phone's build can share it.
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
 import type { NeedsPerson } from "@/lib/agents/needsPerson";
+import type { AgentRelationSummary } from "@/lib/agents/relations/agentRelations";
 
 /** Why the row is in a list that sorts by attention, as one semantic value. */
 export type AgentRowStatus =
@@ -15,12 +16,9 @@ export type AgentRowStatus =
 	| "sign_in_exit"
 	| "result";
 
-/** The agents a row's agent manages, summed over its whole subtree. */
-export interface AgentRowManagedSummary {
-	readonly count: number;
-	readonly needsPerson: number;
-	readonly working: number;
-}
+/** The agents a row's agent manages, summed over its whole subtree, as the
+ * relation owner counts them. */
+export type AgentRowManagedSummary = AgentRelationSummary;
 
 /** The row's one-line activity. It comes only from structured facts: a
  * pending approval the Host projected, a program's own attributed report,
