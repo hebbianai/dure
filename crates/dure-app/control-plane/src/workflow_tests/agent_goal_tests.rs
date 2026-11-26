@@ -474,6 +474,131 @@ async fn queued_input_runs_without_a_view_and_recovers_from_a_missed_notificatio
     );
     assert_eq!(commands.calls.lock().unwrap()["goal-a"].len(), 2);
 }
+
+/// Where the continuation loop meets the store failure.
+#[derive(Clone, Copy, Debug)]
+enum QueueDrainFault {
+    /// The worker's claim of the queued input cannot commit.
+    Dispatch,
+    /// The loop itself cannot read the work it was woken for.
+    Coordinator,
+}
+
+/// The turn's end is the only wake-up for input queued behind it. A store
+/// failure at that moment, such as contention under load, must delay the
+/// input, not strand it as `queued` until some unrelated event.
+#[tokio::test]
+async fn queued_input_runs_after_a_store_failure_when_the_active_turn_ends() {
+    for fault in [QueueDrainFault::Dispatch, QueueDrainFault::Coordinator] {
+        let (root, state, commands) = goal_fixture(Some("goal-a"), false).await;
+        let binding = state
+            .store
+            .agent_interaction_for_agent(&AgentIdV1::new("goal-a").unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        let intent = |id: &str, input: &str| AgentStartTurnIntentV1 {
+            schema_version: 1,
+            interaction_session_id: binding.interaction_session_id.clone(),
+            runtime: binding.runtime.clone(),
+            turn_id: dure_app::AgentTurnIdV1::new(id).unwrap(),
+            client_message_id: dure_app::AgentClientMessageIdV1::new(id).unwrap(),
+            input: input.into(),
+            requested_at_ms: now_ms().unwrap(),
+        };
+        let active = intent("turn-running", "Work that is still running");
+        let queued = intent("turn-queued", "Input queued behind the running turn");
+        let provider_calls = |state: &GoalCommands| {
+            state
+                .calls
+                .lock()
+                .unwrap()
+                .get("goal-a")
+                .cloned()
+                .unwrap_or_default()
+        };
+
+        // Armed before the loop starts, so no worker can pass the failing step.
+        let fault_pool = sqlx::SqlitePool::connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(root.path().join("domain.sqlite")),
+        )
+        .await
+        .unwrap();
+        let (arm, clear) = match fault {
+            QueueDrainFault::Dispatch => (
+                "CREATE TRIGGER fail_queued_dispatch BEFORE INSERT ON agent_timeline_rows \
+                 WHEN json_extract(NEW.body_json, '$.type') = 'queued_input' \
+                 AND json_extract(NEW.body_json, '$.state') = 'dispatched' \
+                 BEGIN SELECT RAISE(ABORT, 'fault-injected queued dispatch'); END",
+                "DROP TRIGGER fail_queued_dispatch",
+            ),
+            QueueDrainFault::Coordinator => (
+                "ALTER TABLE agent_goals RENAME TO agent_goals_unavailable",
+                "ALTER TABLE agent_goals_unavailable RENAME TO agent_goals",
+            ),
+        };
+        sqlx::query(arm).execute(&fault_pool).await.unwrap();
+        let runtime = tokio::spawn(crate::agent_conversation::continuation::run(Arc::clone(
+            &state,
+        )));
+        // Held in the provider, outside the fixture's single request slot.
+        let start = tokio::spawn({
+            let state = Arc::clone(&state);
+            let active = active.clone();
+            async move { state.agent_conversations.start_turn_intent(&active).await }
+        });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while provider_calls(&commands).is_empty() {
+                commands.observed.notified().await;
+            }
+        })
+        .await
+        .unwrap();
+        let admission = request_over_test_connection(
+            Arc::clone(&state),
+            "agent_conversation.enqueue_turn",
+            "agent_conversation.enqueue_turn",
+            serde_json::to_value(&queued).unwrap(),
+        )
+        .await;
+        assert_eq!(
+            admission["result"]["receipt"]["state"], "queued",
+            "{admission}"
+        );
+        // The running turn ends while the store refuses the drain.
+        commands.hold.notify_one();
+        start.await.unwrap().unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            provider_calls(&commands),
+            vec![active.input.clone()],
+            "{fault:?}"
+        );
+
+        sqlx::query(clear).execute(&fault_pool).await.unwrap();
+        fault_pool.close().await;
+        commands.hold.notify_one();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while provider_calls(&commands).len() < 2 {
+                commands.observed.notified().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{fault:?}: the queued input was stranded"));
+        assert_eq!(
+            provider_calls(&commands),
+            vec![active.input.clone(), queued.input.clone()],
+            "{fault:?}"
+        );
+        assert!(
+            !runtime.is_finished(),
+            "{fault:?}: the continuation loop stopped"
+        );
+        runtime.abort();
+        let _ = runtime.await;
+    }
+}
+
 #[tokio::test]
 async fn explicit_goal_continues_after_a_successful_segment_without_another_human_request() {
     let (_root, state, commands) = goal_fixture(None, false).await;
