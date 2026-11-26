@@ -1851,12 +1851,9 @@ where
                     if existing.agent_id != request.agent_id
                         || existing.provider_id.as_str() != CLAUDE_PROVIDER_ID
                         || existing.execution_profile != request.execution_profile
-                        || request
-                            .provider_conversation_ref
-                            .as_ref()
-                            .is_some_and(|reference| {
-                                existing.provider_conversation_ref.as_ref() != Some(reference)
-                            })
+                        || !existing.continues_provider_conversation(
+                            request.provider_conversation_ref.as_deref(),
+                        )
                     {
                         return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict.into());
                     }
@@ -1984,10 +1981,7 @@ where
     ) -> Result<AgentInteractionBindingV1, ClaudeStructuredRuntimeErrorV1> {
         if source.agent_id != request.agent_id
             || source.provider_id.as_str() != CLAUDE_PROVIDER_ID
-            || request
-                .provider_conversation_ref
-                .as_ref()
-                .is_some_and(|expected| source.provider_conversation_ref.as_ref() != Some(expected))
+            || !source.continues_provider_conversation(request.provider_conversation_ref.as_deref())
         {
             return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict);
         }

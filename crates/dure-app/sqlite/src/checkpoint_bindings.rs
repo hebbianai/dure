@@ -181,16 +181,19 @@ pub(crate) async fn get(
     authority_on(&mut connection, agent_id).await
 }
 
+/// Records the conversation the exact current native generation runs: it fills
+/// a missing identity, or follows one its Host verified as the successor of the
+/// recorded one, such as Claude's `/clear` or an in-process continuation.
 pub(crate) async fn converge_provider_conversation(
     pool: &SqlitePool,
     expected: &AgentCheckpointBindingAuthorityV1,
     provider_conversation_id: &str,
 ) -> Result<AgentCheckpointBindingAuthorityV1, DomainStoreErrorV1> {
     expected.validate()?;
-    if expected.binding.provider_conversation_id.is_some() {
+    if expected.binding.provider_conversation_id.as_deref() == Some(provider_conversation_id) {
         return Err(DomainStoreErrorV1::InvalidRecord {
             field: "providerConversationId",
-            reason: "convergence requires a missing provider conversation".into(),
+            reason: "convergence requires a different provider conversation".into(),
         });
     }
     let mut converged = expected.clone();
@@ -219,11 +222,12 @@ pub(crate) async fn converge_provider_conversation(
             UPDATE session_bindings
             SET provider_conversation_id = ?2
             WHERE agent_id = ?1
-              AND provider_conversation_id IS NULL
+              AND provider_conversation_id IS ?3
             "#,
         )
         .bind(expected.binding.agent_id.as_str())
         .bind(provider_conversation_id)
+        .bind(&expected.binding.provider_conversation_id)
         .execute(&mut *connection)
         .await
         .map_err(|error| map_sqlx("converge_checkpoint_provider_conversation", error))?;
@@ -231,7 +235,7 @@ pub(crate) async fn converge_provider_conversation(
             return Err(identity_conflict(
                 "agent_checkpoint_binding_authority",
                 expected.binding.agent_id.as_str(),
-                "provider conversation may only advance from missing to present",
+                "provider conversation may only advance from the one the authority recorded",
             ));
         }
         Ok(converged)

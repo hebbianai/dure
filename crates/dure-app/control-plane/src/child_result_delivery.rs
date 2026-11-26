@@ -398,11 +398,8 @@ async fn observe_child(
     if inspection.provider_id != selection.provider_id.as_str() {
         return Ok(None);
     }
-    let conversation = inspection
-        .provider_conversation_identity
-        .as_ref()
-        .map(|identity| identity.conversation_id.clone())
-        .or_else(|| authority.binding.provider_conversation_id.clone());
+    let conversation =
+        crate::agent_runtime_transition_apply::native_source_conversation(&authority, &inspection);
     let Some(outcome) = classify(&inspection) else {
         return Ok(None);
     };

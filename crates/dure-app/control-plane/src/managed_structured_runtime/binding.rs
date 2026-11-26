@@ -195,10 +195,7 @@ pub(super) fn validate_existing_binding(
     if binding.agent_id != request.agent_id
         || binding.provider_id.as_str() != provider_id
         || binding.execution_profile != request.execution_profile
-        || request
-            .provider_conversation_ref
-            .as_ref()
-            .is_some_and(|reference| binding.provider_conversation_ref.as_ref() != Some(reference))
+        || !binding.continues_provider_conversation(request.provider_conversation_ref.as_deref())
     {
         return Err(conflict());
     }
