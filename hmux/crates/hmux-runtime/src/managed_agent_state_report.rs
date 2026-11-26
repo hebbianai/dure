@@ -1,8 +1,10 @@
 use hmux_client::{
     AgentRuntimeActivity as ClientActivity, AgentRuntimeAttention as ClientAttention,
     AgentStateReport as ClientReport, AgentStateReportObservationFence,
-    AgentStateReportOutcome as ClientOutcome, ClientError, LocalSession, LocalSessionCatalog,
-    ManagedAttachRequest, ProviderConversationIdentity, prepare_managed_attach_receipt,
+    AgentStateReportOutcome as ClientOutcome, ClientError, LocalProcessGenerationStatus,
+    LocalSession, LocalSessionCatalog, ManagedAttachRequest, ProcessDescriptor,
+    ProviderConversationIdentity, SessionDescriptor, inspect_local_session,
+    prepare_managed_attach_receipt, probe_local_process_generation,
 };
 use hmux_host::local_protocol::{
     AGENT_STATE_REPORT_COMPLETION_ID_CAPABILITY, AgentRuntimeActivity, AgentRuntimeAttention,
@@ -36,7 +38,7 @@ pub(crate) fn broker() -> crate::Result<()> {
 fn deliver(
     request: ManagedAgentStateReportRequest,
 ) -> Result<AgentStateReportOutcome, ManagedAgentStateReportFailure> {
-    let (expected_fence, mut report) = request.into_parts();
+    let (expected_fence, mut report, announced_by_process) = request.into_parts();
     let catalog = LocalSessionCatalog::from_environment().map_err(client_failure)?;
     let attach = ManagedAttachRequest::new(
         &expected_fence.session_id,
@@ -51,6 +53,9 @@ fn deliver(
             code: "hmux_agent_state_report_source_mismatch".to_string(),
             message: "managed agent state report source generation changed".to_string(),
         });
+    }
+    if let Some(process_id) = announced_by_process {
+        continue_announced_conversation(&catalog, session.descriptor(), process_id, &mut report);
     }
 
     // Preserve the pre-capability behavior for an already-running older Host:
@@ -70,6 +75,44 @@ fn deliver(
         .report_agent_state(report, Some(authorization_proof_reference))
         .map(map_outcome)
         .map_err(client_failure)
+}
+
+/// A provider can move its own process to another conversation in place,
+/// as Claude does for `/clear`, `/resume` and `/branch`, and write no link
+/// from the old conversation that a reader could follow. That process
+/// announcing the move is the evidence: the reported conversation continues
+/// the one the Host runs now. Another process that inherited the provider's
+/// environment and fence, such as a background copy of the provider, is not
+/// the Host's provider process, and a gone generation's process id may name a
+/// later process, so neither continues anything. The Host still accepts the
+/// continuation only from the exact conversation it runs.
+fn continue_announced_conversation(
+    catalog: &LocalSessionCatalog,
+    descriptor: &SessionDescriptor,
+    process_id: u32,
+    report: &mut AgentStateReport,
+) {
+    let Some(identity) = report.conversation_identity.as_mut() else {
+        return;
+    };
+    if !descriptor.names_live_provider_process(process_id, provider_generation_is_live) {
+        return;
+    }
+    let observed = inspect_local_session(catalog, descriptor.clone());
+    if !observed.descriptor.same_generation(descriptor) {
+        return;
+    }
+    if let Some(current) = observed.provider_conversation_identity.filter(|current| {
+        current.provider_id == identity.provider_id
+            && current.conversation_id != identity.conversation_id
+    }) {
+        identity.previous_conversation_id = Some(current.conversation_id);
+    }
+}
+
+fn provider_generation_is_live(process: &ProcessDescriptor) -> bool {
+    probe_local_process_generation(process)
+        .is_ok_and(|status| status == LocalProcessGenerationStatus::Live)
 }
 
 fn into_client_report(

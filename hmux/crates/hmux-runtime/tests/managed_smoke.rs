@@ -9,6 +9,9 @@ mod progress_cli;
 #[path = "managed_smoke/quiescent_stop.rs"]
 mod quiescent_stop;
 
+#[path = "managed_smoke/conversation_announcement.rs"]
+mod conversation_announcement;
+
 #[cfg(feature = "terminal-state-stream")]
 #[path = "managed_smoke/background_work.rs"]
 mod background_work;

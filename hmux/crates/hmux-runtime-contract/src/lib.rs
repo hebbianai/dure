@@ -3042,6 +3042,13 @@ pub struct ManagedAgentStateReportRequest {
     schema_version: u16,
     expected_fence: SessionFence,
     report: AgentStateReport,
+    /// The provider process that announced the report's conversation as the
+    /// one it runs from now on, after it moved there in place, as the adapter
+    /// observed it. The broker continues the Host's current conversation into
+    /// the reported one only when this is the Host's own live provider
+    /// process. A broker that predates it delivers the report as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    announced_by_process: Option<u32>,
 }
 
 impl ManagedAgentStateReportRequest {
@@ -3054,13 +3061,22 @@ impl ManagedAgentStateReportRequest {
             schema_version: managed_agent_state_report_schema_version(&report),
             expected_fence,
             report,
+            announced_by_process: None,
         };
         request.validate()?;
         Ok(request)
     }
 
-    pub fn into_parts(self) -> (SessionFence, AgentStateReport) {
-        (self.expected_fence, self.report)
+    /// The same report, with the provider process that announced its
+    /// conversation.
+    pub fn announced_by(mut self, process_id: u32) -> Result<Self, RuntimeContractError> {
+        self.announced_by_process = Some(process_id);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn into_parts(self) -> (SessionFence, AgentStateReport, Option<u32>) {
+        (self.expected_fence, self.report, self.announced_by_process)
     }
 
     pub fn validate(&self) -> Result<(), RuntimeContractError> {
@@ -3113,6 +3129,19 @@ impl ManagedAgentStateReportRequest {
         {
             return Err(RuntimeContractError::new(
                 "managed agent state report carries a duplicate conversation fence",
+            ));
+        }
+        // Only a report that names the announced conversation says which
+        // process announced it, and the Host accepts the continuation the
+        // broker derives from it only in causal order. No provider process
+        // is the init process.
+        if self.announced_by_process.is_some_and(|process| {
+            process <= 1
+                || self.report.conversation_identity.is_none()
+                || self.report.causality.is_none()
+        }) {
+            return Err(RuntimeContractError::new(
+                "managed agent state report announcement is invalid",
             ));
         }
         WireFrame {
@@ -5975,6 +6004,102 @@ mod tests {
         let mut malformed_frame = Vec::new();
         write_json_frame(&mut malformed_frame, &malformed).unwrap();
         assert!(read_managed_agent_state_report_request(&mut malformed_frame.as_slice()).is_err());
+    }
+
+    #[test]
+    fn managed_agent_state_report_names_the_process_that_announced_its_conversation() {
+        let fence = SessionFence {
+            workspace_id: "workspace-1".into(),
+            session_id: "session-1".into(),
+            runner_principal: "local-user".into(),
+            runner_instance: "runner-1".into(),
+            channel_epoch: 7,
+            host_instance_id: "host-1".into(),
+            terminal_epoch: "terminal-1".into(),
+        };
+        let report = AgentStateReport {
+            approval_request: None,
+            progress: None,
+            request_id: "conversation-next".into(),
+            identity_only: false,
+            activity: hmux_session_protocol::AgentRuntimeActivity::Working,
+            attention: hmux_session_protocol::AgentRuntimeAttention::None,
+            turn_completed: false,
+            turn_completion_id: None,
+            causality: Some(hmux_session_protocol::AgentStateReportCausality {
+                sequence: 17,
+                work_id: Some("prompt-next".into()),
+            }),
+            working_ttl_ms: None,
+            conversation_identity: Some(
+                hmux_session_protocol::ProviderConversationIdentityReport {
+                    provider_id: "claude".into(),
+                    conversation_id: "conversation-next".into(),
+                    previous_conversation_id: None,
+                    expected_fence: None,
+                },
+            ),
+            expected_observation: None,
+            background_work: false,
+            startup_gate: None,
+            turn_failure: None,
+        };
+        let plain = ManagedAgentStateReportRequest::new(fence.clone(), report.clone()).unwrap();
+        assert!(
+            serde_json::to_value(&plain)
+                .unwrap()
+                .get("announcedByProcess")
+                .is_none()
+        );
+
+        let announced = plain.clone().announced_by(4242).unwrap();
+        let encoded = serde_json::to_value(&announced).unwrap();
+        assert_eq!(encoded["announcedByProcess"], 4242);
+        assert_eq!(
+            encoded["schemaVersion"], MANAGED_AGENT_STATE_REPORT_CAUSAL_SCHEMA_VERSION,
+            "an optional fact needs no new schema"
+        );
+        let mut framed = Vec::new();
+        write_json_frame(&mut framed, &announced).unwrap();
+        let read = read_managed_agent_state_report_request(&mut framed.as_slice()).unwrap();
+        assert_eq!(read, announced);
+        assert_eq!(
+            read.into_parts(),
+            (fence.clone(), report.clone(), Some(4242))
+        );
+
+        // An adapter that names no process reads as before.
+        let mut unnamed = encoded.clone();
+        unnamed
+            .as_object_mut()
+            .unwrap()
+            .remove("announcedByProcess");
+        let mut unnamed_frame = Vec::new();
+        write_json_frame(&mut unnamed_frame, &unnamed).unwrap();
+        assert_eq!(
+            read_managed_agent_state_report_request(&mut unnamed_frame.as_slice()).unwrap(),
+            plain
+        );
+
+        // No process, no conversation, or no causal order.
+        assert!(plain.clone().announced_by(1).is_err());
+        assert!(plain.clone().announced_by(0).is_err());
+        let mut activity_only = report.clone();
+        activity_only.conversation_identity = None;
+        assert!(
+            ManagedAgentStateReportRequest::new(fence.clone(), activity_only)
+                .unwrap()
+                .announced_by(4242)
+                .is_err()
+        );
+        let mut unordered = report;
+        unordered.causality = None;
+        assert!(
+            ManagedAgentStateReportRequest::new(fence, unordered)
+                .unwrap()
+                .announced_by(4242)
+                .is_err()
+        );
     }
 
     #[test]
