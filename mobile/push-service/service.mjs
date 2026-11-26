@@ -22,8 +22,8 @@ import { grantFits, grantSignatureHolds, readGrant } from "./grant.mjs";
 import { APPROVAL_RESERVE, charge, clientKey, createLimits } from "./limits.mjs";
 
 const MAX_REQUEST = 16 * 1024;
-/** The alert kinds this service sends. */
-export const KINDS = ["approval", "done", "input"];
+/** The alert kinds this service sends. `message` is an agent's `dure notify` (#721). */
+export const KINDS = ["approval", "done", "input", "message"];
 /** What each version's Hub signature covers before the message, and its largest base64 message. */
 const VERSIONS = {
   1: { context: Buffer.from("dure-push-request-v1\0"), maxMessage: 4096 },
@@ -42,6 +42,20 @@ const RECEIPT_MS = 3600_000;
 /** `PushId` in dure-hub-protocol: the alphabet Hmux mints opaque ids from. */
 const opaque = (value) => typeof value === "string" && /^[A-Za-z0-9._:+-]{1,256}$/.test(value);
 const plainObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+/** An object of exactly these opaque identifiers, named in sorted order. */
+const identifiers = (...fields) => (value) => plainObject(value) && Object.keys(value).sort().join() === fields.join() && fields.every((field) => opaque(value[field]));
+
+/**
+ * What an alert may carry beside its agent (`PushAlertContext` in
+ * dure-hub-protocol), each only on its own kind and with an agent: what the
+ * phone answers, or the id under which the computer keeps what the phone
+ * reads back from it. Never a path, a title or text.
+ */
+const ATTACHMENTS = {
+  approval: { kind: "approval", valid: identifiers("attentionId", "terminalEpoch") },
+  reply: { kind: "done", valid: identifiers("terminalEpoch") },
+  notice: { kind: "message", valid: opaque },
+};
 
 class Refused extends Error {}
 const refuse = () => { throw new Refused("Refused push request"); };
@@ -117,8 +131,9 @@ function readEvent(event, version) {
   }
   // What travels to APNs beside the text is opaque identifiers only: never a path or a title.
   if (event.sessionId !== undefined && !opaque(event.sessionId)) refuse();
-  if (event.approval !== undefined && (event.kind !== "approval" || event.sessionId === undefined || !plainObject(event.approval) || Object.keys(event.approval).sort().join() !== "attentionId,terminalEpoch" || !opaque(event.approval.attentionId) || !opaque(event.approval.terminalEpoch))) refuse();
-  if (event.reply !== undefined && (event.kind !== "done" || event.sessionId === undefined || !plainObject(event.reply) || Object.keys(event.reply).join() !== "terminalEpoch" || !opaque(event.reply.terminalEpoch))) refuse();
+  for (const [field, { kind, valid }] of Object.entries(ATTACHMENTS)) {
+    if (event[field] !== undefined && (event.kind !== kind || event.sessionId === undefined || !valid(event[field]))) refuse();
+  }
   return { known: true };
 }
 

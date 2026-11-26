@@ -130,6 +130,32 @@ test("the relay refuses a reply reference that is not one opaque process on a fi
   assert.equal(sends, 0);
 });
 
+test("an agent's message is an alert kind, and its notice is one opaque id on a message that names its agent", async () => {
+  const sent = [];
+  const post = await serving({ async send(message) { sent.push(message.event); return { status: "accepted" }; } });
+  const notice = (change, eventId) => {
+    const message = baseMessage();
+    message.event = { kind: "message", eventId, sessionId: "managed_1", notice: "n.0123456789abcdef0123456789abcdef" };
+    change(message.event);
+    return post(envelope(message));
+  };
+  for (const [change, label] of [
+    [(event) => { event.kind = "approval"; }, "on an approval"],
+    [(event) => { event.kind = "done"; }, "on a finished turn"],
+    [(event) => { event.kind = "input"; }, "on a question"],
+    [(event) => { delete event.sessionId; }, "no agent"],
+    [(event) => { event.notice = "Build is green"; }, "the message's text"],
+    [(event) => { event.notice = "/Users/me/notes.txt"; }, "a path"],
+    [(event) => { event.notice = ""; }, "empty"],
+    [(event) => { event.notice = "n".repeat(257); }, "too long"],
+    [(event) => { event.notice = { id: "n.1" }; }, "not a string"],
+  ]) assert.equal((await notice(change, "notify:refused")).status, 403, label);
+  assert.equal(sent.length, 0);
+  assert.equal((await notice(() => {}, "notify:n.1")).status, 202);
+  assert.equal((await notice((event) => { delete event.notice; }, "notify:n.2")).status, 202, "a message without a notice keeps the generic text");
+  assert.deepEqual(sent.map((event) => event.notice), ["n.0123456789abcdef0123456789abcdef", undefined]);
+});
+
 test("approvals-only filters completion and a provider failure remains retryable", async () => {
   let sends = 0;
   const post = await serving({ async send() { return { status: ++sends === 1 ? "unavailable" : "accepted" }; } });
@@ -229,6 +255,15 @@ test("HTTP/2 APNs alert has a valid ES256 provider token and carries the agent's
     assert.deepEqual(bodies[4], {
       aps: { alert: { title: "Dure", body: en["notifications.push.inputBody"] }, sound: "default", "mutable-content": 1 },
       dure: { session: "managed_0123456789abcdef", kind: "input", hub: fingerprint.replace(/=+$/, "") },
+    });
+    // An agent's message says one arrived, and carries only the id the
+    // computer keeps its text under: no actions, never the text.
+    const notified = baseMessage();
+    notified.event = { kind: "message", eventId: "notify:n.1", sessionId: "managed_0123456789abcdef", notice: "n.1" };
+    assert.deepEqual(await sender.send(notified, fingerprint), { status: "accepted" });
+    assert.deepEqual(bodies[5], {
+      aps: { alert: { title: "Dure", body: en["notifications.push.messageBody"] }, sound: "default", "mutable-content": 1 },
+      dure: { session: "managed_0123456789abcdef", kind: "message", hub: fingerprint.replace(/=+$/, ""), notice: "n.1" },
     });
   } finally {
     sender.close();
@@ -417,7 +452,7 @@ test("v2: a phone key binds only by signing back the challenge alert, and nothin
   assert.equal(sender.challenges.length, 2);
 });
 
-test("v2: the challenge and the alert reach APNs as fixed text and identifiers, never the grant", async () => {
+test("v2: the challenge and alerts reach APNs as fixed text and identifiers, never the grant or a message's text", async () => {
   const apns = createHttp2Server();
   const sessions = [];
   const delivered = [];
@@ -462,6 +497,23 @@ test("v2: the challenge and the alert reach APNs as fixed text and identifiers, 
       dure: { session: "managed_1", kind: "approval", hub: hubA.hub, approval: { attentionId: "attention-3", terminalEpoch: "7" } },
     });
     assert.equal(en["notifications.push.setupBody"], "Dure alerts are on for this iPhone.");
+
+    // An agent's message (`dure notify`): one alert with its own fixed text and
+    // no actions. The service only ever sees the id the computer keeps the
+    // text under, and passes it on for the phone to ask that computer.
+    const message = { kind: "message", eventId: "notify:n.0123456789abcdef0123456789abcdef", sessionId: "managed_1", notice: "n.0123456789abcdef0123456789abcdef" };
+    assert.deepEqual(await post("/v2/send", v2(now, "send", grantFor(phone, now, { subscription }), { subscription, event: message })), { status: 202, body: { status: "accepted" }, retryAfter: null });
+    assert.equal(delivered.length, 3);
+    assert.equal(delivered[2].headers["apns-push-type"], "alert");
+    assert.deepEqual(delivered[2].body, {
+      aps: { alert: { title: "Dure", body: ko["notifications.push.messageBody"] }, sound: "default", "mutable-content": 1 },
+      dure: { session: "managed_1", kind: "message", hub: hubA.hub, notice: message.notice },
+    });
+    assert.equal(en["notifications.push.messageBody"], "An agent sent you a message.");
+    // A notice belongs to a message alone, even from the bound key.
+    const misplaced = { ...approval("hmux:pane-1:7:attention:4"), notice: message.notice };
+    assert.deepEqual(await post("/v2/send", v2(now, "send", grantFor(phone, now, { subscription }), { subscription, event: misplaced })), { status: 403, body: { status: "refused" }, retryAfter: null });
+    assert.equal(delivered.length, 3);
   } finally {
     apnsSender.close();
     for (const session of sessions) session.destroy();
@@ -761,12 +813,26 @@ test("v2: a kind this service does not send is answered as unsupported, to the b
   const sender = recorder();
   const post = await service({ sender, now });
   const phone = phoneKey();
-  const message = { kind: "message", eventId: "notice-1", sessionId: "managed_1", notice: "n.1" };
-  assert.equal((await post("/v2/send", v2(now, "send", grantFor(phone, now), { event: message }))).status, 403);
+  const later = { kind: "digest", eventId: "digest-1", sessionId: "managed_1" };
+  assert.equal((await post("/v2/send", v2(now, "send", grantFor(phone, now), { event: later }))).status, 403);
   await bind(post, sender, phone, now);
-  assert.deepEqual(await post("/v2/send", v2(now, "send", grantFor(phone, now), { event: message })), { status: 422, body: { status: "unsupported_kind" }, retryAfter: null });
+  assert.deepEqual(await post("/v2/send", v2(now, "send", grantFor(phone, now), { event: later })), { status: 422, body: { status: "unsupported_kind" }, retryAfter: null });
   assert.equal((await post("/v2/send", v2(now, "send", grantFor(phone, now), { event: { kind: "a kind", eventId: "e" } }))).status, 403, "still an identifier");
   assert.equal(sender.sends.length, 0);
+});
+
+test("v2: a phone that asked for approvals only is not sent agents' messages", async () => {
+  const now = clock();
+  const sender = recorder();
+  const post = await service({ sender, now });
+  const phone = phoneKey();
+  const subscription = subscriptionOf({ preference: "approvals" });
+  await bind(post, sender, phone, now, { subscription });
+  const message = { kind: "message", eventId: "notify:n.1", sessionId: "managed_1", notice: "n.1" };
+  assert.deepEqual(await post("/v2/send", v2(now, "send", grantFor(phone, now, { subscription }), { subscription, event: message })), { status: 200, body: { status: "filtered" }, retryAfter: null });
+  assert.equal(sender.sends.length, 0);
+  assert.equal((await post("/v2/send", v2(now, "send", grantFor(phone, now, { subscription }), { subscription }))).status, 202, "its approvals still arrive");
+  assert.equal(sender.sends.length, 1);
 });
 
 test("v1 lasts while an allowlist is set, padded or not; without one only v2 is served", async () => {
@@ -777,14 +843,14 @@ test("v1 lasts while an allowlist is set, padded or not; without one only v2 is 
     const post = await service({ sender, now, allowedHubs: [entry] });
     assert.equal((await post("/v1/register", legacy("register"))).status, 200, entry);
     assert.equal((await post("/v1/send", legacy("send"))).status, 202, entry);
-    assert.deepEqual(await post.health(), { status: 200, body: { status: "ready", api: [1, 2], kinds: ["approval", "done", "input"] } });
+    assert.deepEqual(await post.health(), { status: 200, body: { status: "ready", api: [1, 2], kinds: ["approval", "done", "input", "message"] } });
   }
   const sender = recorder();
   const post = await service({ sender, now });
   assert.deepEqual(await post("/v1/register", legacy("register")), { status: 403, body: { status: "refused" }, retryAfter: null });
   assert.equal((await post("/v1/send", legacy("send"))).status, 403);
   assert.equal(sender.calls, 0);
-  assert.deepEqual(await post.health(), { status: 200, body: { status: "ready", api: [2], kinds: ["approval", "done", "input"] } });
+  assert.deepEqual(await post.health(), { status: 200, body: { status: "ready", api: [2], kinds: ["approval", "done", "input", "message"] } });
   assert.throws(() => createPushServer({ sender, audiences: [AUDIENCE], allowedHubs: ["SHA256:short"] }), /fingerprint/);
 });
 

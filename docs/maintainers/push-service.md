@@ -33,9 +33,29 @@ Until a request is proven to come from the bound key, every refusal is a bare
 | `429 rate_limited` (with `Retry-After`), `429 busy` | A limit below, or 16 deliveries in flight. |
 | `502 unavailable`, `503 unavailable`, `503 capacity` | APNs failed, the binding could not be written, or the store is full. |
 
-`GET /health` answers `{"status":"ready","api":[1,2],"kinds":["approval","done","input"]}`,
+`GET /health` answers `{"status":"ready","api":[1,2],"kinds":["approval","done","input","message"]}`,
 with `api` `[2]` once the allowlist is unset. Fly's check reads only the status
 code.
+
+## Alerts
+
+An alert is fixed text in the phone's language plus identifiers in its `dure`
+object: the agent a tap opens (`session`), the `kind`, and the computer that
+raised it (`hub`). Some kinds carry one more identifier, and only with an
+agent:
+
+| Kind | Text (en) | Also carries | Category that identifier adds |
+| --- | --- | --- | --- |
+| `approval` | An agent is waiting for your approval. | `approval` (`attentionId`, `terminalEpoch`) | `dure.approval` |
+| `done` | An agent finished its turn. | `reply` (`terminalEpoch`) | `dure.reply` |
+| `input` | An agent is waiting for your answer. | none | none |
+| `message` | An agent sent you a message. | `notice` | none |
+
+`message` is an agent's `dure notify`. Its text stays on the computer: the
+service only sees `notice`, the opaque id the computer keeps the text under,
+for the phone to ask that computer for the text. A `notice` on another kind,
+or without an agent, is refused. A phone set to approvals only gets
+`200 filtered` for every kind but `approval`.
 
 ## Limits
 
@@ -110,6 +130,15 @@ Every deploy:
    service before v2 holds no state.
 2. `fly scale count 1 -a dure-push --yes`, then `fly status -a dure-push`:
    one machine, with the volume attached.
+
+### A new alert kind goes out before the desktop that sends it
+
+A desktop and this service update on their own schedules. Until the deployed
+service lists a kind in `/health` `kinds`, a v2 alert of that kind answers
+`422 unsupported_kind` and a v1 alert a bare `403`. So the service change that
+adds a kind is deployed first, and the desktop change that sends it merges only
+once `/health` lists the kind. For `message`, the service (#721 N2) is deployed
+before the desktop's phone delivery of `dure notify` (#721 N3) merges.
 
 ## Smoke checks
 

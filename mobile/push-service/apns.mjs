@@ -11,6 +11,7 @@ const BODY = {
   approval: "notifications.push.approvalBody",
   done: "notifications.push.doneBody",
   input: "notifications.push.inputBody",
+  message: "notifications.push.messageBody",
 };
 /** 400 reasons that mean the token can never be delivered in that environment. */
 const TOKEN_REFUSALS = ["BadDeviceToken", "DeviceTokenNotForTopic"];
@@ -124,11 +125,14 @@ export function createApnsSender({ key, keyId, teamId, openConnection = connect,
       // dure-hub-protocol): the agent a tap opens, what happened, the
       // computer that raised it — as the phone's paired entry names it,
       // unpadded — and, for an approval or a finished turn the phone can
-      // answer, that approval or process. Never what was asked or said: the
+      // answer, that approval or process; for an agent's message, the id the
+      // computer keeps its text under. Never what was asked or said: the
       // phone's notification service reads that from the computer itself
-      // (`mutable-content`) and keeps this text when it cannot.
+      // (`mutable-content`) and keeps this text when it cannot. A message
+      // has no category, so it offers no actions.
       const approval = event.approval && event.sessionId ? event.approval : undefined;
       const reply = event.reply && event.sessionId ? event.reply : undefined;
+      const notice = event.notice && event.sessionId ? event.notice : undefined;
       const category = approval ? APPROVAL_CATEGORY : reply ? REPLY_CATEGORY : undefined;
       const body = JSON.stringify({
         aps: {
@@ -143,6 +147,7 @@ export function createApnsSender({ key, keyId, teamId, openConnection = connect,
           hub: sender.replace(/=+$/, ""),
           ...(approval ? { approval } : {}),
           ...(reply ? { reply } : {}),
+          ...(notice ? { notice } : {}),
         } } : {}),
       });
       return deliver({
