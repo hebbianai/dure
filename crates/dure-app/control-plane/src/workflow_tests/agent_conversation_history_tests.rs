@@ -240,3 +240,128 @@ async fn a_gap_reads_only_the_history_between_the_rows_around_it() {
         assert_eq!(error.code, "agent_conversation_request_invalid");
     }
 }
+
+/// A Chat runtime of a provider that keeps no transcript file, which answers
+/// the history read itself and records what it was asked.
+#[derive(Default)]
+struct HistoryRuntime {
+    reads: StdMutex<Vec<(u64, u64)>>,
+}
+
+impl crate::agent_conversation::AgentProviderCommands for HistoryRuntime {
+    fn start_turn<'a>(
+        &'a self,
+        _: &'a AgentInteractionBindingV1,
+        _: &'a dure_app::AgentStartTurnIntentV1,
+    ) -> crate::agent_conversation::AgentProviderCommandFuture<'a> {
+        unreachable!("a history read starts no turn")
+    }
+
+    fn answer_pending<'a>(
+        &'a self,
+        _: &'a AgentInteractionBindingV1,
+        _: &'a dure_app::AgentPendingAnswerIntentV1,
+        _: &'a dure_app::AgentPendingRequestV1,
+    ) -> crate::agent_conversation::AgentProviderCommandFuture<'a> {
+        unreachable!("a history read answers nothing")
+    }
+
+    fn interrupt_turn<'a>(
+        &'a self,
+        _: &'a AgentInteractionBindingV1,
+        _: &'a dure_app::AgentInterruptTurnRequestV1,
+    ) -> crate::agent_conversation::AgentProviderCommandFuture<'a> {
+        unreachable!("a history read interrupts nothing")
+    }
+
+    fn read_history<'a>(
+        &'a self,
+        _: &'a AgentInteractionBindingV1,
+        before: u64,
+        after: u64,
+    ) -> crate::agent_conversation::AgentProviderCommandFuture<'a> {
+        self.reads.lock().unwrap().push((before, after));
+        Box::pin(async {
+            Ok(json!({
+                "schemaVersion": 1, "provider": "opencode", "conversationId": "ses_history",
+                "historyComplete": true, "finalResponse": null,
+                "entries": [{"role": "user", "text": "first prompt"}],
+            }))
+        })
+    }
+}
+
+/// An OpenCode Chat session's history lives with the OpenCode server its
+/// runtime is attached to, not in a transcript file: the backend reads it
+/// through that runtime, at the place its boundary names, and only while
+/// one is attached.
+#[tokio::test]
+async fn a_provider_without_a_transcript_file_reads_its_history_through_its_runtime() {
+    let (_root, state, _, _) = fixture(Vec::new()).await;
+    let agent_id = AgentIdV1::new("agent-opencode-history").unwrap();
+    state
+        .store
+        .upsert_agent(&AgentRecordV1 {
+            agent_id: agent_id.clone(),
+            workspace_id: WorkspaceIdV1::new("workspace-1").unwrap(),
+            provider_id: ProviderIdV1::new("opencode").unwrap(),
+            display_name: "OpenCode history".into(),
+            created_at_ms: 10,
+            updated_at_ms: 10,
+        })
+        .await
+        .unwrap();
+    let binding = AgentInteractionBindingV1 {
+        schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+        interaction_session_id: AgentInteractionSessionIdV1::new("interaction-opencode-history")
+            .unwrap(),
+        agent_id,
+        provider_id: ProviderIdV1::new("opencode").unwrap(),
+        execution_profile: AgentExecutionProfileV1::ProviderDefault,
+        provider_conversation_ref: Some("ses_history".into()),
+        runtime: AgentProviderRuntimeFenceV1 {
+            runtime_generation: "runtime-opencode-history".into(),
+            provider_epoch: "provider-opencode-history".into(),
+        },
+        timeline_epoch: AgentTimelineEpochV1::new("timeline-opencode-history").unwrap(),
+        binding_revision: 1,
+        history_complete: false,
+        created_at_ms: 10,
+        updated_at_ms: 10,
+    };
+    state
+        .store
+        .create_agent_interaction(&binding)
+        .await
+        .unwrap();
+    let place = 1_795_000_000_000_u64;
+
+    let error = dispatch(
+        &state,
+        &history_request(&state, history_body(&binding, place)),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        error.code, "agent_conversation_history_unavailable",
+        "no runtime is attached to read it through"
+    );
+
+    let runtime = Arc::new(HistoryRuntime::default());
+    state
+        .agent_conversation_runtimes
+        .register(binding.clone(), runtime.clone())
+        .unwrap();
+    let response = dispatch(
+        &state,
+        &history_request(&state, history_body(&binding, place)),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        response["activity"]["entries"],
+        json!([{"role": "user", "text": "first prompt"}])
+    );
+    assert_eq!(*runtime.reads.lock().unwrap(), [(place, 0)]);
+}

@@ -292,10 +292,20 @@ impl OpenCodeSessionClient {
     /// The session's messages, newest page first, which a caller reads back as
     /// far as it needs.
     pub(crate) fn message_pages<'a>(&'a self, id: &'a SessionId) -> MessagePages<'a> {
+        self.message_pages_before(id, None)
+    }
+
+    /// [`Self::message_pages`] from the page before `cursor`, one an earlier
+    /// read named ([`MessagePages::next_cursor`]); from the newest without one.
+    pub(crate) fn message_pages_before<'a>(
+        &'a self,
+        id: &'a SessionId,
+        cursor: Option<String>,
+    ) -> MessagePages<'a> {
         MessagePages {
             client: self,
             session: id,
-            before: None,
+            before: cursor,
             exhausted: false,
             size: 0,
             cursors: BTreeSet::new(),
@@ -546,6 +556,16 @@ impl MessagePages<'_> {
     /// Whether older messages precede the last page read.
     pub(crate) fn has_older(&self) -> bool {
         !self.exhausted
+    }
+
+    /// The opaque cursor the next older page is read before, while older
+    /// messages remain: every message older than the last one read comes
+    /// after it.
+    pub(crate) fn next_cursor(&self) -> Option<&str> {
+        if self.exhausted {
+            return None;
+        }
+        self.before.as_deref()
     }
 }
 

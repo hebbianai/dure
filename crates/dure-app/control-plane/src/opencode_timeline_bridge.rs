@@ -45,6 +45,8 @@ pub(crate) struct OpenCodeTimelineBridge<S> {
     service: Arc<AgentConversationService<S>>,
     journal: ProviderTimelineJournal<S>,
     projection: Mutex<Projection>,
+    /// Where the session's older history is read from; see [`history_page`].
+    places: std::sync::Mutex<HistoryPlaces>,
     connected: AtomicBool,
     accepting: AtomicBool,
 }
@@ -79,6 +81,7 @@ pub(crate) async fn attach<S: AgentTimelineStore + 'static>(
             service: Arc::clone(&service),
             journal,
             projection: Mutex::new(Projection::default()),
+            places: std::sync::Mutex::default(),
             connected: AtomicBool::new(true),
             accepting: AtomicBool::new(true),
         });
@@ -163,11 +166,14 @@ impl<S: AgentTimelineStore + 'static> OpenCodeTimelineBridge<S> {
             .iter()
             .map(|row| row.item.item_id.clone())
             .collect();
+        let holds_turns = existing.rows.iter().any(|row| row.item.turn_id.is_some());
         let window = history_window(
             self.client.message_pages(&self.session),
             &mut projection.turns,
             &held,
+            holds_turns,
             bounds,
+            &self.places,
         )
         .await?;
         for completed_user in &window.completed_users {
@@ -489,6 +495,30 @@ impl<S: AgentTimelineStore + 'static> AgentProviderCommands for OpenCodeTimeline
                 .await
                 .map_err(provider_error)?;
             Ok(json!({"interrupted": true}))
+        })
+    }
+
+    fn read_history<'a>(
+        &'a self,
+        binding: &'a AgentInteractionBindingV1,
+        before: u64,
+        after: u64,
+    ) -> AgentProviderCommandFuture<'a> {
+        Box::pin(async move {
+            self.exact_binding(binding)?;
+            let place = |value: u64| {
+                i64::try_from(value).map_err(|_| protocol_error("history place is out of range"))
+            };
+            let page = history_page(
+                &self.client,
+                self.binding.provider_id.as_str(),
+                &self.session,
+                &self.places,
+                place(before)?,
+                place(after)?,
+            )
+            .await?;
+            serde_json::to_value(page).map_err(|error| protocol_error(&error.to_string()))
         })
     }
 }

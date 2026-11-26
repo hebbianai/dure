@@ -87,8 +87,11 @@ pub struct ProviderConversationActivity {
     /// exactly as [`ProviderConversationTranscript`] does.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ProviderToolCall>,
-    /// Where older records begin: the byte offset an older page reads up to
-    /// (`before`). Absent once the read reaches the transcript's start.
+    /// Where older records begin: the cursor an older page reads up to
+    /// (`before`). That is a byte offset in a transcript file, or the place
+    /// a provider names when a backend reads the conversation through the
+    /// provider's API (see [`crate::BackendActivityPage`]). Absent once the
+    /// read reaches the transcript's start.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub older_cursor: Option<u64>,
 }

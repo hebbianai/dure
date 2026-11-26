@@ -13,12 +13,14 @@ use std::{
     time::UNIX_EPOCH,
 };
 mod accounts;
+mod backend_page;
 mod claude_local_command;
 mod pi;
 mod tools;
 pub use accounts::{
     ProviderStateRoots, account_profile_directories, newest_conversation_file, read_newest,
 };
+pub use backend_page::{BackendActivityPage, ConversationRecord, Prepended};
 use claude_local_command::{ClaudeLocalCommand, claude_local_command};
 pub use pi::{find_pi_conversation, pi_turn};
 pub use tools::{

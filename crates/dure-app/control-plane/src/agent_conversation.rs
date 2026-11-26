@@ -101,6 +101,27 @@ pub trait AgentProviderCommands: Send + Sync {
         binding: &'a AgentInteractionBindingV1,
         request: &'a AgentInterruptTurnRequestV1,
     ) -> AgentProviderCommandFuture<'a>;
+
+    /// One page of the conversation's history that ends `before` a place
+    /// in it and starts no earlier than `after`, in the shape the shared
+    /// transcript reader answers a page (`ProviderConversationActivity`), as
+    /// `agent_conversation.read_provider_history` returns it. A provider that
+    /// keeps no transcript file a backend reads answers it through its own
+    /// API, at places its history boundaries name. Providers whose
+    /// transcripts the shared reader reads keep the default refusal.
+    fn read_history<'a>(
+        &'a self,
+        _binding: &'a AgentInteractionBindingV1,
+        _before: u64,
+        _after: u64,
+    ) -> AgentProviderCommandFuture<'a> {
+        Box::pin(async {
+            Err(AgentProviderCommandErrorV1::new(
+                "history_unsupported",
+                "this provider's history is read from its transcript",
+            ))
+        })
+    }
 }
 
 #[derive(Debug)]

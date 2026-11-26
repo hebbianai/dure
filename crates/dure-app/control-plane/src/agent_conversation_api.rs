@@ -207,7 +207,7 @@ impl AgentConversationRuntimeRegistry {
         Ok(())
     }
 
-    fn resolve(
+    pub(crate) fn resolve(
         &self,
         binding: &AgentInteractionBindingV1,
     ) -> Result<Arc<dyn AgentProviderCommands>, AgentConversationApiErrorV1> {

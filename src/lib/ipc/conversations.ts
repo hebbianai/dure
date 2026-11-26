@@ -69,8 +69,10 @@ export interface ProviderToolCall {
 export interface ProviderConversationActivity
 	extends ProviderConversationTranscriptV1 {
 	tools?: unknown;
-	/** Where older records begin: the byte offset an older page reads
-	 * `before`. Absent once the read reaches the transcript's start. */
+	/** Where older records begin: the cursor an older page reads `before`,
+	 * a byte offset in a transcript file or a place the provider's runtime
+	 * names (OpenCode's: a message's creation time). Absent once the read
+	 * reaches the transcript's start. */
 	olderCursor?: number;
 }
 

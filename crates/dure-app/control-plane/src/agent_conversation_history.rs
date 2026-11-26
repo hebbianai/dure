@@ -2,16 +2,19 @@
 //! by the backend that owns the session.
 //!
 //! A Chat timeline seeded from a provider conversation can start partway
-//! through it, behind a history boundary placed at a transcript offset. The
-//! records before it stay in the provider's transcript on this backend's
-//! machine, which a client across a backend connection cannot read. So the
-//! backend answers older pages itself: only for the session's own
-//! conversation, from the session's own credential profile, through the
-//! shared transcript reader the desktop's own views use.
+//! through it, behind a history boundary placed in the provider's history.
+//! The records before it stay with the provider on this backend's machine,
+//! which a client across a backend connection cannot read. So the backend
+//! answers older pages itself, only for the session's own conversation: from
+//! the session's own credential profile, through the shared transcript reader
+//! the desktop's own views use, or, for a provider that keeps no transcript
+//! file, through the provider runtime attached to the session.
 
 use std::path::Path;
 
-use dure_app::{AGENT_TIMELINE_SCHEMA_VERSION_V1, AgentInteractionSessionIdV1};
+use dure_app::{
+    AGENT_TIMELINE_SCHEMA_VERSION_V1, AgentInteractionBindingV1, AgentInteractionSessionIdV1,
+};
 use dure_provider_profile::transcript;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -63,6 +66,47 @@ pub(super) async fn read(
     {
         return Err(AgentConversationApiErrorV1::Conflict);
     }
+    let activity = if transcript::turn_parser(binding.provider_id.as_str()).is_some() {
+        transcript_page(
+            state,
+            &binding,
+            body.provider_conversation_ref,
+            body.before,
+            after,
+        )
+        .await?
+    } else {
+        // The runtime reads the provider's history through the provider's
+        // own API; with none attached, there is nothing to read it from.
+        state
+            .agent_conversation_runtimes
+            .resolve(&binding)
+            .map_err(|_| AgentConversationApiErrorV1::HistoryUnavailable)?
+            .read_history(&binding, body.before, after)
+            .await
+            .map_err(|_| AgentConversationApiErrorV1::HistoryUnavailable)?
+    };
+    let response = json!({ "schemaVersion": 1, "activity": activity });
+    // The reader bounds a page's messages and calls, not how much escaping
+    // their JSON needs; a page that would not fit one response is refused
+    // whole rather than cut.
+    let encoded = serde_json::to_vec(&response)
+        .map_err(|_| AgentConversationApiErrorV1::HistoryUnavailable)?;
+    if encoded.len() as u64 > crate::MAX_RESPONSE_BYTES - RESPONSE_ENVELOPE_BYTES {
+        return Err(AgentConversationApiErrorV1::HistoryUnavailable);
+    }
+    Ok(response)
+}
+
+/// A page of a transcript the shared reader reads, under the state directory
+/// of the session's own credential profile.
+async fn transcript_page(
+    state: &ServiceState,
+    binding: &AgentInteractionBindingV1,
+    conversation: String,
+    before: u64,
+    after: u64,
+) -> Result<Value, AgentConversationApiErrorV1> {
     let resolved = state
         .credential_profiles
         .resolve(&binding.provider_id, &binding.execution_profile)
@@ -71,8 +115,6 @@ pub(super) async fn read(
     let home = provider_state_directory(&binding.provider_id, resolved.as_ref())
         .ok_or(AgentConversationApiErrorV1::HistoryUnavailable)?;
     let provider = binding.provider_id.as_str().to_owned();
-    let conversation = body.provider_conversation_ref;
-    let before = body.before;
     let activity = tokio::task::spawn_blocking(move || {
         transcript::read_roots_activity_page(
             &transcript::TranscriptRoots::in_state_directory(&home),
@@ -85,16 +127,7 @@ pub(super) async fn read(
     .await
     .map_err(|_| AgentConversationApiErrorV1::HistoryUnavailable)?
     .map_err(|_| AgentConversationApiErrorV1::HistoryUnavailable)?;
-    let response = json!({ "schemaVersion": 1, "activity": activity });
-    // The reader bounds a page's messages and calls, not how much escaping
-    // their JSON needs; a page that would not fit one response is refused
-    // whole rather than cut.
-    let encoded = serde_json::to_vec(&response)
-        .map_err(|_| AgentConversationApiErrorV1::HistoryUnavailable)?;
-    if encoded.len() as u64 > crate::MAX_RESPONSE_BYTES - RESPONSE_ENVELOPE_BYTES {
-        return Err(AgentConversationApiErrorV1::HistoryUnavailable);
-    }
-    Ok(response)
+    serde_json::to_value(activity).map_err(|_| AgentConversationApiErrorV1::HistoryUnavailable)
 }
 
 /// Where a Codex thread's history from turn `turn_id` on starts in the
