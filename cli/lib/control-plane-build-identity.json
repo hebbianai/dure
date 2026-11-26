@@ -47,6 +47,7 @@
       "agent_runtime.wake",
       "agent_spawn.apply",
       "agent_spawn.child_result_delivery.v1",
+      "agent_spawn.child_result_delivery.parent_agent.v1",
       "agent_spawn.conversation_observation.v1",
       "agent_spawn.list",
       "agent_spawn.parent_agent.v1",

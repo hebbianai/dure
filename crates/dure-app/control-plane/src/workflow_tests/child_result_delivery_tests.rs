@@ -1,11 +1,14 @@
 use super::*;
-use crate::child_result_delivery::{self, ChildResultDeliveries};
+use crate::agent_conversation::{AgentProviderCommandFuture, AgentProviderCommands};
+use crate::child_result_delivery::{self, ChildParent, ChildResultDeliveries};
 use dure_app::{
-    AgentClientMessageIdV1, AgentInteractionRequestIdV1, AgentPendingRequestDraftV1,
-    AgentPendingRequestKindV1, AgentProviderEventCommitV1, AgentProviderEventIdentityV1,
-    AgentSpawnJournalReceiptV1, AgentSpawnParentV1, AgentTimelineItemBodyV1,
-    AgentTimelineItemDraftV1, AgentTimelineItemIdV1, AgentTimelineLifecycleStateV1,
-    AgentTimelineMessageRoleV1, AgentTimelineMutationV1, AgentTimelineStore, AgentTurnIdV1,
+    AgentClientMessageIdV1, AgentInputReceiptV1, AgentInteractionRequestIdV1,
+    AgentPendingRequestDraftV1, AgentPendingRequestKindV1, AgentProviderEventCommitV1,
+    AgentProviderEventIdentityV1, AgentQueuedTurnStateV1, AgentQueuedTurnStore,
+    AgentSpawnJournalReceiptV1, AgentSpawnParentV1, AgentStartTurnIntentV1,
+    AgentTimelineItemBodyV1, AgentTimelineItemDraftV1, AgentTimelineItemIdV1,
+    AgentTimelineLifecycleStateV1, AgentTimelineMessageRoleV1, AgentTimelineMutationV1,
+    AgentTimelineStore, AgentTurnIdV1,
 };
 
 const PARENT_SESSION: &str = "coordinator-session";
@@ -16,6 +19,19 @@ const PARENT_WORKSPACE: &str = "coordinator-workspace";
 /// returned so it outlives the Run.
 pub(super) async fn spawn_linked_child(
     state: &ServiceState,
+) -> (AgentSpawnJournalReceiptV1, TempDir) {
+    spawn_child_linked_to(
+        state,
+        json!({ "parent": { "sessionId": PARENT_SESSION, "workspaceId": PARENT_WORKSPACE } }),
+    )
+    .await
+}
+
+/// Starts a native child through the public spawn path with the given parent
+/// fields (`parent` or `parentAgent`) on its request.
+async fn spawn_child_linked_to(
+    state: &ServiceState,
+    parent: Value,
 ) -> (AgentSpawnJournalReceiptV1, TempDir) {
     let repository = crate::workspace_git::tests::repository().await;
     register_project(
@@ -35,23 +51,22 @@ pub(super) async fn spawn_linked_child(
         backend_id: state.descriptor.backend_id.clone(),
         generation: state.descriptor.generation.clone(),
     };
-    let preview = preview_agent_spawn(
-        state,
-        &authority,
-        &json!({
-            "schemaVersion": 1,
-            "idempotencyKey": "child-result",
-            "projectId": "child-result-project",
-            "providerId": "codex",
-            "agentName": "fix-12",
-            "interactionPreference": "native_cli",
-            "worktree": { "kind": "project_root" },
-            "promptDigest": null,
-            "parent": { "sessionId": PARENT_SESSION, "workspaceId": PARENT_WORKSPACE },
-        }),
-    )
-    .await
-    .unwrap();
+    let mut request = json!({
+        "schemaVersion": 1,
+        "idempotencyKey": "child-result",
+        "projectId": "child-result-project",
+        "providerId": "codex",
+        "agentName": "fix-12",
+        "interactionPreference": "native_cli",
+        "worktree": { "kind": "project_root" },
+        "promptDigest": null,
+    });
+    for (field, value) in parent.as_object().unwrap() {
+        request[field] = value.clone();
+    }
+    let preview = preview_agent_spawn(state, &authority, &request)
+        .await
+        .unwrap();
     let planned: AgentSpawnJournalReceiptV1 =
         serde_json::from_value(preview["receipt"].clone()).unwrap();
     let mut wire = orchestration_backend_request(state, "child-result-apply", "", Value::Null);
@@ -155,10 +170,10 @@ async fn a_child_outcome_reaches_its_parent_once_as_a_durable_message() {
         .await
         .unwrap()
         .unwrap();
-    let parent = AgentSpawnParentV1 {
+    let parent = ChildParent::Session(AgentSpawnParentV1 {
         session_id: PARENT_SESSION.into(),
         workspace_id: PARENT_WORKSPACE.into(),
-    };
+    });
     let epoch = authority.terminal_epoch.clone();
     let mut deliveries = ChildResultDeliveries::new(&state);
 
@@ -585,10 +600,10 @@ async fn a_chat_child_reports_each_outcome_once_after_moving_from_a_terminal() {
         .await
         .unwrap()
         .unwrap();
-    let parent = AgentSpawnParentV1 {
+    let parent = ChildParent::Session(AgentSpawnParentV1 {
         session_id: PARENT_SESSION.into(),
         workspace_id: PARENT_WORKSPACE.into(),
-    };
+    });
     let message = |marker: String| {
         let id = child_result_delivery::interaction_id(&child.operation_id, &parent, &marker);
         let state = &state;
@@ -752,4 +767,329 @@ async fn a_chat_child_reports_each_outcome_once_after_moving_from_a_terminal() {
         .await
         .unwrap();
     assert_eq!(prompt_deliverer.requests().len(), 6);
+}
+
+/// A Chat coordinator's provider, as far as starting turns goes: it records
+/// the input of each turn it is asked to start.
+#[derive(Default)]
+struct RecordingCommands {
+    inputs: StdMutex<Vec<String>>,
+}
+
+impl RecordingCommands {
+    fn inputs(&self) -> Vec<String> {
+        self.inputs.lock().unwrap().clone()
+    }
+}
+
+impl AgentProviderCommands for RecordingCommands {
+    fn start_turn<'a>(
+        &'a self,
+        _: &'a AgentInteractionBindingV1,
+        intent: &'a AgentStartTurnIntentV1,
+    ) -> AgentProviderCommandFuture<'a> {
+        self.inputs.lock().unwrap().push(intent.input.clone());
+        Box::pin(async { Ok(json!({ "accepted": true })) })
+    }
+
+    fn answer_pending<'a>(
+        &'a self,
+        _: &'a AgentInteractionBindingV1,
+        _: &'a dure_app::AgentPendingAnswerIntentV1,
+        _: &'a dure_app::AgentPendingRequestV1,
+    ) -> AgentProviderCommandFuture<'a> {
+        Box::pin(async { unreachable!("the coordinator answers no request here") })
+    }
+
+    fn interrupt_turn<'a>(
+        &'a self,
+        _: &'a AgentInteractionBindingV1,
+        _: &'a dure_app::AgentInterruptTurnRequestV1,
+    ) -> AgentProviderCommandFuture<'a> {
+        Box::pin(async { unreachable!("a child's outcome never interrupts a turn") })
+    }
+}
+
+/// A coordinating Agent on the chat runtime, with its conversation and a
+/// running provider that records the turns it starts.
+async fn chat_coordinator(state: &ServiceState) -> (ChatConversation, Arc<RecordingCommands>) {
+    let agent = AgentIdV1::new("chat-coordinator").unwrap();
+    let provider = ProviderIdV1::new("codex").unwrap();
+    state
+        .store
+        .upsert_agent(&AgentRecordV1 {
+            agent_id: agent.clone(),
+            workspace_id: WorkspaceIdV1::new("workspace-1").unwrap(),
+            provider_id: provider.clone(),
+            display_name: "Chat coordinator".into(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        })
+        .await
+        .unwrap();
+    let (_, binding) = initialize_structured_source_with_conversation(
+        state,
+        agent,
+        provider,
+        Some("coordinator-conversation"),
+    )
+    .await;
+    let commands = Arc::new(RecordingCommands::default());
+    state
+        .agent_conversation_runtimes
+        .register(binding.clone(), commands.clone())
+        .unwrap();
+    (
+        ChatConversation {
+            binding,
+            sequence: 0,
+        },
+        commands,
+    )
+}
+
+/// The state of the coordinator's queued input for one child outcome, if it
+/// was queued.
+async fn queued_state(
+    state: &ServiceState,
+    conversation: &AgentInteractionBindingV1,
+    input_id: &str,
+) -> Option<AgentQueuedTurnStateV1> {
+    match state
+        .store
+        .inspect_agent_input(
+            &conversation.interaction_session_id,
+            &AgentClientMessageIdV1::new(input_id).unwrap(),
+        )
+        .await
+        .unwrap()
+    {
+        Some(AgentInputReceiptV1::Queued { receipt }) => Some(receipt.state),
+        Some(other) => panic!("a child outcome is only ever queued: {other:?}"),
+        None => None,
+    }
+}
+
+#[tokio::test]
+async fn a_chat_parent_gets_each_child_outcome_once_as_queued_input_after_its_running_turn() {
+    let (_root, state, _launcher, prompt_deliverer) =
+        fixture_with_delivery(vec![LaunchOutcome::Succeed], Vec::new()).await;
+    let (mut coordinator, provider) = chat_coordinator(&state).await;
+    let coordinator_id = coordinator.binding.agent_id.clone();
+    let (child, _repository) = spawn_child_linked_to(
+        &state,
+        json!({ "parentAgent": { "agentId": coordinator_id } }),
+    )
+    .await;
+    let authority = state
+        .store
+        .agent_checkpoint_binding_authority(&child.plan.agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let epoch = authority.terminal_epoch.clone();
+    let parent = ChildParent::Agent(coordinator_id.clone());
+    let input_id =
+        |marker: String| child_result_delivery::input_id(&child.operation_id, &parent, &marker);
+    let conversation = coordinator.binding.interaction_session_id.clone();
+    let queue = |state: &ServiceState| {
+        let session = conversation.clone();
+        let store = Arc::clone(&state.store);
+        async move {
+            store
+                .read_queued_agent_turns(&session, 0)
+                .await
+                .unwrap()
+                .inputs
+        }
+    };
+    let mut deliveries = ChildResultDeliveries::new(&state);
+
+    // The coordinator is in the middle of a turn of its own.
+    coordinator
+        .commit(
+            &state,
+            vec![
+                coordinator.message(
+                    "coordinator-user-1",
+                    AgentTimelineMessageRoleV1::User,
+                    "Fix #12 with a worker",
+                ),
+                coordinator.lifecycle(
+                    "coordinator-started-1",
+                    AgentTimelineLifecycleStateV1::TurnStarted,
+                ),
+            ],
+        )
+        .await;
+
+    // A child that is still working has nothing to report.
+    report_child(&state, &authority, "ready", "working", ("none", None), "0");
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    assert!(queue(&state).await.is_empty());
+
+    // A finished turn is queued once in the coordinator's conversation. No
+    // terminal inbox is involved.
+    report_child(&state, &authority, "ready", "waiting", ("none", None), "1");
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    let finished = input_id(format!("turn_completed:{epoch}:1"));
+    let queued = queue(&state).await;
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].client_message_id.as_str(), finished);
+    assert!(
+        queued[0]
+            .preview
+            .starts_with("Your child Run **fix-12** finished a turn and is waiting for more work.")
+    );
+    assert!(prompt_deliverer.requests().is_empty());
+
+    // The same outcome is not queued again, nor after a restart forgets it.
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    child_result_delivery::tick(&state, &mut ChildResultDeliveries::new(&state))
+        .await
+        .unwrap();
+    assert_eq!(queue(&state).await.len(), 1);
+
+    // The running turn is not interrupted: the queue holds the result.
+    crate::agent_conversation::continuation::advance(&state, &coordinator_id, None)
+        .await
+        .unwrap();
+    assert!(provider.inputs().is_empty());
+    assert_eq!(
+        queued_state(&state, &coordinator.binding, &finished).await,
+        Some(AgentQueuedTurnStateV1::Queued)
+    );
+
+    // A later outcome waits behind the first.
+    report_child(
+        &state,
+        &authority,
+        "ready",
+        "working",
+        ("approval_required", Some("attention-4")),
+        "1",
+    );
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    let approval = input_id(format!("approval_required:{epoch}:1:attention-4"));
+    let queued = queue(&state).await;
+    assert_eq!(
+        queued
+            .iter()
+            .map(|input| input.client_message_id.as_str())
+            .collect::<Vec<_>>(),
+        [finished.as_str(), approval.as_str()]
+    );
+    assert!(
+        queued[1]
+            .preview
+            .starts_with("Your child Run **fix-12** is waiting for an approval.")
+    );
+
+    // Once the coordinator's turn ends, the first result starts its next turn.
+    coordinator
+        .commit(
+            &state,
+            vec![coordinator.lifecycle(
+                "coordinator-completed-1",
+                AgentTimelineLifecycleStateV1::TurnCompleted,
+            )],
+        )
+        .await;
+    crate::agent_conversation::continuation::advance(&state, &coordinator_id, None)
+        .await
+        .unwrap();
+    let inputs = provider.inputs();
+    assert_eq!(inputs.len(), 1);
+    assert!(inputs[0].starts_with("Your child Run **fix-12** finished a turn"));
+    assert!(inputs[0].contains(child.operation_id.as_str()));
+    assert!(inputs[0].contains("`dure send fix-12 <text>`"));
+    assert_eq!(
+        queued_state(&state, &coordinator.binding, &finished).await,
+        Some(AgentQueuedTurnStateV1::Dispatched)
+    );
+    assert!(prompt_deliverer.requests().is_empty());
+
+    // A stopped coordinator can't take input. The child's exit waits instead
+    // of being queued or sent anywhere else.
+    coordinator.stop(&state).await;
+    report_child(&state, &authority, "exited", "waiting", ("none", None), "2");
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    assert_eq!(
+        queued_state(
+            &state,
+            &coordinator.binding,
+            &input_id(format!("exited:{epoch}"))
+        )
+        .await,
+        None
+    );
+    assert!(prompt_deliverer.requests().is_empty());
+}
+
+#[tokio::test]
+async fn a_parent_agent_moved_into_its_terminal_reads_outcomes_in_its_session_inbox() {
+    let (_root, state, _launcher, prompt_deliverer) =
+        fixture_with_delivery(vec![LaunchOutcome::Succeed], vec![DeliveryOutcome::Succeed]).await;
+    let (context, _) = prepare_exact_session_run(&state).await;
+    // The fixture's coordinator runs in its terminal Session.
+    let coordinator = AgentIdV1::new("coordinator-1").unwrap();
+    state
+        .store
+        .initialize_agent_runtime_selection(&AgentRuntimeSelectionV1 {
+            schema_version: 1,
+            agent_id: coordinator.clone(),
+            provider_id: ProviderIdV1::new("provider.codex").unwrap(),
+            interaction_profile: AgentInteractionProfileV1::NativeCli,
+            execution_profile: AgentExecutionProfileV1::ProviderDefault,
+            permission_mode: ProviderPermissionModeV1::Default,
+            model: None,
+            effort: None,
+            revision: 1,
+            selected_by_operation_id: None,
+            updated_at_ms: 1,
+        })
+        .await
+        .unwrap();
+    let (child, _repository) = spawn_child_linked_to(
+        &state,
+        json!({ "parentAgent": { "agentId": coordinator.as_str() } }),
+    )
+    .await;
+    let authority = state
+        .store
+        .agent_checkpoint_binding_authority(&child.plan.agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    report_child(&state, &authority, "ready", "waiting", ("none", None), "1");
+    let mut deliveries = ChildResultDeliveries::new(&state);
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    let id = child_result_delivery::interaction_id(
+        &child.operation_id,
+        &ChildParent::Agent(coordinator),
+        &format!("turn_completed:{}:1", authority.terminal_epoch),
+    );
+    assert_eq!(
+        parent_message(&state, &context, &id).await["common"]["title"],
+        "fix-12 finished a turn"
+    );
+    let wakes = prompt_deliverer.requests();
+    assert_eq!(wakes.len(), 1);
+    assert_eq!(wakes[0].session.session_id, PARENT_SESSION);
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    assert_eq!(prompt_deliverer.requests().len(), 1);
 }

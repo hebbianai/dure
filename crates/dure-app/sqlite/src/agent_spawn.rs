@@ -139,7 +139,8 @@ pub(crate) async fn parent_linked_operations(
     let ids: Vec<String> = sqlx::query_scalar(
         r#"SELECT operation_id FROM agent_spawn_receipts
            WHERE state = 'succeeded'
-             AND json_extract(receipt_json, '$.plan.request.parent') IS NOT NULL
+             AND (json_extract(receipt_json, '$.plan.request.parent') IS NOT NULL
+               OR json_extract(receipt_json, '$.plan.request.parentAgent') IS NOT NULL)
              AND (?1 IS NULL OR operation_id > ?1)
            ORDER BY operation_id LIMIT ?2"#,
     )

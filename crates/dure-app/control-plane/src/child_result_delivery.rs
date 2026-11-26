@@ -1,11 +1,14 @@
 //! Tells the agent that started a Run what became of it. When a child
 //! finishes a turn and waits, needs input or approval, exits or is stopped,
-//! the parent's exact Session receives one durable Message through the same
-//! path as `dure send --track`, and is woken to read it.
+//! its parent hears once. A terminal parent's exact Session receives one
+//! durable Message through the same path as `dure send --track`, and is woken
+//! to read it. A Chat parent receives the same text as queued input in its
+//! conversation, which starts its next turn once no turn is running.
 //!
-//! The parent link is the Run's recorded request. Each outcome has a stable
-//! interaction ID, so a restarted control plane replays an outcome it already
-//! delivered instead of sending it again.
+//! The parent link is the Run's recorded request: the exact Session that
+//! started it, or the Agent, which is reached on the runtime it runs on now.
+//! Each outcome has a stable ID per parent, so a restarted control plane
+//! replays an outcome it already delivered instead of sending it again.
 //!
 //! A child is observed on whichever runtime it runs on now: a terminal child
 //! through its Host, a chat child through its committed conversation. A chat
@@ -15,18 +18,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use dure_app::{
-    AgentIdV1, AgentInteractionBindingV1, AgentInteractionSessionIdV1,
+    AgentClientMessageIdV1, AgentIdV1, AgentInteractionBindingV1, AgentInteractionSessionIdV1,
     AgentRuntimeBindingAuthorityV1, AgentRuntimeCloseStateV1, AgentRuntimeSelectionV1,
-    AgentSpawnJournalStore, AgentSpawnParentV1, OperationIdV1, ProviderIdV1,
-    WorkflowSessionGenerationV1,
+    AgentSpawnJournalStore, AgentSpawnParentV1, AgentSpawnPreviewRequestV1, AgentStartTurnIntentV1,
+    AgentTurnIdV1, DomainStoreErrorV1, OperationIdV1, ProviderIdV1, WorkflowSessionGenerationV1,
 };
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast::{self, error::TryRecvError};
 use tokio::time::{Duration, MissedTickBehavior};
 
 use crate::agent_conversation::{
-    AgentConversationNotificationKindV1, AgentConversationNotificationV1,
+    AgentConversationErrorV1, AgentConversationNotificationKindV1, AgentConversationNotificationV1,
 };
+use crate::agent_conversation_api::AgentConversationApiErrorV1;
 use crate::agent_conversation_outcome::{
     ConversationAttention, ConversationOutcome, OUTCOME_TAIL_ROWS, read_tail,
 };
@@ -49,6 +53,9 @@ const MAX_RETRY_MS: i64 = 5 * 60 * 1_000;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
 const MAX_PULL_REQUESTS: usize = 8;
 const GITHUB: &str = "https://github.com/";
+/// The parent Agent can't receive now: it is stopped, changing runtime, or
+/// its Session exited. It may receive again, so the child backs off.
+const PARENT_UNAVAILABLE: &str = "child_result_parent_unavailable";
 
 pub(crate) async fn run_loop(state: Arc<ServiceState>) {
     let mut interval = tokio::time::interval(TICK);
@@ -123,7 +130,7 @@ impl ChildResultDeliveries {
 struct LinkedChild {
     agent_id: AgentIdV1,
     name: String,
-    parent: AgentSpawnParentV1,
+    parent: ChildParent,
     /// The marker of the last outcome the parent received.
     delivered: Option<String>,
     failures: u32,
@@ -138,6 +145,36 @@ struct LinkedChild {
 struct ConversationReading {
     interaction_session_id: AgentInteractionSessionIdV1,
     outcome: Option<ObservedOutcome>,
+}
+
+/// Who started a Run, as its request records it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ChildParent {
+    /// The exact terminal Session that started the Run.
+    Session(AgentSpawnParentV1),
+    /// The Agent that started the Run (a Chat agent has no Session of its
+    /// own). It is reached on the runtime it runs on now.
+    Agent(AgentIdV1),
+}
+
+impl ChildParent {
+    /// The Agent names the manager exactly, so it is used when both are
+    /// recorded.
+    fn of(request: &AgentSpawnPreviewRequestV1) -> Option<Self> {
+        match (&request.parent_agent, &request.parent) {
+            (Some(parent), _) => Some(Self::Agent(parent.agent_id.clone())),
+            (None, Some(parent)) => Some(Self::Session(parent.clone())),
+            (None, None) => None,
+        }
+    }
+}
+
+/// Where a parent receives its children's outcomes now.
+enum ParentInbox {
+    /// A terminal Session's durable inbox; the Session is woken to read it.
+    Session(WorkflowSessionGenerationV1),
+    /// A Chat conversation's queued input, which starts its next turn.
+    Conversation(AgentInteractionBindingV1),
 }
 
 pub(crate) async fn tick(
@@ -191,7 +228,7 @@ async fn refresh_children(
             else {
                 continue;
             };
-            let Some(parent) = receipt.plan.request.parent.clone() else {
+            let Some(parent) = ChildParent::of(&receipt.plan.request) else {
                 continue;
             };
             deliveries.children.insert(
@@ -290,12 +327,11 @@ async fn deliver_outcome(
         child.finished = observed.outcome.ends_run();
         return Ok(());
     }
-    let Some(parent) = parent_session(state, &child.parent).await? else {
-        // The parent's Session has exited; no later outcome can reach it.
+    let Some(inbox) = parent_inbox(state, &child.parent).await? else {
+        // The parent is gone; no later outcome can reach it.
         child.finished = true;
         return Ok(());
     };
-    let context = exact_orchestration_context(state, &parent).await?;
     let final_response = match &observed.result {
         // History is a convenience: the outcome is still worth reporting
         // when the provider's history can't be read.
@@ -315,12 +351,83 @@ async fn deliver_outcome(
         observed.runtime,
         final_response.as_deref(),
     );
-    let interaction_id = interaction_id(operation_id, &child.parent, &observed.marker);
+    match inbox {
+        ParentInbox::Session(session) => {
+            let id = interaction_id(operation_id, &child.parent, &observed.marker);
+            open_message(state, session, id, title, description_markdown).await?;
+        }
+        ParentInbox::Conversation(binding) => {
+            let id = input_id(operation_id, &child.parent, &observed.marker);
+            queue_input(state, &binding, id, description_markdown).await?;
+        }
+    }
+    child.delivered = Some(observed.marker);
+    child.finished = observed.outcome.ends_run();
+    Ok(())
+}
+
+/// Where the parent receives outcomes now, or `None` once it never can
+/// again. A Session that exited is gone. An Agent is reached on the runtime
+/// it runs on now; while it is stopped or changing runtime it can't receive
+/// yet, and the child backs off and tries again.
+async fn parent_inbox(
+    state: &ServiceState,
+    parent: &ChildParent,
+) -> Result<Option<ParentInbox>, BackendDispatchError> {
+    let agent_id = match parent {
+        ChildParent::Session(parent) => {
+            return Ok(parent_session(state, parent)
+                .await?
+                .map(ParentInbox::Session));
+        }
+        ChildParent::Agent(agent_id) => agent_id,
+    };
+    let observed = {
+        let _guard = state.agent_operations.acquire(agent_id).await;
+        read_locked(state, agent_id).await?
+    };
+    match observed {
+        AgentRuntimeObservedV1::Stable { authority, .. } => match *authority {
+            AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding } => {
+                Ok(Some(ParentInbox::Conversation(binding)))
+            }
+            // Moved into its Terminal, the Agent reads its Session's inbox.
+            // The Agent outlives that Session, so an exit is not the end.
+            AgentRuntimeBindingAuthorityV1::NativeCli { authority } => {
+                let session = AgentSpawnParentV1 {
+                    session_id: authority.binding.session_id,
+                    workspace_id: authority.runtime_workspace_id,
+                };
+                match parent_session(state, &session).await? {
+                    Some(session) => Ok(Some(ParentInbox::Session(session))),
+                    None => Err(PARENT_UNAVAILABLE.into()),
+                }
+            }
+        },
+        // A removed Agent, or one this backend never ran, has no inbox.
+        AgentRuntimeObservedV1::Unmanaged => Ok(None),
+        AgentRuntimeObservedV1::Closed { owner, .. } if !owner.admits_successor() => Ok(None),
+        AgentRuntimeObservedV1::Closed { .. } | AgentRuntimeObservedV1::Transitioning { .. } => {
+            Err(PARENT_UNAVAILABLE.into())
+        }
+    }
+}
+
+/// Opens the outcome as one Message in the parent Session's inbox, which
+/// wakes the Session to read it.
+async fn open_message(
+    state: &ServiceState,
+    session: WorkflowSessionGenerationV1,
+    interaction_id: String,
+    title: String,
+    description_markdown: String,
+) -> Result<(), BackendDispatchError> {
+    let context = exact_orchestration_context(state, &session).await?;
     let opened = open_exact_session_message(
         state,
         ExactSessionMessageOpenBody {
             schema_version: agent_orchestration::domain::INTERACTION_SCHEMA_VERSION,
-            session: parent,
+            session,
             expected_endpoint_ref: context.endpoint_fence.endpoint_ref.as_str().to_owned(),
             idempotency_key: interaction_id.clone(),
             interaction_id,
@@ -332,14 +439,42 @@ async fn deliver_outcome(
     )
     .await;
     match opened {
-        Ok(_) => {}
+        Ok(_) => Ok(()),
         // The stable ID already opened this outcome, before a restart.
-        Err(error) if already_opened(&error) => {}
-        Err(error) => return Err(error),
+        Err(error) if already_opened(&error) => Ok(()),
+        Err(error) => Err(error),
     }
-    child.delivered = Some(observed.marker);
-    child.finished = observed.outcome.ends_run();
-    Ok(())
+}
+
+/// Queues the outcome as the next input of the parent's conversation. The
+/// conversation's queue starts it as a turn once no turn is running and no
+/// request waits for an answer, so a running turn is never interrupted.
+async fn queue_input(
+    state: &ServiceState,
+    binding: &AgentInteractionBindingV1,
+    id: String,
+    input: String,
+) -> Result<(), BackendDispatchError> {
+    let invalid = |_| BackendDispatchError::from("child_result_input_invalid");
+    let intent = AgentStartTurnIntentV1 {
+        schema_version: dure_app::AGENT_TIMELINE_SCHEMA_VERSION_V1,
+        interaction_session_id: binding.interaction_session_id.clone(),
+        runtime: binding.runtime.clone(),
+        turn_id: AgentTurnIdV1::new(id.clone()).map_err(invalid)?,
+        client_message_id: AgentClientMessageIdV1::new(id).map_err(invalid)?,
+        input,
+        requested_at_ms: now_ms()
+            .map_err(|_| BackendDispatchError::from("backend_clock_invalid"))?,
+    };
+    match state.agent_conversations.enqueue_turn_intent(&intent).await {
+        Ok(_) => Ok(()),
+        // A replay carries a new request time, so the same input ID is a
+        // conflict: the stable ID already queued this outcome.
+        Err(AgentConversationErrorV1::Store(DomainStoreErrorV1::IdempotencyConflict {
+            ..
+        })) => Ok(()),
+        Err(error) => Err(AgentConversationApiErrorV1::from(error).code().into()),
+    }
 }
 
 /// A replay carries a new open time, so the same key is a conflict rather
@@ -571,29 +706,48 @@ async fn parent_session(
     }))
 }
 
-/// One interaction per outcome and parent. The same outcome always maps to
+/// One inbox Message per outcome and parent. The same outcome always maps to
 /// the same ID, which is also its idempotency key.
 pub(crate) fn interaction_id(
     operation_id: &OperationIdV1,
-    parent: &AgentSpawnParentV1,
+    parent: &ChildParent,
     marker: &str,
 ) -> String {
+    format!(
+        "message.child-result.{}",
+        outcome_digest(operation_id, parent, marker)
+    )
+}
+
+/// One queued conversation input per outcome and parent, under the same
+/// digest as [`interaction_id`].
+pub(crate) fn input_id(operation_id: &OperationIdV1, parent: &ChildParent, marker: &str) -> String {
+    format!(
+        "child-result-{}",
+        outcome_digest(operation_id, parent, marker)
+    )
+}
+
+fn outcome_digest(operation_id: &OperationIdV1, parent: &ChildParent, marker: &str) -> String {
     let mut hash = Sha256::new();
-    for part in [
-        operation_id.as_str(),
-        &parent.session_id,
-        &parent.workspace_id,
-        marker,
-    ] {
-        hash.update((part.len() as u64).to_be_bytes());
-        hash.update(part.as_bytes());
+    let mut part = |value: &str| {
+        hash.update((value.len() as u64).to_be_bytes());
+        hash.update(value.as_bytes());
+    };
+    part(operation_id.as_str());
+    match parent {
+        ChildParent::Session(session) => {
+            part(&session.session_id);
+            part(&session.workspace_id);
+        }
+        ChildParent::Agent(agent_id) => part(agent_id.as_str()),
     }
+    part(marker);
     let digest = hash.finalize();
-    let hex: String = digest[..16]
+    digest[..16]
         .iter()
         .map(|byte| format!("{byte:02x}"))
-        .collect();
-    format!("message.child-result.{hex}")
+        .collect()
 }
 
 pub(crate) fn result_message(
@@ -840,25 +994,30 @@ mod tests {
     #[test]
     fn interaction_ids_are_stable_per_outcome_and_parent() {
         let operation = OperationIdV1::new("operation-1").unwrap();
-        let parent = AgentSpawnParentV1 {
+        let session = AgentSpawnParentV1 {
             session_id: "parent-session".into(),
             workspace_id: "parent-workspace".into(),
         };
+        let parent = ChildParent::Session(session.clone());
         let first = interaction_id(&operation, &parent, "turn_completed:terminal:1");
+        // A Session parent's IDs are the ones earlier backends opened.
+        assert_eq!(
+            first,
+            "message.child-result.144db6004b00fc44799fac1c61721c38"
+        );
         assert_eq!(
             first,
             interaction_id(&operation, &parent, "turn_completed:terminal:1")
         );
-        assert!(first.starts_with("message.child-result."));
         assert!(first.len() <= agent_orchestration::domain::MAX_IDEMPOTENCY_KEY_BYTES);
         assert_ne!(
             first,
             interaction_id(&operation, &parent, "turn_completed:terminal:2")
         );
-        let other_parent = AgentSpawnParentV1 {
+        let other_parent = ChildParent::Session(AgentSpawnParentV1 {
             workspace_id: "other-workspace".into(),
-            ..parent.clone()
-        };
+            ..session
+        });
         assert_ne!(
             first,
             interaction_id(&operation, &other_parent, "turn_completed:terminal:1")
@@ -867,6 +1026,83 @@ mod tests {
         assert_ne!(
             interaction_id(&OperationIdV1::new("operation-1a").unwrap(), &parent, "b"),
             interaction_id(&operation, &parent, "ab")
+        );
+    }
+
+    #[test]
+    fn a_parent_agent_gets_its_own_stable_ids_for_messages_and_queued_input() {
+        let operation = OperationIdV1::new("operation-1").unwrap();
+        let agent = ChildParent::Agent(AgentIdV1::new("agent-coordinator").unwrap());
+        let marker = "turn_completed:terminal:1";
+        assert_eq!(
+            interaction_id(&operation, &agent, marker),
+            "message.child-result.4fa7547f0075ac7b68562d4b06445149"
+        );
+        let input = input_id(&operation, &agent, marker);
+        assert_eq!(input, "child-result-4fa7547f0075ac7b68562d4b06445149");
+        assert_eq!(input, input_id(&operation, &agent, marker));
+        assert!(AgentClientMessageIdV1::new(input.clone()).is_ok());
+        assert!(AgentTurnIdV1::new(input.clone()).is_ok());
+        assert_ne!(
+            input,
+            input_id(&operation, &agent, "turn_completed:terminal:2")
+        );
+        assert_ne!(
+            input,
+            input_id(
+                &operation,
+                &ChildParent::Agent(AgentIdV1::new("agent-other").unwrap()),
+                marker
+            )
+        );
+    }
+
+    #[test]
+    fn delivery_to_a_parent_agent_is_advertised() {
+        assert!(
+            crate::control_plane_build_identity::capabilities()
+                .iter()
+                .any(|capability| capability == "agent_spawn.child_result_delivery.parent_agent.v1")
+        );
+    }
+
+    #[test]
+    fn the_recorded_parent_agent_is_used_before_a_parent_session() {
+        let session = AgentSpawnParentV1 {
+            session_id: "parent-session".into(),
+            workspace_id: "parent-workspace".into(),
+        };
+        let agent = AgentIdV1::new("agent-coordinator").unwrap();
+        let request = |parent: Option<AgentSpawnParentV1>, parent_agent: Option<&AgentIdV1>| {
+            let mut request: AgentSpawnPreviewRequestV1 = serde_json::from_value(json!({
+                "schemaVersion": 1,
+                "idempotencyKey": "child",
+                "projectId": "project-1",
+                "providerId": "codex",
+                "agentName": "fix-12",
+                "worktree": { "kind": "project_root" },
+                "permissionMode": "default",
+                "promptDigest": null,
+            }))
+            .unwrap();
+            request.parent = parent;
+            request.parent_agent = parent_agent.map(|agent_id| dure_app::AgentSpawnParentAgentV1 {
+                agent_id: agent_id.clone(),
+            });
+            request
+        };
+        assert_eq!(ChildParent::of(&request(None, None)), None);
+        assert_eq!(
+            ChildParent::of(&request(Some(session.clone()), None)),
+            Some(ChildParent::Session(session.clone()))
+        );
+        assert_eq!(
+            ChildParent::of(&request(None, Some(&agent))),
+            Some(ChildParent::Agent(agent.clone()))
+        );
+        assert_eq!(
+            ChildParent::of(&request(Some(session), Some(&agent))),
+            Some(ChildParent::Agent(agent))
         );
     }
 
@@ -1091,10 +1327,10 @@ mod tests {
         let child = |id: &str| LinkedChild {
             agent_id: AgentIdV1::new(format!("agent-{id}")).unwrap(),
             name: id.into(),
-            parent: AgentSpawnParentV1 {
+            parent: ChildParent::Session(AgentSpawnParentV1 {
                 session_id: "parent-session".into(),
                 workspace_id: "parent-workspace".into(),
-            },
+            }),
             delivered: None,
             failures: 0,
             retry_at_ms: 0,

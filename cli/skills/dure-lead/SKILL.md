@@ -231,8 +231,9 @@ finished a turn stays settled, so once you have handled it, go back to the
 per-worker `dure wait` above for the ones still working. Each linked worker's
 finished turn, request for input or approval, exit or stop also reaches your
 inbox as one Message (`fix-12 finished a turn`) with its final response and the
-pull request links in it. Treat it like a risen turn count: a reason to look,
-not proof that the item is done.
+pull request links in it; when you run in Chat it arrives as your next input
+instead, after your current turn. Treat it like a risen turn count: a reason to
+look, not proof that the item is done.
 
 **Completion is a GitHub fact, not a session state.** A worker is done when
 its pull request is merged (or open and handed back with a reason) **and** its
