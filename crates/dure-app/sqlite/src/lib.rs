@@ -559,6 +559,24 @@ impl AgentTimelineStore for SqliteDomainStore {
         Box::pin(agent_timeline::binding_for_agent(&self.pool, agent_id))
     }
 
+    fn agent_interactions<'a>(
+        &'a self,
+        after: Option<&'a dure_app::AgentInteractionSessionIdV1>,
+        limit: usize,
+    ) -> DomainStoreFuture<'a, Vec<dure_app::AgentInteractionBindingV1>> {
+        Box::pin(agent_timeline::bindings_after(&self.pool, after, limit))
+    }
+
+    fn latest_agent_turn_completed<'a>(
+        &'a self,
+        interaction_session_id: &'a dure_app::AgentInteractionSessionIdV1,
+    ) -> DomainStoreFuture<'a, Option<dure_app::AgentTimelineCursorV1>> {
+        Box::pin(agent_timeline::latest_turn_completed(
+            &self.pool,
+            interaction_session_id,
+        ))
+    }
+
     fn replace_agent_interaction_runtime<'a>(
         &'a self,
         replacement: &'a dure_app::AgentRuntimeReplacementV1,

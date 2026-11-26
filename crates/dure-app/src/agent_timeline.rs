@@ -1251,6 +1251,21 @@ pub trait AgentTimelineStore: Send + Sync {
         agent_id: &'a AgentIdV1,
     ) -> DomainStoreFuture<'a, Option<AgentInteractionBindingV1>>;
 
+    /// Up to `limit` conversation bindings, one per Agent that has a chat
+    /// conversation, ordered by interaction session after `after`.
+    fn agent_interactions<'a>(
+        &'a self,
+        after: Option<&'a AgentInteractionSessionIdV1>,
+        limit: usize,
+    ) -> DomainStoreFuture<'a, Vec<AgentInteractionBindingV1>>;
+
+    /// The newest `TurnCompleted` row of the conversation's current timeline,
+    /// however far back it is. `None` when no turn has completed in it.
+    fn latest_agent_turn_completed<'a>(
+        &'a self,
+        interaction_session_id: &'a AgentInteractionSessionIdV1,
+    ) -> DomainStoreFuture<'a, Option<AgentTimelineCursorV1>>;
+
     fn replace_agent_interaction_runtime<'a>(
         &'a self,
         replacement: &'a AgentRuntimeReplacementV1,

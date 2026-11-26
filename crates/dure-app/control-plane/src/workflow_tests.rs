@@ -54,6 +54,7 @@ use tokio::sync::{Mutex, Notify, Semaphore};
 
 use super::*;
 
+mod agent_conversation_activity_tests;
 mod agent_conversation_history_tests;
 mod agent_conversation_recovery_tests;
 mod agent_goal_tests;

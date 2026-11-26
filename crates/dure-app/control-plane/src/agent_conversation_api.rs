@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::future::Future;
 use std::io;
 use std::sync::{Arc, RwLock};
 
@@ -13,6 +14,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
+use tokio::net::unix::OwnedWriteHalf;
 use tokio::sync::{OwnedSemaphorePermit, broadcast};
 use tokio::time::timeout;
 
@@ -322,6 +324,22 @@ where
             .map_err(Into::into)
     }
 
+    /// Announces that the Agent's runtime was stopped or changed, so readers
+    /// of its conversation (the app's chat runtime tier among them) read its
+    /// state again. A no-op for an Agent without a chat conversation.
+    pub(crate) async fn publish_runtime_change(
+        &self,
+        agent_id: &AgentIdV1,
+    ) -> Result<(), AgentConversationApiErrorV1> {
+        self.service
+            .publish_projection_change(
+                agent_id,
+                crate::agent_conversation::AgentConversationNotificationKindV1::Runtime,
+            )
+            .await
+            .map_err(Into::into)
+    }
+
     pub(crate) async fn binding(
         &self,
         interaction_session_id: &AgentInteractionSessionIdV1,
@@ -593,6 +611,35 @@ async fn write_persistent_frame(stream: &mut UnixStream, value: &Value) -> io::R
     .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "backend response timed out"))?
 }
 
+/// Writes one subscription event in the backend's event envelope.
+pub(crate) async fn write_subscription_event(
+    writer: &mut OwnedWriteHalf,
+    state: &ServiceState,
+    event: Value,
+) -> io::Result<()> {
+    let event = json!({
+        "schemaVersion": 1,
+        "apiVersion": BACKEND_PROTOCOL_API,
+        "kind": "dure.backend.event",
+        "backend": backend_observation(&state.descriptor),
+        "event": event,
+    });
+    let mut source = serde_json::to_vec(&event)?;
+    if source.len() as u64 > MAX_RESPONSE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "backend subscription frame is too large",
+        ));
+    }
+    source.push(b'\n');
+    timeout(REQUEST_IO_TIMEOUT, async {
+        writer.write_all(&source).await?;
+        writer.flush().await
+    })
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "backend event timed out"))?
+}
+
 async fn stream_subscription(
     state: Arc<ServiceState>,
     stream: UnixStream,
@@ -615,121 +662,107 @@ async fn stream_subscription(
             {
                 json!({
                     "schemaVersion": 1,
-                    "apiVersion": BACKEND_PROTOCOL_API,
-                    "kind": "dure.backend.event",
-                    "backend": backend_observation(&state.descriptor),
-                    "event": {
-                        "schemaVersion": 1,
-                        "topic": "agent_conversation.changed",
-                        "subscriptionRequestId": request_id,
-                        "notification": notification,
-                    },
+                    "topic": "agent_conversation.changed",
+                    "subscriptionRequestId": request_id,
+                    "notification": notification,
                 })
             }
             Ok(_) => continue,
             Err(broadcast::error::RecvError::Lagged(_)) => json!({
                 "schemaVersion": 1,
-                "apiVersion": BACKEND_PROTOCOL_API,
-                "kind": "dure.backend.event",
-                "backend": backend_observation(&state.descriptor),
-                "event": {
-                    "schemaVersion": 1,
-                    "topic": "agent_conversation.reset_required",
-                    "subscriptionRequestId": request_id,
-                    "interactionSessionId": subscription.interaction_session_id,
-                },
+                "topic": "agent_conversation.reset_required",
+                "subscriptionRequestId": request_id,
+                "interactionSessionId": subscription.interaction_session_id,
             }),
             Err(broadcast::error::RecvError::Closed) => return Ok(()),
         };
-        let mut source = serde_json::to_vec(&event)?;
-        if source.len() as u64 > MAX_RESPONSE_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "backend subscription frame is too large",
-            ));
-        }
-        source.push(b'\n');
-        timeout(REQUEST_IO_TIMEOUT, async {
-            writer.write_all(&source).await?;
-            writer.flush().await
-        })
-        .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "backend event timed out"))??;
+        write_subscription_event(&mut writer, &state, event).await?;
     }
 }
 
 pub(super) async fn handle_subscription(
     state: Arc<ServiceState>,
-    mut reader: BufReader<UnixStream>,
+    reader: BufReader<UnixStream>,
     request: BackendRequest,
 ) -> io::Result<()> {
+    serve_subscription(
+        state,
+        reader,
+        request,
+        |state, body| async move {
+            let subscription = state
+                .agent_conversations
+                .subscribe(&body)
+                .await
+                .map_err(agent_conversation_api_error)?;
+            Ok((
+                json!({ "schemaVersion": 1, "read": subscription.initial }),
+                subscription,
+            ))
+        },
+        stream_subscription,
+    )
+    .await
+}
+
+/// Admits and serves one backend subscription on a persistent connection.
+/// Opening holds a request slot and the request deadline; streaming holds a
+/// subscription slot until the client closes. `open` answers the request with
+/// its result and the state `stream` serves events from.
+pub(super) async fn serve_subscription<T, Open, Opened, Stream, Streamed>(
+    state: Arc<ServiceState>,
+    mut reader: BufReader<UnixStream>,
+    request: BackendRequest,
+    open: Open,
+    stream: Stream,
+) -> io::Result<()>
+where
+    Open: FnOnce(Arc<ServiceState>, Value) -> Opened,
+    Opened: Future<Output = Result<(Value, T), BackendDispatchError>>,
+    Stream: FnOnce(Arc<ServiceState>, UnixStream, String, T, OwnedSemaphorePermit) -> Streamed,
+    Streamed: Future<Output = io::Result<()>>,
+{
     let request_id = request.request_id.clone();
-    let response = match validate_request(&request, &state) {
-        Ok(_) if !requests_persistent_connection(&request) => json!({
+    let error = |error: Value| {
+        json!({
             "schemaVersion": 1,
             "apiVersion": BACKEND_PROTOCOL_API,
             "kind": BACKEND_ERROR_KIND,
             "requestId": request_id,
             "backend": backend_observation(&state.descriptor),
-            "error": backend_error_body(BackendDispatchError::terminal(
+            "error": error,
+        })
+    };
+    let response = match validate_request(&request, &state) {
+        Ok(_) if !requests_persistent_connection(&request) => {
+            error(backend_error_body(BackendDispatchError::terminal(
                 "agent_conversation_subscription_requires_persistent_connection",
-            )),
-        }),
+            )))
+        }
         Ok(_) => match Arc::clone(&state.request_slots).try_acquire_owned() {
-            Err(_) => json!({
-                "schemaVersion": 1,
-                "apiVersion": BACKEND_PROTOCOL_API,
-                "kind": BACKEND_ERROR_KIND,
-                "requestId": request_id,
-                "backend": backend_observation(&state.descriptor),
-                "error": {
-                    "code": "backend_busy",
-                    "message": "backend request capacity is exhausted",
-                    "details": { "disposition": "retry_same" }
-                },
-            }),
+            Err(_) => error(json!({
+                "code": "backend_busy",
+                "message": "backend request capacity is exhausted",
+                "details": { "disposition": "retry_same" }
+            })),
             Ok(permit) => {
-                let subscribed = timeout(
-                    REQUEST_DEADLINE,
-                    state.agent_conversations.subscribe(&request.body),
-                )
-                .await;
+                let opened =
+                    timeout(REQUEST_DEADLINE, open(Arc::clone(&state), request.body)).await;
                 drop(permit);
-                match subscribed {
-                    Err(_) => json!({
-                        "schemaVersion": 1,
-                        "apiVersion": BACKEND_PROTOCOL_API,
-                        "kind": BACKEND_ERROR_KIND,
-                        "requestId": request_id,
-                        "backend": backend_observation(&state.descriptor),
-                        "error": {
-                            "code": "backend_request_deadline_exceeded",
-                            "message": "backend request deadline exceeded",
-                            "details": { "disposition": "retry_same" }
-                        },
-                    }),
-                    Ok(Err(error)) => json!({
-                        "schemaVersion": 1,
-                        "apiVersion": BACKEND_PROTOCOL_API,
-                        "kind": BACKEND_ERROR_KIND,
-                        "requestId": request_id,
-                        "backend": backend_observation(&state.descriptor),
-                        "error": backend_error_body(agent_conversation_api_error(error)),
-                    }),
-                    Ok(Ok(subscription)) => {
+                match opened {
+                    Err(_) => error(json!({
+                        "code": "backend_request_deadline_exceeded",
+                        "message": "backend request deadline exceeded",
+                        "details": { "disposition": "retry_same" }
+                    })),
+                    Ok(Err(failure)) => error(backend_error_body(failure)),
+                    Ok(Ok((result, opened))) => {
                         match Arc::clone(&state.subscription_slots).try_acquire_owned() {
-                            Err(_) => json!({
-                                "schemaVersion": 1,
-                                "apiVersion": BACKEND_PROTOCOL_API,
-                                "kind": BACKEND_ERROR_KIND,
-                                "requestId": request_id,
-                                "backend": backend_observation(&state.descriptor),
-                                "error": {
-                                    "code": "backend_subscription_capacity",
-                                    "message": "backend subscription capacity is exhausted",
-                                    "details": { "disposition": "retry_same" }
-                                },
-                            }),
+                            Err(_) => error(json!({
+                                "code": "backend_subscription_capacity",
+                                "message": "backend subscription capacity is exhausted",
+                                "details": { "disposition": "retry_same" }
+                            })),
                             Ok(subscription_permit) => {
                                 let response = json!({
                                     "schemaVersion": 1,
@@ -737,20 +770,17 @@ pub(super) async fn handle_subscription(
                                     "kind": BACKEND_RESPONSE_KIND,
                                     "requestId": request_id,
                                     "backend": backend_observation(&state.descriptor),
-                                    "result": {
-                                        "schemaVersion": 1,
-                                        "read": subscription.initial,
-                                    },
+                                    "result": result,
                                 });
                                 write_persistent_frame(reader.get_mut(), &response).await?;
                                 if !reader.buffer().is_empty() {
                                     return Ok(());
                                 }
-                                return stream_subscription(
+                                return stream(
                                     state,
                                     reader.into_inner(),
                                     request_id,
-                                    subscription,
+                                    opened,
                                     subscription_permit,
                                 )
                                 .await;
@@ -760,14 +790,7 @@ pub(super) async fn handle_subscription(
                 }
             }
         },
-        Err(code) => json!({
-            "schemaVersion": 1,
-            "apiVersion": BACKEND_PROTOCOL_API,
-            "kind": BACKEND_ERROR_KIND,
-            "requestId": request_id,
-            "backend": backend_observation(&state.descriptor),
-            "error": { "code": code, "message": "backend request rejected" },
-        }),
+        Err(code) => error(json!({ "code": code, "message": "backend request rejected" })),
     };
     write_persistent_frame(reader.get_mut(), &response).await
 }

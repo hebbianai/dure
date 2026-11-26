@@ -280,6 +280,28 @@ pub(crate) async fn read_tail(
     })
 }
 
+/// The row of the newest finished turn in the binding's timeline, or `0` when
+/// no turn has finished there yet. It grows exactly when a turn finishes, the
+/// way a Host's completed-turn count does, so a reader that compares two
+/// values counts each finished turn once however long the turn ran. `None`
+/// when the conversation has moved on to another timeline.
+pub(crate) async fn turn_completed_sequence(
+    state: &ServiceState,
+    binding: &AgentInteractionBindingV1,
+) -> Result<Option<i64>, DomainStoreErrorV1> {
+    Ok(
+        match state
+            .store
+            .latest_agent_turn_completed(&binding.interaction_session_id)
+            .await?
+        {
+            Some(cursor) if cursor.epoch == binding.timeline_epoch => Some(cursor.sequence),
+            Some(_) => None,
+            None => Some(0),
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

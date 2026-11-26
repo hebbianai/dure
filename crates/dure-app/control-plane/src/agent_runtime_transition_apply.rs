@@ -917,7 +917,7 @@ async fn advance(
     transition: &AgentRuntimeTransitionRecordV1,
     advance: AgentRuntimeTransitionAdvanceV1,
 ) -> Result<AgentRuntimeTransitionRecordV1, String> {
-    state
+    let advanced = state
         .store
         .advance_agent_runtime_transition(&AgentRuntimeTransitionAdvanceRequestV1 {
             schema_version: AGENT_RUNTIME_TRANSITION_SCHEMA_VERSION_V1,
@@ -927,7 +927,13 @@ async fn advance(
             advanced_at_ms: clock_at_least(transition.updated_at_ms)?,
         })
         .await
-        .map_err(store_error)
+        .map_err(store_error)?;
+    // A hint only: the committed transition is the authority.
+    let _ = state
+        .agent_conversations
+        .publish_runtime_change(&transition.intent.source.agent_id)
+        .await;
+    Ok(advanced)
 }
 
 async fn inspect_native_source(
