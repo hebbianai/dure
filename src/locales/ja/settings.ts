@@ -513,6 +513,8 @@ export const settings: Record<string, string> = {
 	"settings.notifications.event.terminalBell.desc": "バックグラウンドの terminal がベル文字を送出します。",
 	"settings.notifications.event.agentMessage.title": "エージェントからのメッセージ",
 	"settings.notifications.event.agentMessage.desc": "エージェントまたはコマンドが dure notify でメッセージを送ります。そのエージェントのパネルを表示していても通知されます。",
+	"settings.notifications.event.managedAgentDone.title": "他のエージェントが管理するエージェントのターン完了",
+	"settings.notifications.event.managedAgentDone.desc": "オフにすると、他のエージェントに管理されていないエージェントだけがターンの完了を通知します。承認、質問、終了はすべてのエージェントで通知されます。",
 	"notifications.agentMessage.personTitle": "コマンドからのメッセージ",
 	"settings.notifications.enable.desc": "バックグラウンドイベントに対する標準のシステム通知です。",
 	"settings.nav.keyword.version": "バージョン",

@@ -544,6 +544,8 @@ export const settingsEnglishTranslations = {
 	"settings.notifications.event.terminalBell.desc": "A background terminal emitted a bell character.",
 	"settings.notifications.event.agentMessage.title": "Messages from agents",
 	"settings.notifications.event.agentMessage.desc": "An agent or a command sends you a message with dure notify. It appears even while you are viewing that agent's pane.",
+	"settings.notifications.event.managedAgentDone.title": "Finished turns of agents another agent manages",
+	"settings.notifications.event.managedAgentDone.desc": "Off: only agents that no other agent manages notify you when they finish a turn. Approvals, questions and exits notify you for every agent.",
 	"notifications.agentMessage.personTitle": "Message from a command",
 	"settings.notifications.enable.desc": "Basic system notifications for background events.",
 	"settings.nav.keyword.version": "Version",

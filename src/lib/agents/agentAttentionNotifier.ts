@@ -14,6 +14,7 @@ import { isDispatchedAgent } from "@/lib/agents/agentDispatchOrigin";
 import { pendingApproval } from "@/lib/agents/approvalRequest";
 import { agentDisplayName } from "@/lib/agents/agentDisplayName";
 import { agentNotificationsMuted } from "@/lib/agents/agentNotificationMute";
+import { agentRelationsOf } from "@/lib/agents/relations/agentRelationFacts";
 import { agentSeatKey, chatOwnedAgent } from "@/lib/hub/sidebarLayout";
 import { t } from "@/lib/i18n";
 import type { HmuxAgentRuntimeState } from "@/lib/ipc/hmuxContracts";
@@ -38,8 +39,8 @@ type PhonePushKind = Parameters<typeof pushAgentNotification>[0]["kind"];
 
 /**
  * How one kind of agent event reaches the person: which switch enables it,
- * whether a visible pane or a dispatched worker silences it, and which phone
- * push it rides. Every kind, including a new one, is decided here.
+ * whether a visible pane, a dispatched worker or a manager silences it, and
+ * which phone push it rides. Every kind, including a new one, is decided here.
  */
 interface AgentNotificationPolicy {
   /** The Settings switch that turns this kind's desktop notification on. */
@@ -48,21 +49,26 @@ interface AgentNotificationPolicy {
   readonly suppressWhenVisible: boolean;
   /** Whether a dispatched worker's event is a separate cue for the person. */
   readonly dispatchedWorkers: boolean;
+  /** For an agent another agent manages: the Settings switch that lets it
+   *  tell the person of this kind itself, or null when it always does. */
+  readonly managedAgents: "managedAgentDone" | null;
   /** The phone push kind the event rides, or none. */
   readonly phone: PhonePushKind | null;
 }
 
 const NOTIFICATION_POLICY: Readonly<Record<AgentNotificationKind, AgentNotificationPolicy>> = {
-  approval: { pref: "approvalRequired", suppressWhenVisible: true, dispatchedWorkers: true, phone: "approval" },
+  approval: { pref: "approvalRequired", suppressWhenVisible: true, dispatchedWorkers: true, managedAgents: null, phone: "approval" },
   // A dispatched worker's completion or prompt is not a separate cue for the
   // user. Its unread dot remains; approval and exit still request attention.
-  done: { pref: "agentDone", suppressWhenVisible: true, dispatchedWorkers: false, phone: "done" },
-  input: { pref: "agentDone", suppressWhenVisible: true, dispatchedWorkers: false, phone: "input" },
-  exited: { pref: "agentExited", suppressWhenVisible: true, dispatchedWorkers: true, phone: null },
+  // Nor is the finished turn of an agent another agent manages: its manager
+  // follows its work, and the person hears from the manager.
+  done: { pref: "agentDone", suppressWhenVisible: true, dispatchedWorkers: false, managedAgents: "managedAgentDone", phone: "done" },
+  input: { pref: "agentDone", suppressWhenVisible: true, dispatchedWorkers: false, managedAgents: null, phone: "input" },
+  exited: { pref: "agentExited", suppressWhenVisible: true, dispatchedWorkers: true, managedAgents: null, phone: null },
   // `dure notify`: the text is shown nowhere else, so a visible pane does not
   // hide it, and a dispatched worker sent it on purpose. The phone takes it
   // once the push service carries the kind (#721).
-  message: { pref: "agentMessage", suppressWhenVisible: false, dispatchedWorkers: true, phone: null },
+  message: { pref: "agentMessage", suppressWhenVisible: false, dispatchedWorkers: true, managedAgents: null, phone: null },
 };
 
 /** The agent a notification names, as a receipt reports it. */
@@ -77,6 +83,7 @@ type NotificationSkip =
   | "no_agent"
   | "not_main_window"
   | "dispatched_worker"
+  | "managed_agent"
   | "muted"
   | "rate_limited";
 
@@ -191,8 +198,8 @@ export function diffEpisodeBumps(
 const lastNotified = new Map<string, number>();
 
 /** The phone's share of one event. The phone's preference and recipient
- *  authority belong to the paired Hub; desktop visibility and notification
- *  preferences apply only to this screen. */
+ *  authority belong to the paired Hub; desktop visibility and the per-kind
+ *  switches apply only to this screen. */
 function pushToPhone(
   agent: StoreAgent | null,
   policy: AgentNotificationPolicy,
@@ -241,13 +248,25 @@ export async function notifyAgentEvent(
   if (agent && !policy.dispatchedWorkers && isDispatchedAgent(agent)) {
     return skippedAgentNotification(sender, "dispatched_worker");
   }
+  const np = notifyPrefs();
+  // Whether the event is the person's cue at all, decided once for both
+  // surfaces: the relation owner's display manager decides, an agent with no
+  // known manager tells the person as before, and the person's switch brings
+  // the old behavior back on both. Its unread dot stays.
+  if (
+    agent &&
+    policy.managedAgents &&
+    !np[policy.managedAgents] &&
+    agentRelationsOf(useStore.getState().agents).managerOf(agent.id) !== undefined
+  ) {
+    return skippedAgentNotification(sender, "managed_agent");
+  }
   // The person muted this agent: no desktop alert and no phone push. Its
   // attention episode, unread dot and Needs you entry are not touched.
   if (agent && agentNotificationsMuted(agent)) {
     return skippedAgentNotification(sender, "muted");
   }
   const phone = pushToPhone(agent, policy, options?.eventId);
-  const np = notifyPrefs();
   if (!np.enabled || !np[policy.pref]) return { agent: sender, desktop: { status: "disabled" }, phone };
   const st = useStore.getState();
   if (agent && policy.suppressWhenVisible && np.suppressWhenVisible) {

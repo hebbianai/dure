@@ -513,6 +513,8 @@ export const settings: Record<string, string> = {
 	"settings.notifications.event.terminalBell.desc": "Un terminal en segundo plano emitió un carácter de campana.",
 	"settings.notifications.event.agentMessage.title": "Mensajes de los agentes",
 	"settings.notifications.event.agentMessage.desc": "Un agente o un comando le envía un mensaje con dure notify. Aparece aunque esté viendo el panel de ese agente.",
+	"settings.notifications.event.managedAgentDone.title": "Turnos terminados de agentes que gestiona otro agente",
+	"settings.notifications.event.managedAgentDone.desc": "Desactivado: solo los agentes que ningún otro agente gestiona le avisan al terminar un turno. Las aprobaciones, preguntas y salidas le avisan para todos los agentes.",
 	"notifications.agentMessage.personTitle": "Mensaje de un comando",
 	"settings.notifications.enable.desc": "Notificaciones básicas del sistema para eventos en segundo plano.",
 	"settings.nav.keyword.version": "Versión",
