@@ -4,10 +4,7 @@ import type {
 } from "@/lib/agents/chat/agentConversationContract";
 import { nativeAgentChatPage } from "@/lib/agents/chat/nativeAgentChat";
 import type { ProviderConversationActivity } from "@/lib/ipc/conversations";
-import {
-	type NativeAgentTranscriptSource,
-	nativeTranscriptProvider,
-} from "../../../../cli/lib/agent-transcript.mjs";
+import type { ProviderTranscriptSource } from "../../../../cli/lib/agent-transcript.mjs";
 
 /** The pages of one provider transcript a view loaded on request, next to
  * the history it already shows. The one paging owner for every surface that
@@ -52,7 +49,8 @@ export interface ProviderHistoryAnchor {
 /** The boundaries the Chat runtime seeds where the transcript goes on before
  * its history: before the newest window of a longer history, or at the
  * provider's compaction, whose summary stands in for the records before it.
- * Each names the transcript offset of the oldest record the history shows. */
+ * Each names the place in the transcript of the oldest record the history
+ * shows: a byte offset, or a place the provider's runtime names. */
 const OPENING_HISTORY_BOUNDARIES: ReadonlySet<string> = new Set([
 	"provider_transcript_window",
 	"provider_conversation_compacted",
@@ -110,14 +108,18 @@ export function providerHistoryAnchors(
  * seeded history starts, the boundary gives way to the loaded rows and, while
  * older records remain, to the timeline's own "load older". A gap keeps its
  * row above the loaded rows until they reach the rows above it. A view that
- * cannot read the transcript passes no pages and keeps the boundaries. */
+ * cannot read the transcript passes no pages and keeps the boundaries.
+ *
+ * Any provider's history pages here: the backend that owns the session reads
+ * them, from the provider's transcript or, for a provider that keeps none
+ * (OpenCode), through its runtime, at the places its boundaries name. */
 export function chatPageWithProviderHistory(
 	page: AgentTimelinePageV1,
 	loaded: ReadonlyMap<string, ProviderHistoryPages>,
 ): AgentTimelinePageV1 {
 	const provider = page.binding.providerId;
 	const conversationId = page.binding.providerConversationRef;
-	if (!conversationId || !nativeTranscriptProvider(provider)) return page;
+	if (!conversationId) return page;
 	let hasMore = page.hasMore;
 	let changed = false;
 	const anchors = new Map(
@@ -160,7 +162,7 @@ export function chatPageWithProviderHistory(
  * with another anchor's. */
 function loadedRows(
 	page: AgentTimelinePageV1,
-	source: NativeAgentTranscriptSource,
+	source: ProviderTranscriptSource,
 	anchor: ProviderHistoryAnchor,
 	pages: ProviderHistoryPages,
 ): AgentTimelineRowV1[] {

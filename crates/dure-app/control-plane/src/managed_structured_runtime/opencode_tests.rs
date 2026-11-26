@@ -367,7 +367,7 @@ fn live_opencode_opens_a_long_terminal_conversation_in_chat() {
             .expect("a long Terminal conversation opens in Chat");
 
         let shown = conversation(&service, &binding).await;
-        assert_eq!(shown[0], "boundary:provider_history_truncated");
+        assert_eq!(shown[0], "boundary:provider_transcript_window");
         let first = shown[1]
             .strip_prefix("Terminal prompt ")
             .and_then(|index| index.parse::<usize>().ok())
@@ -388,7 +388,39 @@ fn live_opencode_opens_a_long_terminal_conversation_in_chat() {
         );
         println!("Chat opened with Terminal prompts {first} to 199 behind a history boundary");
 
+        // "Show earlier history" pages back from the boundary through the
+        // OpenCode server Chat is attached to, until the session's start.
         let bridge = bridge(&manager, &binding).await;
+        let mut before = timeline_rows(&service, &binding)
+            .await
+            .iter()
+            .find_map(|row| row.item.body.transcript_history_start())
+            .and_then(|place| u64::try_from(place).ok());
+        let mut earlier = Vec::new();
+        let mut pages = 0;
+        while let Some(cursor) = before {
+            let page = bridge.read_history(&binding, cursor, 0).await.unwrap();
+            let mut prompts = page["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| prompt_words(entry["text"].as_str().unwrap()))
+                .collect::<Vec<_>>();
+            prompts.extend(earlier);
+            earlier = prompts;
+            before = page.get("olderCursor").and_then(serde_json::Value::as_u64);
+            assert!(before.is_none_or(|older| older < cursor));
+            pages += 1;
+        }
+        assert_eq!(
+            earlier,
+            (0..first)
+                .map(|index| format!("Terminal prompt {index}"))
+                .collect::<Vec<_>>(),
+            "the earlier prompts, each once, in order, up to the window"
+        );
+        println!("Show earlier history read Terminal prompts 0 to {first} in {pages} pages");
+
         let intent = turn_intent(
             &binding,
             "after-terminal",

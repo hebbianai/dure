@@ -17,8 +17,8 @@ import type { HmuxAgentRuntimeState } from "@/lib/ipc/hmuxContracts";
 import type { Agent } from "@/types";
 import {
 	agentTranscriptFromProvider,
-	type NativeAgentTranscriptSource,
 	type ProviderConversationTranscriptV1,
+	type ProviderTranscriptSource,
 } from "../../../../cli/lib/agent-transcript.mjs";
 
 /** Observer chat for a native terminal Agent (Claude Code / Codex TUI). The
@@ -382,7 +382,7 @@ export function nativeTranscriptToolCalls(
  * call a newer read records again keeps its place and takes the newer state,
  * as the reader does within one read. */
 function joinedTranscriptReads(
-	source: NativeAgentTranscriptSource,
+	source: ProviderTranscriptSource,
 	reads: readonly ProviderConversationActivity[],
 ) {
 	const entries: ReturnType<typeof agentTranscriptFromProvider>["entries"] = [];
@@ -453,7 +453,7 @@ export function nativeAgentChatPage({
 	working,
 	pending,
 }: {
-	source: NativeAgentTranscriptSource;
+	source: ProviderTranscriptSource;
 	transcript: ProviderConversationActivity;
 	older?: readonly ProviderConversationActivity[];
 	canLoadOlder?: boolean;

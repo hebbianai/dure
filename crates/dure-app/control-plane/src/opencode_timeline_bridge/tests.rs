@@ -146,10 +146,16 @@ fn turn(index: usize, oversized: bool) -> Vec<Value> {
     turn_answered(index, text)
 }
 
+/// When the user message of turn `index` was created; its answer follows a
+/// millisecond later.
+fn created_at(index: usize) -> i64 {
+    1_000 + 10 * i64::try_from(index).unwrap()
+}
+
 fn turn_answered(index: usize, text: String) -> Vec<Value> {
     let user = format!("msg_user{index:04}");
     let answer = format!("msg_answer{index:04}");
-    let created = 1_000 + 10 * i64::try_from(index).unwrap();
+    let created = created_at(index);
     vec![
         json!({
             "info": {"id": user, "sessionID": SESSION, "role": "user", "time": {"created": created}},
@@ -258,6 +264,7 @@ async fn bridge(
             .await
             .unwrap(),
         projection: Mutex::new(Projection::default()),
+        places: std::sync::Mutex::default(),
         connected: AtomicBool::new(true),
         accepting: AtomicBool::new(true),
     }
@@ -318,12 +325,22 @@ async fn a_long_session_opens_with_its_newest_messages_behind_a_history_boundary
     let server = FakeOpenCode::start(turns(0..12), 4).await;
     let bridge = bridge(&server, &binding, &service).await;
 
-    // The window's bound falls inside the second page, which it keeps whole.
+    // The window's bound falls inside the second page, which it keeps whole
+    // but for its oldest message: a message created at the same time may sit
+    // on the next page, so the history before the window holds it.
     bridge.hydrate_within(small_window(6)).await.unwrap();
 
-    let mut expected = vec!["boundary:provider_history_truncated".to_owned()];
-    expected.extend(prompts_and_answers(8..12));
+    let mut expected = vec![
+        "boundary:provider_transcript_window".to_owned(),
+        "Answer 8".to_owned(),
+    ];
+    expected.extend(prompts_and_answers(9..12));
     assert_eq!(conversation(&service, &binding).await, expected);
+    assert_eq!(
+        window_place(&service, &binding).await,
+        Some(created_at(8) + 1),
+        "placed where the window's oldest message was created"
+    );
     assert_eq!(
         server.take_message_requests(),
         ["limit=100", "limit=100&before=before-20"],
@@ -567,7 +584,263 @@ async fn live_changes_to_messages_behind_the_boundary_are_left_out() {
         .await
         .unwrap();
 
-    let mut expected = vec!["boundary:provider_history_truncated".to_owned()];
-    expected.extend(prompts_and_answers(8..13));
+    let mut expected = vec![
+        "boundary:provider_transcript_window".to_owned(),
+        "Answer 8".to_owned(),
+    ];
+    expected.extend(prompts_and_answers(9..13));
     assert_eq!(conversation(&service, &binding).await, expected);
+}
+
+/// Where the boundary that opens the timeline's history is placed: the
+/// cursor "Show earlier history" reads before.
+async fn window_place(
+    service: &Arc<AgentConversationService<crate::SqliteDomainStore>>,
+    binding: &AgentInteractionBindingV1,
+) -> Option<i64> {
+    let journal = ProviderTimelineJournal::new(Arc::clone(service), binding)
+        .await
+        .unwrap();
+    let rows = journal.existing_rows().await.unwrap().rows;
+    rows.iter()
+        .find_map(|row| row.item.body.transcript_history_start())
+}
+
+/// A message's text as far as its index: "Prompt 3", "Answer 3".
+fn label(text: &str) -> String {
+    text.split(' ').take(2).collect::<Vec<_>>().join(" ")
+}
+
+/// The history before `place`, read through the bridge page by page as the
+/// backend reads it for "Show earlier history", until the session's start:
+/// each page's labels, oldest page first.
+async fn earlier_history(
+    bridge: &OpenCodeTimelineBridge<crate::SqliteDomainStore>,
+    binding: &AgentInteractionBindingV1,
+    place: i64,
+) -> Vec<Vec<String>> {
+    let mut pages = Vec::new();
+    let mut before = Some(u64::try_from(place).unwrap());
+    while let Some(cursor) = before {
+        let page = bridge.read_history(binding, cursor, 0).await.unwrap();
+        assert_eq!(page["provider"], "opencode");
+        assert_eq!(page["conversationId"], SESSION);
+        before = page.get("olderCursor").and_then(Value::as_u64);
+        assert!(before.is_none_or(|older| older < cursor), "pages move back");
+        assert_eq!(
+            page["historyComplete"],
+            before.is_none(),
+            "only the oldest page reaches the start"
+        );
+        pages.insert(
+            0,
+            page["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| label(entry["text"].as_str().unwrap()))
+                .collect(),
+        );
+    }
+    pages
+}
+
+fn labels(range: std::ops::Range<usize>) -> Vec<String> {
+    range
+        .flat_map(|index| [format!("Prompt {index}"), format!("Answer {index}")])
+        .collect()
+}
+
+/// Before, a long OpenCode session opened behind "Part of the provider
+/// history is unavailable." and nothing older could be read. Now its older
+/// history pages back from the window's boundary: each message once, in
+/// order, joining the window exactly, with the calls between its messages.
+#[tokio::test]
+async fn show_earlier_history_pages_back_from_the_window_to_the_sessions_start() {
+    let (_temporary, service, binding) = conversation_fixture().await;
+    // Answers long enough to be clipped, so that a backend page holds four.
+    let mut messages = (0..12)
+        .flat_map(|index| turn_answered(index, format!("Answer {index} {}", "a".repeat(150_000))))
+        .collect::<Vec<_>>();
+    messages[5]["parts"].as_array_mut().unwrap().push(json!({
+        "id": "prt_tool0002", "sessionID": SESSION, "messageID": "msg_answer0002",
+        "type": "tool", "callID": "call-2", "tool": "bash",
+        "state": {"status": "completed", "input": {"command": "ls"}, "output": "files"},
+    }));
+    let server = FakeOpenCode::start(messages, 4).await;
+    let bridge = bridge(&server, &binding, &service).await;
+    bridge.hydrate_within(small_window(6)).await.unwrap();
+    let place = window_place(&service, &binding).await.unwrap();
+    server.take_message_requests();
+
+    let pages = earlier_history(&bridge, &binding, place).await;
+
+    let mut newest = labels(4..8);
+    newest.push("Prompt 8".into());
+    assert_eq!(pages, [labels(0..4), newest]);
+    // The window goes on from there: Answer 8, then turns 9 to 11.
+    let mut window = vec!["boundary:provider_transcript_window".to_owned()];
+    for index in 8..12 {
+        if index > 8 {
+            window.push(format!("Prompt {index}"));
+        }
+        window.push("clipped answer".into());
+    }
+    assert_eq!(conversation(&service, &binding).await, window);
+    assert_eq!(
+        server.take_message_requests()[0],
+        "limit=100&before=before-20",
+        "the first page starts at the window's last page, not at the newest"
+    );
+    let page = bridge
+        .read_history(&binding, u64::try_from(created_at(3)).unwrap(), 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        page["tools"],
+        json!([{"afterEntries": 6, "callId": "call-2", "name": "bash", "state": "completed", "input": {"command": "ls"}}]),
+        "a call sits after the message it was made in"
+    );
+}
+
+/// A message created in the millisecond of the message before it never ends
+/// the window without it: the window opens at the oldest time it holds every
+/// message of, and the history before it holds the rest.
+#[tokio::test]
+async fn a_window_never_ends_between_messages_created_at_once() {
+    let mut messages = turns(0..5);
+    // Turns 3 and 4 answer in the millisecond they were asked.
+    for index in [3, 4] {
+        messages[2 * index + 1]["info"]["time"]["created"] = json!(created_at(index));
+    }
+    // One message a page, so the window's pages split turn 3.
+    let server = FakeOpenCode::start(messages, 1).await;
+
+    let (_temporary, service, binding) = conversation_fixture().await;
+    let seeded = bridge(&server, &binding, &service).await;
+    seeded.hydrate_within(small_window(3)).await.unwrap();
+
+    let mut expected = vec!["boundary:provider_transcript_window".to_owned()];
+    expected.extend(prompts_and_answers(4..5));
+    assert_eq!(conversation(&service, &binding).await, expected);
+    let place = window_place(&service, &binding).await.unwrap();
+    assert_eq!(place, created_at(4));
+    assert_eq!(
+        earlier_history(&seeded, &binding, place).await.concat(),
+        labels(0..4)
+    );
+
+    // A window whose messages were all created at once has no such time:
+    // it opens behind the boundary at no place, as before.
+    let (_temporary, service, binding) = conversation_fixture().await;
+    bridge(&server, &binding, &service)
+        .await
+        .hydrate_within(small_window(1))
+        .await
+        .unwrap();
+    assert_eq!(
+        conversation(&service, &binding).await,
+        ["boundary:provider_history_truncated", "Answer 4"]
+    );
+}
+
+/// A page of earlier history ends before the messages of a time it cannot
+/// hold whole, so the next page shows them together.
+#[tokio::test]
+async fn a_page_never_ends_between_messages_created_at_once() {
+    let (_temporary, service, binding) = conversation_fixture().await;
+    // Long enough to be clipped: a backend page holds four of them.
+    let long = |text: String| format!("{text} {}", "b".repeat(200_000));
+    let mut messages = turns(0..1);
+    for index in 1..4 {
+        messages.extend(turn_answered(index, long(format!("Answer {index}"))));
+    }
+    messages.extend(turns(4..5));
+    // Turn 1's long prompt and long answer were created at once, and turn
+    // 2's prompt is long too: the newest page holds turn 1's answer beside
+    // turns 2 and 3 only without its prompt.
+    for index in [1, 2] {
+        messages[2 * index]["parts"][0]["text"] = json!(long(format!("Prompt {index}")));
+    }
+    messages[3]["info"]["time"]["created"] = json!(created_at(1));
+    let server = FakeOpenCode::start(messages, 100).await;
+    let bridge = bridge(&server, &binding, &service).await;
+
+    let pages = earlier_history(&bridge, &binding, created_at(4)).await;
+
+    assert_eq!(pages, [labels(0..2), labels(2..4)]);
+}
+
+/// A bridge that has not read past a place, as after the control plane
+/// restarted and Chat reattached, reads the same pages from the newest.
+#[tokio::test]
+async fn a_bridge_reads_a_place_it_has_not_read_past_from_the_newest() {
+    let (_temporary, service, binding) = conversation_fixture().await;
+    let server = FakeOpenCode::start(turns(0..12), 4).await;
+    let seeded = bridge(&server, &binding, &service).await;
+    seeded.hydrate_within(small_window(6)).await.unwrap();
+    let place = window_place(&service, &binding).await.unwrap();
+    let expected = earlier_history(&seeded, &binding, place).await;
+    server.take_message_requests();
+
+    let reattached = bridge(&server, &binding, &service).await;
+    let pages = earlier_history(&reattached, &binding, place).await;
+
+    assert_eq!(pages, expected);
+    let mut whole = labels(0..8);
+    whole.push("Prompt 8".into());
+    assert_eq!(pages.concat(), whole);
+    assert_eq!(
+        server.take_message_requests()[0],
+        "limit=100",
+        "it starts at the newest message"
+    );
+}
+
+/// A window that reaches the messages the timeline holds keeps none of the
+/// older messages its last page also holds: they come before the boundary
+/// the timeline opened with, so appending them would show them after it.
+/// Before, they were appended at the end whenever a reattach read a page
+/// larger than the window's, as after its messages got smaller.
+#[tokio::test]
+async fn a_reattach_never_appends_messages_from_behind_the_boundary() {
+    let (_temporary, service, binding) = conversation_fixture().await;
+    let seeding = FakeOpenCode::start(turns(0..12), 4).await;
+    bridge(&seeding, &binding, &service)
+        .await
+        .hydrate_within(small_window(6))
+        .await
+        .unwrap();
+    let before = conversation(&service, &binding).await;
+
+    // The Terminal continues the conversation, and the reattach reads the
+    // whole session in one page.
+    let reattach = FakeOpenCode::start(turns(0..14), 100).await;
+    bridge(&reattach, &binding, &service)
+        .await
+        .hydrate()
+        .await
+        .unwrap();
+
+    let mut expected = before;
+    expected.extend(prompts_and_answers(12..14));
+    assert_eq!(conversation(&service, &binding).await, expected);
+}
+
+/// A read of a session whose messages are not in creation order is refused
+/// rather than joined by a place that means nothing there.
+#[tokio::test]
+async fn history_out_of_creation_order_is_refused() {
+    let (_temporary, service, binding) = conversation_fixture().await;
+    let mut messages = turns(0..4);
+    messages[1]["info"]["time"]["created"] = json!(5_000);
+    let server = FakeOpenCode::start(messages, 100).await;
+    let bridge = bridge(&server, &binding, &service).await;
+
+    let error = bridge
+        .read_history(&binding, u64::try_from(created_at(3)).unwrap(), 0)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "opencode_protocol_invalid");
 }

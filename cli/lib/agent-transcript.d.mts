@@ -37,11 +37,18 @@ export interface ProviderConversationTranscriptV1 {
   entries: Array<{ role: "user" | "agent"; text: string }>;
 }
 
-export type NativeAgentTranscriptSource = {
+/** The provider conversation a transcript in the shared shape was read from:
+ * by this desktop, or, for a Chat session, by the backend that owns it. */
+export type ProviderTranscriptSource = {
   kind: "local";
   agentId: string;
-  provider: "claude" | "codex" | "pi";
+  provider: string;
   conversationId: string;
+};
+
+/** A conversation whose native CLI transcript this desktop reads itself. */
+export type NativeAgentTranscriptSource = ProviderTranscriptSource & {
+  provider: "claude" | "codex" | "pi";
 };
 
 export type NativeAgentTranscriptSourceResolution =
@@ -115,7 +122,7 @@ export function collectAgentTranscript(input: {
 }): Promise<AgentTranscriptV1>;
 
 export function agentTranscriptFromProvider(input: {
-  source: NativeAgentTranscriptSource;
+  source: ProviderTranscriptSource;
   entryLimit: AgentTranscriptEntryLimit;
   transcript: ProviderConversationTranscriptV1;
 }): AgentTranscriptV1;

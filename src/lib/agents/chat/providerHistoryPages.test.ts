@@ -270,6 +270,43 @@ describe("Chat history older than its seeded window", () => {
 		]);
 	});
 
+	it("pages an OpenCode window back from its oldest message, which keeps no transcript file", () => {
+		// The place is the creation time of the window's oldest message; the
+		// backend reads the pages through the session's runtime.
+		const place = 1_795_000_000_000;
+		const base = seededPage();
+		const opencode = seededPage({
+			binding: { ...base.binding, providerId: "opencode" },
+			rows: base.rows.map((row) =>
+				row.item.body.type === "history_boundary"
+					? {
+							...row,
+							item: {
+								...row.item,
+								body: {
+									...row.item.body,
+									droppedThroughProviderSequence: place,
+								},
+							},
+						}
+					: row,
+			),
+		});
+		expect(seededProviderHistoryCursor(opencode)).toBe(place);
+		const pages = withOlderProviderPage(providerHistoryPages(place), place, {
+			...read(["ask before the window", "before the window"], place - 60_000),
+			provider: "opencode",
+		});
+		const page = chatPageWithOlderProviderHistory(opencode, pages);
+		expect(page.hasMore).toBe(true);
+		expect(messages(page)).toEqual([
+			"ask before the window",
+			"before the window",
+			"ask seeded",
+			"seeded answer",
+		]);
+	});
+
 	it("keeps the boundary where the pages do not belong to it", () => {
 		const unplaced = seededPage({}, "provider_history_truncated");
 		expect(

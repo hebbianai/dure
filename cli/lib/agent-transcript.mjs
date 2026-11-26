@@ -369,7 +369,10 @@ export function nativeAgentTranscriptSource(agent, runtimeBinding) {
   };
 }
 
-/** Converts a provider-owned native CLI transcript into the shared model. */
+/** Converts a provider-owned transcript into the shared model: a native CLI
+ * transcript this module reads, or a page of a provider's history in the same
+ * shape that the backend owning a Chat session read for it, as it does for a
+ * provider that keeps no transcript file. */
 export function agentTranscriptFromProvider({
   source,
   entryLimit,
@@ -379,7 +382,7 @@ export function agentTranscriptFromProvider({
     !record(source) ||
     source.kind !== "local" ||
     !domainId(source.agentId) ||
-    !nativeTranscriptProvider(source.provider) ||
+    !domainId(source.provider) ||
     !domainId(source.conversationId) ||
     !validLimit(entryLimit) ||
     !record(transcript) ||

@@ -28,8 +28,11 @@ pub const MAX_AGENT_HISTORY_ITEMS_V1: usize = 2_048;
 pub const PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1: &str = "provider_conversation_compacted";
 /// The history boundary reason that opens the newest window of a longer
 /// provider history at its place in the provider's transcript:
-/// `droppedThroughProviderSequence` is the transcript offset where the window
-/// starts, which a transcript reader pages the older history before.
+/// `droppedThroughProviderSequence` is where the window starts, which a
+/// transcript reader pages the older history before. That is a byte offset
+/// in a transcript file, or, for a provider that keeps none, a place its
+/// runtime names and reads the older history before through the provider's
+/// own API (OpenCode's: the creation time of the window's oldest message).
 pub const PROVIDER_TRANSCRIPT_WINDOW_HISTORY_BOUNDARY_V1: &str = "provider_transcript_window";
 /// The history boundary reason that opens the newest window of a longer
 /// provider history at no known place in the provider's transcript: older
@@ -425,9 +428,9 @@ pub enum AgentTimelineItemBodyV1 {
 
 impl AgentTimelineItemBodyV1 {
     /// The boundary that opens the newest window of a longer provider
-    /// history. With the transcript offset where the window starts, it is
-    /// placed there, so a reader pages the older history before it; without
-    /// it, it says only that older history precedes the window.
+    /// history. With the place in the transcript where the window starts, it
+    /// is placed there, so a reader pages the older history before it;
+    /// without it, it says only that older history precedes the window.
     pub fn history_window(transcript_start: Option<i64>) -> Self {
         match transcript_start {
             Some(start) if start > 0 => Self::HistoryBoundary {
