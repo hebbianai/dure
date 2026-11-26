@@ -762,6 +762,129 @@ fn a_codex_turn_the_rollout_does_not_name_has_no_start() {
     assert!(codex_turn_start_cursor(&sessions, id, "").is_err());
 }
 
+/// A turn's records end where the next turn the rollout opens starts, read
+/// back from a later turn's start, however far back the turn lies.
+#[test]
+fn a_codex_turn_ends_where_the_next_turn_opens() {
+    let root = tempfile::tempdir().unwrap();
+    let sessions = root.path().join("sessions");
+    let id = "019f0000-0000-7000-8000-000000000785";
+    // Answers longer than one backward read put records across its steps.
+    let long = "x".repeat(BACKWARD_READ_BYTES as usize * 5 / 2);
+    let answers = [
+        "answer 0".to_string(),
+        long.clone(),
+        long,
+        "answer 3".into(),
+    ];
+    let starts = codex_rollout_fixture(&sessions, id, &answers);
+
+    for index in 0..3 {
+        assert_eq!(
+            codex_turn_end_cursor(&sessions, id, &format!("turn-{index}"), starts[3]),
+            Ok(Some(starts[index + 1])),
+            "turn {index}"
+        );
+    }
+    // The last turn that opens before the cursor runs up to it.
+    assert_eq!(
+        codex_turn_end_cursor(&sessions, id, "turn-1", starts[2]),
+        Ok(Some(starts[2]))
+    );
+    // A turn that opens at the cursor or after it is not before it.
+    assert_eq!(
+        codex_turn_end_cursor(&sessions, id, "turn-2", starts[2]),
+        Ok(None)
+    );
+    assert_eq!(
+        codex_turn_end_cursor(&sessions, id, "turn-9", starts[3]),
+        Ok(None)
+    );
+    let end = starts[3] + 4096;
+    assert!(codex_turn_end_cursor(&sessions, id, "turn-0", end).is_err());
+    assert!(codex_turn_end_cursor(&sessions, id, "", starts[3]).is_err());
+    assert!(
+        codex_turn_end_cursor(
+            &sessions,
+            "019f0000-0000-7000-8000-000000000000",
+            "turn-0",
+            starts[3]
+        )
+        .is_err()
+    );
+}
+
+/// A gap between a turn a timeline holds and a later turn it resumes at,
+/// paged from where the held turn ends, holds exactly the turns between
+/// them: records the provider writes for the held turn after it completes,
+/// such as a command that finishes later, stay with it.
+#[test]
+fn a_gap_after_a_codex_turn_pages_only_the_turns_between() {
+    let root = tempfile::tempdir().unwrap();
+    let sessions = root.path().join("sessions");
+    let day = sessions.join("2026/11/26");
+    std::fs::create_dir_all(&day).unwrap();
+    let id = "019f0000-0000-7000-8000-000000000786";
+    let mut source = format!(
+        "{}\n",
+        serde_json::json!({"type":"session_meta","payload":{"id":id}})
+    );
+    let mut starts = Vec::new();
+    for index in 0..4 {
+        let turn = format!("turn-{index}");
+        starts.push(source.len() as u64);
+        for record in [
+            serde_json::json!({"type":"event_msg","payload":{"type":"task_started","turn_id":turn}}),
+            serde_json::json!({"type":"response_item","payload":{"type":"message","role":"user",
+                "content":[{"type":"input_text","text":format!("prompt {index}")}]}}),
+            serde_json::json!({"type":"response_item","payload":{"type":"message","role":"assistant",
+                "content":[{"type":"output_text","text":format!("answer {index}")}]}}),
+            serde_json::json!({"type":"event_msg","payload":{"type":"task_complete","turn_id":turn}}),
+            serde_json::json!({"type":"event_msg","payload":{"type":"item_completed","turn_id":turn,
+                "item":{"type":"CommandExecution","id":format!("late-{index}"),
+                    "command":"sleep 1","status":"completed"}}}),
+            serde_json::json!({"type":"event_msg","payload":{"type":"thread_settings_applied"}}),
+        ] {
+            source.push_str(&format!("{record}\n"));
+        }
+    }
+    std::fs::write(
+        day.join(format!("rollout-2026-11-26T00-00-00-{id}.jsonl")),
+        source,
+    )
+    .unwrap();
+
+    let held_end = codex_turn_end_cursor(&sessions, id, "turn-0", starts[3])
+        .unwrap()
+        .unwrap();
+    assert_eq!(held_end, starts[1]);
+    let gap = read_roots_activity_page(
+        &root.path().join("projects"),
+        &sessions,
+        "codex",
+        id,
+        starts[3],
+        held_end,
+    )
+    .unwrap();
+    assert_eq!(
+        gap.transcript
+            .entries
+            .iter()
+            .map(|entry| entry.text.as_str())
+            .collect::<Vec<_>>(),
+        ["prompt 1", "answer 1", "prompt 2", "answer 2"]
+    );
+    assert_eq!(
+        gap.tools
+            .iter()
+            .map(|call| call.call_id.as_str())
+            .collect::<Vec<_>>(),
+        ["late-1", "late-2"]
+    );
+    assert_eq!(gap.older_cursor, None, "the gap closes at the held turn");
+}
+
 /// Claude Code records some user entries itself: what its own view leaves out
 /// (`isMeta`), a background task's notification, and the marker where the
 /// person interrupted a turn. None of them is the person's message, on the

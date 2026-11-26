@@ -108,3 +108,18 @@ pub(crate) fn codex_turn_start_cursor(home: &Path, thread_id: &str, turn_id: &st
         .flatten()
         .filter(|cursor| *cursor > 0)
 }
+
+/// Where the records of turn `turn_id` of a Codex thread end in the thread's
+/// rollout under the provider `home`, looking back from `before`: the floor
+/// [`read`] pages a gap above `before` down to. `None` when the rollout or a
+/// record of the turn before `before` cannot be found.
+pub(crate) fn codex_turn_end_cursor(
+    home: &Path,
+    thread_id: &str,
+    turn_id: &str,
+    before: u64,
+) -> Option<u64> {
+    transcript::codex_turn_end_cursor(&home.join("sessions"), thread_id, turn_id, before)
+        .ok()
+        .flatten()
+}

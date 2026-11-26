@@ -252,6 +252,8 @@ where
                 {
                     turn.provider_turn_id = Some(provider_turn_id.to_owned());
                 }
+                let provider_turn =
+                    notification_turn_id(method, params).and_then(provider_turn_identity);
                 mutations.push(AgentTimelineMutationV1::Append {
                     item: self.item(
                         "turn-started",
@@ -261,7 +263,7 @@ where
                         },
                         turn_id.clone(),
                         client_message_id.clone(),
-                        None,
+                        provider_turn.clone(),
                         observed_at_ms,
                     )?,
                 });
@@ -271,9 +273,10 @@ where
                     projection
                         .turn_by_client_message
                         .insert(client_message_id.as_str().into(), turn_id.clone());
-                    projection.turn_lifecycle.insert(
-                        turn_id.as_str().into(),
+                    projection.observe_turn_lifecycle(
+                        turn_id,
                         AgentTimelineLifecycleStateV1::TurnStarted,
+                        provider_turn.as_ref(),
                     );
                 }
             }
@@ -312,6 +315,8 @@ where
                 // A failed turn keeps why it failed as the shared reason token;
                 // the composer keys its recovery on this, never on prose.
                 let failure_reason = params.get("turn").and_then(turn_failure_reason);
+                let provider_turn =
+                    notification_turn_id(method, params).and_then(provider_turn_identity);
                 mutations.push(AgentTimelineMutationV1::Append {
                     item: self.item(
                         "turn-completed",
@@ -321,14 +326,12 @@ where
                         },
                         turn_id.clone(),
                         client_message_id,
-                        None,
+                        provider_turn.clone(),
                         observed_at_ms,
                     )?,
                 });
                 if let Some(turn_id) = turn_id.as_ref() {
-                    projection
-                        .turn_lifecycle
-                        .insert(turn_id.as_str().into(), state);
+                    projection.observe_turn_lifecycle(turn_id, state, provider_turn.as_ref());
                 }
             }
             "item/agentMessage/delta"
