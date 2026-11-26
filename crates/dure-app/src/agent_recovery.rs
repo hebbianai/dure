@@ -210,13 +210,22 @@ impl AgentRecoveryAttemptV1 {
         agent_runtime_transition_identity(&self.runtime_attempt_id()).map(|(id, _)| id)
     }
 
+    /// The runtime transition of every target this attempt has selected so
+    /// far, the set-aside ones first and the current one last.
+    pub fn runtime_operation_ids(
+        &self,
+    ) -> impl Iterator<Item = Result<OperationIdV1, DomainIdErrorV1>> + '_ {
+        (0..=self.unusable_targets().len()).map(|index| {
+            agent_runtime_transition_identity(&runtime_attempt_at(self.attempt_id(), index))
+                .map(|(id, _)| id)
+        })
+    }
+
     /// Whether a runtime transition applied one of this attempt's targets.
     #[must_use]
     pub fn owns_runtime_operation(&self, operation_id: &OperationIdV1) -> bool {
-        (0..=self.unusable_targets().len()).any(|index| {
-            agent_runtime_transition_identity(&runtime_attempt_at(self.attempt_id(), index))
-                .is_ok_and(|(id, _)| &id == operation_id)
-        })
+        self.runtime_operation_ids()
+            .any(|id| id.is_ok_and(|id| &id == operation_id))
     }
 
     #[must_use]
@@ -340,8 +349,11 @@ pub trait AgentRecoveryStore: Send + Sync {
     /// Sets `unusable` aside for an attempt that has not started its
     /// continuation and selects again from the policy with the same rule as
     /// the first choice, so fresh usage can also reorder it. Without a next
-    /// account the attempt stops: `Failed` with `failure_code` when a target
-    /// failed, otherwise `Exhausted`. Any other attempt is returned unchanged.
+    /// account the attempt follows the first choice's rule too: while none of
+    /// its targets reached the runtime journal it waits for the reported
+    /// reset when the policy continues after one, and otherwise it stops,
+    /// `Failed` with `failure_code` when a target failed, else `Exhausted`.
+    /// Any other attempt is returned unchanged.
     fn reselect_agent_recovery_target<'a>(
         &'a self,
         attempt_id: &'a str,

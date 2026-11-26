@@ -3,7 +3,7 @@ use dure_app::{
     AgentNativeRecoveryContinuationV1, AgentNativeRecoveryRecordV1, AgentNativeTurnFailureV1,
     AgentRecoveryAttemptV1, AgentRecoveryRecordV1, AgentRecoveryStopV1, AgentRecoveryStore,
     AgentStartTurnIntentV1, AgentTurnEffectReceiptV1, AgentTurnFailureReasonV1, AgentTurnIdV1,
-    DomainStoreErrorV1, DomainStoreFuture, ProviderCredentialProfileV1,
+    DomainStoreErrorV1, DomainStoreFuture, ProviderCredentialProfileV1, ProviderRecoveryPolicyV1,
     WorkflowPromptDeliveryEvidenceV1,
 };
 use sha2::{Digest, Sha256};
@@ -112,8 +112,8 @@ async fn reported_reset_on(
 
 /// When a same-account continuation is due: a reset reported after the
 /// failure, within the longest provider window, plus a jitter that the
-/// attempt digest keeps stable across restarts. A reset already behind a
-/// late backend is due at once.
+/// attempt's identity keeps stable. A reset already behind a late backend is
+/// due at once.
 fn resume_after(reset_ms: i64, failed_at_ms: i64, digest: &[u8]) -> Option<i64> {
     if reset_ms <= failed_at_ms || reset_ms - failed_at_ms > MAX_RESET_AHEAD_MS {
         return None;
@@ -184,6 +184,94 @@ async fn chain_waited_on(
         item_id = parent.failure.item_id;
     }
     Ok(true)
+}
+
+/// Whether a runtime transition journal exists for any target of this
+/// attempt. From then on its source runtime may have stopped, so the same
+/// account can no longer continue on it.
+async fn applied_on(
+    connection: &mut SqliteConnection,
+    attempt: &AgentRecoveryAttemptV1,
+) -> Result<bool, DomainStoreErrorV1> {
+    for operation_id in attempt.runtime_operation_ids() {
+        let operation_id = operation_id
+            .map_err(|error| corrupt_identifier("recovery operation identity", error))?;
+        if crate::agent_runtime_transition::transition_on(connection, &operation_id)
+            .await?
+            .is_some()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The reset the failed turn's provider reported, unless an earlier wait in
+/// the same terminal, or in the chain of recovery turns that sent it, already
+/// ended in another limit.
+async fn unwaited_reset_on(
+    connection: &mut SqliteConnection,
+    attempt: &AgentRecoveryAttemptV1,
+) -> Result<Option<i64>, DomainStoreErrorV1> {
+    match attempt {
+        AgentRecoveryAttemptV1::Conversation(record) => {
+            match reported_reset_on(connection, &record.source, &record.failure).await? {
+                Some(reset)
+                    if !chain_waited_on(connection, &record.source, &record.failure).await? =>
+                {
+                    Ok(Some(reset))
+                }
+                _ => Ok(None),
+            }
+        }
+        AgentRecoveryAttemptV1::Native(record) => match record.native_failure.limit_resets_at_ms {
+            Some(reset)
+                if !native_waited_on(connection, &record.agent_id, &record.native_failure)
+                    .await? =>
+            {
+                Ok(Some(reset))
+            }
+            _ => Ok(None),
+        },
+    }
+}
+
+/// Settles an attempt left with no account to switch to, at its first
+/// selection or once every target is set aside. While none of its targets
+/// reached the runtime journal, the same account continues once after the
+/// reset its provider reported, when the policy continues after a reset.
+/// Otherwise the attempt stops: `Failed` with `failure_code` when a target
+/// failed, else `Exhausted`.
+async fn settle_without_target_on(
+    connection: &mut SqliteConnection,
+    attempt: &mut AgentRecoveryAttemptV1,
+    policy: Option<&ProviderRecoveryPolicyV1>,
+    failure_code: Option<&str>,
+) -> Result<(), DomainStoreErrorV1> {
+    let waits = policy
+        .is_some_and(|policy| policy.permits(attempt.failure_created_at_ms(), None, true))
+        && !applied_on(connection, attempt).await?;
+    let resume = if waits {
+        let digest = Sha256::digest(attempt.attempt_id().as_bytes());
+        unwaited_reset_on(connection, attempt)
+            .await?
+            .and_then(|reset| resume_after(reset, attempt.failure_created_at_ms(), &digest))
+    } else {
+        None
+    };
+    let stop = resume.is_none().then(|| match failure_code {
+        Some(code) => AgentRecoveryStopV1::Failed { code: code.into() },
+        None => AgentRecoveryStopV1::Exhausted,
+    });
+    let (resume_at_ms, stopped) = match attempt {
+        AgentRecoveryAttemptV1::Conversation(record) => {
+            (&mut record.resume_at_ms, &mut record.stopped)
+        }
+        AgentRecoveryAttemptV1::Native(record) => (&mut record.resume_at_ms, &mut record.stopped),
+    };
+    *resume_at_ms = resume;
+    *stopped = stop;
+    Ok(())
 }
 
 async fn prepare_on(
@@ -284,19 +372,7 @@ async fn prepare_native_on(
     } else {
         None
     };
-    // With no account to switch to, the same terminal continues once after
-    // the reset its login's provider reported, unless it already waited.
-    let resume_at_ms = match native.limit_resets_at_ms {
-        Some(reset)
-            if target.is_none()
-                && policy.continue_after_reset
-                && !native_waited_on(connection, agent_id, native).await? =>
-        {
-            resume_after(reset, native.observed_at_ms, &digest)
-        }
-        _ => None,
-    };
-    let record = AgentRecoveryAttemptV1::Native(Box::new(AgentNativeRecoveryRecordV1 {
+    let mut record = AgentRecoveryAttemptV1::Native(Box::new(AgentNativeRecoveryRecordV1 {
         schema_version: 1,
         attempt_id,
         agent_id: agent_id.clone(),
@@ -305,14 +381,16 @@ async fn prepare_native_on(
         source_selection_revision: selection.revision,
         native_failure: native.clone(),
         policy_revision: policy.revision,
-        stopped: (target.is_none() && resume_at_ms.is_none())
-            .then_some(AgentRecoveryStopV1::Exhausted),
+        stopped: None,
         target,
         unusable_targets: Vec::new(),
-        resume_at_ms,
+        resume_at_ms: None,
         continuation: AgentNativeRecoveryContinuationV1::NotStarted,
         created_at_ms: observed_at_ms,
     }));
+    if record.target().is_none() {
+        settle_without_target_on(connection, &mut record, Some(&policy), None).await?;
+    }
     save_on(connection, &record).await?;
     Ok(Some(record))
 }
@@ -415,18 +493,6 @@ async fn prepare_conversation_on(
     } else {
         None
     };
-    // With no account to switch to, the same account continues once after
-    // the reset its provider reported, unless this chain already waited.
-    let resume_at_ms = if target.is_none() && policy.continue_after_reset {
-        match reported_reset_on(connection, &source, &failure).await? {
-            Some(reset) if !chain_waited_on(connection, &source, &failure).await? => {
-                resume_after(reset, failure.created_at_ms, &digest)
-            }
-            _ => None,
-        }
-    } else {
-        None
-    };
     let goal = crate::agent_goals::read_on(connection, agent_id).await?;
     if is_goal_continuation
         && goal
@@ -446,15 +512,17 @@ async fn prepare_conversation_on(
         is_goal_continuation,
         goal_revision,
         policy_revision: policy.revision,
-        stopped: (target.is_none() && resume_at_ms.is_none())
-            .then_some(AgentRecoveryStopV1::Exhausted),
+        stopped: None,
         target,
         unusable_targets: Vec::new(),
-        resume_at_ms,
+        resume_at_ms: None,
         continuation: None,
         created_at_ms: observed_at_ms,
     };
-    let record = AgentRecoveryAttemptV1::Conversation(Box::new(record));
+    let mut record = AgentRecoveryAttemptV1::Conversation(Box::new(record));
+    if record.target().is_none() {
+        settle_without_target_on(connection, &mut record, Some(&policy), None).await?;
+    }
     save_on(connection, &record).await?;
     Ok(record.into_conversation())
 }
@@ -583,6 +651,7 @@ async fn reselect_on(
         .ok_or_else(|| not_found(attempt_id))?;
     let source = attempt.source_execution_profile().clone();
     let provider_id = attempt.provider_id().clone();
+    let policy = crate::provider_recovery::read_on(connection, &provider_id).await?;
     let (target, unusable_targets, stopped, started) = match &mut attempt {
         AgentRecoveryAttemptV1::Conversation(record) => (
             &mut record.target,
@@ -606,7 +675,7 @@ async fn reselect_on(
             unusable_targets.push(profile.clone());
         }
     }
-    *target = match crate::provider_recovery::read_on(connection, &provider_id).await? {
+    *target = match &policy {
         Some(policy) => {
             crate::provider_recovery_usage::select_on(
                 connection,
@@ -619,11 +688,8 @@ async fn reselect_on(
         }
         None => None,
     };
-    if target.is_none() {
-        *stopped = Some(match failure_code {
-            Some(code) => AgentRecoveryStopV1::Failed { code: code.into() },
-            None => AgentRecoveryStopV1::Exhausted,
-        });
+    if attempt.target().is_none() {
+        settle_without_target_on(connection, &mut attempt, policy.as_ref(), failure_code).await?;
     }
     save_on(connection, &attempt).await?;
     Ok(attempt)

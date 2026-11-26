@@ -92,7 +92,12 @@ async fn prepare(store: &SqliteDomainStore) -> AgentRecoveryRecordV1 {
         .unwrap()
 }
 
-async fn switch(store: &SqliteDomainStore, record: &AgentRecoveryRecordV1, attempt_id: &str) {
+/// Admits the runtime transition that applies the record's target.
+async fn admit_switch(
+    store: &SqliteDomainStore,
+    record: &AgentRecoveryRecordV1,
+    attempt_id: &str,
+) -> AgentRuntimeTransitionIntentV1 {
     let (operation_id, idempotency_key) = agent_runtime_transition_identity(attempt_id).unwrap();
     let source = store
         .agent_runtime_selection(&record.source.agent_id)
@@ -101,7 +106,7 @@ async fn switch(store: &SqliteDomainStore, record: &AgentRecoveryRecordV1, attem
         .unwrap();
     let plan = AgentRuntimeTransitionIntentV1 {
         schema_version: 1,
-        operation_id: operation_id.clone(),
+        operation_id,
         idempotency_key,
         source,
         source_authority: AgentRuntimeBindingAuthorityV1::StructuredProtocol {
@@ -119,6 +124,12 @@ async fn switch(store: &SqliteDomainStore, record: &AgentRecoveryRecordV1, attem
         requested_at_ms: 310,
     };
     store.admit_agent_runtime_transition(&plan).await.unwrap();
+    plan
+}
+
+async fn switch(store: &SqliteDomainStore, record: &AgentRecoveryRecordV1, attempt_id: &str) {
+    let plan = admit_switch(store, record, attempt_id).await;
+    let operation_id = plan.operation_id.clone();
     store
         .advance_agent_runtime_transition(&AgentRuntimeTransitionAdvanceRequestV1 {
             schema_version: 1,
@@ -1216,6 +1227,74 @@ mod native {
     }
 
     #[tokio::test]
+    async fn a_native_switch_with_every_login_set_aside_waits_for_the_reset() {
+        let root = TempDir::new().unwrap();
+        let store = native_store(
+            &root.path().join("native-set-aside-wait.sqlite"),
+            AgentInteractionProfileV1::NativeCli,
+            ProviderRecoveryPolicyPutV1 {
+                continue_after_reset: true,
+                ..policy()
+            },
+        )
+        .await;
+        let profiles = policy().accounts;
+        let record = prepare_native(&store, &reset_failure("attention-3", 10_000))
+            .await
+            .unwrap();
+        assert_eq!(record.target.as_ref().unwrap().profile, profiles[1].profile);
+        let mut attempt = AgentRecoveryAttemptV1::Native(Box::new(record.clone()));
+        for profile in [&profiles[1].profile, &profiles[2].profile] {
+            attempt = store
+                .reselect_agent_recovery_target(
+                    &record.attempt_id,
+                    std::slice::from_ref(profile),
+                    Some("agent_recovery_target_signed_out"),
+                    300,
+                )
+                .await
+                .unwrap();
+        }
+        let AgentRecoveryAttemptV1::Native(waiting) = attempt else {
+            panic!("a native attempt stays native");
+        };
+        assert_eq!(waiting.target, None);
+        assert_eq!(waiting.stopped, None);
+        assert_eq!(waiting.unusable_targets.len(), 2);
+        let resume_at_ms = waiting.resume_at_ms.unwrap();
+        assert!((70_000..=190_000).contains(&resume_at_ms), "{resume_at_ms}");
+        // The wait resumes as the terminal's unfinished attempt.
+        assert_eq!(
+            prepare_native(&store, &reset_failure("attention-3", 10_000)).await,
+            Some(*waiting.clone())
+        );
+        deliver(&store, &record.attempt_id).await;
+        // Still limited after the wait: the next limit stops for a person.
+        let again = prepare_native(&store, &reset_failure("attention-4", 400_000))
+            .await
+            .unwrap();
+        let mut again_attempt = AgentRecoveryAttemptV1::Native(Box::new(again.clone()));
+        for profile in [&profiles[1].profile, &profiles[2].profile] {
+            again_attempt = store
+                .reselect_agent_recovery_target(
+                    &again.attempt_id,
+                    std::slice::from_ref(profile),
+                    Some("agent_recovery_target_signed_out"),
+                    300,
+                )
+                .await
+                .unwrap();
+        }
+        assert_eq!(again_attempt.resume_at_ms(), None);
+        assert_eq!(
+            again_attempt.stopped(),
+            Some(&AgentRecoveryStopV1::Failed {
+                code: "agent_recovery_target_signed_out".into()
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn native_attempt_rows_stay_out_of_conversation_queries() {
         let root = TempDir::new().unwrap();
         let store = native_store(
@@ -1661,4 +1740,104 @@ async fn a_limit_without_a_reported_reset_or_the_switch_off_stops_as_exhausted()
         assert_eq!(record.resume_at_ms, None);
         assert_eq!(record.stopped, Some(AgentRecoveryStopV1::Exhausted));
     }
+}
+
+#[tokio::test]
+async fn every_login_set_aside_before_any_apply_waits_for_the_reset_instead() {
+    let root = TempDir::new().unwrap();
+    let input = start_turn().client_message_id;
+    let store = initialized_with(
+        &root.path().join("set-aside-wait.sqlite"),
+        ProviderRecoveryPolicyPutV1 {
+            continue_after_reset: true,
+            ..policy()
+        },
+        vec![
+            reset_evidence(1, input.as_str(), 10_000),
+            limit_failure(2, input.as_str()),
+        ],
+    )
+    .await;
+    let profiles = policy().accounts;
+    let record = prepare(&store).await;
+    assert_eq!(record.target.as_ref().unwrap().profile, profiles[1].profile);
+    assert_eq!(record.resume_at_ms, None, "an account to switch to wins");
+    // Signed out, or the source's own login: neither was ever applied.
+    let waiting = store
+        .reselect_agent_recovery_target(
+            &record.attempt_id,
+            &[profiles[1].profile.clone(), profiles[2].profile.clone()],
+            Some("agent_recovery_target_signed_out"),
+            300,
+        )
+        .await
+        .unwrap();
+    assert_eq!(waiting.target(), None);
+    assert_eq!(waiting.stopped(), None);
+    let resume_at_ms = waiting.resume_at_ms().unwrap();
+    assert!((70_000..=190_000).contains(&resume_at_ms), "{resume_at_ms}");
+    assert_eq!(
+        store
+            .latest_agent_recovery(&record.source.agent_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .resume_at_ms,
+        Some(resume_at_ms)
+    );
+    assert_eq!(
+        store.agent_recovery_waits().await.unwrap(),
+        vec![dure_app::AgentRecoveryWaitV1 {
+            agent_id: record.source.agent_id.clone(),
+            attempt_id: record.attempt_id.clone(),
+            resume_at_ms,
+        }]
+    );
+    // Once due, the same account resends the failed turn.
+    let sent = store
+        .prepare_agent_recovery_turn(&record.attempt_id, resume_at_ms)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(sent.intent.input, start_turn().input);
+    assert_eq!(sent.intent.runtime, runtime(1));
+}
+
+#[tokio::test]
+async fn a_target_that_reached_the_runtime_journal_never_falls_back_to_waiting() {
+    let root = TempDir::new().unwrap();
+    let input = start_turn().client_message_id;
+    let store = initialized_with(
+        &root.path().join("applied-no-wait.sqlite"),
+        ProviderRecoveryPolicyPutV1 {
+            continue_after_reset: true,
+            ..policy()
+        },
+        vec![
+            reset_evidence(1, input.as_str(), 10_000),
+            limit_failure(2, input.as_str()),
+        ],
+    )
+    .await;
+    let profiles = policy().accounts;
+    let record = prepare(&store).await;
+    // The first target's switch began: its source may have stopped.
+    admit_switch(&store, &record, &record.attempt_id).await;
+    let stopped = store
+        .reselect_agent_recovery_target(
+            &record.attempt_id,
+            &[profiles[1].profile.clone(), profiles[2].profile.clone()],
+            Some("agent_runtime_repair_required"),
+            300,
+        )
+        .await
+        .unwrap();
+    assert_eq!(stopped.target(), None);
+    assert_eq!(stopped.resume_at_ms(), None);
+    assert_eq!(
+        stopped.stopped(),
+        Some(&AgentRecoveryStopV1::Failed {
+            code: "agent_runtime_repair_required".into()
+        })
+    );
 }
