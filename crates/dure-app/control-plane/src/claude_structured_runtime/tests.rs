@@ -162,6 +162,54 @@ fn structured_credential_replacement_accepts_only_the_exact_transition_target() 
 }
 
 #[test]
+fn replacement_target_stays_exact_after_its_attach_settles_the_history() {
+    let source = AgentInteractionBindingV1 {
+        schema_version: 1,
+        interaction_session_id: AgentInteractionSessionIdV1::new("interaction-settled").unwrap(),
+        agent_id: AgentIdV1::new("agent-settled").unwrap(),
+        provider_id: ProviderIdV1::new("claude").unwrap(),
+        execution_profile: AgentExecutionProfileV1::ProviderDefault,
+        provider_conversation_ref: Some("conversation-settled".into()),
+        runtime: AgentProviderRuntimeFenceV1 {
+            runtime_generation: "runtime-source".into(),
+            provider_epoch: "query-source".into(),
+        },
+        timeline_epoch: dure_app::AgentTimelineEpochV1::new("timeline-settled").unwrap(),
+        binding_revision: 2,
+        history_complete: false,
+        created_at_ms: 10,
+        updated_at_ms: 20,
+    };
+    let request = ClaudeStructuredOpenRequestV1 {
+        agent_id: source.agent_id.clone(),
+        execution_profile: source.execution_profile.clone(),
+        provider_conversation_ref: source.provider_conversation_ref.clone(),
+        permission_mode: ProviderPermissionModeV1::Default,
+        model: Some(AgentSpawnModelSelectionV1::parse("claude-opus-4-1").unwrap()),
+        effort: None,
+    };
+    let mut target = source.clone();
+    target.runtime = AgentProviderRuntimeFenceV1 {
+        runtime_generation: "runtime-target".into(),
+        provider_epoch: "query-target".into(),
+    };
+    target.binding_revision = 3;
+    target.updated_at_ms = 30;
+    // The target's history seeding settled whether the timeline holds the
+    // whole conversation: the store's fact, not the target's identity.
+    target.history_complete = true;
+    target.updated_at_ms = 31;
+
+    assert!(is_exact_replacement_target(
+        &target,
+        &source,
+        &request,
+        &target.runtime,
+        3,
+    ));
+}
+
+#[test]
 fn fresh_replacement_accepts_the_identity_allocated_by_the_exact_target_runtime() {
     let source = AgentInteractionBindingV1 {
         schema_version: 1,

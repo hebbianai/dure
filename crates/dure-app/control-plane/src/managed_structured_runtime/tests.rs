@@ -910,6 +910,184 @@ async fn failed_chat_retirement_advances_from_the_current_binding_generation() {
     );
 }
 
+#[tokio::test]
+async fn a_retried_chat_replacement_keeps_its_target_after_the_history_settles() {
+    let root = tempfile::Builder::new()
+        .prefix("dcr-settled-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let discovery_root = root.path().join("discovery");
+    let state_root = root.path().join("state");
+    let credential_home = root.path().join("credentials");
+    owner_directory(&discovery_root);
+    owner_directory(&state_root);
+    owner_directory(&credential_home);
+    let provider_launcher = root.path().join("provider-launcher");
+    let hmux_runtime = root.path().join("hmux-runtime");
+    for executable in [&provider_launcher, &hmux_runtime] {
+        fs::write(executable, "#!/bin/sh\nexit 97\n").unwrap();
+        fs::set_permissions(executable, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    let store = Arc::new(
+        SqliteDomainStore::open(root.path().join("domain.sqlite"))
+            .await
+            .unwrap(),
+    );
+    seed(&store, root.path(), 1).await;
+    let agent_id = AgentIdV1::new("agent-codex-scale-0").unwrap();
+    let selection = AgentRuntimeSelectionV1 {
+        schema_version: 1,
+        agent_id: agent_id.clone(),
+        provider_id: ProviderIdV1::new(CODEX_PROVIDER_ID).unwrap(),
+        interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
+        execution_profile: AgentExecutionProfileV1::ProviderDefault,
+        permission_mode: ProviderPermissionModeV1::Default,
+        model: None,
+        effort: None,
+        revision: 1,
+        selected_by_operation_id: None,
+        updated_at_ms: 4,
+    };
+    store
+        .initialize_agent_runtime_selection(&selection)
+        .await
+        .unwrap();
+    let agent = store.agent(&agent_id).await.unwrap().unwrap();
+    let source_request = StructuredProviderOpenRequestV1 {
+        agent_id: agent_id.clone(),
+        execution_profile: AgentExecutionProfileV1::ProviderDefault,
+        provider_conversation_ref: Some("conversation-live".into()),
+        permission_mode: ProviderPermissionModeV1::Default,
+        model: None,
+        effort: None,
+    };
+    let conversation_service = Arc::new(AgentConversationService::new(Arc::clone(&store)));
+    let source = conversation_service
+        .create(&initial_binding(&agent, &source_request, "generation-1").unwrap())
+        .await
+        .unwrap();
+    // A model change on the Chat Agent: a structured to structured transition.
+    let model = dure_app::AgentSpawnModelSelectionV1::parse("gpt-5.6-sol").unwrap();
+    let admitted = AgentRuntimeTransitionRecordV1::admitted(AgentRuntimeTransitionIntentV1 {
+        schema_version: 1,
+        operation_id: OperationIdV1::new("settled-chat-replacement").unwrap(),
+        idempotency_key: "settled-chat-replacement-key".into(),
+        source: selection,
+        source_authority: AgentRuntimeBindingAuthorityV1::StructuredProtocol {
+            binding: source.clone(),
+        },
+        source_stop_policy: AgentRuntimeSourceStopPolicyV1::Preserve,
+        provider_conversation_ref: AgentProviderConversationPlanV1::resume("conversation-live")
+            .unwrap(),
+        target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
+        target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
+        target_launch_selection: Some(dure_app::AgentRuntimeLaunchSelectionV1 {
+            model: Some(model.clone()),
+            effort: None,
+            permission_mode: None,
+        }),
+        workspace_move: None,
+        requested_at_ms: source.updated_at_ms + 1,
+    })
+    .unwrap();
+    let stopped = dure_app::advance_agent_runtime_transition_v1(
+        &admitted,
+        &AgentRuntimeTransitionAdvanceRequestV1 {
+            schema_version: 1,
+            operation_id: admitted.intent.operation_id.clone(),
+            expected_journal_revision: admitted.journal_revision,
+            advance: AgentRuntimeTransitionAdvanceV1::SourceStopped,
+            advanced_at_ms: source.updated_at_ms + 2,
+        },
+    )
+    .unwrap();
+    let request = StructuredProviderOpenRequestV1 {
+        model: Some(model),
+        ..source_request
+    };
+
+    let configuration = ManagedStructuredRuntimeConfiguration::new(
+        "generation-1",
+        ManagedProviderExecutable::new(ManagedProviderKind::Codex, Some(provider_launcher.clone())),
+        provider_launcher,
+        hmux_runtime,
+        discovery_root,
+        state_root.clone(),
+        state_root,
+    )
+    .unwrap();
+    let manager = ManagedStructuredRuntimeManager::new(
+        configuration,
+        Arc::new(ProviderCredentialProfileRegistry::new(
+            credential_home,
+            Arc::clone(&store),
+        )),
+        Arc::clone(&conversation_service),
+        Arc::new(AgentConversationRuntimeRegistry::default()),
+        Arc::clone(&store),
+    );
+
+    let first = manager
+        .open_replacement_runtime(
+            request.clone(),
+            &stopped,
+            ProviderStateEnvironment::default(),
+        )
+        .await
+        .unwrap_err();
+    assert_ne!(first.kind, ErrorKind::RuntimeConflict, "{first:?}");
+    let target = conversation_service
+        .binding(&source.interaction_session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(target.binding_revision, source.binding_revision + 1);
+    assert_eq!(target.runtime, transition_runtime(&stopped));
+
+    // The target's attach settles its history before the transition records
+    // the target; the transition is then applied again, as after a restart.
+    let settled = settle_history(&conversation_service, &target).await;
+    assert_ne!(settled.history_complete, source.history_complete);
+    let retry = manager
+        .open_replacement_runtime(request, &stopped, ProviderStateEnvironment::default())
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        (retry.kind, retry.code),
+        (first.kind, first.code),
+        "the retry must reach the same target, not refuse it as another binding",
+    );
+    assert_eq!(
+        conversation_service
+            .binding(&source.interaction_session_id)
+            .await
+            .unwrap(),
+        Some(settled),
+        "the retry must not replace its own target",
+    );
+}
+
+/// Settles `binding`'s history as a provider bridge does at attach, and
+/// returns the binding the store then holds.
+async fn settle_history(
+    service: &Arc<AgentConversationService<SqliteDomainStore>>,
+    binding: &AgentInteractionBindingV1,
+) -> AgentInteractionBindingV1 {
+    crate::provider_timeline_journal::ProviderTimelineJournal::new(Arc::clone(service), binding)
+        .await
+        .unwrap()
+        .settle_history()
+        .await
+        .unwrap();
+    service
+        .binding(&binding.interaction_session_id)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
 #[test]
 fn failed_idle_probe_always_retains_the_selected_source() {
     for kind in [
