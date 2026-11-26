@@ -31,8 +31,15 @@ fn live_pi_preserves_conversation_across_settings_busy_turns_and_reconnect() {
             .unwrap();
             timeout(Duration::from_secs(20), async {
                 loop {
-                    if !observer.state().await.unwrap().busy() {
-                        let entries = observer.entries().await.unwrap();
+                    let state = observer.state().await.unwrap();
+                    if !state.busy() {
+                        let entries = observer
+                            .history(
+                                &state,
+                                crate::pi_session_client::HistoryWindowBounds::ATTACH,
+                            )
+                            .await
+                            .unwrap();
                         assert!(entries.entries.iter().any(|entry| {
                             entry
                                 .pointer("/message/content/0/text")
@@ -70,6 +77,184 @@ fn live_pi_preserves_conversation_across_settings_busy_turns_and_reconnect() {
     assert_eq!(first, reconnected);
     assert_eq!(descriptor.host_instance_id, observed.host_instance_id);
     assert_eq!(descriptor.session_id, observed.session_id);
+}
+
+/// A Terminal Agent's Pi conversation moved into Chat, longer than one Pi
+/// answer and than the window Chat seeds: 200 turns, each a prompt of about
+/// 400 KB and its answer. Pi records the first turn itself; the others repeat
+/// its records the way Pi appends them, before the managed runtime resumes
+/// the conversation.
+#[test]
+#[ignore = "requires isolated actual Pi, deterministic model backend and Hmux fixture"]
+fn live_pi_opens_a_long_terminal_conversation_in_chat() {
+    let root = env_path("DURE_QA_PI_RUNTIME_ROOT").join("long");
+    tests::owner_directory(&root);
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let (store, service, manager) = fixture(
+                &root,
+                false,
+                ManagedProviderKind::Pi,
+                env_path("DURE_QA_PI_BIN"),
+            )
+            .await;
+            let session = "4c1f2f0e-6b7a-4f43-9d2e-0a5b8c6d7e81";
+            let bytes = record_terminal_conversation(&root.join("workspace-0"), session, 200).await;
+            assert!(bytes > 64 * 1024 * 1024, "the Terminal history is {bytes} bytes");
+            let agent = AgentIdV1::new("agent-pi-scale-0").unwrap();
+            let chat = settings("fixture/model-a", "low");
+            store
+                .initialize_agent_runtime_selection(&AgentRuntimeSelectionV1 {
+                    schema_version: 1,
+                    agent_id: agent.clone(),
+                    provider_id: ProviderIdV1::new("pi").unwrap(),
+                    interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
+                    execution_profile: AgentExecutionProfileV1::ProviderDefault,
+                    permission_mode: chat.permission_mode.clone(),
+                    model: chat.model.clone(),
+                    effort: chat.effort.clone(),
+                    revision: 1,
+                    selected_by_operation_id: None,
+                    updated_at_ms: 4,
+                })
+                .await
+                .unwrap();
+
+            let opening = std::time::Instant::now();
+            let binding = manager
+                .open_runtime(open_request(&agent, Some(session.into()), &chat))
+                .await
+                .expect("a long Terminal conversation opens in Chat");
+            let opened = opening.elapsed();
+
+            let shown = conversation(&service, &binding).await;
+            assert_eq!(shown[0], "boundary:provider_history_truncated");
+            let first = shown[1]
+                .strip_prefix("Terminal prompt ")
+                .and_then(|index| index.parse::<usize>().ok())
+                .unwrap();
+            let newest = (first..200)
+                .map(|index| format!("Terminal prompt {index}"))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                shown[1..],
+                newest,
+                "the newest prompts, each once, in order"
+            );
+            // The window holds the newest 64 MiB of the about 80 MB history.
+            assert!((1..=60).contains(&first), "window starts at prompt {first}");
+            println!(
+                "Chat opened in {opened:?} with Terminal prompts {first} to 199 behind a history boundary"
+            );
+
+            let intent = turn_intent(
+                &binding,
+                "after-terminal",
+                "Continue after the Terminal history.",
+            );
+            service
+                .start_turn(bridge(&manager, &binding).await.as_ref(), &intent)
+                .await
+                .unwrap();
+            wait_completed(&service, &binding, &intent.turn_id).await;
+            let shown = conversation(&service, &binding).await;
+            assert_eq!(
+                shown.last().map(String::as_str),
+                Some("Continue after the Terminal history."),
+                "a Chat prompt follows the history"
+            );
+            assert_eq!(
+                shown
+                    .iter()
+                    .filter(|row| row.starts_with("boundary:"))
+                    .count(),
+                1
+            );
+            manager.stop_binding(&binding, false).await.unwrap();
+        });
+}
+
+/// Records `count` turns of `session` in `workspace` and returns the size of
+/// its transcript. Pi answers the first prompt through the fixture model, as
+/// a person's Terminal session would; the later turns repeat those records
+/// under new entry IDs, so the fixture model is not sent the whole growing
+/// conversation for each of them.
+async fn record_terminal_conversation(workspace: &Path, session: &str, count: usize) -> u64 {
+    use std::io::Write;
+    let recorded = tokio::process::Command::new(env_path("DURE_QA_PI_BIN"))
+        .args([
+            "--print",
+            "--session-id",
+            session,
+            "--model",
+            "fixture/model-a",
+            "--thinking",
+            "low",
+            "Terminal prompt 0",
+        ])
+        .current_dir(workspace)
+        .output()
+        .await
+        .unwrap();
+    assert!(recorded.status.success(), "Pi records the first turn");
+    let transcript = find_transcript(&env_path("PI_CODING_AGENT_DIR"), session)
+        .expect("Pi wrote the Terminal transcript");
+    let entries = std::fs::read_to_string(&transcript)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let role = |entry: &serde_json::Value| entry.pointer("/message/role").cloned();
+    let prompt = entries
+        .iter()
+        .find(|entry| role(entry) == Some(json!("user")))
+        .unwrap();
+    let answer = entries.last().unwrap();
+    assert_eq!(role(answer), Some(json!("assistant")));
+    let mut parent = answer["id"].clone();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&transcript)
+        .unwrap();
+    for index in 1..count {
+        let (prompt_id, answer_id) = (format!("p{index:07}"), format!("a{index:07}"));
+        let mut next = prompt.clone();
+        next["id"] = json!(prompt_id);
+        next["parentId"] = parent;
+        next["message"]["content"] = json!([{
+            "type": "text",
+            "text": format!("Terminal prompt {index} {}", "T".repeat(400_000)),
+        }]);
+        next["message"]["timestamp"] =
+            json!(prompt["message"]["timestamp"].as_i64().unwrap() + index as i64);
+        let mut reply = answer.clone();
+        reply["id"] = json!(answer_id);
+        reply["parentId"] = json!(prompt_id);
+        reply["message"]["timestamp"] = next["message"]["timestamp"].clone();
+        reply["message"]["content"] =
+            json!([{"type":"text","text":format!("Terminal answer {index}")}]);
+        writeln!(file, "{next}\n{reply}").unwrap();
+        parent = json!(answer_id);
+    }
+    file.sync_all().unwrap();
+    file.metadata().unwrap().len()
+}
+
+fn find_transcript(directory: &Path, session: &str) -> Option<PathBuf> {
+    std::fs::read_dir(directory).ok()?.find_map(|entry| {
+        let path = entry.ok()?.path();
+        if path.is_dir() {
+            find_transcript(&path, session)
+        } else {
+            path.file_name()?
+                .to_str()?
+                .ends_with(&format!("_{session}.jsonl"))
+                .then_some(path)
+        }
+    })
 }
 
 /// The file the fixture model asks Pi to write: more than one timeline item

@@ -1,8 +1,10 @@
+use std::collections::VecDeque;
 use std::io::{BufRead, Read};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use dure_app::{AgentInteractionBindingV1, AgentSpawnModelSelectionV1};
+use dure_provider_profile::transcript::bounded_suffix_records;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -78,11 +80,37 @@ impl SessionState {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// How much of a session's newest history an attach reads. These are the
+/// bounds one answer of the whole history had, so a session that opened in
+/// Chat opens with the same history, and a longer one with its newest
+/// history instead of not at all.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HistoryWindowBounds {
+    pub(crate) entries: usize,
+    pub(crate) bytes: u64,
+}
+
+impl HistoryWindowBounds {
+    pub(crate) const ATTACH: Self = Self {
+        entries: 16_384,
+        bytes: 64 * 1024 * 1024,
+    };
+}
+
+/// Entries of the selected session, in the order Pi appended them.
 pub(crate) struct Entries {
     pub(crate) entries: Vec<Value>,
     pub(crate) leaf_id: Option<String>,
+    /// Whether the session holds entries older than `entries`, which a
+    /// window leaves out.
+    pub(crate) omits_older: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EntriesAnswer {
+    entries: Vec<Value>,
+    leaf_id: Option<String>,
 }
 
 pub(crate) struct PiSessionClient {
@@ -126,24 +154,60 @@ impl PiSessionClient {
         Ok(state)
     }
 
-    pub(crate) async fn entries(&self) -> Result<Entries, Error> {
-        let entries: Entries = serde_json::from_value(
+    /// The session's newest entries: the newest window of its transcript
+    /// within `bounds`, then what Pi appended after it. Pi writes every entry
+    /// to its transcript as it records it, so the window and Pi's answer meet
+    /// at the window's newest entry. Pi writes a transcript only once the
+    /// session holds an answer; before that, Pi's answer holds all of it.
+    pub(crate) async fn history(
+        &self,
+        state: &SessionState,
+        bounds: HistoryWindowBounds,
+    ) -> Result<Entries, Error> {
+        let mut entries = match self.transcript(state)? {
+            Some((mut file, header_end)) => newest_entries(&mut file, header_end, bounds)?,
+            None => Entries {
+                entries: Vec::new(),
+                leaf_id: None,
+                omits_older: false,
+            },
+        };
+        self.read_newer(&mut entries).await?;
+        Ok(entries)
+    }
+
+    /// Adds the entries Pi appended after the newest of `entries`, or all of
+    /// them when it holds none, and Pi's current leaf.
+    pub(crate) async fn read_newer(&self, entries: &mut Entries) -> Result<(), Error> {
+        let params = match entries.entries.last() {
+            Some(newest) => json!({"since": field(newest, "id")?}),
+            None => json!({}),
+        };
+        let answer: EntriesAnswer = serde_json::from_value(
             self.rpc
-                .request("get_entries", json!({}))
+                .request("get_entries", params)
                 .await
                 .map_err(store_error)?,
         )
         .map_err(store_error)?;
-        if entries.entries.len() > 16384 {
+        if answer.entries.len() > HistoryWindowBounds::ATTACH.entries {
             return Err(protocol_error("Pi history entry limit exceeded"));
         }
-        Ok(entries)
+        entries.entries.extend(answer.entries);
+        entries.leaf_id = answer.leaf_id;
+        Ok(())
     }
 
     /// Pi creates its transcript only after the first assistant message. An
     /// empty, fresh runtime may remain unmaterialized; exact resume may not.
     pub(crate) fn is_materialized(&self, state: &SessionState) -> Result<bool, Error> {
-        let file = match std::fs::OpenOptions::new()
+        Ok(self.transcript(state)?.is_some())
+    }
+
+    /// The session's own transcript, once Pi has written it, and where its
+    /// entries start after the session header.
+    fn transcript(&self, state: &SessionState) -> Result<Option<(std::fs::File, u64)>, Error> {
+        let mut file = match std::fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW)
             .open(&state.session_file)
@@ -153,7 +217,7 @@ impl PiSessionClient {
                 if error.kind() == std::io::ErrorKind::NotFound
                     && !self.requires_persisted_session =>
             {
-                return Ok(false);
+                return Ok(None);
             }
             Err(error) => return Err(store_error(error)),
         };
@@ -162,12 +226,13 @@ impl PiSessionClient {
             return Err(protocol_error("Pi transcript ownership is invalid"));
         }
         let mut header = Vec::new();
-        std::io::BufReader::new(file.take(65537))
+        std::io::BufReader::new((&mut file).take(65537))
             .read_until(b'\n', &mut header)
             .map_err(store_error)?;
         if header.len() > 65536 {
             return Err(protocol_error("Pi session header limit exceeded"));
         }
+        let header_end = header.len() as u64;
         let header: Value = serde_json::from_slice(&header).map_err(store_error)?;
         if header.get("type").and_then(Value::as_str) != Some("session")
             || header.get("id").and_then(Value::as_str) != Some(self.session.as_str())
@@ -177,7 +242,7 @@ impl PiSessionClient {
                 "Pi transcript does not belong to this session and workspace",
             ));
         }
-        Ok(true)
+        Ok(Some((file, header_end)))
     }
 
     pub(crate) async fn catalog(&self, state: &SessionState) -> Result<Value, Error> {
@@ -214,6 +279,42 @@ impl PiSessionClient {
     }
 }
 
+/// The newest whole entries of a transcript whose entries start at
+/// `header_end`, within `bounds`. Pi may still be appending, so an
+/// unfinished last record is left for Pi's answer after the window. Lines Pi
+/// skips when it loads a transcript are skipped too.
+fn newest_entries(
+    file: &mut std::fs::File,
+    header_end: u64,
+    bounds: HistoryWindowBounds,
+) -> Result<Entries, Error> {
+    let len = file.metadata().map_err(store_error)?.len();
+    let (start, bytes) = bounded_suffix_records(file, len, bounds.bytes).map_err(store_error)?;
+    let mut omits_older = start > header_end;
+    let mut entries = VecDeque::new();
+    for line in bytes.split_inclusive(|byte| *byte == b'\n') {
+        let Some(line) = line.strip_suffix(b"\n") else {
+            break;
+        };
+        let Ok(entry) = serde_json::from_slice::<Value>(line) else {
+            continue;
+        };
+        if entry.get("type").and_then(Value::as_str) == Some("session") {
+            continue;
+        }
+        entries.push_back(entry);
+        if entries.len() > bounds.entries {
+            entries.pop_front();
+            omits_older = true;
+        }
+    }
+    Ok(Entries {
+        entries: entries.into(),
+        leaf_id: None,
+        omits_older,
+    })
+}
+
 pub(crate) fn field<'a>(value: &'a Value, key: &str) -> Result<&'a str, Error> {
     value
         .get(key)
@@ -236,5 +337,67 @@ mod tests {
             assert!(SessionId::parse(id).is_err());
         }
         assert!(SessionId::parse("f4be7e67-9d77-492b-9f6e-a0bc4bf968a1").is_ok());
+    }
+
+    fn ids(entries: &Entries) -> Vec<&str> {
+        entries
+            .entries
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect()
+    }
+
+    /// The newest window holds whole entries within its bounds, in the order
+    /// Pi appended them, and says whether it left older ones out.
+    #[test]
+    fn a_window_reads_the_newest_whole_entries_within_its_bounds() {
+        use std::io::Write;
+        let records = (0..4)
+            .map(|index| {
+                format!(
+                    "{}\n",
+                    json!({"type":"message","id":format!("e{index}"),"parentId":null})
+                )
+            })
+            .collect::<Vec<_>>();
+        let header = format!("{}\n", json!({"type":"session","id":"s","cwd":"/w"}));
+        // Pi skips a malformed line when it loads a transcript, and a record
+        // it is still writing reaches Dure through its answer instead.
+        let (malformed, writing) = ("{\"type\":\n", "{\"type\":\"message\",\"id\":\"e4\"");
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            file,
+            "{header}{}{}{malformed}{}{}{writing}",
+            records[0], records[1], records[2], records[3]
+        )
+        .unwrap();
+        let header_end = header.len() as u64;
+        let len = file.as_file().metadata().unwrap().len();
+        let read = |entries, bytes| {
+            newest_entries(
+                &mut file.reopen().unwrap(),
+                header_end,
+                HistoryWindowBounds { entries, bytes },
+            )
+            .unwrap()
+        };
+
+        let whole = read(16, len);
+        assert_eq!(ids(&whole), ["e0", "e1", "e2", "e3"]);
+        assert!(!whole.omits_older, "a window from the first entry is whole");
+        let from_first = read(16, len - header_end);
+        assert_eq!(ids(&from_first), ["e0", "e1", "e2", "e3"]);
+        assert!(!from_first.omits_older);
+
+        let last_two = (records[2].len() + records[3].len() + writing.len()) as u64;
+        let newest = read(16, last_two);
+        assert_eq!(ids(&newest), ["e2", "e3"]);
+        assert!(newest.omits_older);
+        let inside = read(16, last_two - 1);
+        assert_eq!(ids(&inside), ["e3"], "only whole records are read");
+
+        let counted = read(3, len);
+        assert_eq!(ids(&counted), ["e1", "e2", "e3"]);
+        assert!(counted.omits_older);
     }
 }

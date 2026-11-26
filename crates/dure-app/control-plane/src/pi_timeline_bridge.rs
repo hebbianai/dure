@@ -13,7 +13,7 @@ use crate::agent_conversation::{
 };
 use crate::json_rpc_socket_client::JsonRpcSocketIncoming;
 use crate::managed_provider_connection::{AttachedProviderConnection, ManagedProviderConnection};
-use crate::pi_session_client::PiSessionClient;
+use crate::pi_session_client::{Entries, HistoryWindowBounds, PiSessionClient};
 use crate::provider_timeline_journal::{
     ProviderTimelineJournal, evidence_value, now_ms, protocol_error, store_error,
 };
@@ -30,6 +30,10 @@ struct Projection {
     anchors: BTreeMap<AgentClientMessageIdV1, PromptAnchor>,
     active: Option<TurnContext>,
     pending: BTreeMap<String, Value>,
+    /// The session's entries from its newest prompt on, which the next sync
+    /// extends with what Pi appended after them. `None` until the attach
+    /// reads the session's newest window.
+    entries: Option<Entries>,
 }
 
 struct PiTimelineBridge<S> {
@@ -182,12 +186,22 @@ async fn attach_inner<S: AgentTimelineStore + 'static>(
 }
 
 impl<S: AgentTimelineStore + 'static> PiTimelineBridge<S> {
-    async fn sync(
-        &self,
-        projection: &mut Projection,
-    ) -> Result<crate::pi_session_client::Entries, Error> {
+    /// Projects what Pi recorded since the last sync. The first sync reads the
+    /// session's newest window, so a session longer than one answer opens
+    /// with its newest history; later ones read only what Pi appended.
+    async fn sync(&self, projection: &mut Projection) -> Result<ProjectedHistory, Error> {
         let state = self.client.state().await?;
-        let entries = self.client.entries().await?;
+        let mut entries = match projection.entries.take() {
+            Some(mut entries) => {
+                self.client.read_newer(&mut entries).await?;
+                entries
+            }
+            None => {
+                self.client
+                    .history(&state, HistoryWindowBounds::ATTACH)
+                    .await?
+            }
+        };
         let materialized = self.client.is_materialized(&state)?;
         if materialized && !self.established.load(Ordering::SeqCst) {
             self.journal
@@ -202,8 +216,11 @@ impl<S: AgentTimelineStore + 'static> PiTimelineBridge<S> {
         } else if !materialized && self.established.load(Ordering::SeqCst) {
             return Err(protocol_error("Pi lost its persisted conversation"));
         }
-        let history = project(&entries, &projection.anchors)?;
-        self.journal.append_once(history.items).await?;
+        let mut history = project(&entries, &projection.anchors)?;
+        let meets_timeline = self.journal.holds_any(&history.items).await;
+        self.journal
+            .append_once(history.take_items(meets_timeline)?)
+            .await?;
         if !state.busy() {
             if let Some(active) = projection.active.clone() {
                 if history.completed.contains(&active.client_message_id) {
@@ -271,7 +288,9 @@ impl<S: AgentTimelineStore + 'static> PiTimelineBridge<S> {
             .await
             .map_err(store_error)?;
         projection.pending = pending;
-        Ok(entries)
+        retain_newest_turn(&mut entries)?;
+        projection.entries = Some(entries);
+        Ok(history)
     }
 
     fn spawn(self: &Arc<Self>, mut incoming: JsonRpcSocketIncoming) -> tokio::task::JoinHandle<()> {
@@ -338,11 +357,14 @@ impl<S: AgentTimelineStore + 'static> AgentProviderCommands for PiTimelineBridge
             if !self.accepting.load(Ordering::SeqCst) {
                 return Err(Error::new("runtime_draining", "Pi is switching runtimes"));
             }
-            let entries = self.sync(&mut projection).await?;
-            let history = project(&entries, &projection.anchors)?;
+            let history = self.sync(&mut projection).await?;
             if let Some(id) = history.accepted.get(&intent.client_message_id) {
                 return Ok(json!({"entryId":id}));
             }
+            let leaf = projection
+                .entries
+                .as_ref()
+                .and_then(|entries| entries.leaf_id.clone());
             if projection
                 .active
                 .as_ref()
@@ -360,7 +382,7 @@ impl<S: AgentTimelineStore + 'static> AgentProviderCommands for PiTimelineBridge
                 .entry(intent.client_message_id.clone())
                 .or_insert_with(|| PromptAnchor {
                     context: context.clone(),
-                    previous_leaf: entries.leaf_id.clone(),
+                    previous_leaf: leaf.clone(),
                     runtime: self.binding.runtime.clone(),
                 })
                 .clone();
@@ -370,7 +392,7 @@ impl<S: AgentTimelineStore + 'static> AgentProviderCommands for PiTimelineBridge
                     "The previous Pi process did not persist this prompt; an automatic resend cannot be proven safe",
                 ));
             }
-            if anchor.context != context || anchor.previous_leaf != entries.leaf_id {
+            if anchor.context != context || anchor.previous_leaf != leaf {
                 return Err(protocol_error(
                     "Pi prompt boundary changed before submission",
                 ));
