@@ -160,6 +160,32 @@ describe("projectStructuredRunAgent", () => {
 		).toThrow("structured Agent identity");
 	});
 
+	it("keeps a Chat Run that reuses another Agent's name in the project", () => {
+		const nameOwner = projectStructuredRunAgent(
+			state(),
+			{
+				...run,
+				agentId: "agent-first",
+				operationId: "spawn-first",
+				interactionSessionId: "interaction-first",
+			},
+			project,
+		).agent;
+
+		const projected = projectStructuredRunAgent(
+			{ ...state(), agents: [nameOwner] },
+			run,
+			project,
+		);
+
+		expect(projected.outcome).toBe("created");
+		expect(projected.agent).toMatchObject({
+			id: "agent-1",
+			name: run.agentName,
+		});
+		expect(projected.patch.agents).toEqual([nameOwner, projected.agent]);
+	});
+
 	it("projects the backend-owned dedicated worktree directory verbatim", () => {
 		const projected = projectStructuredRunAgent(
 			state(),
