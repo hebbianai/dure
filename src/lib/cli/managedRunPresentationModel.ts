@@ -668,17 +668,9 @@ export function projectManagedRunPresentationAgent(
 			},
 		};
 	}
-	if (
-		state.agents.some(
-			(agent) =>
-				agent.projectId === project.id && agent.name === request.agentName,
-		)
-	) {
-		failCliManagedRunPresentation(
-			"client_agent_name_conflict",
-			"managed Run Agent name is already in use for this project",
-		);
-	}
+	// The backend has already started this Run, and its identity is the Agent
+	// and Session. Run names may repeat, so a name another Agent in the
+	// project uses must not hide the Run from dure ls and whoami.
 	const agent: Agent = {
 		id: request.agentId,
 		...(canonicalSpawn ? { canonicalSpawn } : {}),
