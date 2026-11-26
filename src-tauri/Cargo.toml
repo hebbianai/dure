@@ -78,6 +78,8 @@ terminal-state-protocol = { path = "../hmux/crates/terminal-state-protocol" }
 ring = "0.17"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls-no-provider"] }
 dirs = "7"
+# The account usage response's reset times are RFC 3339.
+chrono = { version = "0.4.42", default-features = false, features = ["std"] }
 keyring = "4.1.5"
 libc = "0.2"
 tokio = { version = "1", features = ["io-util", "net", "process", "sync", "time"] }

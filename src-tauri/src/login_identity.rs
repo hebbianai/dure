@@ -89,27 +89,41 @@ pub(crate) fn read_claude_keychain_credential_from(
     config_root: &str,
     keychain: Option<&Path>,
 ) -> Result<Option<Vec<u8>>, String> {
-    let service = claude_keychain_service(Some(config_root));
-    let mut command = Command::new("/usr/bin/security");
+    read_claude_keychain_login(Some(config_root), keychain)
+}
+
+/// The stored Claude login Claude Code keeps in the Keychain for one config
+/// directory (`None` is its default login without CLAUDE_CONFIG_DIR).
+/// `Ok(None)` when the item does not exist. The secret stays in the returned
+/// bytes; no error carries it.
+#[cfg(target_os = "macos")]
+pub(crate) fn read_claude_keychain_login(
+    scoped_config_root: Option<&str>,
+    keychain: Option<&Path>,
+) -> Result<Option<Vec<u8>>, String> {
+    const MAX_CREDENTIAL_BYTES: usize = 4 * 1024 * 1024;
+    let service = claude_keychain_service(scoped_config_root);
+    let mut command = hebbian_bounded_process::CommandSpec::new("/usr/bin/security");
     command.args(["find-generic-password", "-s", &service, "-w"]);
     if let Some(keychain) = keychain {
         command.arg(keychain);
     }
-    let output = command
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|_| "credential_transfer_unavailable: cannot read Claude Keychain".to_string())?;
+    let output = hebbian_bounded_process::run(
+        &command,
+        std::time::Duration::from_secs(10),
+        MAX_CREDENTIAL_BYTES,
+    )
+    .map_err(|_| "credential_transfer_unavailable: cannot read Claude Keychain".to_string())?;
     if output.status.code() == Some(44) {
         return Ok(None);
     }
-    if !output.status.success() {
-        return Err("credential_transfer_unavailable: Claude Keychain access failed".to_string());
-    }
-    if output.stdout.len() > 4 * 1024 * 1024 {
+    if output.exceeded_limit {
         return Err(
             "credential_transfer_too_large: Claude Keychain credential exceeds 4 MiB".to_string(),
         );
+    }
+    if !output.status.success() {
+        return Err("credential_transfer_unavailable: Claude Keychain access failed".to_string());
     }
     let valid = serde_json::from_slice::<serde_json::Value>(&output.stdout)
         .ok()

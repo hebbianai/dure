@@ -106,9 +106,10 @@ async fn policy_allows(
 const REPAIR_REQUIRED: &str = "agent_runtime_repair_required";
 
 /// Before a target's first apply, read what this host observes about the pool:
-/// the app's latest usage feeds the usage owner, and logins known signed out or
-/// shared with the source are set aside before the owner selects again. Then
-/// the chosen login is asked whether it is signed in, the way its launch would.
+/// the app's latest usage feeds the usage owner, and logins known signed out,
+/// out of the agent's model or shared with the source are set aside before the
+/// owner selects again. Then the chosen login is asked whether it is signed
+/// in, the way its launch would.
 async fn check_target(
     state: &ServiceState,
     record: AgentRecoveryAttemptV1,
@@ -122,11 +123,19 @@ async fn check_target(
         return Ok(record);
     };
     let observed_at_ms = now_ms().map_err(|_| "agent_recovery_clock_unavailable")?;
+    // The target keeps the agent's model selection.
+    let model = state
+        .store
+        .agent_runtime_selection(record.agent_id())
+        .await
+        .map_err(|_| "agent_recovery_store_failed")?
+        .and_then(|selection| selection.model);
     let pool = state
         .credential_profiles
         .observe_recovery_pool(
             record.provider_id(),
             record.source_execution_profile(),
+            model.as_ref().map(|model| model.as_str()),
             &policy.accounts,
             observed_at_ms,
         )

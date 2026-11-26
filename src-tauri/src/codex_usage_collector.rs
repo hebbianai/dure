@@ -1,39 +1,26 @@
-//! 등록된 Codex credential별 rate-limit snapshot 수집기.
+//! Codex's reader for the app's account usage check.
 //!
-//! 세션 JSONL은 "그 계정을 사용한 뒤"에만 갱신된다. 이 수집기는 공식 Codex
+//! 세션 JSONL은 "그 계정을 사용한 뒤"에만 갱신된다. 이 reader는 공식 Codex
 //! App Server의 `account/rateLimits/read`를 각 CODEX_HOME에서 호출해, pane이나
-//! turn을 만들지 않고 비활성 계정도 갱신한다. 성공 snapshot은 앱 홈에
-//! owner-only로 보존하며 이후 probe 실패가 마지막 성공값을 지우지 않는다.
+//! turn을 만들지 않고 비활성 계정도 갱신한다. The schedule, the account
+//! catalog and the owner-only cache are `account_usage_collector`'s.
 
 use hmux_client::TerminalEnvironment;
-use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::Mutex as AsyncMutex;
 
-use crate::usage::{CodexRateLimitUsage as CodexPolledRateLimit, CodexUsageSnapshot};
+use crate::account_usage_collector::{AccountUsageReader, UsageAccount};
+use crate::usage::{CodexRateLimitUsage as CodexPolledRateLimit, CodexUsageReading};
 
-const CACHE_SCHEMA_VERSION: u32 = 1;
-const CACHE_FILE_NAME: &str = "codex-usage-snapshots.json";
-const POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
-const MAX_POLL_JITTER: Duration = Duration::from_secs(60);
-const INACTIVE_PROBE_STAGGER: Duration = Duration::from_secs(2);
 const BOOT_TIMEOUT: Duration = Duration::from_secs(40);
 const READ_TIMEOUT: Duration = Duration::from_secs(15);
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_RESPONSE_LINE_BYTES: u64 = 1024 * 1024;
-const MAX_CACHE_BYTES: u64 = 4 * 1024 * 1024;
-const MAX_PROFILES: usize = 64;
 const MARKETPLACE_STAGING_ABANDONED_AFTER: Duration = Duration::from_secs(60 * 60);
 const MAX_MARKETPLACE_STAGING_SWEEP: usize = 256;
-const DEFAULT_CREDENTIAL_KEY: &str = "default";
 const AMBIENT_PROVIDER_AUTH_ENVIRONMENT: [&str; 7] = [
     "OPENAI_API_KEY",
     "CODEX_ACCESS_TOKEN",
@@ -43,315 +30,55 @@ const AMBIENT_PROVIDER_AUTH_ENVIRONMENT: [&str; 7] = [
     "ANTHROPIC_API_KEY",
     "CLAUDE_CODE_OAUTH_TOKEN",
 ];
-static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 fn is_ambient_provider_auth_environment(key: &str) -> bool {
     AMBIENT_PROVIDER_AUTH_ENVIRONMENT.contains(&key)
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexUsageProfileInput {
-    pub credential_id: Option<String>,
-    pub directory: Option<String>,
+pub(crate) struct CodexUsage;
+
+/// What one collection resolves once for every Codex account.
+pub(crate) struct CodexUsageContext {
+    resolved: crate::provider_preflight::ResolvedLoginCommandEnvironment,
+    sqlite_home: PathBuf,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ValidatedProfile {
-    credential_id: Option<String>,
-    codex_home: Option<PathBuf>,
-}
+impl AccountUsageReader for CodexUsage {
+    const PROVIDER: &'static str = "codex";
+    const CACHE_FILE_NAME: &'static str = "codex-usage-snapshots.json";
+    const HOME_UNAVAILABLE: &'static str = "codex_usage_home_unavailable";
+    const CREDENTIAL_UNAVAILABLE: &'static str = "codex_usage_credential_unavailable";
+    type Reading = CodexUsageReading;
+    type Context = CodexUsageContext;
 
-#[derive(Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SnapshotCache {
-    schema_version: u32,
-    snapshots: Vec<CodexUsageSnapshot>,
-}
-
-#[derive(Default)]
-struct CollectorInner {
-    loaded: bool,
-    profiles: BTreeMap<String, ValidatedProfile>,
-    snapshots: BTreeMap<String, CodexUsageSnapshot>,
-}
-
-struct CollectorShared {
-    inner: Mutex<CollectorInner>,
-    refresh: AsyncMutex<bool>,
-    wake: tokio::sync::Notify,
-    started: AtomicBool,
-}
-
-impl Default for CollectorShared {
-    fn default() -> Self {
-        Self {
-            inner: Mutex::new(CollectorInner::default()),
-            refresh: AsyncMutex::new(false),
-            wake: tokio::sync::Notify::new(),
-            started: AtomicBool::new(false),
-        }
-    }
-}
-
-#[derive(Clone, Default)]
-pub struct CodexUsageCollector {
-    shared: Arc<CollectorShared>,
-}
-
-impl CodexUsageCollector {
-    fn cache_path() -> Result<PathBuf, String> {
-        Ok(crate::app_home::app_root_resolution()?
-            .0
-            .join(CACHE_FILE_NAME))
+    fn default_directory(home: &Path) -> PathBuf {
+        home.join(".codex")
     }
 
-    fn load_if_needed(&self, inner: &mut CollectorInner) {
-        if inner.loaded {
-            return;
-        }
-        inner.loaded = true;
-        let Ok(path) = Self::cache_path() else { return };
-        if std::fs::metadata(&path).is_ok_and(|metadata| metadata.len() > MAX_CACHE_BYTES) {
-            return;
-        }
-        let Ok(bytes) = std::fs::read(path) else {
-            return;
-        };
-        let Ok(cache) = serde_json::from_slice::<SnapshotCache>(&bytes) else {
-            return;
-        };
-        if cache.schema_version != CACHE_SCHEMA_VERSION {
-            return;
-        }
-        for snapshot in cache.snapshots {
-            inner
-                .snapshots
-                .insert(credential_key(snapshot.credential_id.as_deref()), snapshot);
-        }
-    }
-
-    fn sync_profiles(&self, profiles: Vec<CodexUsageProfileInput>) -> Result<(), String> {
-        if profiles.len() > MAX_PROFILES {
-            return Err("codex_usage_profile_limit_exceeded".to_string());
-        }
-        let home = std::env::var("HOME").map_err(|_| "codex_usage_home_unavailable".to_string())?;
-        let mut validated = BTreeMap::new();
-        for profile in profiles {
-            let key = credential_key(profile.credential_id.as_deref());
-            if validated.contains_key(&key) {
-                return Err("codex_usage_duplicate_credential".to_string());
-            }
-            let codex_home = match (&profile.credential_id, &profile.directory) {
-                (None, None) => Some(Path::new(&home).join(".codex")),
-                (Some(credential_id), Some(directory)) => {
-                    crate::accounts::resolve_account_profile_directory(
-                        "codex",
-                        &home,
-                        credential_id,
-                        directory,
-                    )
-                    .ok()
-                }
-                _ => return Err("codex_usage_invalid_credential_reference".to_string()),
-            };
-            validated.insert(
-                key,
-                ValidatedProfile {
-                    credential_id: profile.credential_id,
-                    codex_home,
-                },
-            );
-        }
-
-        let mut inner = self.shared.inner.lock().unwrap();
-        self.load_if_needed(&mut inner);
-        let changed = inner.profiles != validated;
-        inner.profiles = validated;
-        let current: BTreeSet<_> = inner.profiles.keys().cloned().collect();
-        let snapshot_count = inner.snapshots.len();
-        inner.snapshots.retain(|key, _| current.contains(key));
-        let persisted = if inner.snapshots.len() == snapshot_count {
-            Ok(())
-        } else {
-            persist_cache(&inner.snapshots)
-        };
-        drop(inner);
-        let started = self.start();
-        if changed && !started {
-            self.shared.wake.notify_one();
-        }
-        persisted
-    }
-
-    fn start(&self) -> bool {
-        if self
-            .shared
-            .started
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return false;
-        }
-        let collector = self.clone();
-        tauri::async_runtime::spawn(async move {
-            let mut failure_streak = 0_u32;
-            loop {
-                if collector.refresh_all().await {
-                    failure_streak = 0;
-                } else {
-                    failure_streak = failure_streak.saturating_add(1);
-                }
-                tokio::select! {
-                    _ = tokio::time::sleep(poll_delay(now_secs(), failure_streak)) => {}
-                    _ = collector.shared.wake.notified() => {}
-                }
-            }
-        });
-        true
-    }
-
-    pub fn snapshots(&self) -> Vec<CodexUsageSnapshot> {
-        let mut inner = self.shared.inner.lock().unwrap();
-        self.load_if_needed(&mut inner);
-        inner.snapshots.values().cloned().collect()
-    }
-
-    pub async fn refresh_all(&self) -> bool {
-        let mut result = match self.shared.refresh.try_lock() {
-            Ok(guard) => guard,
-            // Manual and scheduled requests share the current collection result.
-            Err(_) => return *self.shared.refresh.lock().await,
-        };
-        *result = self.collect_profiles().await;
-        *result
-    }
-
-    async fn collect_profiles(&self) -> bool {
-        let profiles: Vec<_> = self
-            .shared
-            .inner
-            .lock()
-            .unwrap()
-            .profiles
-            .values()
-            .cloned()
-            .collect();
-        if profiles.is_empty() {
-            return true;
-        }
-        let home = match std::env::var("HOME") {
-            Ok(home) => PathBuf::from(home),
-            Err(_) => {
-                self.record_all_failures(&profiles, "codex_usage_home_unavailable");
-                return false;
-            }
-        };
+    async fn prepare(home: &Path) -> Result<Self::Context, &'static str> {
         let sqlite_home =
-            match crate::accounts::resolve_codex_canonical_state_directory(&home.to_string_lossy())
-            {
-                Ok(sqlite_home) => sqlite_home,
-                Err(_) => {
-                    self.record_all_failures(&profiles, "codex_usage_canonical_state_unavailable");
-                    return false;
-                }
-            };
-        let resolved = match resolve_codex_environment(home.clone()).await {
-            Ok(resolved) => resolved,
-            Err(code) => {
-                self.record_all_failures(&profiles, code);
-                return false;
-            }
-        };
-
-        let mut any_success = false;
-        for (index, profile) in profiles.iter().enumerate() {
-            if index > 0 {
-                tokio::time::sleep(INACTIVE_PROBE_STAGGER).await;
-            }
-            if let Some(codex_home) = profile.codex_home.clone() {
-                let _ = tauri::async_runtime::spawn_blocking(move || {
-                    sweep_abandoned_marketplace_staging(&codex_home, SystemTime::now())
-                })
-                .await;
-            }
-            let attempted_at = now_secs();
-            let result = if profile.codex_home.is_some() {
-                probe_profile(&resolved, &home, &sqlite_home, profile).await
-            } else {
-                Err("codex_usage_credential_unavailable")
-            };
-            any_success |= result.is_ok();
-            self.record_result(profile, attempted_at, result);
-        }
-        any_success
+            crate::accounts::resolve_codex_canonical_state_directory(&home.to_string_lossy())
+                .map_err(|_| "codex_usage_canonical_state_unavailable")?;
+        let resolved = resolve_codex_environment(home.to_path_buf()).await?;
+        Ok(CodexUsageContext {
+            resolved,
+            sqlite_home,
+        })
     }
 
-    fn record_all_failures(&self, profiles: &[ValidatedProfile], code: &'static str) {
-        let attempted_at = now_secs();
-        for profile in profiles {
-            self.record_result(profile, attempted_at, Err(code));
-        }
+    async fn read<'a>(
+        context: &'a Self::Context,
+        home: &'a Path,
+        _account: &'a UsageAccount,
+        codex_home: &'a Path,
+    ) -> Result<Self::Reading, &'static str> {
+        let staging = codex_home.to_path_buf();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            sweep_abandoned_marketplace_staging(&staging, SystemTime::now())
+        })
+        .await;
+        probe_profile(&context.resolved, home, &context.sqlite_home, codex_home).await
     }
-
-    fn record_result(
-        &self,
-        profile: &ValidatedProfile,
-        attempted_at: u64,
-        result: Result<PolledUsage, &'static str>,
-    ) {
-        let key = credential_key(profile.credential_id.as_deref());
-        let mut inner = self.shared.inner.lock().unwrap();
-        let Some(current) = inner.profiles.get(&key) else {
-            return;
-        };
-        if current.codex_home != profile.codex_home {
-            return;
-        }
-        let snapshot = inner
-            .snapshots
-            .entry(key)
-            .or_insert_with(|| CodexUsageSnapshot {
-                credential_id: profile.credential_id.clone(),
-                ..CodexUsageSnapshot::default()
-            });
-        apply_probe_result(snapshot, attempted_at, result);
-        let _ = persist_cache(&inner.snapshots);
-    }
-}
-
-struct PolledUsage {
-    rate_limits: Vec<CodexPolledRateLimit>,
-    rate_limit_resets_available: Option<u64>,
-}
-
-fn apply_probe_result(
-    snapshot: &mut CodexUsageSnapshot,
-    attempted_at: u64,
-    result: Result<PolledUsage, &'static str>,
-) {
-    snapshot.attempted_at = Some(attempted_at);
-    match result {
-        Ok(usage) => {
-            snapshot.captured_at = Some(attempted_at);
-            snapshot.error = None;
-            snapshot.rate_limits = usage.rate_limits;
-            snapshot.rate_limit_resets_available = usage.rate_limit_resets_available;
-        }
-        Err(code) => {
-            // 마지막 성공값은 절대 지우지 않는다. 오류는 이번 시도 상태만
-            // 설명하며, UI가 capturedAt과 함께 stale로 표시한다.
-            snapshot.error = Some(code.to_string());
-        }
-    }
-}
-
-#[tauri::command(async)]
-pub fn codex_usage_profiles_sync(
-    state: tauri::State<'_, CodexUsageCollector>,
-    profiles: Vec<CodexUsageProfileInput>,
-) -> Result<(), String> {
-    state.sync_profiles(profiles)
 }
 
 async fn resolve_codex_environment(
@@ -373,12 +100,8 @@ async fn probe_profile(
     resolved: &crate::provider_preflight::ResolvedLoginCommandEnvironment,
     home: &Path,
     sqlite_home: &Path,
-    profile: &ValidatedProfile,
-) -> Result<PolledUsage, &'static str> {
-    let codex_home = profile
-        .codex_home
-        .as_ref()
-        .ok_or("codex_usage_credential_unavailable")?;
+    codex_home: &Path,
+) -> Result<CodexUsageReading, &'static str> {
     if !std::fs::metadata(codex_home.join("auth.json")).is_ok_and(|metadata| metadata.is_file()) {
         return Err("codex_usage_not_signed_in");
     }
@@ -435,7 +158,7 @@ async fn probe_profile(
 async fn run_protocol(
     stdin: &mut ChildStdin,
     stdout: &mut BufReader<ChildStdout>,
-) -> Result<PolledUsage, &'static str> {
+) -> Result<CodexUsageReading, &'static str> {
     write_message(
         stdin,
         serde_json::json!({
@@ -516,7 +239,7 @@ async fn read_response(
     }
 }
 
-fn parse_rate_limits(response: &serde_json::Value) -> Result<PolledUsage, &'static str> {
+fn parse_rate_limits(response: &serde_json::Value) -> Result<CodexUsageReading, &'static str> {
     let result = response
         .get("result")
         .and_then(serde_json::Value::as_object)
@@ -545,7 +268,7 @@ fn parse_rate_limits(response: &serde_json::Value) -> Result<PolledUsage, &'stat
     if limits.is_empty() && rate_limit_resets_available.is_none() {
         return Err("codex_usage_no_rate_limits");
     }
-    Ok(PolledUsage {
+    Ok(CodexUsageReading {
         rate_limits: limits,
         rate_limit_resets_available,
     })
@@ -655,122 +378,12 @@ async fn stop_probe(child: &mut Child) {
     }
 }
 
-fn credential_key(credential_id: Option<&str>) -> String {
-    credential_id
-        .map(|credential_id| format!("credential:{credential_id}"))
-        .unwrap_or_else(|| DEFAULT_CREDENTIAL_KEY.to_string())
-}
-
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0)
-}
-
-fn poll_delay(now: u64, failure_streak: u32) -> Duration {
-    let multiplier = 1_u32 << failure_streak.min(2);
-    POLL_INTERVAL * multiplier + Duration::from_secs(now % (MAX_POLL_JITTER.as_secs() + 1))
-}
-
-#[cfg(unix)]
-fn owner_only(options: &mut std::fs::OpenOptions) {
-    use std::os::unix::fs::OpenOptionsExt;
-    options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-}
-
-#[cfg(not(unix))]
-fn owner_only(_options: &mut std::fs::OpenOptions) {}
-
-#[cfg(not(windows))]
-fn replace_cache_file(temporary: &Path, destination: &Path) -> Result<(), String> {
-    std::fs::rename(temporary, destination)
-        .map_err(|_| "codex_usage_cache_publish_failed".to_string())
-}
-
-#[cfg(windows)]
-fn replace_cache_file(temporary: &Path, destination: &Path) -> Result<(), String> {
-    if !destination.exists() {
-        return std::fs::rename(temporary, destination)
-            .map_err(|_| "codex_usage_cache_publish_failed".to_string());
-    }
-    let backup = destination.with_extension("backup");
-    let _ = std::fs::remove_file(&backup);
-    std::fs::rename(destination, &backup)
-        .map_err(|_| "codex_usage_cache_publish_failed".to_string())?;
-    match std::fs::rename(temporary, destination) {
-        Ok(()) => {
-            let _ = std::fs::remove_file(backup);
-            Ok(())
-        }
-        Err(_) => {
-            let _ = std::fs::rename(backup, destination);
-            Err("codex_usage_cache_publish_failed".to_string())
-        }
-    }
-}
-
-fn persist_cache(snapshots: &BTreeMap<String, CodexUsageSnapshot>) -> Result<(), String> {
-    let path = CodexUsageCollector::cache_path()?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| "codex_usage_cache_path_invalid".to_string())?;
-    std::fs::create_dir_all(parent).map_err(|_| "codex_usage_cache_unavailable".to_string())?;
-    let cache = SnapshotCache {
-        schema_version: CACHE_SCHEMA_VERSION,
-        snapshots: snapshots.values().cloned().collect(),
-    };
-    let bytes =
-        serde_json::to_vec(&cache).map_err(|_| "codex_usage_cache_encode_failed".to_string())?;
-    let temporary = path.with_extension(format!(
-        "tmp.{}.{}",
-        std::process::id(),
-        TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed),
-    ));
-    let result = (|| {
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        owner_only(&mut options);
-        let mut file = options
-            .open(&temporary)
-            .map_err(|_| "codex_usage_cache_unavailable".to_string())?;
-        file.write_all(&bytes)
-            .and_then(|_| file.sync_all())
-            .map_err(|_| "codex_usage_cache_write_failed".to_string())?;
-        replace_cache_file(&temporary, &path)?;
-        #[cfg(unix)]
-        std::fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|_| "codex_usage_cache_publish_failed".to_string())?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(temporary);
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[tokio::test]
-    async fn concurrent_refresh_joins_the_running_collection_result() {
-        let collector = CodexUsageCollector::default();
-        let mut running = collector.shared.refresh.lock().await;
-        *running = false;
-        let joined = collector.refresh_all();
-        tokio::pin!(joined);
-        tokio::select! {
-            biased;
-            _ = &mut joined => panic!("refresh must wait for the running collection"),
-            _ = tokio::task::yield_now() => {}
-        }
-        drop(running);
-        // An extra pass over the empty catalog would return true, hiding failure.
-        assert!(!joined.await);
-        assert!(collector.refresh_all().await);
-    }
+    use crate::account_usage_collector::apply_check as apply_probe_result;
+    use crate::usage::CodexUsageSnapshot;
+    use std::io::Write as _;
 
     #[cfg(unix)]
     #[tokio::test]
@@ -799,23 +412,16 @@ printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":21,"rese
             )
             .unwrap();
         script.sync_all().unwrap();
+        // Linux refuses to execute a file still open for writing.
+        drop(script);
 
         let resolved = crate::provider_preflight::ResolvedLoginCommandEnvironment {
             executable,
             environment: BTreeMap::new(),
         };
-        let profile = ValidatedProfile {
-            credential_id: Some("acc-a".into()),
-            codex_home: Some(codex_home),
-        };
-        let limits = probe_profile(
-            &resolved,
-            directory.path(),
-            directory.path(),
-            &profile,
-        )
-        .await
-        .unwrap();
+        let limits = probe_profile(&resolved, directory.path(), directory.path(), &codex_home)
+            .await
+            .unwrap();
         assert_eq!(limits.rate_limits[0].used_percent, Some(21.0));
         assert_eq!(limits.rate_limits[0].used_percent_weekly, Some(34.0));
         assert_eq!(limits.rate_limit_resets_available, Some(3));
@@ -891,10 +497,10 @@ printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":21,"rese
             apply_probe_result(&mut snapshot, 100, parse_rate_limits(&response));
             let encoded = serde_json::to_string(&snapshot).unwrap();
             let decoded: CodexUsageSnapshot = serde_json::from_str(&encoded).unwrap();
-            assert_eq!(decoded.rate_limit_resets_available, Some(count));
+            assert_eq!(decoded.reading.rate_limit_resets_available, Some(count));
             assert_eq!(decoded.captured_at, Some(100));
             apply_probe_result(&mut snapshot, 200, Err("codex_usage_unavailable"));
-            assert_eq!(snapshot.rate_limit_resets_available, Some(count));
+            assert_eq!(snapshot.reading.rate_limit_resets_available, Some(count));
             assert_eq!(snapshot.captured_at, Some(100));
             assert!(snapshot.error.is_some());
         }
@@ -910,10 +516,10 @@ printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":21,"rese
                 "rateLimitResetCredits": reset_credits
             }});
             apply_probe_result(&mut snapshot, 300, parse_rate_limits(&response));
-            assert_eq!(snapshot.rate_limit_resets_available, None);
+            assert_eq!(snapshot.reading.rate_limit_resets_available, None);
             assert_eq!(snapshot.captured_at, Some(300));
             assert!(snapshot.error.is_none());
-            assert_eq!(snapshot.rate_limits[0].used_percent, Some(20.0));
+            assert_eq!(snapshot.reading.rate_limits[0].used_percent, Some(20.0));
         }
     }
 
@@ -963,8 +569,8 @@ printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":21,"rese
             "rateLimits": [{ "limitId": "codex", "usedPercent": 0 }]
         }))
         .unwrap();
-        assert_eq!(old_cache.rate_limits[0].used_percent, Some(0.0));
-        assert_eq!(old_cache.rate_limit_resets_available, None);
+        assert_eq!(old_cache.reading.rate_limits[0].used_percent, Some(0.0));
+        assert_eq!(old_cache.reading.rate_limit_resets_available, None);
     }
 
     #[test]
@@ -1030,29 +636,19 @@ printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":21,"rese
             captured_at: Some(100),
             attempted_at: Some(100),
             error: None,
-            rate_limit_resets_available: None,
-            rate_limits: vec![CodexPolledRateLimit {
-                limit_id: "codex".into(),
-                used_percent: Some(30.0),
-                ..CodexPolledRateLimit::default()
-            }],
+            reading: CodexUsageReading {
+                rate_limit_resets_available: None,
+                rate_limits: vec![CodexPolledRateLimit {
+                    limit_id: "codex".into(),
+                    used_percent: Some(30.0),
+                    ..CodexPolledRateLimit::default()
+                }],
+            },
         };
         apply_probe_result(&mut snapshot, 200, Err("codex_usage_unavailable"));
         assert_eq!(snapshot.captured_at, Some(100));
         assert_eq!(snapshot.attempted_at, Some(200));
-        assert_eq!(snapshot.rate_limits[0].used_percent, Some(30.0));
-    }
-
-    #[test]
-    fn poll_jitter_is_bounded_without_shortening_the_cadence() {
-        assert!(poll_delay(0, 0) >= POLL_INTERVAL);
-        assert!(poll_delay(59, 0) <= POLL_INTERVAL + MAX_POLL_JITTER);
-        assert!(poll_delay(0, 3) >= POLL_INTERVAL * 4);
-    }
-
-    #[test]
-    fn explicit_default_named_credential_does_not_alias_the_implicit_default() {
-        assert_ne!(credential_key(None), credential_key(Some("default")));
+        assert_eq!(snapshot.reading.rate_limits[0].used_percent, Some(30.0));
     }
 
     #[test]

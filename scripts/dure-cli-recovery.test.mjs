@@ -205,11 +205,76 @@ test("get lists each login once with its local profile name, usage windows and r
     { referenceId: "acc-work-a", aliasReferenceIds: ["acc-work-b"], credentialGeneration: "credential-v2-work",
       name: null, profileName: "claude-work", signedIn: true, usage: {
         fiveHour: { usedPercent: 42, resetsAtMs: NOW + 2 * HOUR + 10 * MINUTE },
-        weekly: { usedPercent: 61.4, resetsAtMs: NOW + 99 * HOUR },
+        weekly: { usedPercent: 61.4, resetsAtMs: NOW + 99 * HOUR }, modelWeekly: [], otherWindows: [],
         observedAtMs: NOW - 12 * MINUTE, credits: null, usageResetsAvailable: null, lastCheck: null } },
     { referenceId: "acc-unmatched", aliasReferenceIds: [], credentialGeneration: "credential-v2-elsewhere",
       name: null, profileName: null, signedIn: null, usage: null },
   ]);
+});
+
+test("claude usage lists each model's weekly window from the app's account check, statusLine as fallback", async () => {
+  const { home, environment } = localAccountsFixture({
+    profiles: { "claude-fable": "credential-v2-fable", "claude-busy": "credential-v2-busy",
+      "claude-line": "credential-v2-line" },
+    credentials: { "claude-fable": "{}", "claude-busy": "{}", "claude-line": "{}" },
+    usage: {
+      // Older than the check: the check's windows describe this login.
+      "claude-fable": { captured_at: seconds(NOW - 3 * HOUR), rate_limits: {
+        seven_day: { used_percentage: 5, resets_at: seconds(NOW + 99 * HOUR) } } },
+      // An active session's newer statusLine reading gives the 5h and weekly windows.
+      "claude-busy": { captured_at: seconds(NOW - MINUTE), rate_limits: {
+        five_hour: { used_percentage: 64, resets_at: seconds(NOW + HOUR) },
+        seven_day: { used_percentage: 33, resets_at: seconds(NOW + 99 * HOUR) } } },
+      "claude-line": { captured_at: seconds(NOW - 2 * MINUTE), rate_limits: {
+        seven_day: { used_percentage: 12, resets_at: seconds(NOW + 30 * HOUR) } } },
+    },
+  });
+  const window = (kind, used, resetsAt, extra = {}) => ({ id: "w", kind, model: null, usedPercent: used,
+    resetsAt: resetsAt === null ? null : seconds(resetsAt), ...extra });
+  writeFileSync(join(home, ".dure", "claude-usage-snapshots.json"), JSON.stringify({ schemaVersion: 1, snapshots: [
+    { credentialId: "acc-fable", capturedAt: seconds(NOW - 20 * MINUTE), attemptedAt: seconds(NOW - 5 * MINUTE),
+      error: "claude_usage_login_expired", windows: [
+        window("fiveHour", 99, NOW - MINUTE),
+        window("weekly", 41, NOW + 50 * HOUR),
+        window("modelWeekly", 100, NOW + 26 * HOUR, { model: "Fable 5.1" }),
+        window("modelWeekly", 7, null, { model: "Opus" }),
+        window("modelWeekly", 90, NOW - HOUR, { model: "Sonnet" }),
+        window("modelWeekly", 50, NOW + HOUR, { model: "\u001b[31mred" }),
+        window("other", 3, NOW + 2 * HOUR, { id: "seven_day_lantern" }),
+        window("other", 3, NOW + 2 * HOUR, { id: "Not A Name" }),
+      ] },
+    { credentialId: "acc-busy", capturedAt: seconds(NOW - 10 * MINUTE), attemptedAt: seconds(NOW - 10 * MINUTE),
+      error: null, windows: [window("weekly", 30, NOW + 99 * HOUR),
+        window("modelWeekly", 80, NOW + 99 * HOUR, { model: "Fable" })] },
+  ] }));
+  const result = { schemaVersion: 1, policy: null, profiles: [
+    claudeProfile("acc-fable", "credential-v2-fable"),
+    claudeProfile("acc-busy", "credential-v2-busy"),
+    claudeProfile("acc-line", "credential-v2-line"),
+  ] };
+  const human = accountsCommand({ result, home, environment });
+  assert.equal(await human.run(), true);
+  assert.deepEqual(human.output.join("\n").split("\n").slice(1, 4), [
+    "  acc-fable  claude-fable  weekly 41% (resets in 2d 2h) · weekly Fable 5.1 100% (resets in 1d 2h) · " +
+      "weekly Opus 7% (reset time unknown) · seven_day_lantern 3% (resets in 2h) · observed 20m ago · " +
+      "check failed 5m ago (login expired)",
+    "  acc-busy   claude-busy   5h 64% (resets in 1h) · weekly 33% (resets in 4d 3h) · " +
+      "weekly Fable 80% (resets in 4d 3h) · observed 1m ago",
+    "  acc-line   claude-line   weekly 12% (resets in 1d 6h) · observed 2m ago",
+  ]);
+  const json = accountsCommand({ result, home, environment, args: ["--json"] });
+  assert.equal(await json.run(), true);
+  assert.deepEqual(JSON.parse(json.output[0]).registeredAccounts[0].usage, {
+    fiveHour: null,
+    weekly: { usedPercent: 41, resetsAtMs: seconds(NOW + 50 * HOUR) * 1000 },
+    modelWeekly: [
+      { model: "Fable 5.1", usedPercent: 100, resetsAtMs: seconds(NOW + 26 * HOUR) * 1000 },
+      { model: "Opus", usedPercent: 7, resetsAtMs: null },
+    ],
+    otherWindows: [{ name: "seven_day_lantern", usedPercent: 3, resetsAtMs: seconds(NOW + 2 * HOUR) * 1000 }],
+    observedAtMs: seconds(NOW - 20 * MINUTE) * 1000, credits: null, usageResetsAvailable: null,
+    lastCheck: { checkedAtMs: seconds(NOW - 5 * MINUTE) * 1000, error: "claude_usage_login_expired" },
+  });
 });
 
 test("a policy name labels its login and its ID is offered first", async () => {
@@ -581,10 +646,11 @@ test("codex usage explains a full weekly window that keeps working and a failed 
   ]);
   const usage = JSON.parse(await run(["--json"])).registeredAccounts.map((account) => account.usage);
   assert.deepEqual(usage[0], { fiveHour: null,
-    weekly: { usedPercent: 100, resetsAtMs: seconds(NOW + 110 * HOUR) * 1000 },
+    weekly: { usedPercent: 100, resetsAtMs: seconds(NOW + 110 * HOUR) * 1000 }, modelWeekly: [], otherWindows: [],
     observedAtMs: seconds(NOW - 3 * MINUTE) * 1000, credits: { unlimited: false, balance: 40147.943681 },
     usageResetsAvailable: 2, lastCheck: { checkedAtMs: seconds(NOW - 3 * MINUTE) * 1000, error: null } });
-  assert.deepEqual(usage[2], { fiveHour: null, weekly: null, observedAtMs: null, credits: null,
+  assert.deepEqual(usage[2], { fiveHour: null, weekly: null, modelWeekly: [], otherWindows: [],
+    observedAtMs: null, credits: null,
     usageResetsAvailable: null, lastCheck: { checkedAtMs: seconds(NOW - 2 * MINUTE) * 1000,
       error: "codex_usage_not_signed_in" } });
 });

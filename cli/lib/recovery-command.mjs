@@ -25,15 +25,19 @@ and, for the local backend, its profile directory, "signed out" when that
 directory holds no usable Claude login (none stored, or claude auth status
 reports it logged out or past its time limit) with the command that signs it
 in again, and the usage the app last observed: each limit window the provider
-reports, with its reset time (unknown until observed). For Codex it adds the
-credit balance, available usage resets and a failed latest check. The app
-checks each Codex account about every 15 minutes while it runs, so a reading
-can trail recent work, and an account past its window can keep working while
-it has credits.
+reports, with its reset time (unknown until observed), and a failed latest
+check. For Claude that includes each model's own weekly window (such as
+"weekly Fable"); for Codex it adds the credit balance and available usage
+resets. The app checks each Claude and Codex account about every 15 minutes
+while it runs, so a reading can trail recent work, and a Codex account past
+its window can keep working while it has credits. A Claude check reads the
+account's stored login and never renews it: past the login's expiry the check
+fails until Claude Code next uses that account, and the last reading stays.
 IDs registered for the same login select the same credential. get --json
 returns the policy, the registered profile handles and this summary as
 registeredAccounts, where signedIn is true, false (signed out) or null (not
-known).
+known), and usage holds fiveHour, weekly, modelWeekly ({model, usedPercent,
+resetsAtMs}) and otherWindows ({name, usedPercent, resetsAtMs}).
 Other results are JSON. accounts is an ordered array of {profile, name}; copy
 exact profiles from get --json.
 Use revision 0 for a new policy. Only explicitly allowed accounts are used.
@@ -48,9 +52,10 @@ Joining a workspace does not register or offer personal accounts. Unknown usage
 is eligible; optional observations contain {profile, usedPercent, observedAtMs}.
 Before switching, the backend also reads the usage the app last observed on
 its host. An attempt skips a login the app or the provider reports signed out
-(or past its time limit), a login that signs in as the same provider account as
-the agent's current login, and a target that fails to start, then tries the
-next allowed account; each account is tried at most once per attempt.
+(or past its time limit), a login whose own window for the agent's selected
+model is used up and not yet reset, a login that signs in as the same provider
+account as the agent's current login, and a target that fails to start, then
+tries the next allowed account; each account is tried at most once per attempt.
 A failed or uncertain attempt is retained. Reading status never resends work.
 For a manual same-conversation account change (Claude or Codex), use
 dure runs switch-account <name-or-id> --account ACCOUNT_ID; see dure runs --help.

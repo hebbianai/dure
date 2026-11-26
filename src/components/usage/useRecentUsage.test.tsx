@@ -12,7 +12,7 @@ vi.mock("@/lib/ipc", () => ({
 	usageRecent: (hours: number) => usageRecentMock(hours),
 	usageRefresh: (provider: string) => usageRefreshMock(provider),
 	claudeCollectorStatus: () => collectorStatusMock(),
-	codexUsageProfilesSync: (profiles: unknown) => profilesSyncMock(profiles),
+	accountUsageProfilesSync: (profiles: unknown) => profilesSyncMock(profiles),
 }));
 
 import { useRecentUsage } from "@/components/usage/useRecentUsage";
@@ -87,7 +87,7 @@ describe("useRecentUsage", () => {
 		expect(rendered.result.current.refreshing).toBeNull();
 	});
 
-	it("codex 카탈로그 동기화를 먼저 끝낸 뒤 5h/24h 창과 수집기 상태를 채운다", async () => {
+	it("계정 사용량 확인 카탈로그 동기화를 먼저 끝낸 뒤 5h/24h 창과 수집기 상태를 채운다", async () => {
 		let releaseSync!: () => void;
 		profilesSyncMock.mockReturnValue(
 			new Promise<void>((resolve) => {
@@ -100,12 +100,28 @@ describe("useRecentUsage", () => {
 		collectorStatusMock.mockResolvedValue("installed");
 		const accounts: AccountProfile[] = [
 			{ id: "acc-cx", provider: "codex", name: "work", dir: "/accounts/work" },
+			{
+				id: "acc-cl",
+				provider: "claude",
+				name: "fable",
+				dir: "/accounts/fable",
+			},
 		];
 
 		const rendered = renderHook(() => useRecentUsage(accounts));
 		expect(profilesSyncMock).toHaveBeenCalledWith([
-			{ credentialId: null, directory: null },
-			{ credentialId: "acc-cx", directory: "/accounts/work" },
+			{ providerId: "codex", credentialId: null, directory: null },
+			{
+				providerId: "codex",
+				credentialId: "acc-cx",
+				directory: "/accounts/work",
+			},
+			{ providerId: "claude", credentialId: null, directory: null },
+			{
+				providerId: "claude",
+				credentialId: "acc-cl",
+				directory: "/accounts/fable",
+			},
 		]);
 		// Reports load only after the catalog sync settles.
 		expect(usageRecentMock).not.toHaveBeenCalled();

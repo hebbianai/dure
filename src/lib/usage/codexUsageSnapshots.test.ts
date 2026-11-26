@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderUsage } from "@/lib/usage/usageMeter";
-import type { AccountProfile } from "@/types";
 import {
 	applyCodexSnapshot,
 	codexSnapshotForCredential,
 	codexSnapshotFreshness,
-	codexUsageProfiles,
 } from "./codexUsageSnapshots";
 
 const EMPTY_USAGE: ProviderUsage = {
@@ -23,17 +21,6 @@ const EMPTY_USAGE: ProviderUsage = {
 };
 
 describe("codexUsageSnapshots", () => {
-	it("includes default and only registered Codex profiles", () => {
-		const accounts: AccountProfile[] = [
-			{ id: "cx", name: "Codex", provider: "codex", dir: "/profiles/cx" },
-			{ id: "cl", name: "Claude", provider: "claude", dir: "/profiles/cl" },
-		];
-		expect(codexUsageProfiles(accounts)).toEqual([
-			{ credentialId: null, directory: null },
-			{ credentialId: "cx", directory: "/profiles/cx" },
-		]);
-	});
-
 	it("keeps token accounting while applying the last successful limits", () => {
 		const usage = applyCodexSnapshot(EMPTY_USAGE, {
 			credentialId: "cx",

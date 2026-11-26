@@ -178,13 +178,33 @@ async fn recovery_pool_fixture_with(
     prepare_host: impl FnOnce(&mut ServiceState, &Path) -> bool,
     reset_at_ms: Option<i64>,
 ) -> (TempDir, Arc<ServiceState>, Arc<RecoveryRuntime>, AgentIdV1) {
+    recovery_pool_fixture_on(
+        "codex",
+        None,
+        accounts,
+        credential_unavailable,
+        prepare_host,
+        reset_at_ms,
+    )
+    .await
+}
+
+/// `recovery_pool_fixture_with` for an agent of `provider` running `model`.
+async fn recovery_pool_fixture_on(
+    provider: &str,
+    model: Option<&str>,
+    accounts: &[&str],
+    credential_unavailable: &[&str],
+    prepare_host: impl FnOnce(&mut ServiceState, &Path) -> bool,
+    reset_at_ms: Option<i64>,
+) -> (TempDir, Arc<ServiceState>, Arc<RecoveryRuntime>, AgentIdV1) {
     let (root, mut state, _, _) = fixture(Vec::new()).await;
     make_fixture_mutation_authority(&mut state);
     state.agent_providers = Arc::new(provider_extension::test_structured_agent_provider_registry(
-        "codex",
+        provider,
     ));
     let agent_id = AgentIdV1::new("account-recovery-agent").unwrap();
-    let provider_id = ProviderIdV1::new("codex").unwrap();
+    let provider_id = ProviderIdV1::new(provider).unwrap();
     state
         .store
         .upsert_agent(&AgentRecordV1 {
@@ -197,9 +217,14 @@ async fn recovery_pool_fixture_with(
         })
         .await
         .unwrap();
-    let (_, binding) =
-        initialize_structured_source_for_provider(&state, agent_id.clone(), provider_id.clone())
-            .await;
+    let (_, binding) = initialize_structured_source_on_model(
+        &state,
+        agent_id.clone(),
+        provider_id.clone(),
+        Some("conversation-retained"),
+        model,
+    )
+    .await;
     let accounts_root = state
         .descriptor
         .database_path
@@ -210,7 +235,7 @@ async fn recovery_pool_fixture_with(
     fs::set_permissions(&accounts_root, fs::Permissions::from_mode(0o700)).unwrap();
     let mut pool = Vec::new();
     for reference in accounts {
-        let directory_name = format!("codex-{reference}");
+        let directory_name = format!("{provider}-{reference}");
         let profile_directory = accounts_root.join(&directory_name);
         fs::create_dir(&profile_directory).unwrap();
         fs::set_permissions(&profile_directory, fs::Permissions::from_mode(0o700)).unwrap();
@@ -219,7 +244,7 @@ async fn recovery_pool_fixture_with(
             .register(
                 provider_credential_profile::RegisterProviderCredentialProfileBodyV1 {
                     schema_version: 1,
-                    provider_id: "codex".into(),
+                    provider_id: provider.into(),
                     reference_id: (*reference).into(),
                     profile_directory_name: directory_name,
                 },
@@ -989,6 +1014,92 @@ async fn recovery_skips_signed_out_full_and_same_logins_the_app_observed() {
     assert_eq!(runtime.opens.load(Ordering::SeqCst), 1);
     assert_eq!(selected_reference(&state, &agent_id).await, "working");
     assert_eq!(runtime.commands.inputs.lock().unwrap().len(), 1);
+}
+
+/// An account whose own Fable window is used up refuses a Fable agent even
+/// while its weekly window over every model has headroom; an agent on
+/// another model still gets it, as the account with the most headroom.
+#[tokio::test]
+async fn recovery_skips_an_account_whose_window_for_the_agents_model_is_full() {
+    let now = now_ms().unwrap() / 1000;
+    let pool = |state: &mut ServiceState, home: &Path| {
+        let window = |kind: &str, model: Option<&str>, used: f64| {
+            json!({"id": "window", "kind": kind, "model": model, "usedPercent": used,
+                "resetsAt": now + 6000})
+        };
+        let path = home.join("claude-usage-snapshots.json");
+        fs::write(
+            &path,
+            json!({"schemaVersion": 1, "snapshots": [
+                {"credentialId": "fable-full", "capturedAt": now - 10, "attemptedAt": now - 10,
+                    "error": null, "windows": [
+                    window("weekly", None, 30.0),
+                    window("modelWeekly", Some("Fable"), 100.0),
+                ]},
+                {"credentialId": "working", "capturedAt": now - 10, "attemptedAt": now - 10,
+                    "error": null, "windows": [
+                    window("weekly", None, 50.0),
+                    window("modelWeekly", Some("Fable"), 20.0),
+                ]},
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        // Every login answers signed in, without running Claude Code.
+        state.credential_profiles = Arc::new(
+            provider_credential_profile::ProviderCredentialProfileRegistry::with_launch_preparer(
+                home.to_path_buf(),
+                Arc::clone(&state.store),
+                Arc::new(SignedOutProfiles {
+                    signed_out: Vec::new(),
+                    delegate: provider_credential_profile::NativeProviderCredentialProfileLaunchPreparer::new(
+                        home.to_path_buf(),
+                        Some(home.to_path_buf()),
+                    ),
+                }),
+            ),
+        );
+        false
+    };
+    let (_root, state, runtime, agent_id) = recovery_pool_fixture_on(
+        "claude",
+        Some("claude-fable-5-2"),
+        &["fable-full", "working"],
+        &[],
+        pool,
+        None,
+    )
+    .await;
+    let advanced = crate::agent_recovery::advance(&state, &agent_id).await;
+    let record = recovery_record(&state, &agent_id).await;
+    assert_eq!(
+        advanced,
+        Ok(crate::agent_recovery::AgentRecoveryHoldV1::Owned),
+        "{record:?}"
+    );
+    assert_eq!(reference_ids(&record.unusable_targets), ["fable-full"]);
+    assert_eq!(runtime.opens.load(Ordering::SeqCst), 1);
+    assert_eq!(selected_reference(&state, &agent_id).await, "working");
+
+    let (_root, state, _, agent_id) = recovery_pool_fixture_on(
+        "claude",
+        Some("sonnet"),
+        &["fable-full", "working"],
+        &[],
+        pool,
+        None,
+    )
+    .await;
+    let advanced = crate::agent_recovery::advance(&state, &agent_id).await;
+    let record = recovery_record(&state, &agent_id).await;
+    assert_eq!(
+        advanced,
+        Ok(crate::agent_recovery::AgentRecoveryHoldV1::Owned),
+        "{record:?}"
+    );
+    assert!(record.unusable_targets.is_empty());
+    assert_eq!(selected_reference(&state, &agent_id).await, "fable-full");
 }
 
 #[tokio::test]

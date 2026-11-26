@@ -118,7 +118,10 @@ export interface AccountLoginIdentity {
 export const accountLoginIdentity = (provider: Provider, dir?: string) =>
 	invoke<AccountLoginIdentity>("account_login_identity", { provider, dir });
 
-export interface CodexUsageProfileInput {
+/** One account the app's periodic account usage check reads. A null
+ * credential is the provider's default login. */
+export interface AccountUsageProfileInput {
+	providerId: "claude" | "codex";
 	credentialId: string | null;
 	directory: string | null;
 }
@@ -148,10 +151,11 @@ export interface CodexUsageSnapshot {
 	rateLimitResetsAvailable?: number | null;
 }
 
-/** 등록된 Codex credential catalog를 backend 수집기에 동기화한다. 토큰이나
+/** 등록된 Claude·Codex credential catalog를 backend 수집기에 동기화한다. 토큰이나
  * auth 내용은 넘기지 않으며, backend가 profile 경로를 다시 검증한다. */
-export const codexUsageProfilesSync = (profiles: CodexUsageProfileInput[]) =>
-	invoke<void>("codex_usage_profiles_sync", { profiles });
+export const accountUsageProfilesSync = (
+	profiles: AccountUsageProfileInput[],
+) => invoke<void>("account_usage_profiles_sync", { profiles });
 
 export interface UsageRecentReport {
 	claude: import("@/lib/usage/usageMeter").ProviderUsage;
