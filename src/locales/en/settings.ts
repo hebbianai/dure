@@ -793,6 +793,8 @@ export const settingsEnglishTranslations = {
 	"settings.stats.usage.startTitle": "Start tracking tokens",
 	"settings.stats.title": "Stats and usage",
 	"settings.notifications.suppressFocused.desc": "Skips the notification when you are already viewing the pane that triggered it.",
+	"settings.notifications.appIconBadge.title": "Dock badge",
+	"settings.notifications.appIconBadge.desc": "Shows how many agents need you on Dure's Dock icon, even when notifications are off.",
 	"settings.providers.capability.resumeById": "Resume a conversation",
 	"settings.appearance.scheme.import.readFailed": "Could not read the file",
 	"settings.appearance.scheme.import.readFailedCheckPath": "Could not read the file — check the path",

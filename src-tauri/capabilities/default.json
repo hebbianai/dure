@@ -30,6 +30,7 @@
     "core:window:allow-unminimize",
     "core:window:allow-set-focus",
     "core:window:allow-set-theme",
+    "core:window:allow-set-badge-count",
     "core:webview:allow-create-webview-window",
     "core:webview:allow-set-webview-focus",
     "window-focus-qa:default",

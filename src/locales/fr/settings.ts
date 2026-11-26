@@ -762,6 +762,8 @@ export const settings: Record<string, string> = {
 	"settings.stats.usage.startTitle": "Commencer le suivi des tokens",
 	"settings.stats.title": "Statistiques et utilisation",
 	"settings.notifications.suppressFocused.desc": "Ignore la notification si vous consultez déjà le pane qui l'a déclenchée.",
+	"settings.notifications.appIconBadge.title": "Pastille dans le Dock",
+	"settings.notifications.appIconBadge.desc": "Affiche sur l'icône de Dure dans le Dock le nombre d'agents à traiter, même si les notifications sont désactivées.",
 	"settings.providers.capability.resumeById": "Reprendre une conversation",
 	"settings.appearance.scheme.import.readFailed": "Impossible de lire le fichier",
 	"settings.appearance.scheme.import.readFailedCheckPath": "Impossible de lire le fichier — vérifiez le chemin",

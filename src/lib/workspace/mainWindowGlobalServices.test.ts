@@ -5,6 +5,7 @@ afterEach(() => vi.restoreAllMocks());
 
 const serviceNames = [
 	"attention",
+	"app-icon-badge",
 	"runtime-projection",
 	"managed-agent-semantic",
 	"provider-conversation-metadata",
@@ -44,6 +45,7 @@ function lifecycleFixture(failedStart?: ServiceName) {
 		},
 		services: {
 			installAttentionNotifier: () => install("attention"),
+			installAppIconBadge: () => install("app-icon-badge"),
 			installRuntimeProjectionReconciler: () => ({
 				request: vi.fn(),
 				stop: install("runtime-projection"),
@@ -173,6 +175,7 @@ test("starts and retires main-window services as one lifecycle unit", () => {
 
 	const stop = startMainWindowGlobalServices({
 		installAttentionNotifier: start("attention"),
+		installAppIconBadge: start("app-icon-badge"),
 		installRuntimeProjectionReconciler,
 		installManagedAgentSemanticObserver,
 		installProviderConversationMetadata: start("provider-conversation-metadata"),
@@ -186,6 +189,7 @@ test("starts and retires main-window services as one lifecycle unit", () => {
 
 	expect(calls).toEqual([
 		"start:attention",
+		"start:app-icon-badge",
 		"start:runtime-projection",
 		"start:managed-agent-semantic",
 		"start:provider-conversation-metadata",
@@ -203,7 +207,7 @@ test("starts and retires main-window services as one lifecycle unit", () => {
 	);
 
 	stop();
-	expect(calls.slice(10)).toEqual([
+	expect(calls.slice(11)).toEqual([
 		"stop:registry",
 		"stop:low-disk-worktrees",
 		"stop:discovery-state-gc",
@@ -211,6 +215,7 @@ test("starts and retires main-window services as one lifecycle unit", () => {
 		"stop:provider-conversation-metadata",
 		"stop:managed-agent-semantic",
 		"stop:runtime-projection",
+		"stop:app-icon-badge",
 		"stop:attention",
 	]);
 });
