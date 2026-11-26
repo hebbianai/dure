@@ -200,6 +200,14 @@ where
             }
         }
         *self.timeline_projection.lock().await = projection;
+        self.commit(
+            "thread/history/settled",
+            &json!({ "threadId": self.thread_id }),
+            vec![AgentTimelineMutationV1::SettleHistory {
+                settled_at_ms: now_ms()?,
+            }],
+        )
+        .await?;
         Ok(window)
     }
 

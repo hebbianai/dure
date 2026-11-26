@@ -129,7 +129,10 @@ async fn attach_inner<S: AgentTimelineStore + 'static>(
         connected: AtomicBool::new(true),
         accepting: AtomicBool::new(true),
     });
+    // The first sync reads the session's newest window; later ones only
+    // what Pi appends live.
     bridge.sync(&mut *bridge.projection.lock().await).await?;
+    bridge.journal.settle_history().await?;
     bridge
         .journal
         .append_once(vec![item(

@@ -266,6 +266,18 @@ async fn conversation(
         .collect()
 }
 
+async fn history_complete(
+    service: &Arc<AgentConversationService<crate::SqliteDomainStore>>,
+    binding: &AgentInteractionBindingV1,
+) -> bool {
+    service
+        .binding(&binding.interaction_session_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .history_complete
+}
+
 fn prompts_and_answers(range: std::ops::Range<usize>) -> Vec<String> {
     range
         .flat_map(|index| [format!("Prompt {index}"), format!("Answer {index}")])
@@ -296,6 +308,7 @@ async fn a_long_session_opens_with_its_newest_messages_behind_a_history_boundary
         ["limit=100", "limit=100&before=before-20"],
         "a window stops paging once it holds its bound"
     );
+    assert!(!history_complete(&service, &binding).await);
 }
 
 #[tokio::test]
@@ -310,6 +323,12 @@ async fn a_session_read_to_its_start_opens_without_a_boundary() {
         assert_eq!(
             conversation(&service, &binding).await,
             prompts_and_answers(0..count)
+        );
+        // The moved Terminal conversation is whole, so automatic turns and
+        // recovery admit it.
+        assert!(
+            history_complete(&service, &binding).await,
+            "{count} messages"
         );
     }
 }

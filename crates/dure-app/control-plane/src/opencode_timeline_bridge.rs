@@ -175,6 +175,7 @@ impl<S: AgentTimelineStore + 'static> OpenCodeTimelineBridge<S> {
         }
         projection.history_starts_at_ms = window.starts_at_ms;
         self.journal.append_once(window.items).await?;
+        self.journal.settle_history().await?;
         self.sync_pending(&mut projection).await?;
         self.journal
             .append_once(vec![item(

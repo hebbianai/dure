@@ -382,6 +382,10 @@ fn live_opencode_opens_a_long_terminal_conversation_in_chat() {
         );
         // The window holds the newest 64 MiB of the about 80 MB conversation.
         assert!((1..=40).contains(&first), "window starts at prompt {first}");
+        assert!(
+            !binding.history_complete,
+            "the window leaves the older history out"
+        );
         println!("Chat opened with Terminal prompts {first} to 199 behind a history boundary");
 
         let bridge = bridge(&manager, &binding).await;

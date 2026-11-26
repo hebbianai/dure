@@ -131,6 +131,10 @@ fn live_pi_opens_a_long_terminal_conversation_in_chat() {
             );
             // The window holds the newest 64 MiB of the about 80 MB history.
             assert!((1..=60).contains(&first), "window starts at prompt {first}");
+            assert!(
+                !binding.history_complete,
+                "the window leaves the older history out"
+            );
             println!(
                 "Chat opened in {opened:?} with Terminal prompts {first} to 199 behind a history boundary"
             );
@@ -167,7 +171,9 @@ fn live_pi_opens_a_long_terminal_conversation_in_chat() {
 /// message with no content. Chat shows them as the command lines the person
 /// ran, and its next prompt reaches a model that has the `!` command's output
 /// in its context and not the `!!` one's
-/// (`scripts/qa/pi-provider-conformance.mjs` checks the model's side).
+/// (`scripts/qa/pi-provider-conformance.mjs` checks the model's side). That
+/// prompt is an automatic turn, as a goal sends, which the store admits only
+/// for a history it settled as complete.
 #[test]
 #[ignore = "requires isolated actual Pi, deterministic model backend and Hmux fixture"]
 fn live_pi_opens_a_terminal_conversation_with_shell_commands_in_chat() {
@@ -214,15 +220,25 @@ fn live_pi_opens_a_terminal_conversation_with_shell_commands_in_chat() {
                 ]
             );
 
+            // The moved conversation is whole, so the store admits the
+            // automatic turn a goal continues it with.
+            assert!(binding.history_complete);
             let intent = turn_intent(
                 &binding,
                 "after-shell",
                 "DURE_PI_SHELL_CONTEXT continue after the shell commands.",
             );
-            service
-                .start_turn(bridge(&manager, &binding).await.as_ref(), &intent)
+            let continued = service
+                .continue_turn(
+                    bridge(&manager, &binding).await.as_ref(),
+                    &AgentContinueTurnRequestV1 {
+                        intent: intent.clone(),
+                        expected_cursor: page(&service, &binding).await.final_cursor,
+                    },
+                )
                 .await
                 .unwrap();
+            assert!(continued.is_some(), "the automatic turn is admitted");
             wait_completed(&service, &binding, &intent.turn_id).await;
             assert_eq!(
                 conversation(&service, &binding)
