@@ -47,6 +47,20 @@ iPhone 和 Android 版 Dure 应用不发送使用数据。它没有分析工具�
 - **推送通知（iPhone）**：开启后，手机会把 Apple 推送令牌交给已配对的电脑，由电脑保存。当智能体等待审批、完成一轮或向你提问时，电脑会把该令牌、事件类型和 ID、智能体的不透明 ID（以及可在提醒中回答的审批或进程的 ID）、你的通知设置以及应用语言发送到 Fly.io 上的 Dure 推送服务。该服务请求 Apple 显示固定的文字，例如“An agent is waiting for your approval.”。会话名称、提示词和智能体输出绝不会经过推送服务或 Apple。提醒到达时，手机会通过上述固定证书的连接直接询问已配对的电脑：这条提醒属于哪个智能体和项目、智能体问了什么或答了什么，并把它显示在提醒中。在应用设置中关闭 **Agent details in notifications**，所有提醒（包括锁屏上）都只显示固定文字。该服务不保存令牌；为避免重复提醒，它会把每次投递的单向哈希保留一小时。关闭通知后，令牌会从你的电脑上删除。
 - **反馈**：**Send feedback** 会在浏览器中打开 GitHub issue 表单，并预先填入应用版本和浏览器的 user agent。在 GitHub 上提交表单之前，不会发送任何内容。
 
+### 使用你自己的推送服务
+
+除非这台电脑指定了其他服务，手机提醒都会经过官方的 Dure 推送服务。运行自有服务的分支或社区构建，可以在存放 `hub-devices.json` 的文件夹，也就是 Dure 的应用数据文件夹（例如 macOS 上的 `~/Library/Application Support/io.hebbian.ade`）中创建名为 `hub-push-service.json` 的文件：
+
+```json
+{ "hub_push_service_version": 1, "endpoint": "https://push.example.org/" }
+```
+
+- 端点必须使用 HTTPS，且不能包含用户名、密码、查询参数或片段。Dure 会发送到它下面的 `v1/register` 和 `v1/send`，所以像 `https://push.example.org/dure` 这样带路径的地址也可以。
+- Dure 每次注册手机或发送提醒时都会重新读取该文件，因此修改无需重启即可生效。Dure 从不写入该文件。
+- 文件生效期间，**设置 → 移动端** 会显示该服务。如果文件无法读取或无效，Dure 将完全不发送手机提醒，也不会退回到官方服务。
+- 你指定的服务会收到官方服务会收到的同样信息：与这台电脑配对的所有手机的 Apple 推送令牌、上文所述的事件，以及这台电脑的证书。
+- Apple 只接受由为应用签名的团队的密钥发出的提醒，因此你的服务还需要你自己构建的 iPhone 版 Dure，以及你自己的 APNs 密钥和应用标识符。该服务的源代码位于仓库的 `mobile/push-service`。
+
 ## 文档站点
 
 `docs.dureai.dev` 会向同一个 PostHog 项目发送页面浏览，以便我们了解哪些页面有帮助。这是 Mintlify 的标准分析集成；项目会丢弃请求的 IP 地址，文档站点上的任何内容都不会与应用的安装 ID 关联。

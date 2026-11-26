@@ -924,7 +924,7 @@ fn serve_one(
         use dure_hub_protocol::push::PushSubscriptionResult;
         let saved = super::push::update_subscription(
             registry,
-            &hello.device.token,
+            hello.device,
             subscription.clone(),
             |subscription| super::push::check_registration(registry, subscription),
         );

@@ -2,27 +2,40 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { hubDeviceRevoke, hubDevices, hubPairingOffer, mobilePairingNetworks, mobilePairingQr } =
-	vi.hoisted(() => ({
-		hubDeviceRevoke: vi.fn(
-			async (): Promise<{
-				revoked: boolean;
-				failures: { name: string; failure: string }[];
-			}> => ({ revoked: true, failures: [] }),
-		),
-		hubDevices: vi.fn(async () => [] as { device_id: string; label: string }[]),
-		hubPairingOffer: vi.fn(
-			async (_label: string, _address: string, _relay: string) => ({
-				payload: "dure-hub:3?o=abc",
-				device_id: "phone-1",
-			}),
-		),
-		mobilePairingNetworks: vi.fn(async () => [
-			{ address: "100.64.1.2", interface: "utun3", tailnet: true },
-			{ address: "192.168.0.11", interface: "en0", tailnet: false },
-		]),
-		mobilePairingQr: vi.fn(async () => ({ size: 1, modules: [true] })),
-	}));
+const {
+	hubDeviceRevoke,
+	hubDevices,
+	hubPairingOffer,
+	hubPushServiceStatus,
+	mobilePairingNetworks,
+	mobilePairingQr,
+} = vi.hoisted(() => ({
+	hubDeviceRevoke: vi.fn(
+		async (): Promise<{
+			revoked: boolean;
+			failures: { name: string; failure: string }[];
+		}> => ({ revoked: true, failures: [] }),
+	),
+	hubDevices: vi.fn(async () => [] as { device_id: string; label: string }[]),
+	hubPairingOffer: vi.fn(
+		async (_label: string, _address: string, _relay: string) => ({
+			payload: "dure-hub:3?o=abc",
+			device_id: "phone-1",
+		}),
+	),
+	mobilePairingNetworks: vi.fn(async () => [
+		{ address: "100.64.1.2", interface: "utun3", tailnet: true },
+		{ address: "192.168.0.11", interface: "en0", tailnet: false },
+	]),
+	hubPushServiceStatus: vi.fn(
+		async (): Promise<
+			| { kind: "official" }
+			| { kind: "custom"; origin: string }
+			| { kind: "not_configured" }
+		> => ({ kind: "official" }),
+	),
+	mobilePairingQr: vi.fn(async () => ({ size: 1, modules: [true] })),
+}));
 const { writeText } = vi.hoisted(() => ({ writeText: vi.fn(async (_text: string) => {}) }));
 
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText }));
@@ -31,6 +44,7 @@ vi.mock("@/lib/ipc", () => ({
 	hubDeviceRevoke,
 	hubDevices,
 	hubPairingOffer,
+	hubPushServiceStatus,
 	mobilePairingNetworks,
 	mobilePairingQr,
 }));
@@ -52,6 +66,8 @@ afterEach(() => {
 	mobilePairingQr.mockReset();
 	hubDevices.mockReset();
 	hubDevices.mockResolvedValue([]);
+	hubPushServiceStatus.mockReset();
+	hubPushServiceStatus.mockResolvedValue({ kind: "official" });
 });
 
 describe("설정 → 모바일", () => {
@@ -296,5 +312,38 @@ describe("설정 → 모바일", () => {
 
 		expect(await screen.findByText("이 컴퓨터와 페어링")).toBeTruthy();
 		await waitFor(() => expect(hubPairingOffer).toHaveBeenCalledTimes(1));
+	});
+});
+
+describe("Settings → Mobile push service", () => {
+	it("says nothing about the official service", async () => {
+		hubDevices.mockResolvedValue([{ device_id: "phone-1", label: "내 폰" }]);
+		render(<MobileConnectivityPage />);
+		await screen.findByText("내 폰");
+		await waitFor(() => expect(hubPushServiceStatus).toHaveBeenCalled());
+		expect(screen.queryByText(/사용자 지정/)).toBeNull();
+	});
+
+	it("names a custom service by its origin", async () => {
+		hubPushServiceStatus.mockResolvedValue({
+			kind: "custom",
+			origin: "https://push.example.org",
+		});
+		render(<MobileConnectivityPage />);
+		expect(
+			await screen.findByText(
+				"폰 알림은 https://push.example.org의 사용자 지정 서비스를 씁니다. 이 서비스는 이 컴퓨터와 페어링한 폰의 알림 토큰을 받습니다.",
+			),
+		).toBeTruthy();
+	});
+
+	it("says alerts are off when the override file is invalid", async () => {
+		hubPushServiceStatus.mockResolvedValue({ kind: "not_configured" });
+		render(<MobileConnectivityPage />);
+		expect(
+			await screen.findByText(
+				"사용자 지정 폰 알림 서비스 파일이 올바르지 않아 폰 알림이 꺼져 있습니다.",
+			),
+		).toBeTruthy();
 	});
 });

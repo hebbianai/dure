@@ -87,6 +87,8 @@ export const settingsEnglishTranslations = {
 	"settings.mobile.devices.forgetTitle": "Remove this device even if keys remain on servers?",
 	"settings.mobile.devices.forgetDescription": "Dure will forget the retry record and revoke this device here. A key left on an unreachable server may keep working, and Dure will no longer know where to remove it.",
 	"settings.mobile.devices.forgetConfirm": "Remove anyway",
+	"settings.mobile.pushService.custom": "Phone alerts use a custom service at {origin}. It receives the alert tokens of phones paired with this computer.",
+	"settings.mobile.pushService.invalid": "The custom phone alert service file is invalid, so phone alerts are off.",
 	"복사할 때 접힌 줄 펴기": "Unwrap folded lines when copying",
 	"승인 필요": "Approval Required",
 	"Agent 세션 종료": "Agent Session Exited",

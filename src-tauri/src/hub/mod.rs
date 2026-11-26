@@ -12,6 +12,7 @@
 pub mod agent_chat;
 mod autostart;
 pub mod push;
+pub mod push_service;
 pub mod catalog;
 pub mod conversation;
 pub mod file_diff;

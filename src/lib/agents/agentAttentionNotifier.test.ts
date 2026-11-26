@@ -79,7 +79,7 @@ beforeEach(() => {
     suppressWhenVisible: false,
   });
   mocks.systemNotify.mockResolvedValue({ accepted: true });
-  mocks.pushAgentNotification.mockResolvedValue(undefined);
+  mocks.pushAgentNotification.mockResolvedValue({ status: "no_subscribed_phone" });
 });
 
 describe("phone push delivery", () => {
@@ -200,6 +200,26 @@ describe("phone push delivery", () => {
       ["input", undefined, "claude"],
       ["done", undefined, "claude"],
     ]);
+  });
+
+  it("logs why a phone alert failed and still shows the desktop notification", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mocks.pushAgentNotification
+      .mockResolvedValueOnce({ status: "failed", reason: "phone_update_required" })
+      .mockResolvedValueOnce({ status: "partial", sent: 1, failed: 1, reason: "rate_limited" })
+      .mockResolvedValueOnce({ status: "sent", devices: 2 })
+      .mockRejectedValueOnce(new Error("backend"));
+    for (const eventId of ["event-a", "event-b", "event-c", "event-d"]) {
+      notifyAgentEvent("agent-a", "approval", "Approval", { eventId });
+    }
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(3));
+    expect(warn.mock.calls).toEqual([
+      ["Paired phone notification not delivered:", "phone_update_required"],
+      ["Paired phone notification not delivered:", "rate_limited"],
+      ["Could not deliver the agent event to paired phone notifications"],
+    ]);
+    expect(mocks.systemNotify).toHaveBeenCalledTimes(4);
+    warn.mockRestore();
   });
 
   it("leaves phone delivery to the main window and an exact event identity", () => {

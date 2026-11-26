@@ -1,8 +1,16 @@
 //! Paired-device delivery. The notification service alone owns APNs credentials
-//! and deduplication; the existing registry owns consent and token replacement.
-use super::{commands::HubState, identity};
+//! and deduplication; the existing registry owns consent, token replacement
+//! and what the service last said about each subscription.
+use super::{
+    commands::HubState,
+    devices::DeviceRegistry,
+    identity::{self, DeviceToken, PushRegistrationState},
+    push_service::{self, PushAnswer, PushRoute},
+};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use dure_hub_protocol::push::{PushApproval, PushId, PushKind, PushReply, PushSubscription};
+use dure_hub_protocol::push::{
+    PushApproval, PushId, PushKind, PushRefusal, PushReply, PushSubscription,
+};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -117,67 +125,220 @@ fn sign_request(
     })
 }
 
-fn endpoint() -> Result<reqwest::Url, String> {
-    let endpoint = std::env::var("DURE_PUSH_ENDPOINT")
-        .map_err(|_| "This computer has no configured push service")?;
-    let url = reqwest::Url::parse(&endpoint).map_err(|_| "Invalid push service endpoint")?;
-    if url.scheme() != "https"
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return Err(
-            "The push service requires HTTPS without URL credentials or query parameters".into(),
-        );
+fn unix_now() -> Result<u64, String> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .map_err(|_| "Could not read the notification clock".into())
+}
+
+/// The subscription an alert of `kind` goes to: one that wants that kind
+/// and that the push service registered. A device the service refused, or
+/// one never registered, waits for the phone's next sync.
+fn recipient(device: &DeviceToken, kind: PushKind) -> Option<&PushSubscription> {
+    let registered = matches!(
+        device
+            .push_registration
+            .as_ref()
+            .map(|record| &record.state),
+        Some(PushRegistrationState::Registered)
+    );
+    device
+        .push
+        .as_ref()
+        .filter(|subscription| registered && subscription.accepts(kind))
+}
+
+/// Keeps the registry in step with what the service answered about
+/// `subscription`, and names why it did not pass. None: accepted.
+fn apply_answer(
+    registry: &DeviceRegistry,
+    device_id: &str,
+    subscription: &PushSubscription,
+    answer: PushAnswer,
+) -> Result<Option<PushRefusal>, String> {
+    let reason = match answer {
+        PushAnswer::Accepted => return Ok(None),
+        PushAnswer::Retired => {
+            registry
+                .retire_push(device_id, subscription)
+                .map_err(|error| error.to_string())?;
+            PushRefusal::TokenInvalid
+        }
+        PushAnswer::Refused(reason) => {
+            registry
+                .record_push_registration(
+                    device_id,
+                    subscription,
+                    PushRegistrationState::Refused { reason },
+                )
+                .map_err(|error| error.to_string())?;
+            reason
+        }
+        // A passing outage keeps what the service said last.
+        PushAnswer::Unavailable(reason) => reason,
+    };
+    Ok(Some(reason))
+}
+
+/// The sentence a phone shows for `reason` in a V1 answer.
+fn refusal_detail(reason: PushRefusal) -> &'static str {
+    match reason {
+        PushRefusal::PhoneUpdateRequired => {
+            "Phone alerts from this computer need a newer Dure for iPhone."
+        }
+        PushRefusal::NotConfigured => {
+            "This computer's custom push service file is invalid, so phone alerts are off."
+        }
+        PushRefusal::ServiceUnreachable => "Could not reach the push service. Push is not ready.",
+        PushRefusal::ServiceOutdated => "The push service does not support this computer yet.",
+        PushRefusal::RateLimited => "The push service is busy. Try again later.",
+        PushRefusal::TokenInvalid => "Apple no longer accepts this phone's alert token.",
+        _ => "The push service refused this computer.",
     }
-    Ok(url)
 }
 
 /// Report delivery readiness separately from the device's latest consent.
 /// A provider outage must never retain an older, more permissive preference.
 pub(super) fn update_subscription(
-    registry: &super::devices::DeviceRegistry,
-    token: &str,
+    registry: &DeviceRegistry,
+    device: &DeviceToken,
     subscription: Option<PushSubscription>,
-    check: impl FnOnce(&PushSubscription) -> Result<(), String>,
+    check: impl FnOnce(&PushSubscription) -> Result<PushAnswer, String>,
 ) -> Result<(), String> {
     registry
-        .set_push(token, subscription.clone())
+        .set_push(&device.token, subscription.clone())
         .map_err(|e| e.to_string())?;
-    subscription.as_ref().map_or(Ok(()), check)
+    let Some(subscription) = subscription else {
+        return Ok(());
+    };
+    let answer = check(&subscription)?;
+    match apply_answer(registry, &device.device_id, &subscription, answer)? {
+        None => registry
+            .record_push_registration(
+                &device.device_id,
+                &subscription,
+                PushRegistrationState::Registered,
+            )
+            .map_err(|error| error.to_string()),
+        Some(reason) => Err(refusal_detail(reason).into()),
+    }
 }
 
+/// Asks the push service to register `subscription`. Err: this computer
+/// could not make the request at all.
 pub(super) fn check_registration(
-    registry: &super::devices::DeviceRegistry,
+    registry: &DeviceRegistry,
     subscription: &PushSubscription,
-) -> Result<(), String> {
-    let url = endpoint()?
-        .join("register")
-        .map_err(|_| "Invalid push registration endpoint")?;
+) -> Result<PushAnswer, String> {
+    let service = match push_service::resolve(registry.root()) {
+        Ok(service) => service,
+        Err(reason) => return Ok(PushAnswer::Unavailable(reason)),
+    };
     let certificate =
         identity::load_or_create_certificate(registry.root()).map_err(|e| e.to_string())?;
-    let issued_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| "Could not read the notification clock")?
-        .as_secs();
-    let request = sign_request(&certificate, subscription, None, issued_at)?;
-    let response = reqwest::blocking::Client::builder()
+    let request = sign_request(&certificate, subscription, None, unix_now()?)?;
+    let status = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(8))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "Could not create push transport")?
-        .post(url)
+        .post(service.url(PushRoute::RegisterV1))
         .json(&request)
         .send()
-        .map_err(|_| "Could not reach the push service. Push is not ready.")?;
-    if response.status().as_u16() != 200 {
-        return Err(format!(
-            "Push service refused registration ({})",
-            response.status().as_u16()
-        ));
+        .ok()
+        .map(|response| response.status().as_u16());
+    Ok(push_service::read_answer(PushRoute::RegisterV1, status))
+}
+
+/// What became of one agent event's phone alert.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum PhonePushReceipt {
+    /// No paired phone wants this kind with a subscription the service
+    /// registered.
+    NoSubscribedPhone,
+    Sent {
+        devices: usize,
+    },
+    /// `reason` is the first failure's.
+    Partial {
+        sent: usize,
+        failed: usize,
+        reason: PushRefusal,
+    },
+    Failed {
+        reason: PushRefusal,
+    },
+}
+
+impl PhonePushReceipt {
+    fn of(sent: usize, failures: &[PushRefusal]) -> Self {
+        match (sent, failures.first()) {
+            (0, None) => Self::NoSubscribedPhone,
+            (devices, None) => Self::Sent { devices },
+            (0, Some(&reason)) => Self::Failed { reason },
+            (sent, Some(&reason)) => Self::Partial {
+                sent,
+                failed: failures.len(),
+                reason,
+            },
+        }
     }
-    Ok(())
+}
+
+/// Sends `event` to every registered phone that wants it. `post` delivers one
+/// signed request and gives the HTTP status, or None when none arrived.
+async fn deliver<F, Fut>(
+    registry: &DeviceRegistry,
+    event: &PushEvent,
+    post: F,
+) -> Result<PhonePushReceipt, String>
+where
+    F: Fn(reqwest::Url, SignedRequest) -> Fut,
+    Fut: std::future::Future<Output = Option<u16>>,
+{
+    let devices = registry.load().map_err(|error| error.to_string())?;
+    if !devices
+        .iter()
+        .any(|device| recipient(device, event.kind).is_some())
+    {
+        return Ok(PhonePushReceipt::NoSubscribedPhone);
+    }
+    let service = match push_service::resolve(registry.root()) {
+        Ok(service) => service,
+        Err(reason) => return Ok(PhonePushReceipt::Failed { reason }),
+    };
+    // Distinct simultaneous episodes wait for transport capacity; capacity
+    // never acts as a time throttle that silently drops their event IDs.
+    let _slot = SEND_SLOTS
+        .acquire()
+        .await
+        .map_err(|_| "Phone notification delivery stopped")?;
+    let certificate =
+        identity::load_or_create_certificate(registry.root()).map_err(|error| error.to_string())?;
+    let (mut sent, mut failures) = (0, Vec::new());
+    for device in devices {
+        let Some(subscription) = recipient(&device, event.kind).cloned() else {
+            continue;
+        };
+        // A queued send cannot outlive revocation, a newer preference or
+        // token, or a refusal another send just recorded.
+        let current = registry.load().map_err(|error| error.to_string())?;
+        if !current.iter().any(|d| {
+            d.device_id == device.device_id && recipient(d, event.kind) == Some(&subscription)
+        }) {
+            continue;
+        }
+        let request = sign_request(&certificate, &subscription, Some(event), unix_now()?)?;
+        let status = post(service.url(PushRoute::SendV1), request).await;
+        let answer = push_service::read_answer(PushRoute::SendV1, status);
+        match apply_answer(registry, &device.device_id, &subscription, answer)? {
+            None => sent += 1,
+            Some(reason) => failures.push(reason),
+        }
+    }
+    Ok(PhonePushReceipt::of(sent, &failures))
 }
 
 #[tauri::command]
@@ -186,71 +347,27 @@ pub async fn hub_push_agent_notification(
     state: tauri::State<'_, HubState>,
     mut event: PushEvent,
     provider: Option<String>,
-) -> Result<(), String> {
+) -> Result<PhonePushReceipt, String> {
     if event.event_id.is_empty() || event.event_id.len() > 512 {
         return Err("Invalid notification event identity".into());
     }
     event.offer_only_answerable(provider.as_deref());
     let registry = state.registry(&app)?;
-    let recipients = registry.load().map_err(|error| error.to_string())?;
-    if !recipients
-        .iter()
-        .any(|device| device.push.as_ref().is_some_and(|s| s.accepts(event.kind)))
-    {
-        return Ok(());
-    }
-    // Distinct simultaneous episodes wait for transport capacity; capacity
-    // never acts as a time throttle that silently drops their event IDs.
-    let _slot = SEND_SLOTS
-        .acquire()
-        .await
-        .map_err(|_| "Phone notification delivery stopped")?;
-    let url = endpoint()?;
-    let certificate =
-        identity::load_or_create_certificate(registry.root()).map_err(|error| error.to_string())?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "Could not create push transport")?;
-    let mut failure = None;
-    for device in recipients {
-        let Some(subscription) = device.push.filter(|s| s.accepts(event.kind)) else {
-            continue;
-        };
-        // A queued send cannot outlive revocation or a newer preference/token.
-        let current = registry.load().map_err(|error| error.to_string())?;
-        if !current
-            .iter()
-            .any(|d| d.device_id == device.device_id && d.push.as_ref() == Some(&subscription))
-        {
-            continue;
+    deliver(&registry, &event, |url, request| {
+        let sending = client.post(url).json(&request).send();
+        async move {
+            sending
+                .await
+                .ok()
+                .map(|response| response.status().as_u16())
         }
-        let issued_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| "Could not read the notification clock")?
-            .as_secs();
-        let request = sign_request(&certificate, &subscription, Some(&event), issued_at)?;
-        let response = match client.post(url.clone()).json(&request).send().await {
-            Ok(response) => response,
-            Err(_) => {
-                failure = Some("Could not reach the phone notification service".to_string());
-                continue;
-            }
-        };
-        match response.status().as_u16() {
-            200 | 202 => (),
-            410 => registry
-                .retire_push(&device.device_id, &subscription)
-                .map_err(|error| error.to_string())?,
-            status => {
-                failure = Some(format!(
-                    "Phone notification service refused delivery ({status})"
-                ))
-            }
-        }
-    }
-    failure.map_or(Ok(()), Err)
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -442,18 +559,393 @@ mod tests {
         let mut current = subscription("bbbb");
         current.preference = PushPreference::Approvals;
         assert!(
-            update_subscription(&registry, &phone.token, Some(current.clone()), |_| Err(
+            update_subscription(&registry, &phone, Some(current.clone()), |_| Err(
                 "Provider offline".into()
             ))
             .is_err()
         );
         assert_eq!(registry.load().unwrap()[0].push, Some(current.clone()));
-        update_subscription(&registry, &phone.token, Some(current), |_| {
+        for offline in [PushRefusal::ServiceUnreachable, PushRefusal::RateLimited] {
+            assert!(
+                update_subscription(&registry, &phone, Some(current.clone()), |_| Ok(
+                    PushAnswer::Unavailable(offline)
+                ))
+                .is_err()
+            );
+            assert_eq!(registry.load().unwrap()[0].push, Some(current.clone()));
+        }
+        update_subscription(&registry, &phone, Some(current), |_| {
             registry.revoke(&phone.device_id).unwrap();
-            Ok(())
+            Ok(PushAnswer::Accepted)
         })
         .unwrap();
         assert!(registry.load().unwrap().is_empty());
+    }
+
+    fn state(registry: &DeviceRegistry) -> Option<PushRegistrationState> {
+        registry.load().unwrap()[0]
+            .push_registration
+            .as_ref()
+            .map(|record| record.state.clone())
+    }
+
+    /// A phone that registered through the service, as the desktop stores it.
+    fn registered(registry: &DeviceRegistry, label: &str, token: &str) -> DeviceToken {
+        let phone = registry.register(label.into()).unwrap();
+        update_subscription(registry, &phone, Some(subscription(token)), |_| {
+            Ok(PushAnswer::Accepted)
+        })
+        .unwrap();
+        phone
+    }
+
+    #[test]
+    fn the_registration_state_follows_the_service_and_the_subscription_it_describes() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = DeviceRegistry::new(root.path());
+        let phone = registry.register("Phone".into()).unwrap();
+
+        // Refused: stored with its reason, and the phone reads why.
+        let refused = update_subscription(&registry, &phone, Some(subscription("aaaa")), |_| {
+            Ok(PushAnswer::Refused(PushRefusal::PhoneUpdateRequired))
+        });
+        assert_eq!(
+            refused,
+            Err("Phone alerts from this computer need a newer Dure for iPhone.".into())
+        );
+        assert_eq!(
+            state(&registry),
+            Some(PushRegistrationState::Refused {
+                reason: PushRefusal::PhoneUpdateRequired
+            })
+        );
+
+        // Registered on the next sync of the same subscription.
+        update_subscription(&registry, &phone, Some(subscription("aaaa")), |_| {
+            Ok(PushAnswer::Accepted)
+        })
+        .unwrap();
+        assert_eq!(state(&registry), Some(PushRegistrationState::Registered));
+        assert!(
+            registry.load().unwrap()[0]
+                .push_registration
+                .as_ref()
+                .unwrap()
+                .at
+                > 0
+        );
+
+        // A passing outage on a later sync keeps the registration.
+        assert!(
+            update_subscription(&registry, &phone, Some(subscription("aaaa")), |_| Ok(
+                PushAnswer::Unavailable(PushRefusal::ServiceUnreachable)
+            ))
+            .is_err()
+        );
+        assert_eq!(state(&registry), Some(PushRegistrationState::Registered));
+
+        // A new token is not what the service registered.
+        assert!(
+            update_subscription(&registry, &phone, Some(subscription("bbbb")), |_| Ok(
+                PushAnswer::Unavailable(PushRefusal::ServiceUnreachable)
+            ))
+            .is_err()
+        );
+        assert_eq!(state(&registry), None);
+
+        // Off clears both, without asking the service.
+        update_subscription(&registry, &phone, Some(subscription("bbbb")), |_| {
+            Ok(PushAnswer::Accepted)
+        })
+        .unwrap();
+        update_subscription(&registry, &phone, None, |_| unreachable!()).unwrap();
+        assert_eq!(registry.load().unwrap()[0].push, None);
+        assert_eq!(state(&registry), None);
+
+        // APNs retiring the token clears both too.
+        update_subscription(&registry, &phone, Some(subscription("cccc")), |_| {
+            Ok(PushAnswer::Accepted)
+        })
+        .unwrap();
+        registry
+            .retire_push(&phone.device_id, &subscription("cccc"))
+            .unwrap();
+        assert_eq!(registry.load().unwrap()[0].push, None);
+        assert_eq!(state(&registry), None);
+        assert_eq!(
+            update_subscription(&registry, &phone, Some(subscription("dddd")), |_| Ok(
+                PushAnswer::Retired
+            )),
+            Err("Apple no longer accepts this phone's alert token.".into())
+        );
+        assert_eq!(registry.load().unwrap()[0].push, None);
+
+        // Revocation removes the device with its state.
+        registered(&registry, "Other", "eeee");
+        registry.revoke(&phone.device_id).unwrap();
+        assert!(registry
+            .load()
+            .unwrap()
+            .iter()
+            .all(|device| device.device_id != phone.device_id));
+    }
+
+    #[test]
+    fn a_check_that_finishes_after_the_phone_changed_its_subscription_records_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = DeviceRegistry::new(root.path());
+        let phone = registry.register("Phone".into()).unwrap();
+        update_subscription(&registry, &phone, Some(subscription("aaaa")), |_| {
+            // The phone's newer sync lands while the service is asked.
+            registry
+                .set_push(&phone.token, Some(subscription("bbbb")))
+                .unwrap();
+            Ok(PushAnswer::Accepted)
+        })
+        .unwrap();
+        assert_eq!(registry.load().unwrap()[0].push, Some(subscription("bbbb")));
+        assert_eq!(state(&registry), None);
+    }
+
+    /// A file written before #660 has no registration state.
+    #[test]
+    fn a_device_list_from_before_registration_state_reads_as_not_yet_registered() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("hub-devices.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "hub_devices_version": 1,
+                "devices": [{
+                    "device_id": "device_1",
+                    "label": "Phone",
+                    "token": "t",
+                    "push": serde_json::to_value(subscription("aaaa")).unwrap(),
+                }],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let registry = DeviceRegistry::new(root.path());
+        let device = &registry.load().unwrap()[0];
+        assert_eq!(device.push_registration, None);
+        assert_eq!(recipient(device, PushKind::Approval), None);
+        let written = serde_json::to_value(device).unwrap();
+        assert!(written.get("push_registration").is_none(), "{written}");
+        let record = identity::PushRegistrationRecord {
+            state: PushRegistrationState::Refused {
+                reason: PushRefusal::PhoneUpdateRequired,
+            },
+            at: 7,
+        };
+        assert_eq!(
+            serde_json::to_value(&record).unwrap(),
+            serde_json::json!({ "state": "refused", "reason": "phone_update_required", "at": 7 })
+        );
+    }
+
+    #[test]
+    fn alerts_go_only_to_subscriptions_the_service_registered() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = DeviceRegistry::new(root.path());
+        let never = registry.register("Never checked".into()).unwrap();
+        registry
+            .set_push(&never.token, Some(subscription("aaaa")))
+            .unwrap();
+        let refused = registry.register("Refused".into()).unwrap();
+        let _ = update_subscription(&registry, &refused, Some(subscription("bbbb")), |_| {
+            Ok(PushAnswer::Refused(PushRefusal::PhoneUpdateRequired))
+        });
+        registered(&registry, "Registered", "cccc");
+        let approvals = registry.register("Approvals".into()).unwrap();
+        let mut narrow = subscription("dddd");
+        narrow.preference = PushPreference::Approvals;
+        update_subscription(&registry, &approvals, Some(narrow), |_| {
+            Ok(PushAnswer::Accepted)
+        })
+        .unwrap();
+        let devices = registry.load().unwrap();
+        let tokens = |kind| -> Vec<String> {
+            devices
+                .iter()
+                .filter_map(|device| recipient(device, kind))
+                .map(|subscription| subscription.token.as_str().to_string())
+                .collect()
+        };
+        assert_eq!(tokens(PushKind::Approval), ["cccc", "dddd"]);
+        assert_eq!(tokens(PushKind::Done), ["cccc"]);
+    }
+
+    fn approval() -> PushEvent {
+        PushEvent {
+            kind: PushKind::Approval,
+            event_id: "host:session:approval:1".into(),
+            session_id: None,
+            approval: None,
+            reply: None,
+        }
+    }
+
+    /// Delivers `event`, answering each request in turn from `answers`, and
+    /// gives the receipt with the URLs the requests went to.
+    fn deliver_with(
+        registry: &DeviceRegistry,
+        event: &PushEvent,
+        answers: &[Option<u16>],
+    ) -> (PhonePushReceipt, Vec<String>) {
+        let urls = std::sync::Mutex::new(Vec::new());
+        let receipt = tauri::async_runtime::block_on(deliver(registry, event, |url, _| {
+            let mut urls = urls.lock().unwrap();
+            let answer = *answers
+                .get(urls.len())
+                .expect("no more requests than answers");
+            urls.push(url.to_string());
+            async move { answer }
+        }))
+        .unwrap();
+        (receipt, urls.into_inner().unwrap())
+    }
+
+    #[test]
+    fn nobody_registered_for_the_kind_means_no_request_at_all() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = DeviceRegistry::new(root.path());
+        assert_eq!(
+            deliver_with(&registry, &approval(), &[]),
+            (PhonePushReceipt::NoSubscribedPhone, vec![])
+        );
+        let phone = registry.register("Phone".into()).unwrap();
+        registry
+            .set_push(&phone.token, Some(subscription("aaaa")))
+            .unwrap();
+        assert_eq!(
+            deliver_with(&registry, &approval(), &[]),
+            (PhonePushReceipt::NoSubscribedPhone, vec![])
+        );
+    }
+
+    #[test]
+    fn sends_go_to_the_official_service_or_the_override_and_never_past_an_invalid_one() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = DeviceRegistry::new(root.path());
+        registered(&registry, "Phone", "aaaa");
+        assert_eq!(
+            deliver_with(&registry, &approval(), &[Some(202)]),
+            (
+                PhonePushReceipt::Sent { devices: 1 },
+                vec!["https://push.dureai.dev/v1/send".to_string()]
+            )
+        );
+        let file = root.path().join("hub-push-service.json");
+        std::fs::write(
+            &file,
+            r#"{"hub_push_service_version": 1, "endpoint": "https://host.example/push"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            deliver_with(&registry, &approval(), &[Some(200)]).1,
+            ["https://host.example/push/v1/send"]
+        );
+        std::fs::write(
+            &file,
+            r#"{"hub_push_service_version": 1, "endpoint": "http://host.example/push"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            deliver_with(&registry, &approval(), &[]),
+            (
+                PhonePushReceipt::Failed {
+                    reason: PushRefusal::NotConfigured
+                },
+                vec![]
+            )
+        );
+    }
+
+    #[test]
+    fn registration_against_an_invalid_override_asks_no_service() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("hub-push-service.json"), "{").unwrap();
+        let registry = DeviceRegistry::new(root.path());
+        assert_eq!(
+            check_registration(&registry, &subscription("aaaa")),
+            Ok(PushAnswer::Unavailable(PushRefusal::NotConfigured))
+        );
+    }
+
+    #[test]
+    fn each_failed_send_is_typed_and_a_refused_device_waits_for_its_next_sync() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = DeviceRegistry::new(root.path());
+        let first = registered(&registry, "First", "aaaa");
+        registered(&registry, "Second", "bbbb");
+
+        // Passing failures keep both devices registered.
+        for (status, reason) in [
+            (Some(429), PushRefusal::RateLimited),
+            (Some(503), PushRefusal::ServiceUnreachable),
+            (None, PushRefusal::ServiceUnreachable),
+        ] {
+            assert_eq!(
+                deliver_with(&registry, &approval(), &[status, status]).0,
+                PhonePushReceipt::Failed { reason }
+            );
+        }
+        assert_eq!(
+            deliver_with(&registry, &approval(), &[Some(202), Some(404)]).0,
+            PhonePushReceipt::Partial {
+                sent: 1,
+                failed: 1,
+                reason: PushRefusal::ServiceOutdated
+            }
+        );
+
+        // The second was refused by the 404; the first is refused now.
+        assert_eq!(
+            deliver_with(&registry, &approval(), &[Some(403)]).0,
+            PhonePushReceipt::Failed {
+                reason: PushRefusal::Refused
+            }
+        );
+        assert_eq!(
+            deliver_with(&registry, &approval(), &[]).0,
+            PhonePushReceipt::NoSubscribedPhone
+        );
+
+        // The phone's next sync registers it again.
+        update_subscription(&registry, &first, Some(subscription("aaaa")), |_| {
+            Ok(PushAnswer::Accepted)
+        })
+        .unwrap();
+        assert_eq!(
+            deliver_with(&registry, &approval(), &[Some(202)]).0,
+            PhonePushReceipt::Sent { devices: 1 }
+        );
+
+        // APNs retiring the token removes that subscription.
+        assert_eq!(
+            deliver_with(&registry, &approval(), &[Some(410)]).0,
+            PhonePushReceipt::Failed {
+                reason: PushRefusal::TokenInvalid
+            }
+        );
+        assert_eq!(registry.load().unwrap()[0].push, None);
+    }
+
+    #[test]
+    fn the_receipt_names_the_outcome_for_the_desktop() {
+        assert_eq!(
+            serde_json::to_value(PhonePushReceipt::Partial {
+                sent: 1,
+                failed: 2,
+                reason: PushRefusal::RateLimited
+            })
+            .unwrap(),
+            serde_json::json!({ "status": "partial", "sent": 1, "failed": 2, "reason": "rate_limited" })
+        );
+        assert_eq!(
+            serde_json::to_value(PhonePushReceipt::NoSubscribedPhone).unwrap(),
+            serde_json::json!({ "status": "no_subscribed_phone" })
+        );
     }
 
     #[test]
