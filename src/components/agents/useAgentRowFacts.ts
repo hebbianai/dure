@@ -1,8 +1,8 @@
 // Store wiring for one agent row: the facts about the agent itself, where it
 // stands among the agents that manage it and what it manages. The list that
 // shows the row supplies where it stands in that list (its state, why it is
-// listed, since when, and its Space), so pane locations are read once per
-// list.
+// listed, since when, its Space, and the agent the list sits under), so pane
+// locations are read once per list.
 import { useMemo, useSyncExternalStore } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { agentIndexOf, useIndexedAgent } from "@/components/agents/useAgentIndex";
@@ -29,7 +29,11 @@ import type { Agent } from "@/types";
 export type AgentRowPlacement = Pick<
 	AgentRowFacts,
 	"state" | "needsPerson" | "hasResult" | "sinceMs" | "spaceName"
->;
+> & {
+	/** The agent the list sits under, as a manager's team line does: the
+	 * row's path then names only the managers below it. */
+	readonly below?: string;
+};
 
 /** The same title authority as the pane header and the Spaces row. */
 function agentRowTitle(
@@ -48,7 +52,7 @@ function agentRowTitle(
 
 export function useAgentRowFacts(
 	agentId: string,
-	placement: AgentRowPlacement,
+	{ below, ...placement }: AgentRowPlacement,
 ): AgentRowFacts | undefined {
 	const agent = useIndexedAgent(agentId);
 	const sessionId = agent?.sessionId ?? "";
@@ -70,8 +74,8 @@ export function useAgentRowFacts(
 	);
 	const relations = useAgentRelations();
 	const managerIds = useMemo(
-		() => relations.chain(agentId),
-		[relations, agentId],
+		() => relations.chain(agentId, below),
+		[relations, agentId, below],
 	);
 	const path = useStore(
 		useShallow((state) => {

@@ -40,8 +40,10 @@ export interface AgentRelations {
 	managedBy(agentId: string): readonly string[];
 	/** The agents with no display manager, in start order. */
 	readonly roots: readonly string[];
-	/** Its display managers, outermost first; empty for a root. */
-	chain(agentId: string): readonly string[];
+	/** Its display managers, outermost first; empty for a root. With
+	 * `below`, only the managers under that agent when it is one of them, so
+	 * a list nested under an agent names the path from there. */
+	chain(agentId: string, below?: string): readonly string[];
 }
 
 /** What one agent manages, over its whole display subtree. */
@@ -126,13 +128,14 @@ export function buildAgentRelations(
 		managersOf: (agentId) => facts.get(agentId) ?? NONE,
 		managedBy: (agentId) => managed.get(agentId) ?? NONE,
 		roots,
-		chain(agentId) {
+		chain(agentId, below) {
 			const chain: string[] = [];
 			for (
 				let above = manager.get(agentId);
 				above !== undefined;
 				above = manager.get(above)
 			) {
+				if (above === below) return chain.reverse();
 				chain.push(above);
 			}
 			return chain.reverse();

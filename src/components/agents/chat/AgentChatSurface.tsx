@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useRef } from "react";
 import type { IDockviewPanelProps } from "dockview-react";
+import { AgentTeamLine } from "@/components/agents/AgentTeamLine";
 import { AgentGoalBar } from "@/components/agents/chat/AgentGoalBar";
 import { TranscriptContents } from "@/components/agents/chat/AgentChatTimelineRows";
 import {
@@ -158,6 +159,7 @@ export function AgentChatSurface({
 				onLoadOlder={storePage?.hasMore ? session.loadOlder : older.loadOlder}
 				renderPending={renderPending}
 			/>
+			<AgentTeamLine agentId={session.draftIdentity.agentId} />
 			<AgentGoalBar
 				key={`${session.draftIdentity.backendProfileId}:${session.draftIdentity.agentId}:${session.draftIdentity.interactionSessionId}`}
 				session={session}
