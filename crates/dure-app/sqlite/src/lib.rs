@@ -240,7 +240,7 @@ impl SqliteDomainStore {
         F: FnOnce(AgentSpawnPlanV1) -> Result<AgentSpawnPlanV1, DomainStoreErrorV1>,
     {
         agent_spawn::append_planned_resolving_provider_defaults(
-            &self.pool,
+            self,
             draft,
             event_id,
             recorded_at_ms,
@@ -448,7 +448,7 @@ impl AgentSpawnJournalStore for SqliteDomainStore {
         &'a self,
         event: &'a AgentSpawnJournalEventV1,
     ) -> DomainStoreFuture<'a, AgentSpawnJournalReceiptV1> {
-        Box::pin(agent_spawn::append_event(&self.pool, event))
+        Box::pin(agent_spawn::append_event(self, event))
     }
 
     fn agent_spawn_receipt<'a>(
