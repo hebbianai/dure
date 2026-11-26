@@ -771,6 +771,7 @@ export const en: Record<string, string> = {
   "home.row.manages": "Manages {n}",
   "home.row.managedNeedYou": "{n} need you",
   "home.row.managedWorking": "{n} working",
+  "home.row.continuesAt": "Continues at {time}",
   "chat.composer.label": "Prompt for the agent",
   "chat.composer.placeholder": "Message the agent",
   "chat.composer.placeholderQueued": "Message the agent. It sends when the agent is idle.",

@@ -207,6 +207,7 @@ export const ko: Record<string, string> = {
   "home.row.manages": "{n}개 관리",
   "home.row.managedNeedYou": "주의 필요 {n}개",
   "home.row.managedWorking": "작업 중 {n}개",
+  "home.row.continuesAt": "{time}에 이어서 진행",
   "chat.composer.label": "에이전트에게 보낼 프롬프트",
   "chat.composer.placeholder": "에이전트에게 메시지 보내기",
   "chat.composer.placeholderQueued": "에이전트에게 메시지 보내기. 에이전트가 쉬면 전송됩니다.",

@@ -11,6 +11,7 @@ import type { Project } from "@/types";
 import { useHubSidebarLayout } from "@/components/hub/useHubSidebarLayout";
 import { useDiffBadges } from "@/lib/scm/status/diffBadgesStore";
 import { setAgentNotificationsMuted } from "@/lib/agents/agentNotificationMute";
+import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
 
 const mocks = vi.hoisted(() => ({
 	history: { entries: [] as ProviderConversationRecord[], loadState: "ready" },
@@ -71,6 +72,7 @@ describe("useHubSidebarLayout — mobile presentation", () => {
 			pinnedPanes: {},
 			sessionAgentRuntimeState: {},
 		});
+		useAgentAttention.setState({ recoveryWaits: {} });
 	});
 
 	it("publishes pin and unpin changes for the exact Space and pane", () => {
@@ -181,6 +183,28 @@ describe("useHubSidebarLayout — mobile presentation", () => {
 		}];
 		act(() => useStore.setState({ desktops: [{ id: "work", name: "Work" }] }));
 		expect(muted("terminal-1")).toBe(true);
+	});
+
+	/** #726: the phone's needs-person authority leaves out an error the
+	 * computer's backend continues after the reset, so each Agent row carries
+	 * that backend's wait, open or unopened, and drops it once it ends. */
+	it("publishes each Agent's recovery wait for open and unopened rows", () => {
+		const send = vi.fn();
+		renderHook(() => useHubSidebarLayout(send));
+		const wait = (key: string) => lastSent(send).placements[key].presentation?.continuesAtMs;
+		expect(wait("hmux-1")).toBeUndefined();
+		act(() => useAgentAttention.getState().setRecoveryWaits({ [agent.id]: 1_700_000_600_000 }));
+		expect(wait("hmux-1")).toBe(1_700_000_600_000);
+
+		// An open pane carries the backend's wait, not the row's words for it.
+		mocks.spaces = [{
+			key: "agent:one", kind: "term", desktopId: "work", projectName: "Dure",
+			title: "Open agent", hmuxSessionId: "hmux-1", agentId: agent.id,
+		} as (typeof mocks.spaces)[number]];
+		act(() => useStore.setState({ desktops: [{ id: "work", name: "Work" }] }));
+		expect(wait("hmux-1")).toBe(1_700_000_600_000);
+		act(() => useAgentAttention.getState().setRecoveryWaits({}));
+		expect(wait("hmux-1")).toBeUndefined();
 	});
 
 	/** #732 S8: the phone builds who manages whom from each row's Agent and

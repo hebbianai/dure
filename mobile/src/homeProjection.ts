@@ -47,6 +47,9 @@ export interface HomeRow extends SpacesFacetSource {
 	/** The computer's Agent this row shows, and its display manager. */
 	readonly agentId?: string;
 	readonly managerAgentId?: string;
+	/** When the computer's backend continues the agent by itself after its
+	 * usage limit resets, while it waits for that. */
+	readonly continuesAtMs?: number;
 	/**
 	 * Why only a person can move it forward, from the shared needs-person
 	 * authority; `needsPerson` is its reason, for the list's facets.
@@ -256,11 +259,13 @@ export function homeRows(
 			source.kind === "ssh" || source.session.box_id !== "this-laptop";
 		// The phone sees no wait begin, so a wait is dated by the agent's
 		// last activity: the moment it stopped to wait. An exit is dated by
-		// the Host.
+		// the Host. An error the computer's backend continues by itself after
+		// the limit resets needs no one, as on the desktop.
 		const need = needsPersonOf({
 			displayState: presentation?.displayState,
 			failure: failures.get(row.sessionId),
 			waitingSinceMs: presentation?.activityAt,
+			continuesAtMs: presentation?.continuesAtMs,
 		});
 		return {
 			kind: remote ? "ssh" : "term",
@@ -306,6 +311,7 @@ export function homeRows(
 				spaceName: view.desktopName,
 				path: relations.path(view),
 				managed: relations.managed(view),
+				continuesAtMs: view.continuesAtMs,
 			}),
 		})),
 	};

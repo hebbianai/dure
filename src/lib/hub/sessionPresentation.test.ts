@@ -61,3 +61,12 @@ it("names the row's Agent and its manager only when the relation owner knows the
 	expect(root).not.toContain("managerAgentId");
 	expect(JSON.stringify(sessionPresentation({ kind: "term" }))).not.toContain("agentId");
 });
+
+it("carries the backend's recovery wait only while one is known", () => {
+	expect(
+		sessionPresentation({ kind: "agent", displayState: "error", continuesAtMs: 1_700_000_600_000 }),
+	).toMatchObject({ displayState: "error", continuesAtMs: 1_700_000_600_000 });
+	expect(JSON.stringify(sessionPresentation({ kind: "agent", displayState: "error" }))).not.toContain(
+		"continuesAtMs",
+	);
+});
