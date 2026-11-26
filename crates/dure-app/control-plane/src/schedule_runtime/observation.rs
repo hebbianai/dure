@@ -95,7 +95,8 @@ pub(crate) async fn agent_runtime(
                 "state": "unavailable",
                 "errorCode": "schedule_runtime_not_native",
                 "conversation":
-                    super::conversation::ConversationActivity::from_page(&page).observation(),
+                    crate::agent_conversation_outcome::ConversationActivity::from_page(&page)
+                        .observation(),
             }));
         }
     };

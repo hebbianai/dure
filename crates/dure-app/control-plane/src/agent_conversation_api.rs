@@ -336,6 +336,13 @@ where
         self.service.subscribe()
     }
 
+    /// The service that commits provider events and announces each change,
+    /// for tests that write a conversation the way a provider bridge does.
+    #[cfg(test)]
+    pub(crate) fn service(&self) -> &AgentConversationService<S> {
+        &self.service
+    }
+
     pub(crate) async fn start_goal_turn(
         &self,
         request: &dure_app::AgentGoalTurnRequestV1,

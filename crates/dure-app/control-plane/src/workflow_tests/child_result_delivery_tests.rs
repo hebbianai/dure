@@ -1,6 +1,12 @@
 use super::*;
 use crate::child_result_delivery::{self, ChildResultDeliveries};
-use dure_app::{AgentSpawnJournalReceiptV1, AgentSpawnParentV1};
+use dure_app::{
+    AgentClientMessageIdV1, AgentInteractionRequestIdV1, AgentPendingRequestDraftV1,
+    AgentPendingRequestKindV1, AgentProviderEventCommitV1, AgentProviderEventIdentityV1,
+    AgentSpawnJournalReceiptV1, AgentSpawnParentV1, AgentTimelineItemBodyV1,
+    AgentTimelineItemDraftV1, AgentTimelineItemIdV1, AgentTimelineLifecycleStateV1,
+    AgentTimelineMessageRoleV1, AgentTimelineMutationV1, AgentTimelineStore, AgentTurnIdV1,
+};
 
 const PARENT_SESSION: &str = "coordinator-session";
 const PARENT_WORKSPACE: &str = "coordinator-workspace";
@@ -152,7 +158,7 @@ async fn a_child_outcome_reaches_its_parent_once_as_a_durable_message() {
         workspace_id: PARENT_WORKSPACE.into(),
     };
     let epoch = authority.terminal_epoch.clone();
-    let mut deliveries = ChildResultDeliveries::default();
+    let mut deliveries = ChildResultDeliveries::new(&state);
 
     // A child that is still working has nothing to report.
     report_child(&state, &authority, "ready", "working", ("none", None), "0");
@@ -186,7 +192,7 @@ async fn a_child_outcome_reaches_its_parent_once_as_a_durable_message() {
     child_result_delivery::tick(&state, &mut deliveries)
         .await
         .unwrap();
-    child_result_delivery::tick(&state, &mut ChildResultDeliveries::default())
+    child_result_delivery::tick(&state, &mut ChildResultDeliveries::new(&state))
         .await
         .unwrap();
     assert_eq!(prompt_deliverer.requests().len(), 1);
@@ -303,10 +309,430 @@ async fn a_child_whose_parent_exited_is_not_reported() {
         parent.to_string(),
     )
     .unwrap();
-    let mut deliveries = ChildResultDeliveries::default();
+    let mut deliveries = ChildResultDeliveries::new(&state);
     child_result_delivery::tick(&state, &mut deliveries)
         .await
         .unwrap();
     // No delivery is attempted; the fixture has no wake outcome to give.
     assert!(prompt_deliverer.requests().is_empty());
+}
+
+/// Moves the child onto the chat runtime the way a committed runtime switch
+/// does, and returns its new conversation.
+async fn move_child_to_chat(
+    state: &ServiceState,
+    agent_id: &AgentIdV1,
+) -> AgentInteractionBindingV1 {
+    let source = state
+        .store
+        .agent_runtime_selection(agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let authority = state
+        .store
+        .agent_checkpoint_binding_authority(agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let operation_id = OperationIdV1::new("child-to-chat").unwrap();
+    let at_ms = source.updated_at_ms + 1;
+    let conversation = match authority.binding.provider_conversation_id.clone() {
+        Some(conversation) => dure_app::AgentProviderConversationPlanV1::resume(conversation),
+        None => Ok(dure_app::AgentProviderConversationPlanV1::fresh()),
+    }
+    .unwrap();
+    let binding = AgentInteractionBindingV1 {
+        schema_version: 1,
+        interaction_session_id: AgentInteractionSessionIdV1::new("child-chat").unwrap(),
+        agent_id: agent_id.clone(),
+        provider_id: source.provider_id.clone(),
+        execution_profile: source.execution_profile.clone(),
+        provider_conversation_ref: authority.binding.provider_conversation_id.clone(),
+        runtime: AgentProviderRuntimeFenceV1 {
+            runtime_generation: "child-chat-runtime".into(),
+            provider_epoch: "child-chat-provider".into(),
+        },
+        timeline_epoch: AgentTimelineEpochV1::new("child-chat-timeline").unwrap(),
+        binding_revision: 1,
+        history_complete: true,
+        created_at_ms: at_ms,
+        updated_at_ms: at_ms,
+    };
+    state
+        .store
+        .admit_agent_runtime_transition(&AgentRuntimeTransitionIntentV1 {
+            schema_version: 1,
+            operation_id: operation_id.clone(),
+            idempotency_key: "child-to-chat-key".into(),
+            source: source.clone(),
+            source_authority: AgentRuntimeBindingAuthorityV1::NativeCli { authority },
+            source_stop_policy: dure_app::AgentRuntimeSourceStopPolicyV1::Preserve,
+            provider_conversation_ref: conversation,
+            target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
+            target_execution_profile: source.execution_profile.clone(),
+            target_launch_selection: None,
+            workspace_move: None,
+            requested_at_ms: at_ms,
+        })
+        .await
+        .unwrap();
+    state
+        .store
+        .create_agent_interaction(&binding)
+        .await
+        .unwrap();
+    for (revision, advance) in [
+        AgentRuntimeTransitionAdvanceV1::SourceStopped,
+        AgentRuntimeTransitionAdvanceV1::TargetStarted {
+            authority: Box::new(AgentRuntimeBindingAuthorityV1::StructuredProtocol {
+                binding: binding.clone(),
+            }),
+            launch_idempotency_key: None,
+            workspace: None,
+        },
+        AgentRuntimeTransitionAdvanceV1::Committed,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        state
+            .store
+            .advance_agent_runtime_transition(&AgentRuntimeTransitionAdvanceRequestV1 {
+                schema_version: 1,
+                operation_id: operation_id.clone(),
+                expected_journal_revision: i64::try_from(revision).unwrap() + 1,
+                advance,
+                advanced_at_ms: at_ms,
+            })
+            .await
+            .unwrap();
+    }
+    binding
+}
+
+/// Writes the chat child's conversation as its provider bridge does. An
+/// unannounced write reaches only the store, as if its change notice were
+/// still in flight.
+struct ChatConversation {
+    binding: AgentInteractionBindingV1,
+    sequence: i64,
+}
+
+impl ChatConversation {
+    fn at_ms(&self) -> i64 {
+        self.binding.created_at_ms + self.sequence
+    }
+}
+
+impl ChatConversation {
+    fn event(&mut self, mutations: Vec<AgentTimelineMutationV1>) -> AgentProviderEventCommitV1 {
+        self.sequence += 1;
+        AgentProviderEventCommitV1 {
+            schema_version: 1,
+            interaction_session_id: self.binding.interaction_session_id.clone(),
+            event: AgentProviderEventIdentityV1 {
+                runtime: self.binding.runtime.clone(),
+                sequence: self.sequence,
+            },
+            source_fingerprint: format!("child-chat-event-{}", self.sequence),
+            recorded_at_ms: self.at_ms(),
+            mutations,
+        }
+    }
+
+    async fn commit(&mut self, state: &ServiceState, mutations: Vec<AgentTimelineMutationV1>) {
+        let event = self.event(mutations);
+        state
+            .agent_conversations
+            .service()
+            .commit_provider_event(&event)
+            .await
+            .unwrap();
+    }
+
+    async fn write_unannounced(
+        &mut self,
+        state: &ServiceState,
+        mutations: Vec<AgentTimelineMutationV1>,
+    ) {
+        let event = self.event(mutations);
+        state
+            .store
+            .apply_agent_provider_event(&event)
+            .await
+            .unwrap();
+    }
+
+    fn row(&self, id: &str, body: AgentTimelineItemBodyV1) -> AgentTimelineMutationV1 {
+        AgentTimelineMutationV1::Append {
+            item: AgentTimelineItemDraftV1 {
+                item_id: AgentTimelineItemIdV1::new(id).unwrap(),
+                turn_id: Some(AgentTurnIdV1::new("child-turn").unwrap()),
+                client_message_id: Some(AgentClientMessageIdV1::new("child-message").unwrap()),
+                provider_message_id: None,
+                body,
+                created_at_ms: self.at_ms(),
+            },
+        }
+    }
+
+    fn lifecycle(&self, id: &str, state: AgentTimelineLifecycleStateV1) -> AgentTimelineMutationV1 {
+        let detail = (state == AgentTimelineLifecycleStateV1::TurnFailed)
+            .then(|| "provider_error".to_owned());
+        self.row(id, AgentTimelineItemBodyV1::Lifecycle { state, detail })
+    }
+
+    fn message(
+        &self,
+        id: &str,
+        role: AgentTimelineMessageRoleV1,
+        text: &str,
+    ) -> AgentTimelineMutationV1 {
+        self.row(
+            id,
+            AgentTimelineItemBodyV1::Message {
+                role,
+                markdown: text.into(),
+            },
+        )
+    }
+
+    fn ask(&self, id: &str, kind: AgentPendingRequestKindV1) -> AgentTimelineMutationV1 {
+        AgentTimelineMutationV1::PutPending {
+            request: AgentPendingRequestDraftV1 {
+                request_id: AgentInteractionRequestIdV1::new(id).unwrap(),
+                kind,
+                turn_id: Some(AgentTurnIdV1::new("child-turn").unwrap()),
+                client_message_id: AgentClientMessageIdV1::new("child-message").unwrap(),
+                payload: json!({}),
+                created_at_ms: self.at_ms(),
+            },
+        }
+    }
+
+    fn answer(&self, id: &str) -> AgentTimelineMutationV1 {
+        AgentTimelineMutationV1::ResolvePending {
+            request_id: AgentInteractionRequestIdV1::new(id).unwrap(),
+            outcome: json!({"allowed": true}),
+            resolved_at_ms: self.at_ms(),
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_chat_child_reports_each_outcome_once_after_moving_from_a_terminal() {
+    let (_root, state, _launcher, prompt_deliverer) = fixture_with_delivery(
+        vec![LaunchOutcome::Succeed],
+        vec![DeliveryOutcome::Succeed; 6],
+    )
+    .await;
+    let (context, _) = prepare_exact_session_run(&state).await;
+    let (child, _repository) = spawn_linked_child(&state).await;
+    let agent = child.plan.agent_id.clone();
+    let authority = state
+        .store
+        .agent_checkpoint_binding_authority(&agent)
+        .await
+        .unwrap()
+        .unwrap();
+    let parent = AgentSpawnParentV1 {
+        session_id: PARENT_SESSION.into(),
+        workspace_id: PARENT_WORKSPACE.into(),
+    };
+    let message = |marker: String| {
+        let id = child_result_delivery::interaction_id(&child.operation_id, &parent, &marker);
+        let state = &state;
+        let context = &context;
+        async move { parent_message(state, context, &id).await }
+    };
+    let mut deliveries = ChildResultDeliveries::new(&state);
+
+    // On its terminal, the child reports through its Host.
+    report_child(&state, &authority, "ready", "waiting", ("none", None), "1");
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    assert_eq!(prompt_deliverer.requests().len(), 1);
+
+    // Moved into Chat, its conversation is the authority. A conversation
+    // that has not finished a turn reports nothing, and neither does a turn
+    // that is still running.
+    let binding = move_child_to_chat(&state, &agent).await;
+    let session = binding.interaction_session_id.as_str().to_owned();
+    let mut chat = ChatConversation {
+        binding,
+        sequence: 0,
+    };
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    chat.commit(
+        &state,
+        vec![
+            chat.message("user-1", AgentTimelineMessageRoleV1::User, "Fix #12"),
+            chat.lifecycle("started-1", AgentTimelineLifecycleStateV1::TurnStarted),
+        ],
+    )
+    .await;
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    assert_eq!(prompt_deliverer.requests().len(), 1);
+
+    // Two requests in one turn are two outcomes, each named by its request.
+    chat.commit(
+        &state,
+        vec![chat.ask("permission-1", AgentPendingRequestKindV1::Permission)],
+    )
+    .await;
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    let approval = message(format!("approval_required:{session}:permission-1")).await;
+    assert_eq!(approval["common"]["title"], "fix-12 needs approval");
+    let body = approval["common"]["descriptionMarkdown"].as_str().unwrap();
+    assert!(body.contains(&format!("`dure transcript {}`", agent.as_str())));
+    assert!(!body.contains("dure read"));
+    chat.commit(
+        &state,
+        vec![
+            chat.answer("permission-1"),
+            chat.ask("question-2", AgentPendingRequestKindV1::Question),
+        ],
+    )
+    .await;
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    assert_eq!(
+        message(format!("input_required:{session}:question-2")).await["common"]["title"],
+        "fix-12 needs input"
+    );
+    assert_eq!(prompt_deliverer.requests().len(), 3);
+
+    // The finished turn carries its answer and pull request.
+    chat.commit(
+        &state,
+        vec![
+            chat.answer("question-2"),
+            chat.message(
+                "answer-1",
+                AgentTimelineMessageRoleV1::Assistant,
+                "Fixed in https://github.com/hebbianai/dure/pull/77",
+            ),
+            chat.lifecycle("completed-1", AgentTimelineLifecycleStateV1::TurnCompleted),
+        ],
+    )
+    .await;
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    let finished = message(format!("turn_completed:{session}:completed-1")).await;
+    assert_eq!(finished["common"]["title"], "fix-12 finished a turn");
+    let body = finished["common"]["descriptionMarkdown"].as_str().unwrap();
+    assert!(body.contains("Pull requests:\n- https://github.com/hebbianai/dure/pull/77\n"));
+    assert!(
+        body.contains("Final response:\n\n> Fixed in https://github.com/hebbianai/dure/pull/77\n")
+    );
+    assert_eq!(prompt_deliverer.requests().len(), 4);
+
+    // Nothing is sent again, nor by a restarted control plane, which reads
+    // each chat child once and replays what it already delivered.
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    child_result_delivery::tick(&state, &mut ChildResultDeliveries::new(&state))
+        .await
+        .unwrap();
+    assert_eq!(prompt_deliverer.requests().len(), 4);
+
+    // An idle child's conversation is not read until it changes: a failure
+    // written without its change notice is not seen yet.
+    chat.write_unannounced(
+        &state,
+        vec![
+            chat.message("user-2", AgentTimelineMessageRoleV1::User, "And #13"),
+            chat.lifecycle("started-2", AgentTimelineLifecycleStateV1::TurnStarted),
+            chat.lifecycle("failed-2", AgentTimelineLifecycleStateV1::TurnFailed),
+        ],
+    )
+    .await;
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    assert_eq!(prompt_deliverer.requests().len(), 4);
+    chat.commit(
+        &state,
+        vec![chat.row(
+            "error-2",
+            AgentTimelineItemBodyV1::Error {
+                code: "provider_error".into(),
+                message: "The provider failed".into(),
+            },
+        )],
+    )
+    .await;
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    assert_eq!(
+        message(format!("error:{session}:failed-2")).await["common"]["title"],
+        "fix-12 stopped on an error"
+    );
+    assert_eq!(prompt_deliverer.requests().len(), 5);
+
+    // A stop ends the Run's reports.
+    let selection = state
+        .store
+        .agent_runtime_selection(&agent)
+        .await
+        .unwrap()
+        .unwrap();
+    let close = OperationIdV1::new("child-chat-stop").unwrap();
+    state
+        .store
+        .admit_agent_runtime_close(&AgentRuntimeCloseIntentV1 {
+            schema_version: AGENT_RUNTIME_CLOSE_SCHEMA_VERSION_V1,
+            operation_id: close.clone(),
+            idempotency_key: "child-chat-stop-key".into(),
+            source: selection,
+            source_authority: AgentRuntimeBindingAuthorityV1::StructuredProtocol {
+                binding: chat.binding.clone(),
+            },
+            stopped_transition: None,
+            requested_at_ms: chat.at_ms() + 1,
+        })
+        .await
+        .unwrap();
+    state
+        .store
+        .advance_agent_runtime_close(&AgentRuntimeCloseAdvanceRequestV1 {
+            schema_version: AGENT_RUNTIME_CLOSE_SCHEMA_VERSION_V1,
+            operation_id: close.clone(),
+            expected_journal_revision: 1,
+            advance: AgentRuntimeCloseAdvanceV1::Stopped,
+            advanced_at_ms: chat.at_ms() + 2,
+        })
+        .await
+        .unwrap();
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    let stopped = message(format!("stopped:{}", close.as_str())).await;
+    assert_eq!(stopped["common"]["title"], "fix-12 was stopped");
+    assert!(
+        stopped["common"]["descriptionMarkdown"]
+            .as_str()
+            .unwrap()
+            .contains(&format!(
+                "Read its conversation with `dure transcript {}`.",
+                agent.as_str()
+            ))
+    );
+    assert_eq!(prompt_deliverer.requests().len(), 6);
+    child_result_delivery::tick(&state, &mut deliveries)
+        .await
+        .unwrap();
+    assert_eq!(prompt_deliverer.requests().len(), 6);
 }
