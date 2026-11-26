@@ -1,27 +1,50 @@
-// Store wiring for one agent row: the facts about the agent itself. The list
-// that shows the row supplies where it stands (its state, why it is listed,
-// since when, and its Space), so pane locations are read once per list.
+// Store wiring for one agent row: the facts about the agent itself, where it
+// stands among the agents that manage it and what it manages. The list that
+// shows the row supplies where it stands in that list (its state, why it is
+// listed, since when, and its Space), so pane locations are read once per
+// list.
 import { useMemo, useSyncExternalStore } from "react";
-import { useConversationTitle } from "@/components/agents/chat/useConversationTitle";
-import { useIndexedAgent } from "@/components/agents/useAgentIndex";
+import { useShallow } from "zustand/react/shallow";
+import { agentIndexOf, useIndexedAgent } from "@/components/agents/useAgentIndex";
+import {
+	useAgentManagedSummary,
+	useAgentRelations,
+} from "@/components/agents/useAgentRelations";
 import type { AgentRowFacts } from "@/lib/agents/agentRowModel";
 import { pendingApproval } from "@/lib/agents/approvalRequest";
 import {
 	conversationPresentationRevision,
 	conversationPrompt,
+	conversationTitle,
 	subscribeConversationPresentation,
 } from "@/lib/agents/chat/conversationPresentationState";
 import { programStatusNotice } from "@/lib/agents/programStatus";
 import { managedConversationId } from "@/lib/sessions/managed/managedConversationIdentity";
 import { agentRowPrompt } from "@/lib/spaces/unopenedAgentPresentation";
 import { observedTitle, resolveAgentPaneTitle } from "@/lib/workspace/pane/paneTitle";
-import { useStore } from "@/store";
+import { type AppState, useStore } from "@/store";
+import type { Agent } from "@/types";
 
 /** What the list knows about the row's place in it. */
 export type AgentRowPlacement = Pick<
 	AgentRowFacts,
-	"state" | "needsPerson" | "hasResult" | "sinceMs" | "spaceName" | "path" | "managed"
+	"state" | "needsPerson" | "hasResult" | "sinceMs" | "spaceName"
 >;
+
+/** The same title authority as the pane header and the Spaces row. */
+function agentRowTitle(
+	agent: Agent,
+	state: Pick<AppState, "sessionTitle" | "sessionCwd">,
+): string {
+	return resolveAgentPaneTitle({
+		agent,
+		runtimeTitle:
+			conversationTitle(agent.id) ??
+			observedTitle(state.sessionTitle[agent.sessionId], agent.conversationId),
+		opaqueConversationId: agent.conversationId,
+		directoryCandidates: [state.sessionCwd[agent.sessionId], agent.worktreePath],
+	});
+}
 
 export function useAgentRowFacts(
 	agentId: string,
@@ -29,20 +52,37 @@ export function useAgentRowFacts(
 ): AgentRowFacts | undefined {
 	const agent = useIndexedAgent(agentId);
 	const sessionId = agent?.sessionId ?? "";
-	const sessionTitle = useStore((state) => state.sessionTitle[sessionId]);
-	const sessionCwd = useStore((state) => state.sessionCwd[sessionId]);
 	const runtime = useStore((state) => state.sessionAgentRuntimeState[sessionId]);
 	const promptActivity = useStore((state) => state.sessionActivity[sessionId]);
 	const projectName = useStore(
 		(state) =>
 			state.projects.find((project) => project.id === agent?.projectId)?.name,
 	);
-	const conversationTitle = useConversationTitle(agent?.id);
+	// Titles read provider-reported conversation titles too, so a new one
+	// re-renders the row.
 	const presentationRevision = useSyncExternalStore(
 		subscribeConversationPresentation,
 		conversationPresentationRevision,
 		conversationPresentationRevision,
 	);
+	const title = useStore((state) =>
+		agent ? agentRowTitle(agent, state) : undefined,
+	);
+	const relations = useAgentRelations();
+	const managerIds = useMemo(
+		() => relations.chain(agentId),
+		[relations, agentId],
+	);
+	const path = useStore(
+		useShallow((state) => {
+			const agents = agentIndexOf(state.agents);
+			return managerIds.flatMap((id) => {
+				const manager = agents.get(id);
+				return manager ? [agentRowTitle(manager, state)] : [];
+			});
+		}),
+	);
+	const managed = useAgentManagedSummary(agentId);
 	const prompt = useMemo(
 		() =>
 			agent
@@ -53,7 +93,7 @@ export function useAgentRowFacts(
 				: undefined,
 		[agent, promptActivity, presentationRevision],
 	);
-	if (!agent) return undefined;
+	if (!agent || title === undefined) return undefined;
 	const waiting = placement.needsPerson !== undefined;
 	const running = runtime?.lifecycle === "running";
 	// What the program reports, for a row the needs-person authority put
@@ -67,15 +107,10 @@ export function useAgentRowFacts(
 	return {
 		...placement,
 		agentId: agent.id,
-		// The same title authority as the pane header and the Spaces row.
-		title: resolveAgentPaneTitle({
-			agent,
-			runtimeTitle:
-				conversationTitle ?? observedTitle(sessionTitle, agent.conversationId),
-			opaqueConversationId: agent.conversationId,
-			directoryCandidates: [sessionCwd, agent.worktreePath],
-		}),
+		title,
 		...(projectName ? { projectName } : {}),
+		...(path.length > 0 ? { path } : {}),
+		...(managed ? { managed } : {}),
 		...(programNotice ? { programNotice } : {}),
 		...(approval
 			? {

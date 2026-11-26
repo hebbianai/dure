@@ -11,6 +11,7 @@ import {
 	agentFixture,
 	hmuxSessionMetadataFixture,
 	managedAgentFixture,
+	managedBindingFixture,
 } from "@/test/agentFixtures";
 import type { Project, Space } from "@/types";
 
@@ -253,6 +254,61 @@ describe("NextUpChip", () => {
 			t("agents.row.approvalWithSummary", { tool: "Bash", summary: "rm -rf build" }),
 		);
 		expect(approval.textContent).not.toContain("Clean up");
+	});
+
+	it("shows who manages a waiting agent at any depth, and what a waiting manager manages", () => {
+		const team = [
+			["coordinator", undefined],
+			["lead", "s-coordinator"],
+			["worker", "s-lead"],
+		].map(([id, parentSession]) =>
+			managedAgentFixture({
+				id,
+				name: id,
+				displayName: `Agent ${id}`,
+				sessionId: `s-${id}`,
+				runtimeBinding: managedBindingFixture({ sessionId: `s-${id}` }),
+				...(parentSession
+					? {
+							runParent: { sessionId: parentSession, workspaceId: "workspace-1" },
+						}
+					: {}),
+			}),
+		);
+		useStore.setState({ agents: [...agents, ...team] });
+		seed({
+			displayStates: { coordinator: "blocked", lead: "working", worker: "input" },
+		});
+		render(<NextUpChip />);
+		act(() => fireEvent.click(chip()));
+
+		// Equal wait starts keep the store's order.
+		const rows = () =>
+			within(
+				screen.getByRole("region", { name: t("agents.nextUp.needsYou") }),
+			).getAllByRole("button");
+		const [coordinator, worker] = rows();
+		expect(worker.textContent).toContain("Agent coordinator › Agent lead");
+		expect(worker.textContent).toContain("Agent worker");
+		const managed = (needYou: number, working?: number) =>
+			[
+				t("agents.row.manages", { n: 2 }),
+				t("agents.row.managedNeedYou", { n: needYou }),
+				...(working ? [t("agents.row.managedWorking", { n: working })] : []),
+			].join(" · ");
+		expect(coordinator.textContent).toContain(managed(1, 1));
+		expect(coordinator.textContent).not.toContain("›");
+
+		// Attention alone updates the counts.
+		act(() =>
+			useAgentAttention.setState({
+				displayStates: { coordinator: "blocked", lead: "input", worker: "input" },
+			}),
+		);
+		const [nextCoordinator, lead] = rows();
+		expect(nextCoordinator.textContent).toContain(managed(2));
+		expect(lead.textContent).toContain(t("agents.row.manages", { n: 1 }));
+		expect(lead.textContent).toContain("Agent coordinator");
 	});
 
 	it("labels a result's line as what the agent was asked", () => {
