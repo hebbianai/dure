@@ -18,6 +18,7 @@ export const agents: Record<string, string> = {
 	"agents.nextUp.needsYou": "待处理",
 	"agents.nextUp.results": "有结果",
 	"agents.row.result": "有结果",
+	"agents.row.continuesAt": "将于 {time} 继续",
 	"agents.row.unexpectedExit": "意外退出",
 	"agents.row.signInExit": "请重新登录",
 	"agents.row.asked": "请求：{prompt}",

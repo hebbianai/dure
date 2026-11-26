@@ -110,7 +110,8 @@
       "workflow.delegate_once.complete",
       "workflow.delegate_once.show",
       "account_recovery.v1",
-      "account_recovery.continue_after_reset.v1"
+      "account_recovery.continue_after_reset.v1",
+      "account_recovery.waits.v1"
     ]
   }
 }

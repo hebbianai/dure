@@ -18,6 +18,7 @@ type AttentionRecords = {
 	displayStates: Record<string, AgentDisplayState>;
 	episodes: Record<string, number>;
 	acks: Record<string, number>;
+	recoveryWaits: Record<string, number>;
 };
 
 /** Each store remains authoritative. Keep one projection of its referenced
@@ -76,5 +77,6 @@ export function createSpacesAttentionSelector(agentIds: readonly string[]) {
 		displayStates: agentIds,
 		episodes: agentIds,
 		acks: agentIds,
+		recoveryWaits: agentIds,
 	});
 }

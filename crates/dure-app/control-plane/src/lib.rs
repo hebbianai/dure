@@ -3894,7 +3894,8 @@ async fn dispatch_authorized(
         "provider_recovery.get"
         | "provider_recovery.put"
         | "provider_recovery.observe_usage"
-        | "agent_recovery.read" => {
+        | "agent_recovery.read"
+        | "agent_recovery.waits" => {
             boxed_operation(|| {
                 provider_recovery_api::invoke(state, &request.operation, &request.body)
             })

@@ -9,6 +9,7 @@ const serviceNames = [
 	"runtime-projection",
 	"managed-agent-semantic",
 	"provider-conversation-metadata",
+	"recovery-waits",
 	"notification-activation",
 	"discovery-state-gc",
 	"low-disk-worktrees",
@@ -54,6 +55,7 @@ function lifecycleFixture(failedStart?: ServiceName) {
 				install("managed-agent-semantic"),
 			installProviderConversationMetadata: () =>
 				install("provider-conversation-metadata"),
+			installRecoveryWaits: () => install("recovery-waits"),
 			installNotificationActivation: () => install("notification-activation"),
 			installDiscoveryStateGc: () => install("discovery-state-gc"),
 			installLowDiskWorktrees: () => install("low-disk-worktrees"),
@@ -179,6 +181,7 @@ test("starts and retires main-window services as one lifecycle unit", () => {
 		installRuntimeProjectionReconciler,
 		installManagedAgentSemanticObserver,
 		installProviderConversationMetadata: start("provider-conversation-metadata"),
+		installRecoveryWaits: start("recovery-waits"),
 		installNotificationActivation: start("notification-activation"),
 		installDiscoveryStateGc: start("discovery-state-gc"),
 		installLowDiskWorktrees: start("low-disk-worktrees"),
@@ -193,6 +196,7 @@ test("starts and retires main-window services as one lifecycle unit", () => {
 		"start:runtime-projection",
 		"start:managed-agent-semantic",
 		"start:provider-conversation-metadata",
+		"start:recovery-waits",
 		"start:notification-activation",
 		"start:discovery-state-gc",
 		"start:low-disk-worktrees",
@@ -207,11 +211,12 @@ test("starts and retires main-window services as one lifecycle unit", () => {
 	);
 
 	stop();
-	expect(calls.slice(11)).toEqual([
+	expect(calls.slice(12)).toEqual([
 		"stop:registry",
 		"stop:low-disk-worktrees",
 		"stop:discovery-state-gc",
 		"stop:notification-activation",
+		"stop:recovery-waits",
 		"stop:provider-conversation-metadata",
 		"stop:managed-agent-semantic",
 		"stop:runtime-projection",

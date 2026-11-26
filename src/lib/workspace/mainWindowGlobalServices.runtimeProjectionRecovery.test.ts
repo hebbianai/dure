@@ -16,6 +16,9 @@ vi.mock("@/lib/agents/managedAgentSemanticObserverRuntime", () => ({
 vi.mock("@/lib/agents/providerConversationMetadataRuntime", () => ({
 	installProviderConversationMetadataRuntime: () => () => undefined,
 }));
+vi.mock("@/lib/agents/agentRecoveryWaitRuntime", () => ({
+	installAgentRecoveryWaitRuntime: () => () => undefined,
+}));
 vi.mock("@/lib/maintenance/discoveryStateGcService", () => ({
 	installDiscoveryStateGcService: () => () => undefined,
 }));

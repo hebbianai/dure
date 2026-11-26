@@ -17,6 +17,8 @@ import { DureLoader } from "@/components/ui/dure-loader";
 import { AgentDiffBadge } from "@/components/agents/AgentDiffBadge";
 import { ProgramStatusNoticeBadge } from "@/components/agents/ProgramStatusBadge";
 import { AgentActivityGlyph } from "@/components/agents/AgentActivityGlyph";
+import { agentContinuesText } from "@/components/agents/AgentRow";
+import { useNeedsPerson } from "@/components/agents/useNeedsPerson";
 import { AgentNotificationsMutedMarker } from "@/components/agents/AgentNotificationsMutedMarker";
 import { OverflowRevealText } from "@/components/ui/overflow-reveal-text";
 import { UnopenedAgentDetails } from "@/components/spaces/UnopenedAgentDetails";
@@ -43,7 +45,9 @@ import {
   useOpenSpaceRowState,
   useUnopenedAgentRowState,
 } from "@/components/spaces/useSpacesRowsState";
+import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
 import { agentNotificationsMuted } from "@/lib/agents/agentNotificationMute";
+import { agentContinuesAtMs } from "@/lib/agents/agentRowModel";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
 import type { ProviderConversationRecord } from "@/lib/agents/providerConversationDiscovery";
 import { t } from "@/lib/i18n";
@@ -96,6 +100,7 @@ const SPACE_ROW_VIEW_KEYS: readonly (keyof SpaceRowView)[] = [
   "programStatusKind",
   "programStatusApp",
   "programStatusMessage",
+  "continuesAtMs",
   "hidden",
   "unread",
   "agentId",
@@ -243,6 +248,11 @@ export const OpenSpaceRow = memo(function OpenSpaceRow({
       : value,
   );
   const detail = [
+    // What the agent does next on its own leads the line, whatever the
+    // visible fields: the row's dot still shows the error it continues from.
+    space.continuesAtMs === undefined
+      ? ""
+      : agentContinuesText(space.continuesAtMs),
     ...rowMetadata,
     !visibleFields.includes("details") ||
     (groupBy === "location" && space.detailSource === "location")
@@ -565,11 +575,21 @@ export const UnopenedAgentRow = memo(function UnopenedAgentRow({
   const visibleActivity = visibleFields.includes("updated")
     ? lastActivity
     : undefined;
+  // The same rule and words as the open rows: an unopened Agent is often a
+  // headless Run, the likeliest to wait out a limit overnight.
+  const continuesAtMs = agentContinuesAtMs(
+    useAgentAttention((state) => state.recoveryWaits[agent.id]),
+    displayState,
+    useNeedsPerson().has(agent.id),
+  );
+  const continuesText =
+    continuesAtMs === undefined ? "" : agentContinuesText(continuesAtMs);
   const visibleDetail = !visibleFields.includes("details")
     ? ""
     : recentActivity
       ? [projectName, recentActivity.text].join(" · ")
       : detail;
+  const infoText = [continuesText, visibleDetail].filter(Boolean).join(" · ");
   const activityLabel = visibleActivity && (
     <span className="shrink-0 font-mono text-meta text-muted-foreground">
       {visibleActivity}
@@ -577,7 +597,7 @@ export const UnopenedAgentRow = memo(function UnopenedAgentRow({
   );
   const toggleDetails = () => setDetailsOpen((open) => !open);
   const notificationsMuted = agentNotificationsMuted(agent);
-  const hasInfoLine = Boolean(visibleDetail) || notificationsMuted;
+  const hasInfoLine = Boolean(infoText) || notificationsMuted;
   return (
     <>
       <ContextMenu>
@@ -646,10 +666,10 @@ export const UnopenedAgentRow = memo(function UnopenedAgentRow({
                   {/* The branch glyph labels a branch name; with nothing to name
                       (an agent at its repository root writes no path) it would
                       stand alone — owner report 2026-09-03. */}
-                  {visibleDetail && !recentActivity && (
+                  {visibleDetail && !recentActivity && !continuesText && (
                     <GitBranch className="size-[10px] shrink-0" />
                   )}
-                  <OverflowRevealText text={visibleDetail} className="flex-1" />
+                  <OverflowRevealText text={infoText} className="flex-1" />
                 </span>
               )}
             </span>

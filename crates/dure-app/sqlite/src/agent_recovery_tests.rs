@@ -1104,7 +1104,16 @@ mod native {
                 .unwrap()
                 .contains(&agent())
         );
+        // Clients list the terminal's wait the same way as a Chat agent's.
+        let wait = dure_app::AgentRecoveryWaitV1 {
+            agent_id: agent(),
+            attempt_id: record.attempt_id.clone(),
+            resume_at_ms,
+        };
+        assert_eq!(store.agent_recovery_waits().await.unwrap(), vec![wait]);
         deliver(&store, &record.attempt_id).await;
+        // Once its prompt is typed, the terminal no longer waits.
+        assert_eq!(store.agent_recovery_waits().await.unwrap(), Vec::new());
 
         // Still limited: the continued turn fails again before any turn
         // completes, so recovery stops for a person instead of waiting
@@ -1136,6 +1145,17 @@ mod native {
         .unwrap();
         assert_eq!(later.stopped, None);
         assert!(later.resume_at_ms.is_some_and(|at| at > 400_000));
+        // An Exhausted attempt never lists; the new wait does.
+        assert_eq!(
+            store
+                .agent_recovery_waits()
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|wait| wait.attempt_id)
+                .collect::<Vec<_>>(),
+            vec![later.attempt_id]
+        );
     }
 
     #[tokio::test]

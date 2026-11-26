@@ -1,13 +1,14 @@
 import { AgentDiffBadge } from "@/components/agents/AgentDiffBadge";
 import { ActivityDot, activityLabel } from "@/components/agents/StatusBits";
 import { useNowTick } from "@/components/spaces/useNowTick";
+import { continuationTimeLabel } from "@/lib/agents/chat/turnFailureReason";
 import type {
 	AgentRowActivity,
 	AgentRowManagedSummary,
 	AgentRowModel,
 	AgentRowStatus,
 } from "@/lib/agents/agentRowModel";
-import { t } from "@/lib/i18n";
+import { currentLang, t } from "@/lib/i18n";
 import { formatRelativeAge } from "@/lib/ui/relativeAge";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +23,14 @@ const STATUS_LABEL: Record<AgentRowStatus, () => string> = {
 
 function agentRowStatusLabel(status: AgentRowStatus): string {
 	return STATUS_LABEL[status]();
+}
+
+/** When an agent continues by itself after its usage limit resets, in the
+ * words every list of agents uses. */
+export function agentContinuesText(atMs: number, nowMs?: number): string {
+	return t("agents.row.continuesAt", {
+		time: continuationTimeLabel(atMs, currentLang(), nowMs),
+	});
 }
 
 /** Program text never reads as Dure's: it is always attributed. A prompt is
@@ -84,9 +93,11 @@ export function AgentRow({
 		// a reason it still says what its dot shows, in words.
 		row.status
 			? agentRowStatusLabel(row.status)
-			: variant === "card" && row.dot.state
-				? activityLabel(row.dot.state)
-				: undefined,
+			: row.continuesAtMs !== undefined
+				? agentContinuesText(row.continuesAtMs, now)
+				: variant === "card" && row.dot.state
+					? activityLabel(row.dot.state)
+					: undefined,
 		row.sinceMs === undefined ? undefined : formatRelativeAge(row.sinceMs, now),
 		...row.context,
 	]

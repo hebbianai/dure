@@ -76,3 +76,25 @@ it("reads account choices against the conversation's exact server route", async 
 		route: { kind: "exact", authority },
 	});
 });
+
+it("lists the backend's recovery waits and rejects a malformed one", async () => {
+	const wait = {
+		agentId: "agent-1",
+		attemptId: "recovery-1",
+		resumeAtMs: 1_800_000_000_000,
+	};
+	const invoke = vi
+		.fn()
+		.mockResolvedValueOnce(envelope({ waits: [wait] }))
+		.mockResolvedValueOnce(envelope({ waits: [{ ...wait, resumeAtMs: "soon" }] }));
+	const client = createAccountRecoveryClient("team", invoke);
+	await expect(client.waits()).resolves.toEqual([wait]);
+	expect(invoke.mock.calls[0]?.[1]).toMatchObject({
+		operation: "agent_recovery.waits",
+		route: { kind: "selected" },
+		body: { schemaVersion: 1 },
+	});
+	await expect(client.waits()).rejects.toMatchObject({
+		code: "provider_recovery_response_invalid",
+	});
+});

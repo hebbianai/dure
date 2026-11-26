@@ -25,6 +25,12 @@ struct Read {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Waits {
+    schema_version: u16,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Observe {
     schema_version: u16,
     observations: Vec<ProviderRecoveryUsageV1>,
@@ -108,7 +114,33 @@ pub(crate) async fn invoke(
                 .latest_agent_recovery(&request.agent_id)
                 .await
                 .map_err(store_error)?;
-            Ok(json!({ "schemaVersion": 1, "recovery": recovery }))
+            // A terminal Agent has no conversation observation, so its wait
+            // is reported on its own; omitted when the Agent does not wait.
+            let wait = state
+                .store
+                .agent_recovery_waits()
+                .await
+                .map_err(store_error)?
+                .into_iter()
+                .find(|wait| wait.agent_id == request.agent_id);
+            let mut result = json!({ "schemaVersion": 1, "recovery": recovery });
+            if let Some(wait) = wait {
+                result["wait"] = json!(wait);
+            }
+            Ok(result)
+        }
+        "agent_recovery.waits" => {
+            let request: Waits = serde_json::from_value(body.clone())
+                .map_err(|_| "provider_recovery_request_invalid")?;
+            if request.schema_version != 1 {
+                return Err("provider_recovery_request_invalid".into());
+            }
+            let waits = state
+                .store
+                .agent_recovery_waits()
+                .await
+                .map_err(store_error)?;
+            Ok(json!({ "schemaVersion": 1, "waits": waits }))
         }
         _ => Err("provider_recovery_operation_unsupported".into()),
     }

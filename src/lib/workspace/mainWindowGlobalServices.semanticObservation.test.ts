@@ -66,6 +66,9 @@ vi.mock("@/lib/agents/appIconBadge", () => ({
 vi.mock("@/lib/agents/providerConversationMetadataRuntime", () => ({
 	installProviderConversationMetadataRuntime: () => () => undefined,
 }));
+vi.mock("@/lib/agents/agentRecoveryWaitRuntime", () => ({
+	installAgentRecoveryWaitRuntime: () => () => undefined,
+}));
 vi.mock("@/lib/persistence/registry", () => ({
 	startRegistrySync: mocks.startRegistry,
 }));

@@ -74,6 +74,7 @@ describe("Spaces runtime record projections", () => {
 			displayStates: { agent: "blocked" as const },
 			episodes: { agent: 3 },
 			acks: { agent: 2 },
+			recoveryWaits: {},
 		};
 		const result = select(state);
 		expect(
@@ -83,10 +84,17 @@ describe("Spaces runtime record projections", () => {
 		expect(acknowledged.displayStates).toBe(result.displayStates);
 		expect(acknowledged.episodes).toBe(result.episodes);
 		expect(acknowledged.acks).toEqual({ agent: 3 });
-		expect(select({ displayStates: {}, episodes: {}, acks: {} })).toEqual({
+		expect(
+			select({ displayStates: {}, episodes: {}, acks: {}, recoveryWaits: {} }),
+		).toEqual({
 			displayStates: {},
 			episodes: {},
 			acks: {},
+			recoveryWaits: {},
+		});
+		// A wait the backend reports for this agent reaches its row.
+		expect(select({ ...state, recoveryWaits: { agent: 9_000 } }).recoveryWaits).toEqual({
+			agent: 9_000,
 		});
 	});
 });

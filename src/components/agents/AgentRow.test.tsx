@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AgentRow } from "@/components/agents/AgentRow";
+import { AgentRow, agentContinuesText } from "@/components/agents/AgentRow";
 import { activityLabel } from "@/components/agents/StatusBits";
 import { agentRowModel } from "@/lib/agents/agentRowModel";
 import { t } from "@/lib/i18n";
@@ -85,6 +85,28 @@ describe("AgentRow", () => {
 	it("adds nothing for facts it lacks", () => {
 		render(<AgentRow row={agentRowModel({ agentId: "a", title: "Plain" })} />);
 		expect(screen.getByRole("button").textContent).toBe("Plain");
+	});
+
+	it("says when an agent its backend continues after the limit resets goes on", () => {
+		const atMs = Date.now() + 60 * 60_000;
+		render(
+			<AgentRow
+				row={agentRowModel({
+					agentId: "a",
+					title: "Overnight",
+					state: "error",
+					continuesAtMs: atMs,
+					projectName: "repo",
+				})}
+				variant="card"
+			/>,
+		);
+		const text = screen.getByRole("button").textContent ?? "";
+		expect(text).toContain(
+			[agentContinuesText(atMs), "repo"].join(" · "),
+		);
+		// It replaces the bare state a card would otherwise say.
+		expect(text).not.toContain(activityLabel("error"));
 	});
 
 	it("names an exit by its cause", () => {

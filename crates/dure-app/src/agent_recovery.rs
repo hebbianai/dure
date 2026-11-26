@@ -289,11 +289,27 @@ pub struct AgentRecoveryObservationV1 {
     pub created_at_ms: i64,
 }
 
+/// An Agent whose unfinished recovery waits for its usage limit to reset:
+/// the same account continues it at `resume_at_ms`, a Chat agent by resending
+/// its failed turn and a terminal agent with one prompt in the same terminal.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentRecoveryWaitV1 {
+    pub agent_id: AgentIdV1,
+    pub attempt_id: String,
+    pub resume_at_ms: i64,
+}
+
 pub trait AgentRecoveryStore: Send + Sync {
     fn latest_agent_recovery<'a>(
         &'a self,
         agent_id: &'a AgentIdV1,
     ) -> DomainStoreFuture<'a, Option<AgentRecoveryObservationV1>>;
+
+    /// Every Agent whose unfinished attempt waits for a reset, Chat and
+    /// terminal alike, in Agent order. A wait that a person's input or a
+    /// stop superseded leaves the list when its attempt is stopped.
+    fn agent_recovery_waits(&self) -> DomainStoreFuture<'_, Vec<AgentRecoveryWaitV1>>;
 
     /// Resumes the Agent's unfinished attempt, or reads its current failure
     /// and selects from its owning backend's explicitly configured pool in

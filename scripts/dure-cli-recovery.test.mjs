@@ -87,6 +87,20 @@ test("status is read only and returns the backend outcome unchanged", async () =
   assert.deepEqual(f.output, [result]);
 });
 
+test("waits lists the backend's reset waits read only and requires its capability", async () => {
+  const result = { schemaVersion: 1, waits: [
+    { agentId: "agent-a", attemptId: "attempt-a", resumeAtMs: 456 }] };
+  const f = fixture(async (_, request) => {
+    assert.deepEqual(request, { operation: "agent_recovery.waits",
+      requiredCapabilities: ["account_recovery.waits.v1"], body: { schemaVersion: 1 } });
+    return { result };
+  });
+  assert.equal(await runRecoveryCommand(["waits", "--backend", "shared"], f.options), true);
+  assert.deepEqual(f.routes, [{ backend: "shared", backendSpecified: true }]);
+  assert.deepEqual(f.output, [result]);
+  assert.throws(() => parseRecoveryCommand(["waits", "agent-a"]));
+});
+
 test("optional unknown telemetry reaches the backend without a credential availability probe", async () => {
   const observations = [{ profile, usedPercent: null, observedAtMs: 123 }];
   const f = fixture(async (_, request) => {

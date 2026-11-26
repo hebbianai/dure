@@ -1,4 +1,5 @@
 import { installAgentAttentionNotifier } from "@/lib/agents/agentAttentionNotifier";
+import { installAgentRecoveryWaitRuntime } from "@/lib/agents/agentRecoveryWaitRuntime";
 import { installAppIconBadge } from "@/lib/agents/appIconBadge";
 import {
 	type AgentRuntimeProjectionReconciler,
@@ -40,6 +41,7 @@ interface MainWindowGlobalServices {
 		refreshRuntimeProjection: ManagedAgentRuntimeProjectionRefresh,
 	): () => void;
 	installProviderConversationMetadata(): () => void;
+	installRecoveryWaits(): () => void;
 	installNotificationActivation(): () => void;
 	installDiscoveryStateGc(): () => void;
 	installLowDiskWorktrees(): () => void;
@@ -59,6 +61,7 @@ const defaultServices: MainWindowGlobalServices = {
 			refreshRuntimeProjection,
 		),
 	installProviderConversationMetadata: installProviderConversationMetadataRuntime,
+	installRecoveryWaits: () => installAgentRecoveryWaitRuntime(),
 	installNotificationActivation: installNotificationActivationHandler,
 	installDiscoveryStateGc: () =>
 		installDiscoveryStateGcService({
@@ -113,6 +116,7 @@ export function startMainWindowGlobalServices(
 			),
 		);
 		cleanups.push(services.installProviderConversationMetadata());
+		cleanups.push(services.installRecoveryWaits());
 		cleanups.push(services.installNotificationActivation());
 		cleanups.push(services.installDiscoveryStateGc());
 		cleanups.push(services.installLowDiskWorktrees());

@@ -3,7 +3,9 @@
 // map this module derives; a second inline rule would let them disagree.
 //
 // "Needs a person" is limited to what only a person can resolve: an approval,
-// an answer, an error, or a provider that exited on its own. Nothing here is
+// an answer, an error, or a provider that exited on its own. An error the
+// backend continues by itself after its usage limit resets needs no one
+// while that wait lasts. Nothing here is
 // persisted, answered or acknowledged. The module imports no store, i18n or
 // React, so the phone's build can share it.
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
@@ -82,6 +84,9 @@ export interface NeedsPersonInput {
 	readonly failure?: NeedsPersonFailure;
 	/** When this window saw a wait for a person begin. */
 	readonly waitingSinceMs?: number;
+	/** When the backend's recovery continues the agent on its own after its
+	 * usage limit resets, while it waits for that. */
+	readonly continuesAtMs?: number;
 }
 
 /** Why a person is needed, if one is. An exit capsule for the current epoch
@@ -105,7 +110,11 @@ export function needsPersonOf(input: NeedsPersonInput): NeedsPerson | undefined 
 		NEEDS_PERSON_DISPLAY_STATES.has(input.displayState)
 			? NEEDS_PERSON_REASON_BY_STATE[input.displayState as AgentDisplayState]
 			: undefined;
-	if (!reason) return undefined;
+	// The failed turn continues by itself; a question or an approval still
+	// waits for a person.
+	if (!reason || (reason === "error" && input.continuesAtMs !== undefined)) {
+		return undefined;
+	}
 	return input.waitingSinceMs === undefined
 		? { reason }
 		: { reason, sinceMs: input.waitingSinceMs };
@@ -122,6 +131,8 @@ export interface NeedsPersonFacts {
 	readonly waitingSince: Readonly<Record<string, number | undefined>>;
 	/** Agent id → its current-epoch failure capsule. */
 	readonly failures: Readonly<Record<string, NeedsPersonFailure | undefined>>;
+	/** Agent id → when its backend continues it after its limit resets. */
+	readonly recoveryWaits?: Readonly<Record<string, number | undefined>>;
 }
 
 /** The needs-person map over the registered agents. Agents with no fact are
@@ -136,6 +147,7 @@ export function deriveNeedsPerson(
 			displayState: facts.displayStates[id],
 			failure: facts.failures[id],
 			waitingSinceMs: facts.waitingSince[id],
+			continuesAtMs: facts.recoveryWaits?.[id],
 		});
 		if (need) map.set(id, need);
 	}
