@@ -15,6 +15,7 @@ export const en: Record<string, string> = {
   "notifications.push.approvalBody": "An agent is waiting for your approval.",
   "notifications.push.doneBody": "An agent finished its turn.",
   "notifications.push.inputBody": "An agent is waiting for your answer.",
+  "notifications.push.messageBody": "An agent sent you a message.",
   "notifications.push.setupBody": "Dure alerts are on for this iPhone.",
   "notifications.push.description": "Receive approval and completion alerts even when Dure is closed. The paired computer must be running Dure.",
   "notifications.push.syncing": "Updating push notifications…",
