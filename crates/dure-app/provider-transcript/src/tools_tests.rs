@@ -179,6 +179,7 @@ fn calls_before_a_left_out_message_are_left_out_and_the_rest_rebased() {
             ..Limits::PAGE
         },
         None,
+        0,
     )
     .unwrap();
     assert!(!transcript.history_complete);

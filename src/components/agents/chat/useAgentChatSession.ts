@@ -96,9 +96,9 @@ export function useAgentChatSession(
 			controller
 				? controller.loadOlder()
 				: Promise.reject(new Error("agent_chat_controller_unavailable")),
-		readProviderHistory: (before: number) =>
+		readProviderHistory: (before: number, after = 0) =>
 			controller
-				? controller.readProviderHistory(before)
+				? controller.readProviderHistory({ before, after })
 				: Promise.reject(new Error("agent_chat_controller_unavailable")),
 		queueMessage: (input: string) => {
 			if (!controller) throw new Error("agent_chat_controller_unavailable");

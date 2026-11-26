@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useRef } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
 import type { IDockviewPanelProps } from "dockview-react";
 import { AgentTeamLine } from "@/components/agents/AgentTeamLine";
 import { AgentGoalBar } from "@/components/agents/chat/AgentGoalBar";
@@ -7,7 +7,14 @@ import {
 	ChatComposer,
 	type ChatTurnFailureRecovery,
 } from "@/components/agents/chat/ChatComposer";
-import { useOlderProviderHistory } from "@/components/agents/chat/useOlderProviderHistory";
+import {
+	type ProviderHistoryGaps,
+	ProviderHistoryGapContext,
+} from "@/components/agents/chat/ProviderHistoryGapContext";
+import {
+	type ProviderHistoryPagesState,
+	useProviderHistoryPages,
+} from "@/components/agents/chat/useOlderProviderHistory";
 import { PanelStatus } from "@/components/common/PanelStatus";
 import { LoadingRow } from "@/components/common/StatusBlocks";
 import { Button } from "@/components/ui/button";
@@ -16,8 +23,9 @@ import type { ProviderCatalogSource } from "@/lib/agents/providerModelCatalogSou
 import type { AgentChatSessionView } from "@/lib/agents/chat/agentChatSessionView";
 import type { AgentPendingRequestV1 } from "@/lib/agents/chat/agentConversationContract";
 import {
-	chatPageWithOlderProviderHistory,
-	seededProviderHistoryCursor,
+	chatPageWithProviderHistory,
+	type ProviderHistoryPages,
+	providerHistoryAnchors,
 } from "@/lib/agents/chat/providerHistoryPages";
 import { t } from "@/lib/i18n";
 
@@ -56,31 +64,58 @@ export function AgentChatSurface({
 }) {
 	const readyReported = useRef(false);
 	const storePage = session.page;
-	const olderAnchor = storePage
-		? seededProviderHistoryCursor(storePage)
-		: undefined;
+	const anchors = useMemo(
+		() => (storePage ? providerHistoryAnchors(storePage) : []),
+		[storePage],
+	);
 	const conversationRef = storePage?.binding.providerConversationRef;
-	// History older than the seeded window loads on request through the
-	// backend that owns the session, which holds the provider transcript.
-	const older = useOlderProviderHistory(
+	// History older than the seeded window, and the history a gap between
+	// the timeline's rows leaves out, load on request through the backend
+	// that owns the session, which holds the provider transcript.
+	const history = useProviderHistoryPages(
 		storePage && conversationRef
 			? {
 					provider: storePage.binding.providerId,
 					conversationId: conversationRef,
 				}
 			: undefined,
-		olderAnchor,
+		anchors,
 		session.readProviderHistory,
 	);
-	// A backend that cannot read it keeps the boundary where history starts.
-	const olderPages = older.unavailable ? undefined : older.pages;
-	const page = useMemo(
+	const opening = anchors.find((anchor) => anchor.kind === "opening");
+	const older: ProviderHistoryPagesState | undefined =
+		opening && history.states.get(opening.itemId);
+	const openingItemId = opening?.itemId;
+	const loadOlderHistory = useCallback(
 		() =>
-			storePage && olderPages
-				? chatPageWithOlderProviderHistory(storePage, olderPages)
-				: storePage,
-		[storePage, olderPages],
+			openingItemId === undefined
+				? Promise.resolve()
+				: history.load(openingItemId),
+		[openingItemId, history.load],
 	);
+	const gaps = useMemo<ProviderHistoryGaps>(
+		() => ({
+			states: new Map(
+				anchors.flatMap((anchor) => {
+					const state = history.states.get(anchor.itemId);
+					return anchor.kind === "gap" && state
+						? [[anchor.itemId, state] as const]
+						: [];
+				}),
+			),
+			load: history.load,
+		}),
+		[anchors, history.states, history.load],
+	);
+	const page = useMemo(() => {
+		if (!storePage) return storePage;
+		// A backend that cannot read it keeps the boundary where it is.
+		const loaded = new Map<string, ProviderHistoryPages>();
+		for (const [itemId, state] of history.states) {
+			if (!state.unavailable) loaded.set(itemId, state.pages);
+		}
+		return chatPageWithProviderHistory(storePage, loaded);
+	}, [storePage, history.states]);
 	useEffect(() => {
 		if (session.phase !== "ready" || !page || readyReported.current) return;
 		readyReported.current = true;
@@ -143,22 +178,26 @@ export function AgentChatSurface({
 					{t("agents.chat.reconnecting")}
 				</LoadingRow>
 			)}
-			<TranscriptContents
-				page={page}
-				active={Boolean(session.activeTurn)}
-				shimmerTurn={
-					shimmerOwner === "transcript" ? session.activeTurn : undefined
-				}
-				loadingOlder={session.loadingOlder || older.loading}
-				olderHistoryError={
-					session.olderHistoryError ??
-					(older.failed ? t("agents.chat.historyBoundary") : undefined)
-				}
-				// The store's own older rows come first; past them, the
-				// provider transcript's.
-				onLoadOlder={storePage?.hasMore ? session.loadOlder : older.loadOlder}
-				renderPending={renderPending}
-			/>
+			<ProviderHistoryGapContext.Provider value={gaps}>
+				<TranscriptContents
+					page={page}
+					active={Boolean(session.activeTurn)}
+					shimmerTurn={
+						shimmerOwner === "transcript" ? session.activeTurn : undefined
+					}
+					loadingOlder={session.loadingOlder || (older?.loading ?? false)}
+					olderHistoryError={
+						session.olderHistoryError ??
+						(older?.failed ? t("agents.chat.historyBoundary") : undefined)
+					}
+					// The store's own older rows come first; past them, the
+					// provider transcript's.
+					onLoadOlder={
+						storePage?.hasMore ? session.loadOlder : loadOlderHistory
+					}
+					renderPending={renderPending}
+				/>
+			</ProviderHistoryGapContext.Provider>
 			<AgentTeamLine agentId={session.draftIdentity.agentId} />
 			<AgentGoalBar
 				key={`${session.draftIdentity.backendProfileId}:${session.draftIdentity.agentId}:${session.draftIdentity.interactionSessionId}`}

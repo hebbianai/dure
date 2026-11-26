@@ -2,7 +2,11 @@
 
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { useOlderProviderHistory } from "@/components/agents/chat/useOlderProviderHistory";
+import {
+	useOlderProviderHistory,
+	useProviderHistoryPages,
+} from "@/components/agents/chat/useOlderProviderHistory";
+import type { ProviderHistoryAnchor } from "@/lib/agents/chat/providerHistoryPages";
 import type { ProviderConversationActivity } from "@/lib/ipc/conversations";
 
 function page(
@@ -33,6 +37,7 @@ describe("older provider history", () => {
 		);
 		expect(result.current.pages).toEqual({
 			anchor: 900,
+			floor: 0,
 			pages: [],
 			before: 900,
 		});
@@ -75,6 +80,7 @@ describe("older provider history", () => {
 
 		expect(result.current.pages).toEqual({
 			anchor: 1_500,
+			floor: 0,
 			pages: [],
 			before: 1_500,
 		});
@@ -139,5 +145,103 @@ describe("older provider history", () => {
 		await act(() => result.current.loadOlder());
 		expect(result.current.pages).toBeUndefined();
 		expect(read).not.toHaveBeenCalled();
+	});
+});
+
+describe("provider history at several anchors", () => {
+	const opening: ProviderHistoryAnchor = {
+		kind: "opening",
+		itemId: "history-boundary",
+		before: 300,
+		after: 0,
+	};
+	const gap: ProviderHistoryAnchor = {
+		kind: "gap",
+		itemId: "history-gap",
+		before: 900,
+		after: 400,
+	};
+
+	it("pages each anchor down to its own floor, on its own", async () => {
+		const read = vi
+			.fn()
+			.mockResolvedValueOnce(page("between, newer", 650))
+			.mockResolvedValueOnce(page("between, older"));
+		const { result } = renderHook(() =>
+			useProviderHistoryPages(source, [opening, gap], read),
+		);
+
+		await act(() => result.current.load("history-gap"));
+		await act(() => result.current.load("history-gap"));
+		await act(() => result.current.load("history-gap"));
+
+		expect(read.mock.calls).toEqual([
+			[900, 400],
+			[650, 400],
+		]);
+		const between = result.current.states.get("history-gap");
+		expect(between?.pages.before).toBeNull();
+		expect(
+			between?.pages.pages.map((loaded) => loaded.entries[0]?.text),
+		).toEqual(["between, older", "between, newer"]);
+		expect(result.current.states.get("history-boundary")?.pages).toEqual({
+			anchor: 300,
+			floor: 0,
+			pages: [],
+			before: 300,
+		});
+	});
+
+	it("marks only the anchor a reader cannot read", async () => {
+		const read = vi.fn(async (_before: number, after: number) =>
+			after > 0 ? null : page("oldest"),
+		);
+		const { result } = renderHook(() =>
+			useProviderHistoryPages(source, [opening, gap], read),
+		);
+
+		await act(() => result.current.load("history-gap"));
+		await act(() => result.current.load("history-boundary"));
+
+		expect(result.current.states.get("history-gap")?.unavailable).toBe(true);
+		expect(result.current.states.get("history-boundary")?.unavailable).toBe(
+			false,
+		);
+		expect(
+			result.current.states.get("history-boundary")?.pages.before,
+		).toBeNull();
+	});
+
+	it("drops an answer for a gap that is no longer shown", async () => {
+		let answer: (value: ProviderConversationActivity) => void = () => {};
+		const read = vi.fn(
+			() =>
+				new Promise<ProviderConversationActivity>((resolve) => {
+					answer = resolve;
+				}),
+		);
+		const { result, rerender } = renderHook(
+			({ anchors }) => useProviderHistoryPages(source, anchors, read),
+			{ initialProps: { anchors: [gap] } },
+		);
+		let loading: Promise<void> = Promise.resolve();
+		act(() => {
+			loading = result.current.load("history-gap");
+		});
+		expect(result.current.states.get("history-gap")?.loading).toBe(true);
+
+		const moved = { ...gap, after: 500 };
+		rerender({ anchors: [moved] });
+		await act(async () => {
+			answer(page("for the old gap"));
+			await loading;
+		});
+
+		expect(result.current.states.get("history-gap")).toEqual({
+			pages: { anchor: 900, floor: 500, pages: [], before: 900 },
+			loading: false,
+			failed: false,
+			unavailable: false,
+		});
 	});
 });

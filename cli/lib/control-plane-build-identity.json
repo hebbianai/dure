@@ -16,6 +16,7 @@
       "agent_conversation.interrupt_turn",
       "agent_conversation.read.v7",
       "agent_conversation.read_provider_history",
+      "agent_conversation.read_provider_history.after.v1",
       "agent_conversation.read_queue",
       "agent_conversation.recover",
       "agent_conversation.start_turn",

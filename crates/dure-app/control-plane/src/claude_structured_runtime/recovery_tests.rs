@@ -138,6 +138,7 @@ async fn active_reopen_attempts_recovery_without_reusing_an_unproved_host_receip
             binding: stale.clone(),
             items: Vec::new(),
             observed_at_ms: 5,
+            held_history_end: None,
         })
         .await
         .unwrap()

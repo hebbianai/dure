@@ -50,6 +50,10 @@ const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$/;
 const MAX_QUEUED_EVENTS = 64;
 const READ_PROVIDER_HISTORY_OPERATION =
 	"agent_conversation.read_provider_history";
+/** A backend that reads the history between two transcript offsets, as a
+ * gap in a Chat timeline asks for. */
+const READ_PROVIDER_HISTORY_AFTER_CAPABILITY =
+	"agent_conversation.read_provider_history.after.v1";
 
 type AgentConversationReadRequestV1 = AgentTimelineReadRequestV1;
 
@@ -83,6 +87,9 @@ interface AgentProviderHistoryReadRequestV1 {
 	 * refuses the read. */
 	providerConversationRef: string;
 	before: number;
+	/** Where the page may start at the earliest: where the rows above a gap
+	 * end. Absent at the transcript's start. */
+	after?: number;
 }
 
 export interface AgentConversationInterruptTurnV1 {
@@ -136,14 +143,15 @@ export interface DureAgentConversationClient {
 		routeAuthority: DureBackendRouteAuthorityV1,
 	): Promise<AgentQueuedInputPageV1>;
 	/** The page of the session's provider history that ends `before` a
-	 * transcript cursor, older than its seeded timeline. The backend that owns
+	 * transcript cursor and starts no earlier than `after`: older than its
+	 * seeded timeline, or in a gap between its rows. The backend that owns
 	 * the session reads it, on the session's exact route, from the
 	 * conversation the binding names, so a remote project's history is read
 	 * where its transcript is. Null when there is no conversation yet or that
 	 * backend predates the read. */
 	readProviderHistory(
 		binding: AgentInteractionBindingV1,
-		before: number,
+		range: { before: number; after: number },
 		routeAuthority: DureBackendRouteAuthorityV1,
 	): Promise<ProviderConversationActivity | null>;
 	enqueueTurn(
@@ -252,7 +260,8 @@ function parseProviderHistoryPage(
 		!(
 			activity.olderCursor === undefined ||
 			(nonNegativeInteger(activity.olderCursor) &&
-				activity.olderCursor < request.before)
+				activity.olderCursor < request.before &&
+				activity.olderCursor > (request.after ?? -1))
 		)
 	) {
 		return null;
@@ -573,7 +582,7 @@ export function createDureAgentConversationClient(options?: {
 					| "uncertain",
 			};
 		},
-		async readProviderHistory(binding, before, routeAuthority) {
+		async readProviderHistory(binding, { before, after }, routeAuthority) {
 			const providerConversationRef = binding.providerConversationRef;
 			if (!providerConversationRef) return null;
 			const request: AgentProviderHistoryReadRequestV1 = {
@@ -581,6 +590,9 @@ export function createDureAgentConversationClient(options?: {
 				interactionSessionId: binding.interactionSessionId,
 				providerConversationRef,
 				before,
+				// The transcript's start needs no floor, so an older backend
+				// still answers it.
+				...(after > 0 ? { after } : {}),
 			};
 			let response: Awaited<ReturnType<typeof requestEffect>>;
 			try {
@@ -591,7 +603,14 @@ export function createDureAgentConversationClient(options?: {
 				);
 			} catch (error) {
 				if (
-					dureBackendCapabilityMissing(error, READ_PROVIDER_HISTORY_OPERATION)
+					dureBackendCapabilityMissing(
+						error,
+						READ_PROVIDER_HISTORY_OPERATION,
+					) ||
+					dureBackendCapabilityMissing(
+						error,
+						READ_PROVIDER_HISTORY_AFTER_CAPABILITY,
+					)
 				)
 					return null;
 				throw error;

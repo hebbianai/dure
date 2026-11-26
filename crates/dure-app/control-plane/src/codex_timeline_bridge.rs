@@ -1136,6 +1136,7 @@ mod tests {
             "codex",
             "thread-history",
             starts[1],
+            0,
         )
         .unwrap();
         assert_eq!(
@@ -1330,6 +1331,45 @@ mod tests {
             ]
         );
         assert!(!history_complete(&service, &binding).await);
+        drop(bridge);
+        drop(incoming);
+        server.abort();
+    }
+
+    /// The same window after held turns, with the rollout on this machine:
+    /// its start in the rollout is no place to page back from, since the
+    /// history before it runs over the turns the timeline already shows. It
+    /// follows them behind the gap at no place.
+    #[tokio::test]
+    async fn a_window_after_held_history_is_never_placed_over_the_held_turns() {
+        let (temporary, service, binding) = conversation_fixture().await;
+        let home = temporary.path().join("codex-home");
+        rollout_home(&home, 1..=5);
+        let socket_path = temporary.path().join("app.sock");
+        let (server, _requests) = paged_thread_server(&socket_path, THREAD_PAGES);
+        let (bridge, incoming) = paged_bridge(&socket_path, &binding, &service, Some(home)).await;
+        bridge
+            .reconcile_history(json!({
+                "thread": { "id": "thread-history", "turns": [history_turn(1)] },
+            }))
+            .await
+            .unwrap();
+
+        let newest_page = encoded_len(&history_turn(5)) + encoded_len(&history_turn(4));
+        bridge
+            .reconcile_history_within(paged_resume(), newest_page)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            prompts_and_boundaries(&service, &binding).await,
+            [
+                "Prompt 1",
+                "boundary:provider_history_truncated",
+                "Prompt 4",
+                "Prompt 5"
+            ]
+        );
         drop(bridge);
         drop(incoming);
         server.abort();

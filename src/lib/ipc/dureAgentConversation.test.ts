@@ -967,7 +967,11 @@ describe("Dure agent conversation client", () => {
 		const client = createDureAgentConversationClient({ invokeCommand });
 
 		expect(
-			await client.readProviderHistory(binding, 900, routeAuthority()),
+			await client.readProviderHistory(
+				binding,
+				{ before: 900, after: 0 },
+				routeAuthority(),
+			),
 		).toEqual(activity);
 		expect(invokeCommand).toHaveBeenCalledWith("dure_backend_request", {
 			route: { kind: "exact", authority: routeAuthority() },
@@ -983,26 +987,102 @@ describe("Dure agent conversation client", () => {
 		// never shown.
 		for (let attempt = 0; attempt < 2; attempt += 1) {
 			await expect(
-				client.readProviderHistory(binding, 900, routeAuthority()),
+				client.readProviderHistory(
+					binding,
+					{ before: 900, after: 0 },
+					routeAuthority(),
+				),
 			).rejects.toMatchObject({ code: "agent_conversation_response_invalid" });
 		}
 		// A backend that predates the read cannot answer it at all.
 		expect(
-			await client.readProviderHistory(binding, 900, routeAuthority()),
+			await client.readProviderHistory(
+				binding,
+				{ before: 900, after: 0 },
+				routeAuthority(),
+			),
 		).toBeNull();
 		await expect(
-			client.readProviderHistory(binding, 900, routeAuthority()),
+			client.readProviderHistory(
+				binding,
+				{ before: 900, after: 0 },
+				routeAuthority(),
+			),
 		).rejects.toMatchObject({ code: "agent_conversation_history_unavailable" });
 		// A session with no provider conversation yet has none to page.
 		invokeCommand.mockClear();
 		expect(
 			await client.readProviderHistory(
 				read().page.binding,
-				900,
+				{ before: 900, after: 0 },
 				routeAuthority(),
 			),
 		).toBeNull();
 		expect(invokeCommand).not.toHaveBeenCalled();
+	});
+
+	it("reads a gap's history between its ends, where the backend can", async () => {
+		const binding = {
+			...read().page.binding,
+			providerConversationRef: "conversation-1",
+		};
+		const activity = {
+			schemaVersion: 1,
+			provider: "claude",
+			conversationId: "conversation-1",
+			historyComplete: true,
+			finalResponse: null,
+			entries: [{ role: "user", text: "terminal prompt" }],
+			tools: [],
+		};
+		const invokeCommand = vi
+			.fn()
+			.mockResolvedValueOnce(envelope({ activity }))
+			.mockResolvedValueOnce(
+				envelope({ activity: { ...activity, olderCursor: 400 } }),
+			)
+			.mockRejectedValueOnce({
+				code: "backend_transport_capability_missing",
+				details: {
+					capability: "agent_conversation.read_provider_history.after.v1",
+				},
+			});
+		const client = createDureAgentConversationClient({ invokeCommand });
+
+		expect(
+			await client.readProviderHistory(
+				binding,
+				{ before: 900, after: 400 },
+				routeAuthority(),
+			),
+		).toEqual(activity);
+		expect(invokeCommand).toHaveBeenCalledWith("dure_backend_request", {
+			route: { kind: "exact", authority: routeAuthority() },
+			operation: "agent_conversation.read_provider_history",
+			body: {
+				schemaVersion: 1,
+				interactionSessionId: "interaction-1",
+				providerConversationRef: "conversation-1",
+				before: 900,
+				after: 400,
+			},
+		});
+		// A page that would read past the gap's floor is never shown.
+		await expect(
+			client.readProviderHistory(
+				binding,
+				{ before: 900, after: 400 },
+				routeAuthority(),
+			),
+		).rejects.toMatchObject({ code: "agent_conversation_response_invalid" });
+		// A backend that reads older history but not a gap keeps the gap.
+		expect(
+			await client.readProviderHistory(
+				binding,
+				{ before: 900, after: 400 },
+				routeAuthority(),
+			),
+		).toBeNull();
 	});
 
 	it("interrupts only through the observed exact route", async () => {

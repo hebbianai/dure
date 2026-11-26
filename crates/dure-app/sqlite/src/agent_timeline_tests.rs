@@ -876,6 +876,7 @@ async fn complete_history_seeds_after_hidden_rows_without_advancing_the_live_cur
             ),
         ],
         observed_at_ms: 120,
+        held_history_end: None,
     };
     let receipt = store.reconcile_agent_history(&snapshot).await.unwrap();
     assert!(receipt.binding.history_complete);
@@ -923,6 +924,7 @@ async fn empty_exact_history_completes_without_rows_or_live_cursor_movement() {
             binding: current,
             items: Vec::new(),
             observed_at_ms: 120,
+            held_history_end: None,
         })
         .await
         .unwrap();
@@ -986,6 +988,7 @@ async fn windowed_history_seeds_behind_its_boundary_and_stays_incomplete() {
             ),
         ],
         observed_at_ms: 120,
+        held_history_end: None,
     };
     assert!(snapshot.omits_older_history());
 
@@ -1058,6 +1061,7 @@ async fn compacted_history_seeds_behind_its_compaction_boundary_as_complete() {
             ),
         ],
         observed_at_ms: 120,
+        held_history_end: None,
     };
     assert!(!snapshot.omits_older_history());
 
@@ -1109,6 +1113,7 @@ async fn a_history_boundary_can_only_open_a_snapshot() {
                 history_boundary_item("provider_history_truncated", 1),
             ],
             observed_at_ms: 120,
+            held_history_end: None,
         })
         .await
         .unwrap_err();
@@ -1139,6 +1144,7 @@ async fn history_hydration_authority_never_mixes_pre_and_post_commit_rows() {
             dure_app::AgentTimelineMessageRoleV1::Assistant,
         )],
         observed_at_ms: 120,
+        held_history_end: None,
     };
 
     let mut reader = store.pool.acquire().await.unwrap();
@@ -1285,6 +1291,7 @@ async fn history_reconciliation_rejects_failure_lifecycle_and_pending_authority(
                     dure_app::AgentTimelineMessageRoleV1::Assistant,
                 )],
                 observed_at_ms: 120,
+                held_history_end: None,
             })
             .await
             .unwrap_err(),
@@ -1329,6 +1336,7 @@ async fn history_reconciliation_rejects_failure_lifecycle_and_pending_authority(
                     dure_app::AgentTimelineMessageRoleV1::Assistant,
                 )],
                 observed_at_ms: 120,
+                held_history_end: None,
             })
             .await
             .unwrap_err(),
@@ -1363,6 +1371,7 @@ async fn history_reconciliation_rejects_failure_lifecycle_and_pending_authority(
                     dure_app::AgentTimelineMessageRoleV1::Assistant,
                 )],
                 observed_at_ms: 120,
+                held_history_end: None,
             })
             .await
             .unwrap_err(),
@@ -1409,6 +1418,7 @@ async fn history_reconciliation_rejects_visible_content_and_rolls_back_item_conf
                 dure_app::AgentTimelineMessageRoleV1::User,
             )],
             observed_at_ms: 120,
+            held_history_end: None,
         })
         .await
         .unwrap_err();
@@ -1460,6 +1470,7 @@ async fn history_reconciliation_rejects_visible_content_and_rolls_back_item_conf
             ),
         ],
         observed_at_ms: 120,
+        held_history_end: None,
     };
     assert!(matches!(
         conflict_store

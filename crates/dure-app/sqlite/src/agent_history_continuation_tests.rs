@@ -3,7 +3,10 @@
 //! two Chat sessions, without inserting older history ahead of its rows.
 
 use super::*;
-use dure_app::{AgentTimelineMessageRoleV1, PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1};
+use dure_app::{
+    AgentHeldHistoryEndV1, AgentTimelineMessageRoleV1, PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1,
+    PROVIDER_TRANSCRIPT_GAP_HISTORY_BOUNDARY_V1,
+};
 
 fn message(
     id: &str,
@@ -82,6 +85,7 @@ async fn snapshot(
             .unwrap(),
         items,
         observed_at_ms: 200,
+        held_history_end: None,
     }
 }
 
@@ -261,6 +265,126 @@ async fn continued_history_from_a_compaction_marks_the_gap_and_stays_complete() 
         item_ids(&page)[2..],
         ["compaction-summary", "after-compaction"]
     );
+}
+
+/// The provider history after a Terminal session longer than one window:
+/// where the newest held message's records end, as the runtime found them in
+/// the transcript, and where the window starts there place the gap, so a view
+/// pages exactly the records the timeline skips into it.
+#[tokio::test]
+async fn continued_history_places_its_gap_between_the_held_rows_and_the_window() {
+    let root = TempDir::new().unwrap();
+    for (name, reason) in [
+        ("window", "provider_transcript_window"),
+        ("compaction", PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1),
+    ] {
+        let store = provision(&root.path().join(format!("{name}.sqlite"))).await;
+        live(
+            &store,
+            1,
+            vec![
+                assistant("chat-answer-1", "msg_1"),
+                user("chat-user"),
+                assistant("chat-answer-2", "msg_2"),
+            ],
+        )
+        .await;
+        let authority = store
+            .agent_history_hydration_authority(&interaction())
+            .await
+            .unwrap();
+        assert_eq!(
+            authority.newest_provider_message_id,
+            Some(AgentProviderMessageIdV1::new("msg_2").unwrap())
+        );
+        let mut history = snapshot(
+            &store,
+            vec![
+                boundary(reason, 9_000),
+                user("terminal-user"),
+                assistant("terminal-answer", "msg_9"),
+            ],
+        )
+        .await;
+        history.held_history_end = Some(AgentHeldHistoryEndV1 {
+            provider_message_id: AgentProviderMessageIdV1::new("msg_2").unwrap(),
+            transcript_offset: 4_000,
+        });
+        assert!(
+            store
+                .continue_agent_history(&history)
+                .await
+                .unwrap()
+                .timeline_changed
+        );
+        let page = tail(&store).await;
+        assert_eq!(
+            page.rows[3].item.body,
+            AgentTimelineItemBodyV1::HistoryBoundary {
+                reason: PROVIDER_TRANSCRIPT_GAP_HISTORY_BOUNDARY_V1.into(),
+                requested_after_provider_sequence: 4_000,
+                dropped_through_provider_sequence: 9_000,
+            },
+            "{name}"
+        );
+        assert_eq!(item_ids(&page)[4..], ["terminal-user", "terminal-answer"]);
+    }
+}
+
+/// A gap stays at no place when its ends are not this timeline's: measured
+/// from a message the timeline no longer ends with, from past where the
+/// history resumes, or without a place for the history it continues with.
+#[tokio::test]
+async fn a_continued_gap_without_both_ends_stays_unplaced() {
+    let root = TempDir::new().unwrap();
+    for (name, measured, held_end, opening) in [
+        (
+            "stale",
+            "msg_1",
+            4_000,
+            boundary("provider_transcript_window", 9_000),
+        ),
+        (
+            "past",
+            "msg_2",
+            9_000,
+            boundary("provider_transcript_window", 9_000),
+        ),
+        (
+            "unplaced",
+            "msg_2",
+            4_000,
+            boundary(PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1, 12),
+        ),
+    ] {
+        let store = provision(&root.path().join(format!("{name}.sqlite"))).await;
+        live(
+            &store,
+            1,
+            vec![
+                assistant("chat-answer-1", "msg_1"),
+                assistant("chat-answer-2", "msg_2"),
+            ],
+        )
+        .await;
+        let mut history =
+            snapshot(&store, vec![opening, assistant("terminal-answer", "msg_9")]).await;
+        history.held_history_end = Some(AgentHeldHistoryEndV1 {
+            provider_message_id: AgentProviderMessageIdV1::new(measured).unwrap(),
+            transcript_offset: held_end,
+        });
+        store.continue_agent_history(&history).await.unwrap();
+        let page = tail(&store).await;
+        assert_eq!(
+            page.rows[2].item.body,
+            AgentTimelineItemBodyV1::HistoryBoundary {
+                reason: PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1.into(),
+                requested_after_provider_sequence: 0,
+                dropped_through_provider_sequence: 1,
+            },
+            "{name}"
+        );
+    }
 }
 
 /// A provider history that neither meets the held rows nor opens at a window

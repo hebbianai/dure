@@ -1418,6 +1418,199 @@ async fn a_second_chat_session_continues_with_the_terminal_turns_between() {
     );
 }
 
+/// An Agent moved into Chat, then worked in its Terminal longer than the
+/// newest history window holds, and moved into Chat again. The second Chat
+/// session follows the first one's rows behind a gap placed where those rows
+/// end in the transcript and where its window starts, so the Terminal turns
+/// between them page into the gap, each once.
+#[tokio::test]
+async fn a_second_chat_session_after_a_long_terminal_places_the_gap_between_them() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = fixture_with_history_state(
+        &temp_dir.path().join("domain.sqlite"),
+        Some("session-claude-1"),
+        false,
+    )
+    .await;
+    let interaction = AgentInteractionSessionIdV1::new("interaction-claude").unwrap();
+    let service = Arc::new(AgentConversationService::new(Arc::clone(&store)));
+    let first = FakeTransport::new(Arc::clone(&store), [empty_replay()], [no_pending()])
+        .with_history(history_snapshot(vec![
+            history_message("terminal-1", Some("uuid-terminal-1"), "user"),
+            history_message("terminal-2", Some("msg_terminal_2"), "assistant"),
+        ]));
+    ClaudeTimelineBridge::new(Arc::clone(&service), first, interaction.clone(), identity())
+        .unwrap()
+        .reconcile()
+        .await
+        .unwrap();
+
+    // The provider's transcript: the history Chat seeded, the turn the first
+    // Chat session answered in two records, then the Terminal's turns.
+    let home = temp_dir.path().join("claude-home");
+    let project = home.join("projects").join("-workspace-claude");
+    std::fs::create_dir_all(&project).unwrap();
+    let records = [
+        json!({"type":"user","uuid":"uuid-terminal-1",
+            "message":{"role":"user","content":"terminal question"}}),
+        json!({"type":"assistant","uuid":"record-2",
+            "message":{"id":"msg_terminal_2","role":"assistant",
+                "content":[{"type":"text","text":"terminal answer"}]}}),
+        json!({"type":"user","uuid":"uuid-chat",
+            "message":{"role":"user","content":"chat question"}}),
+        json!({"type":"assistant","uuid":"record-4",
+            "message":{"id":"msg_chat","role":"assistant",
+                "content":[{"type":"thinking","thinking":"weighing it"}]}}),
+        json!({"type":"assistant","uuid":"record-5",
+            "message":{"id":"msg_chat","role":"assistant",
+                "content":[{"type":"text","text":"chat answer"}]}}),
+        json!({"type":"system","uuid":"record-6","subtype":"turn_duration"}),
+        json!({"type":"user","uuid":"uuid-terminal-3",
+            "message":{"role":"user","content":"long terminal question"}}),
+        json!({"type":"assistant","uuid":"record-8",
+            "message":{"id":"msg_terminal_4","role":"assistant",
+                "content":[{"type":"text","text":"long terminal answer"}]}}),
+        json!({"type":"user","uuid":"uuid-terminal-5",
+            "message":{"role":"user","content":"newest question"}}),
+        json!({"type":"assistant","uuid":"record-10",
+            "message":{"id":"msg_terminal_6","role":"assistant",
+                "content":[{"type":"text","text":"newest answer"}]}}),
+    ];
+    let mut transcript = String::new();
+    let mut starts = Vec::new();
+    for record in records {
+        starts.push(transcript.len() as i64);
+        transcript.push_str(&format!("{record}\n"));
+    }
+    std::fs::write(project.join("session-claude-1.jsonl"), &transcript).unwrap();
+    let (held_end, window_start) = (starts[5], starts[8]);
+
+    // The first Chat session's own turn, recorded live.
+    let live =
+        |id: &str, role, provider_message_id: Option<&str>| AgentTimelineMutationV1::Append {
+            item: AgentTimelineItemDraftV1 {
+                item_id: AgentTimelineItemIdV1::new(id).unwrap(),
+                turn_id: None,
+                client_message_id: None,
+                provider_message_id: provider_message_id
+                    .map(|id| AgentProviderMessageIdV1::new(id).unwrap()),
+                body: AgentTimelineItemBodyV1::Message {
+                    role,
+                    markdown: format!("live {id}"),
+                },
+                created_at_ms: 20,
+            },
+        };
+    store
+        .apply_agent_provider_event(&AgentProviderEventCommitV1 {
+            schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+            interaction_session_id: interaction.clone(),
+            event: AgentProviderEventIdentityV1 {
+                runtime: runtime(),
+                sequence: 1,
+            },
+            source_fingerprint: "chat-turn".into(),
+            mutations: vec![
+                live(
+                    "chat-user",
+                    AgentTimelineMessageRoleV1::User,
+                    Some("uuid-chat"),
+                ),
+                live(
+                    "chat-answer",
+                    AgentTimelineMessageRoleV1::Assistant,
+                    Some("msg_chat"),
+                ),
+            ],
+            recorded_at_ms: 20,
+        })
+        .await
+        .unwrap();
+
+    // The second Chat session's history is the newest window only.
+    let second_identity = replace_with_second_chat_runtime(&store, &interaction).await;
+    let second = FakeTransport::new(Arc::clone(&store), [empty_replay()], [no_pending()])
+        .with_history(history_snapshot(vec![
+            json!({
+                "sourceId": "history-boundary",
+                "createdAtMs": 10,
+                "providerMessageId": null,
+                "body": {
+                    "type": "history_boundary",
+                    "reason": "provider_transcript_window",
+                    "requested_after_provider_sequence": 0,
+                    "dropped_through_provider_sequence": window_start
+                }
+            }),
+            history_message("terminal-5", Some("uuid-terminal-5"), "user"),
+            history_message("terminal-6", Some("msg_terminal_6"), "assistant"),
+        ]));
+    ClaudeTimelineBridge::new(
+        Arc::clone(&service),
+        second,
+        interaction.clone(),
+        second_identity,
+    )
+    .unwrap()
+    .with_transcript_home(Some(home.clone()))
+    .reconcile()
+    .await
+    .unwrap();
+
+    let page = tail(&store).await;
+    let gap = page
+        .rows
+        .iter()
+        .position(|row| {
+            matches!(
+                row.item.body,
+                AgentTimelineItemBodyV1::HistoryBoundary { .. }
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        page.rows[gap].item.body,
+        AgentTimelineItemBodyV1::HistoryBoundary {
+            reason: dure_app::PROVIDER_TRANSCRIPT_GAP_HISTORY_BOUNDARY_V1.into(),
+            requested_after_provider_sequence: held_end,
+            dropped_through_provider_sequence: window_start,
+        }
+    );
+    assert_eq!(
+        markdown(&page),
+        [
+            "user terminal-1",
+            "assistant terminal-2",
+            "live chat-user",
+            "live chat-answer",
+            "user terminal-5",
+            "assistant terminal-6",
+        ]
+    );
+    assert!(!page.binding.history_complete);
+
+    // The page a view reads into the gap holds the Terminal turn between.
+    let between = dure_provider_profile::transcript::read_roots_activity_page(
+        &home.join("projects"),
+        &temp_dir.path().join("no-codex-sessions"),
+        "claude",
+        "session-claude-1",
+        window_start as u64,
+        held_end as u64,
+    )
+    .unwrap();
+    assert_eq!(between.older_cursor, None);
+    assert_eq!(
+        between
+            .transcript
+            .entries
+            .iter()
+            .map(|entry| entry.text.as_str())
+            .collect::<Vec<_>>(),
+        ["long terminal question", "long terminal answer"]
+    );
+}
+
 /// A new Chat runtime replaces the stopped first one, as a second move into
 /// Chat does after the Agent ran in its Terminal. It keeps the interaction
 /// binding and its timeline.

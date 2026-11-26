@@ -387,9 +387,9 @@ export class AgentChatSessionController {
 		return this.submissions.dequeueMessage(clientMessageId, restore);
 	}
 
-	readProviderHistory(before: number) {
+	readProviderHistory(range: { before: number; after: number }) {
 		const { binding, routeAuthority } = this.requireConversationAuthority();
-		return this.client.readProviderHistory(binding, before, routeAuthority);
+		return this.client.readProviderHistory(binding, range, routeAuthority);
 	}
 
 	async loadMoreQueued(): Promise<void> {

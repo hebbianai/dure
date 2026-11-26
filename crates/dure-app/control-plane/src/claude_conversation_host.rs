@@ -522,7 +522,8 @@ where
                 attachment.binding.interaction_session_id.clone(),
                 identity.clone(),
             )
-            .map_err(bridge_error)?,
+            .map_err(bridge_error)?
+            .with_transcript_home(claude_state_directory(&attachment.environment)),
         );
         let route = Arc::new(ConversationRoute {
             bridge: Arc::clone(&bridge),
@@ -1477,6 +1478,22 @@ async fn retarget_retirement(
         ));
     }
     Ok(receipt.authority)
+}
+
+/// Claude's state directory for an attachment's account, which holds its
+/// transcripts: the account's configured directory, or Claude's default under
+/// the attachment's home, as a launch resolves it.
+fn claude_state_directory(environment: &BTreeMap<String, String>) -> Option<PathBuf> {
+    environment
+        .get("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| {
+            environment
+                .get("HOME")
+                .map(PathBuf::from)
+                .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+                .map(|home| home.join(".claude"))
+        })
 }
 
 fn exact_directory(path: &Path) -> Result<PathBuf, ClaudeConversationHostErrorV1> {

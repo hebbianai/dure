@@ -287,6 +287,7 @@ fn page(path: &Path, before: Option<u64>, limits: Limits) -> TranscriptWindow {
         Some(claude_tool_events),
         limits,
         before,
+        0,
     )
     .unwrap()
 }
@@ -627,8 +628,9 @@ fn backend_pages_fit_one_response_and_join_where_each_stopped() {
     let mut before = std::fs::metadata(&path).unwrap().len();
     let (mut joined, mut calls, mut pages) = (Vec::new(), Vec::new(), 0);
     loop {
-        let page = read_roots_activity_page(root.path(), &codex, "claude", "conversation", before)
-            .unwrap();
+        let page =
+            read_roots_activity_page(root.path(), &codex, "claude", "conversation", before, 0)
+                .unwrap();
         let encoded = serde_json::to_vec(&page).unwrap();
         assert!(
             encoded.len() <= 1024 * 1024,
@@ -730,6 +732,7 @@ fn a_codex_turn_starts_at_its_task_started_event_where_the_page_before_it_ends()
         "codex",
         id,
         before,
+        0,
     )
     .unwrap();
     assert_eq!(
@@ -892,4 +895,170 @@ fn input_the_person_ran_in_claude_code_reads_as_the_command_line() {
     assert_eq!(shown(&read.entries), expected);
     let older = page(file.path(), None, Limits::PAGE);
     assert_eq!(shown(&older.transcript.entries), expected);
+}
+
+/// A Claude conversation under a projects root: a person's message with its
+/// `uuid` or a reply under its provider `message.id`, and where each starts.
+fn claude_conversation_fixture(
+    projects: &Path,
+    records: &[(&str, &str, &str)],
+) -> (PathBuf, Vec<u64>) {
+    let project = projects.join("-project");
+    fs::create_dir_all(&project).unwrap();
+    let path = project.join("conversation.jsonl");
+    let mut source = String::new();
+    let mut starts = Vec::new();
+    for (index, (role, id, text)) in records.iter().enumerate() {
+        starts.push(source.len() as u64);
+        let record = if *role == "user" {
+            serde_json::json!({"type":"user","uuid":id,"message":{"role":"user","content":text}})
+        } else {
+            serde_json::json!({"type":"assistant","uuid":format!("record-{index}"),
+                "message":{"id":id,"role":"assistant","content":[{"type":"text","text":text}]}})
+        };
+        source.push_str(&format!("{record}\n"));
+    }
+    fs::write(&path, source).unwrap();
+    (path, starts)
+}
+
+/// Pages read into a gap, between where the history above it ends and where
+/// the history below it resumes, stop at the gap's floor: together they hold
+/// exactly the records in between, each once, and the last names no older
+/// cursor, so paging ends there.
+#[test]
+fn pages_into_a_gap_stop_at_its_floor_and_join_both_sides() {
+    let root = tempfile::tempdir().unwrap();
+    let mut records = Vec::new();
+    let texts_of = |prefix: &str, count: usize| {
+        (0..count)
+            .map(|index| format!("{prefix} {index}"))
+            .collect::<Vec<_>>()
+    };
+    let (above, gap, below) = (
+        texts_of("above", 4),
+        texts_of("gap", 23),
+        texts_of("below", 3),
+    );
+    let ids = (0..above.len() + gap.len() + below.len())
+        .map(|index| format!("id-{index}"))
+        .collect::<Vec<_>>();
+    for (index, text) in above.iter().chain(&gap).chain(&below).enumerate() {
+        let role = if index % 2 == 0 { "user" } else { "assistant" };
+        records.push((role, ids[index].as_str(), text.as_str()));
+    }
+    let (path, starts) = claude_conversation_fixture(root.path(), &records);
+    let floor = starts[above.len()];
+    let resume = starts[above.len() + gap.len()];
+    let limits = Limits {
+        source: 1024 * 1024,
+        output: 1024,
+        entries: 5,
+        ..Limits::PAGE
+    };
+    let mut before = resume;
+    let mut pages = Vec::new();
+    loop {
+        let window = read_window(
+            &path,
+            "claude",
+            "test",
+            claude_turn,
+            Some(claude_tool_events),
+            limits,
+            Some(before),
+            floor,
+        )
+        .unwrap();
+        let older = window.older_cursor;
+        pages.push(window);
+        match older {
+            Some(cursor) => {
+                assert!(floor < cursor && cursor < before, "every page moves back");
+                before = cursor;
+            }
+            None => break,
+        }
+    }
+    assert_eq!(pages.len(), 5);
+    assert!(pages.last().unwrap().transcript.history_complete);
+    assert_eq!(pages.iter().rev().flat_map(texts).collect::<Vec<_>>(), gap);
+
+    // A backend page holds the whole gap at once and stops at the floor too.
+    let codex = root.path().join("no-codex-sessions");
+    let whole =
+        read_roots_activity_page(root.path(), &codex, "claude", "conversation", resume, floor)
+            .unwrap();
+    assert_eq!(whole.older_cursor, None);
+    assert_eq!(
+        whole
+            .transcript
+            .entries
+            .iter()
+            .map(|entry| entry.text.clone())
+            .collect::<Vec<_>>(),
+        gap
+    );
+}
+
+/// A floor is where a record starts. One inside a record, or past the page's
+/// end, names a transcript that is not the one it was measured in.
+#[test]
+fn a_floor_off_a_record_start_or_past_the_page_fails() {
+    let root = tempfile::tempdir().unwrap();
+    let (_, starts) = claude_conversation_fixture(
+        root.path(),
+        &[
+            ("user", "u-0", "first"),
+            ("assistant", "msg_0", "second"),
+            ("user", "u-1", "third"),
+        ],
+    );
+    let codex = root.path().join("no-codex-sessions");
+    let read = |before, after| {
+        read_roots_activity_page(root.path(), &codex, "claude", "conversation", before, after)
+    };
+    assert!(read(starts[2], starts[1] + 1).is_err());
+    assert!(read(starts[1], starts[2]).is_err());
+    let at_floor = read(starts[2], starts[1]).unwrap();
+    assert_eq!(at_floor.transcript.entries.len(), 1);
+    assert_eq!(at_floor.transcript.entries[0].text, "second");
+    assert_eq!(at_floor.older_cursor, None);
+    let empty = read(starts[1], starts[1]).unwrap();
+    assert!(empty.transcript.entries.is_empty());
+    assert_eq!(empty.older_cursor, None);
+}
+
+/// A message ends after the last record that carries it: a person's message
+/// under its `uuid`, a reply under its `message.id` in each of its records.
+/// Only records before the given cursor count.
+#[test]
+fn a_claude_message_ends_after_the_last_record_that_carries_it() {
+    let root = tempfile::tempdir().unwrap();
+    // A reply longer than one backward read puts its records across steps.
+    let long = "x".repeat(BACKWARD_READ_BYTES as usize * 3 / 2);
+    let (path, starts) = claude_conversation_fixture(
+        root.path(),
+        &[
+            ("user", "u-0", "prompt"),
+            ("assistant", "msg_01reply", "thinking it over"),
+            ("assistant", "msg_01reply", &long),
+            ("user", "u-1", "next prompt"),
+            ("assistant", "msg_02reply", "answer"),
+        ],
+    );
+    let length = fs::metadata(&path).unwrap().len();
+    let end = |message: &str, before| {
+        claude_message_end_cursor(root.path(), "conversation", message, before)
+    };
+    assert_eq!(end("msg_01reply", length), Ok(Some(starts[3])));
+    assert_eq!(end("u-0", length), Ok(Some(starts[1])));
+    assert_eq!(end("msg_02reply", length), Ok(Some(length)));
+    assert_eq!(end("u-1", starts[3]), Ok(None));
+    assert_eq!(end("msg_01reply", starts[2]), Ok(Some(starts[2])));
+    assert_eq!(end("msg_unknown", length), Ok(None));
+    assert!(end("msg_01reply", length + 1).is_err());
+    assert!(end("", length).is_err());
+    assert!(end("u\"-0", length).is_err());
+    assert!(claude_message_end_cursor(root.path(), "missing", "u-0", 0).is_err());
 }

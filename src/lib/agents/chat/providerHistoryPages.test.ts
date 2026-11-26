@@ -5,9 +5,10 @@ import type {
 	AgentTimelineRowV1,
 } from "@/lib/agents/chat/agentConversationContract";
 import {
-	chatPageWithOlderProviderHistory,
+	chatPageWithProviderHistory,
+	type ProviderHistoryPages,
+	providerHistoryAnchors,
 	providerHistoryPages,
-	seededProviderHistoryCursor,
 	withOlderProviderPage,
 } from "@/lib/agents/chat/providerHistoryPages";
 import type { ProviderConversationActivity } from "@/lib/ipc/conversations";
@@ -100,6 +101,23 @@ function seededPage(
 	};
 }
 
+/** Where the seeded history starts, if it pages from there. */
+function seededProviderHistoryCursor(
+	page: AgentTimelinePageV1,
+): number | undefined {
+	return providerHistoryAnchors(page).find(
+		(anchor) => anchor.kind === "opening",
+	)?.before;
+}
+
+/** The page with `pages` loaded where its seeded history starts. */
+function chatPageWithOlderProviderHistory(
+	page: AgentTimelinePageV1,
+	pages: ProviderHistoryPages,
+): AgentTimelinePageV1 {
+	return chatPageWithProviderHistory(page, new Map([["store-2", pages]]));
+}
+
 function messages(page: AgentTimelinePageV1): string[] {
 	return page.rows.flatMap((row) =>
 		row.item.body.type === "message" ? [row.item.body.markdown] : [],
@@ -109,7 +127,7 @@ function messages(page: AgentTimelinePageV1): string[] {
 describe("provider history pages", () => {
 	it("pages back from the anchor until the transcript's start", () => {
 		const start = providerHistoryPages(900);
-		expect(start).toEqual({ anchor: 900, pages: [], before: 900 });
+		expect(start).toEqual({ anchor: 900, floor: 0, pages: [], before: 900 });
 		const newer = read(["ask two", "two"], 400);
 		const first = withOlderProviderPage(start, 900, newer);
 		expect(first.before).toBe(400);
@@ -241,5 +259,207 @@ describe("Chat history older than its seeded window", () => {
 		expect(
 			chatPageWithOlderProviderHistory(other, providerHistoryPages(800)),
 		).toBe(other);
+	});
+});
+
+/** A Chat timeline continued after a Terminal session longer than one window:
+ * the first Chat session's rows, the boundary where the continued history
+ * skips the Terminal turns between, then the newest window. */
+function continuedPage(
+	boundary: AgentTimelineRowV1["item"]["body"],
+	overrides: Partial<AgentTimelinePageV1> = {},
+): AgentTimelinePageV1 {
+	const rows = [
+		storeRow(1, { type: "message", role: "user", markdown: "ask in chat" }),
+		storeRow(2, {
+			type: "message",
+			role: "assistant",
+			markdown: "chat answer",
+		}),
+		storeRow(3, boundary),
+		storeRow(4, { type: "message", role: "user", markdown: "ask newest" }),
+		storeRow(5, {
+			type: "message",
+			role: "assistant",
+			markdown: "newest answer",
+		}),
+	];
+	return seededPage({
+		rows,
+		finalCursor: { epoch: EPOCH, sequence: rows.length },
+		...overrides,
+	});
+}
+
+const GAP = {
+	type: "history_boundary",
+	reason: "provider_transcript_gap",
+	requestedAfterProviderSequence: 400,
+	droppedThroughProviderSequence: 900,
+} as const;
+
+describe("Chat history a continued timeline skips", () => {
+	it("never pages a window boundary back over the rows before it", () => {
+		// A window that follows rows the timeline held is no start of its
+		// history: the records before it include those rows.
+		for (const reason of [
+			"provider_transcript_window",
+			"provider_conversation_compacted",
+		]) {
+			const page = continuedPage({
+				type: "history_boundary",
+				reason,
+				requestedAfterProviderSequence: 0,
+				droppedThroughProviderSequence: 900,
+			});
+			expect(providerHistoryAnchors(page)).toEqual([]);
+			expect(
+				chatPageWithProviderHistory(
+					page,
+					new Map([["store-3", providerHistoryPages(900)]]),
+				),
+			).toBe(page);
+		}
+	});
+
+	it("pages a placed gap between its ends, even with older store rows", () => {
+		const page = continuedPage(GAP, { hasMore: true });
+		expect(providerHistoryAnchors(page)).toEqual([
+			{ kind: "gap", itemId: "store-3", before: 900, after: 400 },
+		]);
+		const unplaced = continuedPage({
+			...GAP,
+			reason: "provider_history_truncated",
+			requestedAfterProviderSequence: 0,
+			droppedThroughProviderSequence: 1,
+		});
+		expect(providerHistoryAnchors(unplaced)).toEqual([]);
+	});
+
+	it("loads the skipped turns below the gap until it closes, each once", () => {
+		const page = continuedPage(GAP, { hasMore: true });
+		let pages = providerHistoryPages(900, 400);
+		const open = chatPageWithProviderHistory(
+			page,
+			new Map([["store-3", pages]]),
+		);
+		// Before anything loads, the gap offers its history where it is.
+		expect(open.rows.map((row) => row.item.itemId)).toEqual(
+			page.rows.map((row) => row.item.itemId),
+		);
+
+		pages = withOlderProviderPage(
+			pages,
+			900,
+			read(["ask terminal two", "terminal two"], 650),
+		);
+		const partly = chatPageWithProviderHistory(
+			page,
+			new Map([["store-3", pages]]),
+		);
+		expect(partly.rows.map((row) => row.item.body.type)).toContain(
+			"history_boundary",
+		);
+		expect(messages(partly)).toEqual([
+			"ask in chat",
+			"chat answer",
+			"ask terminal two",
+			"terminal two",
+			"ask newest",
+			"newest answer",
+		]);
+
+		pages = withOlderProviderPage(
+			pages,
+			650,
+			read(["ask terminal one", "terminal one"]),
+		);
+		const closed = chatPageWithProviderHistory(
+			page,
+			new Map([["store-3", pages]]),
+		);
+		expect(
+			closed.rows.some((row) => row.item.body.type === "history_boundary"),
+		).toBe(false);
+		expect(messages(closed)).toEqual([
+			"ask in chat",
+			"chat answer",
+			"ask terminal one",
+			"terminal one",
+			"ask terminal two",
+			"terminal two",
+			"ask newest",
+			"newest answer",
+		]);
+		// The store's own older rows still load from the top.
+		expect(closed.hasMore).toBe(true);
+		const ids = closed.rows.map((row) => row.item.itemId);
+		expect(new Set(ids).size).toBe(ids.length);
+	});
+
+	it("keeps a gap's rows apart from the history loaded above the timeline", () => {
+		const seeded = seededPage();
+		const rows = [
+			...seeded.rows,
+			storeRow(5, GAP),
+			storeRow(6, { type: "message", role: "user", markdown: "ask newest" }),
+		];
+		const page = { ...seeded, rows };
+		expect(providerHistoryAnchors(page).map((anchor) => anchor.kind)).toEqual([
+			"opening",
+			"gap",
+		]);
+		const loaded = new Map([
+			[
+				"store-2",
+				withOlderProviderPage(
+					providerHistoryPages(900),
+					900,
+					read(["ask oldest", "oldest"]),
+				),
+			],
+			[
+				"store-5",
+				withOlderProviderPage(
+					providerHistoryPages(900, 400),
+					900,
+					read(["ask between", "between"]),
+				),
+			],
+		]);
+		const joined = chatPageWithProviderHistory(page, loaded);
+		expect(messages(joined)).toEqual([
+			"ask oldest",
+			"oldest",
+			"ask seeded",
+			"seeded answer",
+			"ask between",
+			"between",
+			"ask newest",
+		]);
+		const ids = joined.rows.map((row) => row.item.itemId);
+		expect(new Set(ids).size).toBe(ids.length);
+		// Rows are keyed by their place in the timeline, too.
+		const places = joined.rows.map(
+			(row) => `${row.cursor.epoch}:${row.cursor.sequence}`,
+		);
+		expect(new Set(places).size).toBe(places.length);
+		const turns = projectAgentChatTranscript(joined.rows).filter(
+			(block) => block.kind === "turn",
+		);
+		expect(turns).toHaveLength(2);
+	});
+
+	it("never reads past a gap's floor", () => {
+		const pages = providerHistoryPages(900, 400);
+		for (const older of [400, 300]) {
+			expect(() =>
+				withOlderProviderPage(pages, 900, read(["x"], older)),
+			).toThrow("provider_history_cursor_invalid");
+		}
+		expect(providerHistoryPages(900, 900).before).toBeNull();
+		expect(() => providerHistoryPages(400, 900)).toThrow(
+			"provider_history_cursor_invalid",
+		);
 	});
 });

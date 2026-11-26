@@ -103,6 +103,12 @@ impl CodexTimelineProjection {
         Ok((client_message_id, turn_id))
     }
 
+    /// Whether the timeline holds any turn, which a provider history then
+    /// continues rather than seeds.
+    pub(super) fn holds_turns(&self) -> bool {
+        !self.turn_lifecycle.is_empty()
+    }
+
     /// Whether the timeline already holds this provider history turn.
     pub(super) fn holds_turn(&self, turn: &Value) -> Result<bool, AgentProviderCommandErrorV1> {
         let (_, turn_id) = self.history_turn_identity(turn)?;
