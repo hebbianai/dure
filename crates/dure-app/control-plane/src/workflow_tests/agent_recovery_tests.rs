@@ -170,8 +170,9 @@ async fn recovery_pool_fixture(
     recovery_pool_fixture_with(accounts, credential_unavailable, prepare_host, None).await
 }
 
-/// With `reset_at_ms`, only continuing after a reset is on, and the failed
-/// turn carries the reset its provider reported, as the Claude bridge records it.
+/// With `reset_at_ms`, continuing after a reset is on, switching only when
+/// `accounts` names a pool, and the failed turn carries the reset its
+/// provider reported, as the Claude bridge records it.
 async fn recovery_pool_fixture_with(
     accounts: &[&str],
     credential_unavailable: &[&str],
@@ -266,7 +267,7 @@ async fn recovery_pool_fixture_on(
                 provider_id: provider_id.clone(),
                 expected_revision: 0,
                 idempotency_key: "enable-recovery".into(),
-                enabled: reset_at_ms.is_none(),
+                enabled: reset_at_ms.is_none() || !pool.is_empty(),
                 accounts: pool,
                 continue_after_reset: reset_at_ms.is_some(),
             },
@@ -1227,4 +1228,87 @@ async fn the_continuation_worker_resends_once_on_the_same_account_after_the_rese
     assert_eq!(inputs[0].runtime, source.runtime, "no account switch");
     assert_eq!(runtime.opens.load(Ordering::SeqCst), 0);
     assert_eq!(runtime.stops.load(Ordering::SeqCst), 0);
+}
+
+/// The switch that sets every login aside before any apply waits for the
+/// reported reset instead and then resends on the unchanged runtime; a
+/// target that failed after its source stopped still stops recovery.
+#[tokio::test]
+async fn a_switch_with_every_login_set_aside_waits_for_the_reset_instead() {
+    let signed_out = |state: &mut ServiceState, home: &Path| {
+        state.credential_profiles = Arc::new(
+            provider_credential_profile::ProviderCredentialProfileRegistry::with_launch_preparer(
+                home.to_path_buf(),
+                Arc::clone(&state.store),
+                Arc::new(SignedOutProfiles {
+                    signed_out: vec!["codex-expired".into()],
+                    delegate: provider_credential_profile::NativeProviderCredentialProfileLaunchPreparer::new(
+                        home.to_path_buf(),
+                        Some(home.to_path_buf()),
+                    ),
+                }),
+            ),
+        );
+        false
+    };
+    let reset_at_ms = now_ms().unwrap() + 60 * 60 * 1000;
+    let (_root, state, runtime, agent_id) =
+        recovery_pool_fixture_with(&["expired"], &[], signed_out, Some(reset_at_ms)).await;
+    let hold = crate::agent_recovery::advance(&state, &agent_id).await;
+    let record = recovery_record(&state, &agent_id).await;
+    let Ok(crate::agent_recovery::AgentRecoveryHoldV1::WaitsUntil(resume_at_ms)) = hold else {
+        panic!("expected a wait for the reset: {hold:?} {record:?}");
+    };
+    assert!(
+        (reset_at_ms + 60_000..=reset_at_ms + 180_000).contains(&resume_at_ms),
+        "{resume_at_ms} vs {reset_at_ms}"
+    );
+    assert_eq!(reference_ids(&record.unusable_targets), ["expired"]);
+    assert_eq!(record.target, None);
+    assert_eq!(record.stopped, None);
+    assert_eq!(record.resume_at_ms, Some(resume_at_ms));
+    assert_eq!(runtime.stops.load(Ordering::SeqCst), 0);
+    assert_eq!(runtime.opens.load(Ordering::SeqCst), 0);
+    assert!(runtime.commands.inputs.lock().unwrap().is_empty());
+    assert_eq!(selected_reference(&state, &agent_id).await, "default");
+
+    // A reset already behind the backend: the same account resends at once.
+    let reset_at_ms = now_ms().unwrap() - 5 * 60 * 1000;
+    let (_root, state, runtime, agent_id) =
+        recovery_pool_fixture_with(&["expired"], &[], signed_out, Some(reset_at_ms)).await;
+    let source = state
+        .store
+        .agent_interaction_for_agent(&agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        crate::agent_recovery::advance(&state, &agent_id).await,
+        Ok(crate::agent_recovery::AgentRecoveryHoldV1::Owned)
+    );
+    {
+        let inputs = runtime.commands.inputs.lock().unwrap();
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].input, "Create the requested marketing draft");
+        assert_eq!(inputs[0].runtime, source.runtime, "no account switch");
+    }
+    assert_eq!(runtime.opens.load(Ordering::SeqCst), 0);
+    assert_eq!(runtime.stops.load(Ordering::SeqCst), 0);
+
+    // A target that failed to start after the source stopped has applied.
+    let (_root, state, runtime, agent_id) =
+        recovery_pool_fixture_with(&["broken"], &["broken"], |_, _| false, Some(reset_at_ms)).await;
+    assert_eq!(
+        crate::agent_recovery::advance(&state, &agent_id).await,
+        Err("agent_recovery_failed")
+    );
+    let record = recovery_record(&state, &agent_id).await;
+    assert_eq!(record.resume_at_ms, None);
+    assert_eq!(
+        record.stopped,
+        Some(AgentRecoveryStopV1::Failed {
+            code: "agent_runtime_repair_required".into()
+        })
+    );
+    assert!(runtime.commands.inputs.lock().unwrap().is_empty());
 }

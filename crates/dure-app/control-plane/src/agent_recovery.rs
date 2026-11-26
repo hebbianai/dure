@@ -109,7 +109,8 @@ const REPAIR_REQUIRED: &str = "agent_runtime_repair_required";
 /// the app's latest usage feeds the usage owner, and logins known signed out,
 /// out of the agent's model or shared with the source are set aside before the
 /// owner selects again. Then the chosen login is asked whether it is signed
-/// in, the way its launch would.
+/// in, the way its launch would. When no login is left, the attempt waits for
+/// the reported reset if the policy continues after one, or stops.
 async fn check_target(
     state: &ServiceState,
     record: AgentRecoveryAttemptV1,
@@ -383,6 +384,8 @@ async fn advance_locked(
             }
             // A same-account continuation after a reset has no target to check.
             None if record.resume_at_ms().is_some() => {}
+            // With every login set aside before any apply, the store may
+            // have turned the switch into a wait for the reported reset.
             None => {
                 record = check_target(state, record).await?;
                 if record.stopped().is_some() {
