@@ -45,16 +45,30 @@ pub(super) fn item(
     Ok(item)
 }
 
+/// The OpenCode message a row names as its provider record, when it names a
+/// message rather than one of its parts: a turn's lifecycle row names the
+/// message it comes from, a part's row names the part.
+pub(super) fn provider_message(item: &AgentTimelineItemDraftV1) -> Option<&str> {
+    item.provider_message_id
+        .as_ref()?
+        .as_str()
+        .strip_prefix("opencode-")
+        .filter(|id| id.starts_with("msg_"))
+}
+
+/// A turn's lifecycle row, which names the OpenCode `message` it comes from,
+/// if any.
 pub(super) fn lifecycle(
     user: &str,
     context: &TurnContext,
+    message: Option<&str>,
     state: AgentTimelineLifecycleStateV1,
     at: i64,
 ) -> Result<AgentTimelineItemDraftV1, CommandError> {
     item(
         &format!("turn:{user}:{state:?}"),
         Some(context),
-        None,
+        message,
         AgentTimelineItemBodyV1::Lifecycle {
             state,
             detail: None,
@@ -92,6 +106,7 @@ pub(super) fn message_items(
         items.push(lifecycle(
             user,
             context,
+            Some(id),
             AgentTimelineLifecycleStateV1::TurnStarted,
             created,
         )?);
@@ -179,6 +194,7 @@ pub(super) fn message_items(
         items.push(lifecycle(
             user,
             context,
+            Some(id),
             state,
             completed.unwrap_or(created),
         )?);

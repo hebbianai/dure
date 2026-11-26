@@ -402,8 +402,14 @@ async fn a_reattach_pages_back_only_to_the_messages_the_timeline_holds() {
     );
 }
 
+/// Before, a Chat that came back from a Terminal past its window showed
+/// "Part of the provider history is unavailable." between the messages it
+/// held and the newest ones, and the Terminal's messages in between could not
+/// be read in Chat. Now the gap is placed from right after the newest held
+/// message to where the window opens, so "Show earlier history" pages them in:
+/// each message once, in order, joining both ends exactly.
 #[tokio::test]
-async fn a_reattach_marks_terminal_history_it_cannot_reach_back_to() {
+async fn show_earlier_history_pages_the_terminal_messages_a_reattach_skips() {
     let (_temporary, service, binding) = conversation_fixture().await;
     let server = FakeOpenCode::start(turns(0..2), 4).await;
     bridge(&server, &binding, &service)
@@ -411,18 +417,113 @@ async fn a_reattach_marks_terminal_history_it_cannot_reach_back_to() {
         .hydrate()
         .await
         .unwrap();
+    // The Terminal continues the conversation past Chat's window.
     server.push(turns(2..12));
+
+    let reattached = bridge(&server, &binding, &service).await;
+    reattached.hydrate_within(small_window(6)).await.unwrap();
+
+    let mut expected = prompts_and_answers(0..2);
+    expected.push("boundary:provider_transcript_gap".into());
+    expected.push("Answer 8".into());
+    expected.extend(prompts_and_answers(9..12));
+    assert_eq!(conversation(&service, &binding).await, expected);
+    let (held_end, resumed_at) = gap_range(&service, &binding).await.unwrap();
+    assert_eq!(
+        (held_end, resumed_at),
+        (created_at(1) + 2, created_at(8) + 1),
+        "from right after the newest held message, Answer 1, to the window"
+    );
+    let mut skipped = labels(2..8);
+    skipped.push("Prompt 8".into());
+    assert_eq!(
+        history_between(&reattached, &binding, resumed_at, held_end)
+            .await
+            .concat(),
+        skipped
+    );
+    assert!(!history_complete(&service, &binding).await);
+}
+
+/// A window whose oldest message was created in the millisecond of the newest
+/// held message stays whole behind a gap at no place: the gap's pages start
+/// after that millisecond, so a message the window gave them would show
+/// nowhere.
+#[tokio::test]
+async fn a_gap_never_takes_a_message_created_with_the_newest_held_one() {
+    let (_temporary, service, binding) = conversation_fixture().await;
+    let server = FakeOpenCode::start(turns(0..2), 1).await;
+    bridge(&server, &binding, &service)
+        .await
+        .hydrate()
+        .await
+        .unwrap();
+    let mut terminal = turns(2..4);
+    // The Terminal's first prompt shares Answer 1's millisecond.
+    terminal[0]["info"]["time"]["created"] = json!(created_at(1) + 1);
+    server.push(terminal);
 
     bridge(&server, &binding, &service)
         .await
-        .hydrate_within(small_window(6))
+        .hydrate_within(small_window(4))
         .await
         .unwrap();
 
     let mut expected = prompts_and_answers(0..2);
     expected.push("boundary:provider_history_truncated".into());
-    expected.extend(prompts_and_answers(8..12));
+    expected.extend(prompts_and_answers(2..4));
     assert_eq!(conversation(&service, &binding).await, expected);
+}
+
+/// A timeline whose newest row naming a provider record names no message
+/// cannot tell where the messages it holds end, so the gap stays at no
+/// place, as before, and the window keeps every message it read: nothing is
+/// ever paged twice. That is a timeline stored before a turn's lifecycle rows
+/// named their message, and one whose newest held message ended without a
+/// lifecycle row, so that an older message's row would name a place before it.
+#[tokio::test]
+async fn a_reattach_after_rows_that_name_no_newest_message_keeps_the_gap_unplaced() {
+    for stored_before_named_lifecycles in [true, false] {
+        let (_temporary, service, binding) = conversation_fixture().await;
+        let mut held = turns(0..2);
+        if !stored_before_named_lifecycles {
+            // Answer 1 ends in a way that completes no turn.
+            held[3]["info"]["finish"] = json!("unknown");
+        }
+        let server = FakeOpenCode::start(held.clone(), 4).await;
+        let seeding = bridge(&server, &binding, &service).await;
+        if stored_before_named_lifecycles {
+            let mut turns = BTreeMap::new();
+            let mut items = Vec::new();
+            for message in &held {
+                items.extend(message_items(message, &mut turns).unwrap().0);
+            }
+            for item in &mut items {
+                if matches!(item.body, AgentTimelineItemBodyV1::Lifecycle { .. }) {
+                    item.provider_message_id = None;
+                }
+            }
+            seeding.journal.append_once(items).await.unwrap();
+        } else {
+            seeding.hydrate().await.unwrap();
+        }
+        server.push(turns(2..12));
+
+        bridge(&server, &binding, &service)
+            .await
+            .hydrate_within(small_window(6))
+            .await
+            .unwrap();
+
+        let mut expected = prompts_and_answers(0..2);
+        expected.push("boundary:provider_history_truncated".into());
+        expected.extend(prompts_and_answers(8..12));
+        assert_eq!(
+            conversation(&service, &binding).await,
+            expected,
+            "stored before named lifecycles: {stored_before_named_lifecycles}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -606,6 +707,29 @@ async fn window_place(
         .find_map(|row| row.item.body.transcript_history_start())
 }
 
+/// Where the gap a continued timeline skips is placed: where the held
+/// messages end, and where the history it continues with opens.
+async fn gap_range(
+    service: &Arc<AgentConversationService<crate::SqliteDomainStore>>,
+    binding: &AgentInteractionBindingV1,
+) -> Option<(i64, i64)> {
+    let journal = ProviderTimelineJournal::new(Arc::clone(service), binding)
+        .await
+        .unwrap();
+    let rows = journal.existing_rows().await.unwrap().rows;
+    rows.iter().find_map(|row| match &row.item.body {
+        AgentTimelineItemBodyV1::HistoryBoundary {
+            reason,
+            requested_after_provider_sequence,
+            dropped_through_provider_sequence,
+        } if reason == PROVIDER_TRANSCRIPT_GAP_HISTORY_BOUNDARY_V1 => Some((
+            *requested_after_provider_sequence,
+            *dropped_through_provider_sequence,
+        )),
+        _ => None,
+    })
+}
+
 /// A message's text as far as its index: "Prompt 3", "Answer 3".
 fn label(text: &str) -> String {
     text.split(' ').take(2).collect::<Vec<_>>().join(" ")
@@ -619,18 +743,33 @@ async fn earlier_history(
     binding: &AgentInteractionBindingV1,
     place: i64,
 ) -> Vec<Vec<String>> {
+    history_between(bridge, binding, place, 0).await
+}
+
+/// [`earlier_history`] down to `floor` rather than to the session's start, as
+/// the backend reads a gap.
+async fn history_between(
+    bridge: &OpenCodeTimelineBridge<crate::SqliteDomainStore>,
+    binding: &AgentInteractionBindingV1,
+    place: i64,
+    floor: i64,
+) -> Vec<Vec<String>> {
+    let floor = u64::try_from(floor).unwrap();
     let mut pages = Vec::new();
     let mut before = Some(u64::try_from(place).unwrap());
     while let Some(cursor) = before {
-        let page = bridge.read_history(binding, cursor, 0).await.unwrap();
+        let page = bridge.read_history(binding, cursor, floor).await.unwrap();
         assert_eq!(page["provider"], "opencode");
         assert_eq!(page["conversationId"], SESSION);
         before = page.get("olderCursor").and_then(Value::as_u64);
-        assert!(before.is_none_or(|older| older < cursor), "pages move back");
+        assert!(
+            before.is_none_or(|older| floor < older && older < cursor),
+            "pages move back, never past the floor"
+        );
         assert_eq!(
             page["historyComplete"],
             before.is_none(),
-            "only the oldest page reaches the start"
+            "only the oldest page reaches the start or the floor"
         );
         pages.insert(
             0,

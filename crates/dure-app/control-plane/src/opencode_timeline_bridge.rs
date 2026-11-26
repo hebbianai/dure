@@ -161,17 +161,11 @@ impl<S: AgentTimelineStore + 'static> OpenCodeTimelineBridge<S> {
                     });
             }
         }
-        let held = existing
-            .rows
-            .iter()
-            .map(|row| row.item.item_id.clone())
-            .collect();
-        let holds_turns = existing.rows.iter().any(|row| row.item.turn_id.is_some());
         let window = history_window(
-            self.client.message_pages(&self.session),
+            &self.client,
+            &self.session,
             &mut projection.turns,
-            &held,
-            holds_turns,
+            &HeldTimeline::of(&existing.rows),
             bounds,
             &self.places,
         )
@@ -316,6 +310,7 @@ impl<S: AgentTimelineStore + 'static> OpenCodeTimelineBridge<S> {
                         let item = lifecycle(
                             &user,
                             context,
+                            None,
                             AgentTimelineLifecycleStateV1::TurnFailed,
                             now_ms()?,
                         )?;
