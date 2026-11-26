@@ -230,6 +230,30 @@ pub struct DeviceToken {
     pub token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub push: Option<dure_hub_protocol::push::PushSubscription>,
+    /// What the push service last said about `push`. Alerts go only to a
+    /// device whose subscription it registered. Cleared or kept together
+    /// with `push`; a file from before #660 has none, so the device waits
+    /// for the phone's next sync.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push_registration: Option<PushRegistrationRecord>,
+}
+
+/// The push service's last word on a device's subscription, and when.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PushRegistrationRecord {
+    #[serde(flatten)]
+    pub state: PushRegistrationState,
+    /// Unix seconds.
+    pub at: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum PushRegistrationState {
+    Registered,
+    Refused {
+        reason: dure_hub_protocol::push::PushRefusal,
+    },
 }
 
 /// 새 기기 토큰. 32바이트 OS 난수.
@@ -245,6 +269,7 @@ pub fn mint_token(device_id: String, label: String) -> Result<DeviceToken, Ident
         label,
         token: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes),
         push: None,
+        push_registration: None,
     })
 }
 

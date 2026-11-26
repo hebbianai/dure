@@ -2330,6 +2330,7 @@ pub fn run() {
             hub::commands::hub_device_register,
             hub::commands::hub_device_revoke,
             hub::push::hub_push_agent_notification,
+            hub::push_service::hub_push_service_status,
             hub::commands::hub_pairing_offer,
             hub::commands::hub_relay_start,
             hub::commands::hub_relay_stop,

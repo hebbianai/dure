@@ -84,6 +84,8 @@ export const settings: Record<string, string> = {
 	"settings.mobile.devices.forgetTitle": "서버에 키가 남아 있어도 이 기기 기록을 지울까요?",
 	"settings.mobile.devices.forgetDescription": "Dure가 재시도 기록을 버리고 이 컴퓨터에서 기기를 등록 해제합니다. 도달하지 못한 서버에 남은 키는 계속 작동할 수 있고, 이후에는 Dure가 그 키를 찾아 지울 수 없습니다.",
 	"settings.mobile.devices.forgetConfirm": "그래도 등록 해제",
+	"settings.mobile.pushService.custom": "폰 알림은 {origin}의 사용자 지정 서비스를 씁니다. 이 서비스는 이 컴퓨터와 페어링한 폰의 알림 토큰을 받습니다.",
+	"settings.mobile.pushService.invalid": "사용자 지정 폰 알림 서비스 파일이 올바르지 않아 폰 알림이 꺼져 있습니다.",
 	"settings.accounts.recovery.profileIncompatible": "'{name}' 프로필은 현재 credential-only 구조와 호환되지 않습니다. 기존 경로({path})는 그대로 보존했습니다. {provider}에 다른 이름으로 새 계정을 추가하고 로그인한 뒤 다시 전환하세요.",
 	"settings.accounts.removeConfirm": "'{name}'을(를) 앱 목록에서 제거할까요? 프로필 파일은 삭제되지 않습니다.",
 	"settings.accounts.removeConfirmLabel": "제거",

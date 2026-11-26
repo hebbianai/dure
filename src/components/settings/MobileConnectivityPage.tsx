@@ -39,10 +39,12 @@ import { t } from "@/lib/i18n";
 import {
 	type HubDeviceRevokeFailure,
 	type PairedDevice,
+	type PushServiceStatus,
 	type QrMatrix,
 	hubDeviceRevoke,
 	hubDevices,
 	hubPairingOffer,
+	hubPushServiceStatus,
 	mobilePairingNetworks,
 	mobilePairingQr,
 } from "@/lib/ipc";
@@ -217,6 +219,7 @@ export function MobileConnectivityPage() {
 	return (
 		<>
 			<PageTitle title={t("settings.mobilePairing.title")} desc={t("settings.mobile.subtitle")} />
+			<PushServiceNotice />
 			{error && <ErrorText className="text-sm">{error}</ErrorText>}
 			{revokeFailure && (
 				<Alert icon={false} tone="warn" role="alert" className="grid gap-2 text-sm">
@@ -310,6 +313,44 @@ export function MobileConnectivityPage() {
 			</Dialog>
 		</>
 	);
+}
+
+/**
+ * The push service phone alerts use, named only when it is not the official
+ * one: a custom service receives the alert tokens of every paired phone, and
+ * an override file that cannot be used turns alerts off. The desktop reads
+ * the file and never writes it, so there is nothing to edit here.
+ */
+function PushServiceNotice() {
+	const [status, setStatus] = useState<PushServiceStatus | undefined>();
+	useEffect(() => {
+		let alive = true;
+		hubPushServiceStatus().then(
+			(read) => {
+				if (alive) setStatus(read);
+			},
+			// The line is a notice; without an answer the page stays as it is.
+			() => {},
+		);
+		return () => {
+			alive = false;
+		};
+	}, []);
+	if (status?.kind === "custom") {
+		return (
+			<Alert tone="warn" className="text-sm">
+				{t("settings.mobile.pushService.custom", { origin: status.origin })}
+			</Alert>
+		);
+	}
+	if (status?.kind === "not_configured") {
+		return (
+			<Alert tone="warn" className="text-sm">
+				{t("settings.mobile.pushService.invalid")}
+			</Alert>
+		);
+	}
+	return null;
 }
 
 /** 시안의 "1/2" — 단계 수를 세는 줄. */

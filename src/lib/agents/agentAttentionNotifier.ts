@@ -113,9 +113,16 @@ export function notifyAgentEvent(
         ...(reply ? { reply } : {}),
       },
       agent.provider,
-    ).catch(() => {
-      console.warn("Could not deliver the agent event to paired phone notifications");
-    });
+    ).then(
+      (receipt) => {
+        if (receipt.status === "failed" || receipt.status === "partial") {
+          console.warn("Paired phone notification not delivered:", receipt.reason);
+        }
+      },
+      () => {
+        console.warn("Could not deliver the agent event to paired phone notifications");
+      },
+    );
   }
   const np = notifyPrefs();
   if (!np.enabled) return;

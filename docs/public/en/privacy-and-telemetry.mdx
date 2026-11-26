@@ -47,6 +47,20 @@ The Dure app for iPhone and Android sends no usage data. It has no analytics, cr
 - **Push notifications (iPhone)**: if you turn them on, the phone gives its Apple push token to your paired computer, which stores it. When an agent needs your approval, finishes its turn or asks you something, your computer sends that token, the event type and id, opaque ids for the agent (and for the approval or process you can answer from the alert), your notification setting and the app language to the Dure push service on Fly.io. The service asks Apple to show a fixed message, such as "An agent is waiting for your approval." Session names, prompts and agent output never pass through the push service or Apple. When the alert arrives, the phone itself asks your paired computer over the pinned connection above which agent and project it is about and what the agent asks or said, and shows that in the alert. Turn off **Agent details in notifications** in the app's settings to keep every alert to the fixed message, on the lock screen too. The service does not store tokens; to avoid duplicate alerts, it keeps a one-way hash of each delivery for one hour. Turning notifications off removes the token from your computer.
 - **Feedback**: **Send feedback** opens a GitHub issue form in your browser with the app version and the browser's user agent filled in. Nothing is sent unless you submit the form on GitHub.
 
+### Use your own push service
+
+Phone alerts go through the official Dure push service unless this computer names another one. A fork or community build that runs its own service writes a file named `hub-push-service.json` into the folder that holds `hub-devices.json`, Dure's app data folder (for example `~/Library/Application Support/io.hebbian.ade` on macOS):
+
+```json
+{ "hub_push_service_version": 1, "endpoint": "https://push.example.org/" }
+```
+
+- The endpoint must use HTTPS, with no user name, password, query or fragment. Dure sends to `v1/register` and `v1/send` under it, so a path such as `https://push.example.org/dure` works too.
+- Dure reads the file each time it registers a phone or sends an alert, so a change applies without a restart. It never writes the file.
+- While the file is in effect, **Settings → Mobile** names the service. If the file cannot be read or is invalid, Dure sends no phone alerts at all; it never falls back to the official service.
+- The service you name receives what the official one would: the Apple push tokens of every phone paired with this computer, the events described above and this computer's certificate.
+- Apple accepts an alert only with a key from the team that signed the app, so your service also needs your own iPhone build of Dure, with your own APNs key and app identifier. The service's source is in `mobile/push-service` in the repository.
+
 ## The documentation site
 
 `docs.dureai.dev` sends page views to the same PostHog project so we can see which pages help. That is Mintlify's standard analytics integration; the project discards the request's IP address, and nothing on the docs site is tied to the app's install id.

@@ -84,6 +84,8 @@ export const settings: Record<string, string> = {
 	"settings.mobile.devices.forgetTitle": "Retirer cet appareil même si des clés restent sur des serveurs ?",
 	"settings.mobile.devices.forgetDescription": "Dure oubliera l’enregistrement de nouvelle tentative et retirera cet appareil ici. Une clé laissée sur un serveur inaccessible peut continuer à fonctionner, et Dure ne saura plus où la retirer.",
 	"settings.mobile.devices.forgetConfirm": "Retirer quand même",
+	"settings.mobile.pushService.custom": "Les alertes du téléphone passent par un service personnalisé à {origin}. Il reçoit les jetons d'alerte des téléphones appairés à cet ordinateur.",
+	"settings.mobile.pushService.invalid": "Le fichier du service personnalisé d'alertes du téléphone n'est pas valide : les alertes du téléphone sont désactivées.",
 	"로그인": "Se connecter",
 	"Durable orchestration 연동": "Intégration de l’orchestration durable",
 	"결정 필요": "Décision requise",

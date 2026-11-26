@@ -84,6 +84,8 @@ export const settings: Record<string, string> = {
 	"settings.mobile.devices.forgetTitle": "即使服务器上可能残留密钥，也要删除此设备记录吗？",
 	"settings.mobile.devices.forgetDescription": "Dure 将丢弃重试记录并在此电脑上解除设备登记。无法访问的服务器上残留的密钥可能仍然有效，之后 Dure 将无法再定位并删除它。",
 	"settings.mobile.devices.forgetConfirm": "仍然解除登记",
+	"settings.mobile.pushService.custom": "手机提醒使用位于 {origin} 的自定义服务。该服务会收到与这台电脑配对的手机的提醒令牌。",
+	"settings.mobile.pushService.invalid": "自定义手机提醒服务文件无效，因此手机提醒已关闭。",
 	"로그인": "登录",
 	"Durable orchestration 연동": "持久化编排集成",
 	"결정 필요": "需要决策",

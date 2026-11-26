@@ -84,6 +84,8 @@ export const settings: Record<string, string> = {
 	"settings.mobile.devices.forgetTitle": "サーバーにキーが残っていても、この端末を削除しますか？",
 	"settings.mobile.devices.forgetDescription": "Dure は再試行の記録を破棄し、このコンピューターで端末を登録解除します。到達できないサーバーに残ったキーは引き続き動作する可能性があり、Dure はその削除先を追跡できなくなります。",
 	"settings.mobile.devices.forgetConfirm": "それでも登録解除",
+	"settings.mobile.pushService.custom": "スマホの通知には {origin} のカスタムサービスを使います。このサービスは、このコンピュータとペアリングしたスマホの通知トークンを受け取ります。",
+	"settings.mobile.pushService.invalid": "カスタムのスマホ通知サービスのファイルが無効なため、スマホの通知はオフです。",
 	"로그인": "サインイン",
 	"Durable orchestration 연동": "永続オーケストレーション連携",
 	"결정 필요": "決定が必要",

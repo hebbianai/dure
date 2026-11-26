@@ -84,6 +84,8 @@ export const settings: Record<string, string> = {
 	"settings.mobile.devices.forgetTitle": "¿Quitar este dispositivo aunque queden claves en servidores?",
 	"settings.mobile.devices.forgetDescription": "Dure olvidará el registro de reintento y quitará este dispositivo de aquí. Una clave que quede en un servidor inaccesible puede seguir funcionando y Dure ya no sabrá dónde quitarla.",
 	"settings.mobile.devices.forgetConfirm": "Quitar de todos modos",
+	"settings.mobile.pushService.custom": "Las alertas del teléfono usan un servicio personalizado en {origin}. Recibe los tokens de alerta de los teléfonos emparejados con este ordenador.",
+	"settings.mobile.pushService.invalid": "El archivo del servicio personalizado de alertas del teléfono no es válido, así que las alertas del teléfono están desactivadas.",
 	"로그인": "Iniciar sesión",
 	"Durable orchestration 연동": "Integración de orquestación duradera",
 	"결정 필요": "Se requiere una decisión",

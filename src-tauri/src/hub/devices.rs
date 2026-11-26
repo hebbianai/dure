@@ -16,7 +16,10 @@
 //! 가 되고, 그 기록을 못 읽으면 취소가 풀린다. 취소는 실패해도 안전한 쪽으로
 //! 기울어야 하므로, 남길 것만 적고 통째로 바꿔 쓴다.
 
-use super::identity::{self, DeviceToken, IdentityError};
+use super::identity::{
+    self, DeviceToken, IdentityError, PushRegistrationRecord, PushRegistrationState,
+};
+use dure_hub_protocol::push::PushSubscription;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -137,10 +140,13 @@ impl DeviceRegistry {
 
     /// Recheck pairing under the same writer lock as revocation. An older
     /// authenticated connection must never recreate a revoked subscription.
+    ///
+    /// The registration state describes the stored subscription, so it stays
+    /// only when the phone re-sends the same one, and the caller checks again.
     pub fn set_push(
         &self,
         pairing_token: &str,
-        subscription: Option<dure_hub_protocol::push::PushSubscription>,
+        subscription: Option<PushSubscription>,
     ) -> Result<(), IdentityError> {
         let _guard = self
             .write_lock
@@ -154,8 +160,28 @@ impl DeviceRegistry {
             .iter_mut()
             .find(|device| device.device_id == id)
             .ok_or(IdentityError::Corrupt("Device pairing was revoked"))?;
+        if device.push != subscription {
+            device.push_registration = None;
+        }
         device.push = subscription;
         self.save(&devices)
+    }
+
+    /// Records what the push service said about `checked`, unless the phone
+    /// replaced or removed that subscription, or the pairing was revoked,
+    /// while the service was asked.
+    pub fn record_push_registration(
+        &self,
+        device_id: &str,
+        checked: &PushSubscription,
+        state: PushRegistrationState,
+    ) -> Result<(), IdentityError> {
+        self.update_push(device_id, checked, |device| {
+            device.push_registration = Some(PushRegistrationRecord {
+                state,
+                at: now_secs(),
+            });
+        })
     }
 
     /// APNs may retire a token while the phone concurrently registers a new
@@ -163,16 +189,32 @@ impl DeviceRegistry {
     pub fn retire_push(
         &self,
         device_id: &str,
-        rejected: &dure_hub_protocol::push::PushSubscription,
+        rejected: &PushSubscription,
+    ) -> Result<(), IdentityError> {
+        self.update_push(device_id, rejected, |device| {
+            device.push = None;
+            device.push_registration = None;
+        })
+    }
+
+    /// Changes the device only while it still holds exactly `subscription`.
+    fn update_push(
+        &self,
+        device_id: &str,
+        subscription: &PushSubscription,
+        change: impl FnOnce(&mut DeviceToken),
     ) -> Result<(), IdentityError> {
         let _guard = self
             .write_lock
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let mut devices = self.load()?;
-        if let Some(device) = devices.iter_mut().find(|device| device.device_id == device_id) {
-            if device.push.as_ref() == Some(rejected) {
-                device.push = None;
+        if let Some(device) = devices
+            .iter_mut()
+            .find(|device| device.device_id == device_id)
+        {
+            if device.push.as_ref() == Some(subscription) {
+                change(device);
                 self.save(&devices)?;
             }
         }
@@ -198,6 +240,12 @@ impl DeviceRegistry {
             .map_err(|error| IdentityError::Io(error.error))?;
         Ok(())
     }
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 /// 새 기기 id. 난수인 이유: 이름이나 순번을 쓰면 같은 이름의 폰 두 대가 같은

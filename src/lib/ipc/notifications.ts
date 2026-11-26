@@ -22,10 +22,42 @@ export const pushAgentNotification = (
 	/** Not sent on: the desktop offers a reply only where it serves prompts. */
 	provider?: string,
 ) =>
-	invoke<void>("hub_push_agent_notification", {
+	invoke<PhonePushReceipt>("hub_push_agent_notification", {
 		event,
 		provider: provider ?? null,
 	});
+
+/** Why an alert cannot reach a phone: `PushRefusal` in dure-hub-protocol. */
+export type PushRefusal =
+	| "not_configured"
+	| "service_unreachable"
+	| "service_outdated"
+	| "phone_update_required"
+	| "grant_refused"
+	| "grant_expired"
+	| "grant_superseded"
+	| "token_invalid"
+	| "rate_limited"
+	| "capacity"
+	| "refused"
+	| "other";
+
+/** What became of one agent event's phone alert. */
+export type PhonePushReceipt =
+	| { status: "no_subscribed_phone" }
+	| { status: "sent"; devices: number }
+	| { status: "partial"; sent: number; failed: number; reason: PushRefusal }
+	| { status: "failed"; reason: PushRefusal };
+
+/** The push service phone alerts use. Only a custom one is named, because it
+ *  receives the alert tokens of every phone paired with this computer. */
+export type PushServiceStatus =
+	| { kind: "official" }
+	| { kind: "custom"; origin: string }
+	| { kind: "not_configured" };
+
+export const hubPushServiceStatus = () =>
+	invoke<PushServiceStatus>("hub_push_service_status");
 
 export type NotificationAuthorization =
 	| "authorized"
