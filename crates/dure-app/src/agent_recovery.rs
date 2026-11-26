@@ -83,8 +83,8 @@ pub struct AgentNativeRecoveryRecordV1 {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum AgentRecoveryAttemptV1 {
-    Conversation(AgentRecoveryRecordV1),
-    Native(AgentNativeRecoveryRecordV1),
+    Conversation(Box<AgentRecoveryRecordV1>),
+    Native(Box<AgentNativeRecoveryRecordV1>),
 }
 
 impl AgentRecoveryAttemptV1 {
@@ -92,7 +92,7 @@ impl AgentRecoveryAttemptV1 {
     #[must_use]
     pub fn into_conversation(self) -> Option<AgentRecoveryRecordV1> {
         match self {
-            Self::Conversation(record) => Some(record),
+            Self::Conversation(record) => Some(*record),
             Self::Native(_) => None,
         }
     }

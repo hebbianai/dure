@@ -837,7 +837,7 @@ mod native {
             .await
             .unwrap()
         {
-            Some(AgentRecoveryAttemptV1::Native(record)) => Some(record),
+            Some(AgentRecoveryAttemptV1::Native(record)) => Some(*record),
             Some(AgentRecoveryAttemptV1::Conversation(record)) => {
                 panic!("a native failure prepared a conversation attempt: {record:?}")
             }

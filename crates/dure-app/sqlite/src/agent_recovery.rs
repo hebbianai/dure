@@ -100,7 +100,7 @@ async fn prepare_on(
         None => Ok(
             prepare_conversation_on(connection, agent_id, observed_at_ms)
                 .await?
-                .map(AgentRecoveryAttemptV1::Conversation),
+                .map(|record| AgentRecoveryAttemptV1::Conversation(Box::new(record))),
         ),
     }
 }
@@ -170,7 +170,7 @@ async fn prepare_native_on(
         observed_at_ms,
     )
     .await?;
-    let record = AgentRecoveryAttemptV1::Native(AgentNativeRecoveryRecordV1 {
+    let record = AgentRecoveryAttemptV1::Native(Box::new(AgentNativeRecoveryRecordV1 {
         schema_version: 1,
         attempt_id,
         agent_id: agent_id.clone(),
@@ -183,7 +183,7 @@ async fn prepare_native_on(
         target,
         continuation: AgentNativeRecoveryContinuationV1::NotStarted,
         created_at_ms: observed_at_ms,
-    });
+    }));
     save_on(connection, &record).await?;
     Ok(Some(record))
 }
@@ -307,7 +307,7 @@ async fn prepare_conversation_on(
         continuation: None,
         created_at_ms: observed_at_ms,
     };
-    let record = AgentRecoveryAttemptV1::Conversation(record);
+    let record = AgentRecoveryAttemptV1::Conversation(Box::new(record));
     save_on(connection, &record).await?;
     Ok(record.into_conversation())
 }
@@ -388,12 +388,20 @@ async fn prepare_turn_on(
             prepare_continuation_with_goal_on(connection, &request, original_goal).await?
         {
             record.continuation = Some(request);
-            save_on(connection, &AgentRecoveryAttemptV1::Conversation(record)).await?;
+            save_on(
+                connection,
+                &AgentRecoveryAttemptV1::Conversation(Box::new(record)),
+            )
+            .await?;
             return Ok(Some(receipt));
         }
     }
     record.stopped = Some(AgentRecoveryStopV1::Superseded);
-    save_on(connection, &AgentRecoveryAttemptV1::Conversation(record)).await?;
+    save_on(
+        connection,
+        &AgentRecoveryAttemptV1::Conversation(Box::new(record)),
+    )
+    .await?;
     Ok(None)
 }
 
@@ -683,7 +691,7 @@ async fn update_native_continuation(
         .commit()
         .await
         .map_err(|error| map_sqlx("update_agent_recovery_continuation", error))?;
-    Ok(record)
+    Ok(*record)
 }
 
 /// One Agent the native recovery scanner probes or wakes.

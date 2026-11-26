@@ -15,6 +15,7 @@ struct NativeRecovery {
     agent_id: AgentIdV1,
     source: WorkflowSessionGenerationV1,
     accounts: Vec<ProviderRecoveryAccountV1>,
+    prompts: FakePromptDeliverer,
 }
 
 /// A running terminal Agent on account A of a recovery pool [A, B], whose
@@ -62,6 +63,12 @@ async fn native_recovery(key: &str) -> NativeRecovery {
         });
     }
     let hmux = RealHmux::install(root, &mut state);
+    // The Host, its stop fence and the account switch are real. Typing the
+    // prompt needs the product runtime's agent prompt input, so the prompt
+    // port records what the owner asked to type, as other real-Hmux
+    // fixtures that are not about provider prompt semantics do.
+    let prompts = FakePromptDeliverer::new(vec![DeliveryOutcome::Succeed]);
+    state.workflow_prompt_deliverer = Arc::new(prompts.clone());
     let agent_id = AgentIdV1::new(format!("{key}-agent")).unwrap();
     let source = launch(&state, &hmux, &format!("{key}-source")).await;
     bind_source_profile(
@@ -101,6 +108,7 @@ async fn native_recovery(key: &str) -> NativeRecovery {
         agent_id,
         source,
         accounts,
+        prompts,
     }
 }
 
@@ -109,7 +117,7 @@ async fn native_attempt(
     attempt_id: &str,
 ) -> dure_app::AgentNativeRecoveryRecordV1 {
     match state.store.agent_recovery(attempt_id).await.unwrap() {
-        Some(AgentRecoveryAttemptV1::Native(record)) => record,
+        Some(AgentRecoveryAttemptV1::Native(record)) => *record,
         other => panic!("expected a native attempt, got {other:?}"),
     }
 }
@@ -161,6 +169,7 @@ async fn limit_failure_moves_the_conversation_and_continues_it_once() {
         agent_id,
         source,
         accounts,
+        prompts,
     } = native_recovery("native-limit").await;
     let original = hmux.session(&source);
     // An untyped error is a person's to read; recovery leaves it alone.
@@ -237,6 +246,7 @@ async fn limit_failure_moves_the_conversation_and_continues_it_once() {
     assert_ne!(target.terminal_epoch, source.terminal_epoch);
     assert!(agent_recovery::advance(&state, &agent_id).await.unwrap());
     assert_eq!(recovery_rows(&state, &agent_id).await, 1);
+    assert!(prompts.requests().is_empty());
 
     // Once its Host reports the conversation waiting, it gets one prompt.
     state_reporter::report_conversation(
@@ -259,6 +269,24 @@ async fn limit_failure_moves_the_conversation_and_continues_it_once() {
     ));
     assert_eq!(attempt.stopped, None);
     assert_eq!(recovery_rows(&state, &agent_id).await, 0);
+    let typed = prompts.requests();
+    assert_eq!(typed.len(), 1);
+    assert_eq!(typed[0].session, target);
+    assert_eq!(
+        typed[0].delivery_idempotency_key,
+        format!("recovery:{}", attempt.attempt_id)
+    );
+    assert_eq!(
+        typed[0].intent,
+        dure_app::WorkflowPromptDeliveryIntentV1::ExistingConversation {
+            provider_conversation_id: CONVERSATION.into(),
+        }
+    );
+    assert_eq!(
+        typed[0].handoff,
+        "Your previous turn stopped at a usage limit. Dure moved this conversation to \
+         another account; continue where you left off."
+    );
 
     // Later wakes never type it again.
     let delivered = attempt.clone();
@@ -267,6 +295,7 @@ async fn limit_failure_moves_the_conversation_and_continues_it_once() {
         native_attempt(&state, &delivered.attempt_id).await,
         delivered
     );
+    assert_eq!(prompts.requests().len(), 1);
     agent_runtime_close_apply::apply(
         &state,
         "close-native-limit-fixture",

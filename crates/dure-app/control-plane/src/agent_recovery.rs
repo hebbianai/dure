@@ -378,7 +378,7 @@ async fn continue_native(
     record: &AgentNativeRecoveryRecordV1,
     operation_id: &OperationIdV1,
 ) -> Result<bool, &'static str> {
-    let attempt = AgentRecoveryAttemptV1::Native(record.clone());
+    let attempt = AgentRecoveryAttemptV1::Native(Box::new(record.clone()));
     match &record.continuation {
         AgentNativeRecoveryContinuationV1::Delivered { .. } => return Ok(false),
         // A claim found on replay may already have reached the terminal.
