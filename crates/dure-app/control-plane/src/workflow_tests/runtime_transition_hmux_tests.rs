@@ -2,6 +2,7 @@ use super::*;
 use real_hmux::RealHmux;
 
 mod delegate_checkout_tests;
+mod native_account_recovery_tests;
 mod native_binding_conversation_tests;
 mod native_close_retirement_tests;
 mod native_deferred_tests;

@@ -19,6 +19,44 @@ pub(super) fn report_conversation(
     completed: bool,
     conversation: Option<&str>,
 ) {
+    report_state(
+        hmux,
+        source,
+        activity,
+        attention,
+        completed,
+        conversation,
+        None,
+    );
+}
+
+/// Report what a provider's hook reports when its turn ended on an API
+/// error: waiting on that error, with why it failed when the hook knows.
+pub(super) fn report_turn_failure(
+    hmux: &RealHmux,
+    source: &WorkflowSessionGenerationV1,
+    turn_failure: Option<hmux_client::AgentTurnFailure>,
+) {
+    report_state(
+        hmux,
+        source,
+        hmux_client::AgentRuntimeActivity::Waiting,
+        hmux_client::AgentRuntimeAttention::Error,
+        false,
+        None,
+        turn_failure,
+    );
+}
+
+fn report_state(
+    hmux: &RealHmux,
+    source: &WorkflowSessionGenerationV1,
+    activity: hmux_client::AgentRuntimeActivity,
+    attention: hmux_client::AgentRuntimeAttention,
+    completed: bool,
+    conversation: Option<&str>,
+    turn_failure: Option<hmux_client::AgentTurnFailure>,
+) {
     let fence = hmux_client::SessionFence {
         workspace_id: source.workspace_id.clone(),
         session_id: source.session_id.clone(),
@@ -56,7 +94,7 @@ pub(super) fn report_conversation(
             expected_observation: None,
             background_work: false,
             startup_gate: None,
-            turn_failure: None,
+            turn_failure,
         },
         fence,
     )

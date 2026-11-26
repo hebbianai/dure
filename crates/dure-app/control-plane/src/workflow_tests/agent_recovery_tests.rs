@@ -672,3 +672,28 @@ async fn independent_clients_observe_the_same_retained_recovery_and_canonical_se
     assert_eq!(runtime.opens.load(Ordering::SeqCst), 1);
     assert_eq!(runtime.commands.inputs.lock().unwrap().len(), 1);
 }
+
+/// A native terminal Agent has no conversation binding. The continuation
+/// loop still runs account recovery for it and is not an error.
+#[tokio::test]
+async fn continuation_advances_an_agent_without_a_conversation() {
+    let (_root, mut state, _, _) = fixture(Vec::new()).await;
+    make_fixture_mutation_authority(&mut state);
+    let agent_id = AgentIdV1::new("native-terminal-agent").unwrap();
+    state
+        .store
+        .upsert_agent(&AgentRecordV1 {
+            agent_id: agent_id.clone(),
+            workspace_id: WorkspaceIdV1::new("workspace-1").unwrap(),
+            provider_id: ProviderIdV1::new("codex").unwrap(),
+            display_name: "Native terminal".into(),
+            created_at_ms: 2,
+            updated_at_ms: 2,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::agent_conversation::continuation::advance(&state, &agent_id, None).await,
+        Ok(())
+    );
+}

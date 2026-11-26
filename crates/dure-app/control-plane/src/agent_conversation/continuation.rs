@@ -44,7 +44,7 @@ async fn enqueue_active(
     Ok(())
 }
 
-async fn advance(
+pub(crate) async fn advance(
     state: &ServiceState,
     agent_id: &AgentIdV1,
     goal: Option<&AgentGoalRecordV1>,

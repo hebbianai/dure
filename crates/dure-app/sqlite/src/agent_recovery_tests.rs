@@ -738,3 +738,413 @@ async fn accepted_recovery_does_not_hide_a_new_provider_failure() {
         "an accepted send is not a successful recovery of a later failure"
     );
 }
+
+mod native {
+    use super::*;
+    use dure_app::{
+        AGENT_CHECKPOINT_SCHEMA_VERSION_V1, AgentCheckpointBindingAuthorityV1,
+        AgentNativeRecoveryContinuationV1, AgentNativeRecoveryRecordV1, AgentNativeTurnFailureV1,
+        AgentTurnFailureReasonV1, WorkflowPromptDeliveryEvidenceV1,
+    };
+
+    fn agent() -> AgentIdV1 {
+        interaction_binding().agent_id
+    }
+
+    fn failure(reason: AgentTurnFailureReasonV1, attention: &str) -> AgentNativeTurnFailureV1 {
+        AgentNativeTurnFailureV1 {
+            terminal_epoch: "terminal-epoch-1".into(),
+            attention_id: attention.into(),
+            reason,
+            observed_at_ms: 200,
+        }
+    }
+
+    fn authority() -> AgentCheckpointBindingAuthorityV1 {
+        AgentCheckpointBindingAuthorityV1 {
+            schema_version: AGENT_CHECKPOINT_SCHEMA_VERSION_V1,
+            binding: SessionBindingRecordV1 {
+                agent_id: agent(),
+                runtime_kind_id: RuntimeKindIdV1::new("runtime.hmux").unwrap(),
+                session_id: "hmux-session-1".into(),
+                provider_conversation_id: Some("conversation-1".into()),
+                credential_reference_id: Some("credential.account-a".into()),
+                binding_generation: 1,
+                bound_at_ms: 4,
+            },
+            runtime_workspace_id: "workspace-1".into(),
+            runner_principal: "runner-principal-1".into(),
+            runner_instance: "runner-instance-1".into(),
+            channel_epoch: "1".into(),
+            host_instance_id: "host-instance-1".into(),
+            terminal_epoch: "terminal-epoch-1".into(),
+            updated_at_ms: 100,
+        }
+    }
+
+    fn selection(profile: AgentInteractionProfileV1) -> AgentRuntimeSelectionV1 {
+        let binding = interaction_binding();
+        AgentRuntimeSelectionV1 {
+            schema_version: 1,
+            agent_id: binding.agent_id,
+            provider_id: binding.provider_id,
+            interaction_profile: profile,
+            execution_profile: binding.execution_profile,
+            permission_mode: ProviderPermissionModeV1::Default,
+            model: None,
+            effort: None,
+            revision: 1,
+            selected_by_operation_id: None,
+            updated_at_ms: 100,
+        }
+    }
+
+    /// A terminal Agent on account A whose provider recovers over the
+    /// configured pool. Its timeline holds no failure: only the Host knows.
+    async fn native_store(
+        path: &std::path::Path,
+        profile: AgentInteractionProfileV1,
+        policy: ProviderRecoveryPolicyPutV1,
+    ) -> SqliteDomainStore {
+        let store = provision(path).await;
+        store
+            .initialize_agent_runtime_selection(&selection(profile))
+            .await
+            .unwrap();
+        store
+            .upsert_agent_checkpoint_binding_authority(&authority())
+            .await
+            .unwrap();
+        store
+            .put_provider_recovery_policy(&policy, 100)
+            .await
+            .unwrap();
+        store
+    }
+
+    fn only_the_source_account() -> ProviderRecoveryPolicyPutV1 {
+        let mut policy = policy();
+        policy.accounts.truncate(1);
+        policy
+    }
+
+    async fn prepare_native(
+        store: &SqliteDomainStore,
+        native: &AgentNativeTurnFailureV1,
+    ) -> Option<AgentNativeRecoveryRecordV1> {
+        match store
+            .prepare_agent_recovery(&agent(), 300, Some(native))
+            .await
+            .unwrap()
+        {
+            Some(AgentRecoveryAttemptV1::Native(record)) => Some(record),
+            Some(AgentRecoveryAttemptV1::Conversation(record)) => {
+                panic!("a native failure prepared a conversation attempt: {record:?}")
+            }
+            None => None,
+        }
+    }
+
+    async fn rows(store: &SqliteDomainStore, predicate: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM agent_recoveries WHERE {predicate}"
+        )))
+        .fetch_one(&store.pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn native_limit_failure_prepares_one_attempt_on_the_next_account() {
+        let root = TempDir::new().unwrap();
+        for reason in [
+            AgentTurnFailureReasonV1::RateLimit,
+            AgentTurnFailureReasonV1::UsageLimit,
+        ] {
+            let path = root.path().join(format!("{}.sqlite", reason.as_token()));
+            let store = native_store(&path, AgentInteractionProfileV1::NativeCli, policy()).await;
+            let native = failure(reason, "attention-3");
+            let record = prepare_native(&store, &native).await.unwrap();
+            assert_eq!(
+                record
+                    .target
+                    .as_ref()
+                    .map(|target| target.profile.reference_id.as_str()),
+                Some("credential.account-b")
+            );
+            assert_eq!(record.native_failure, native);
+            assert_eq!(record.source_selection_revision, 1);
+            assert_eq!(
+                record.continuation,
+                AgentNativeRecoveryContinuationV1::NotStarted
+            );
+            assert_eq!(record.stopped, None);
+            assert!(agent_runtime_transition_identity(&record.attempt_id).is_ok());
+            // The Host's failure episode is the identity: a repeated
+            // observation and a reopened store find the same attempt.
+            assert_eq!(
+                prepare_native(&store, &native).await.as_ref(),
+                Some(&record)
+            );
+            store.close().await;
+            let reopened = SqliteDomainStore::open(&path).await.unwrap();
+            assert_eq!(
+                prepare_native(&reopened, &native)
+                    .await
+                    .map(|record| record.attempt_id),
+                Some(record.attempt_id)
+            );
+            reopened.close().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn native_failures_that_cannot_recover_write_no_attempt() {
+        let root = TempDir::new().unwrap();
+        let rate_limit = failure(AgentTurnFailureReasonV1::RateLimit, "attention-3");
+
+        let store = native_store(
+            &root.path().join("provider-error.sqlite"),
+            AgentInteractionProfileV1::NativeCli,
+            policy(),
+        )
+        .await;
+        let provider_error = failure(AgentTurnFailureReasonV1::ProviderError, "attention-3");
+        assert_eq!(prepare_native(&store, &provider_error).await, None);
+        // An episode the checkpoint's Host generation did not see.
+        let elsewhere = AgentNativeTurnFailureV1 {
+            terminal_epoch: "terminal-epoch-2".into(),
+            ..rate_limit.clone()
+        };
+        assert_eq!(prepare_native(&store, &elsewhere).await, None);
+        // A failure from before recovery was enabled is not replayed.
+        let earlier = AgentNativeTurnFailureV1 {
+            observed_at_ms: 50,
+            ..rate_limit.clone()
+        };
+        assert_eq!(prepare_native(&store, &earlier).await, None);
+        assert_eq!(rows(&store, "1").await, 0);
+
+        let mut disabled = policy();
+        disabled.enabled = false;
+        let store = native_store(
+            &root.path().join("disabled.sqlite"),
+            AgentInteractionProfileV1::NativeCli,
+            disabled,
+        )
+        .await;
+        assert_eq!(prepare_native(&store, &rate_limit).await, None);
+        assert_eq!(rows(&store, "1").await, 0);
+
+        let store = native_store(
+            &root.path().join("structured.sqlite"),
+            AgentInteractionProfileV1::StructuredProtocol,
+            policy(),
+        )
+        .await;
+        assert_eq!(prepare_native(&store, &rate_limit).await, None);
+        assert_eq!(rows(&store, "1").await, 0);
+
+        // A runtime change already in flight owns the Agent.
+        let store = native_store(
+            &root.path().join("transitioning.sqlite"),
+            AgentInteractionProfileV1::NativeCli,
+            policy(),
+        )
+        .await;
+        let (operation_id, idempotency_key) =
+            agent_runtime_transition_identity("manual-switch").unwrap();
+        store
+            .admit_agent_runtime_transition(&AgentRuntimeTransitionIntentV1 {
+                schema_version: 1,
+                operation_id,
+                idempotency_key,
+                source: selection(AgentInteractionProfileV1::NativeCli),
+                source_authority: AgentRuntimeBindingAuthorityV1::NativeCli {
+                    authority: authority(),
+                },
+                source_stop_policy: AgentRuntimeSourceStopPolicyV1::Preserve,
+                provider_conversation_ref: AgentProviderConversationPlanV1::resume(
+                    "conversation-1",
+                )
+                .unwrap(),
+                target_interaction_profile: AgentInteractionProfileV1::NativeCli,
+                target_execution_profile: policy().accounts[2].execution_profile(),
+                target_launch_selection: None,
+                workspace_move: None,
+                requested_at_ms: 250,
+            })
+            .await
+            .unwrap();
+        assert_eq!(prepare_native(&store, &rate_limit).await, None);
+        assert_eq!(rows(&store, "1").await, 0);
+    }
+
+    #[tokio::test]
+    async fn a_native_limit_without_another_account_is_saved_exhausted() {
+        let root = TempDir::new().unwrap();
+        let store = native_store(
+            &root.path().join("exhausted.sqlite"),
+            AgentInteractionProfileV1::NativeCli,
+            only_the_source_account(),
+        )
+        .await;
+        let native = failure(AgentTurnFailureReasonV1::UsageLimit, "attention-3");
+        let record = prepare_native(&store, &native).await.unwrap();
+        assert_eq!(record.target, None);
+        assert_eq!(record.stopped, Some(AgentRecoveryStopV1::Exhausted));
+        assert_eq!(prepare_native(&store, &native).await, Some(record));
+    }
+
+    #[tokio::test]
+    async fn native_attempt_rows_stay_out_of_conversation_queries() {
+        let root = TempDir::new().unwrap();
+        let store = native_store(
+            &root.path().join("queries.sqlite"),
+            AgentInteractionProfileV1::NativeCli,
+            policy(),
+        )
+        .await;
+        let first = prepare_native(
+            &store,
+            &failure(AgentTurnFailureReasonV1::RateLimit, "attention-3"),
+        )
+        .await
+        .unwrap();
+        // Queries written before native attempts never select one, so a
+        // downgraded backend leaves them alone.
+        assert_eq!(
+            rows(
+                &store,
+                "json_extract(record_json, '$.stopped') IS NULL \
+                 AND json_extract(record_json, '$.continuation') IS NULL"
+            )
+            .await,
+            0
+        );
+        assert_eq!(
+            rows(
+                &store,
+                "json_extract(record_json, '$.source.interactionSessionId') IS NOT NULL"
+            )
+            .await,
+            0
+        );
+        assert_eq!(store.latest_agent_recovery(&agent()).await.unwrap(), None);
+        assert!(
+            store
+                .agents_with_recovery()
+                .await
+                .unwrap()
+                .contains(&agent())
+        );
+        let candidates = store
+            .agent_native_recovery_candidates(None, 128)
+            .await
+            .unwrap();
+        assert_eq!(
+            candidates,
+            vec![crate::NativeRecoveryCandidateV1 {
+                agent_id: agent(),
+                unfinished_attempt: true,
+            }]
+        );
+
+        // One claim owns the prompt; a second claim changes nothing.
+        let claimed = store
+            .claim_native_agent_recovery_continuation(&first.attempt_id, "recovery:first")
+            .await
+            .unwrap();
+        let owned = AgentNativeRecoveryContinuationV1::Claimed {
+            delivery_idempotency_key: "recovery:first".into(),
+        };
+        assert_eq!(claimed.continuation, owned);
+        assert_eq!(
+            store
+                .claim_native_agent_recovery_continuation(&first.attempt_id, "recovery:other")
+                .await
+                .unwrap()
+                .continuation,
+            owned
+        );
+        // Nothing written releases it; a delivery settles it for good.
+        assert_eq!(
+            store
+                .settle_native_agent_recovery_continuation(&first.attempt_id, None)
+                .await
+                .unwrap()
+                .continuation,
+            AgentNativeRecoveryContinuationV1::NotStarted
+        );
+        store
+            .claim_native_agent_recovery_continuation(&first.attempt_id, "recovery:first")
+            .await
+            .unwrap();
+        let evidence = WorkflowPromptDeliveryEvidenceV1::agent_prompt(
+            "terminal-epoch-2",
+            "record-1",
+            "41",
+            Some("7".into()),
+        );
+        let delivered = store
+            .settle_native_agent_recovery_continuation(&first.attempt_id, Some(&evidence))
+            .await
+            .unwrap();
+        assert_eq!(
+            delivered.continuation,
+            AgentNativeRecoveryContinuationV1::Delivered { evidence }
+        );
+        // A delivered continuation cannot be stopped, resent or resumed.
+        let stop = AgentRecoveryStopV1::Failed {
+            code: "late".into(),
+        };
+        assert_eq!(
+            store
+                .stop_agent_recovery(&first.attempt_id, &stop)
+                .await
+                .unwrap()
+                .stopped(),
+            None
+        );
+        assert_eq!(
+            store
+                .claim_native_agent_recovery_continuation(&first.attempt_id, "recovery:again")
+                .await
+                .unwrap(),
+            delivered
+        );
+        assert!(
+            store
+                .agent_native_recovery_candidates(None, 128)
+                .await
+                .unwrap()
+                .iter()
+                .all(|candidate| !candidate.unfinished_attempt)
+        );
+
+        // Unfinished attempts, claimed or not, can still be stopped.
+        for (attention, claim) in [("attention-4", false), ("attention-5", true)] {
+            let record = prepare_native(
+                &store,
+                &failure(AgentTurnFailureReasonV1::UsageLimit, attention),
+            )
+            .await
+            .unwrap();
+            if claim {
+                store
+                    .claim_native_agent_recovery_continuation(&record.attempt_id, "recovery:x")
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(
+                store
+                    .stop_agent_recovery(&record.attempt_id, &stop)
+                    .await
+                    .unwrap()
+                    .stopped(),
+                Some(&stop),
+                "{attention}"
+            );
+        }
+    }
+}
