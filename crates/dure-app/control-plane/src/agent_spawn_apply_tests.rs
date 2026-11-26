@@ -828,6 +828,46 @@ impl crate::workflow_launch::CredentialAwareWorkflowSessionLauncher for Recordin
     }
 }
 
+/// Asks the store, while the Hub watches the launch prompt, the question a
+/// provider's session-start enrollment asks: does an Agent bind this exact
+/// Session generation yet?
+struct EnrollmentProbeLauncher {
+    launcher: RecordingLauncher,
+    store: SqliteDomainStore,
+    bound_during_watch: Mutex<Vec<bool>>,
+}
+
+impl crate::workflow_launch::CredentialAwareWorkflowSessionLauncher for EnrollmentProbeLauncher {
+    fn observe_launch_prompt(
+        &self,
+        session: WorkflowSessionGenerationV1,
+        watch: LaunchPromptWatch,
+    ) -> crate::workflow_launch::LaunchPromptObservationFuture<'_> {
+        Box::pin(async move {
+            let bound = self
+                .store
+                .orchestration_run_authority_for_exact_session(&session)
+                .await
+                .is_ok();
+            self.bound_during_watch.lock().unwrap().push(bound);
+            self.launcher.observe_launch_prompt(session, watch).await
+        })
+    }
+
+    fn launch_with_provider_state(
+        &self,
+        request: WorkflowSessionLaunchRequestV1,
+        provider_state_environment: ProviderStateEnvironment,
+        presentation_predecessor: Option<hmux_client::PresentationCheckpointPredecessor>,
+    ) -> WorkflowSessionLaunchFutureV1 {
+        self.launcher.launch_with_provider_state(
+            request,
+            provider_state_environment,
+            presentation_predecessor,
+        )
+    }
+}
+
 impl crate::workflow_launch::CredentialAwareWorkflowSessionLauncher for FixtureLauncher {
     fn launch_with_provider_state(
         &self,
@@ -2430,6 +2470,48 @@ async fn claude_spawn_into_a_trusted_folder_claims_the_prompt_unless_sign_in_fai
             }
         )));
     }
+}
+
+/// Claude runs its session-start hook, which opens the Session's durable
+/// inbox, while the Hub still watches the brief that rode the launch command
+/// (up to 8 s). The inbox opens only for a Session an Agent binds, so a
+/// binding recorded after the watch left every such Run without an inbox and
+/// `dure send --track` refused it (f-XHEFD).
+#[tokio::test]
+async fn claude_spawn_binds_its_agent_before_watching_the_launch_prompt() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+        .await
+        .unwrap();
+    let planned = planned_native_claude_prompt_spawn(&store).await;
+    let body = apply_body(&planned, "private prompt");
+    let launcher = EnrollmentProbeLauncher {
+        launcher: RecordingLauncher::showing(LaunchPromptObservation::TakenUp),
+        store: store.clone(),
+        bound_during_watch: Mutex::new(Vec::new()),
+    };
+    let prompt_deliverer = FixturePromptDeliverer {
+        calls: Arc::new(AtomicUsize::new(0)),
+        uncertain: false,
+    };
+
+    let succeeded = apply(
+        &store,
+        authorize(&store, "dure-local", &body).await.unwrap(),
+        &body,
+        Some(execution_with_prompt_target(
+            &launcher,
+            &prompt_deliverer,
+            &TRUSTED_CLAUDE_WORKSPACE_PREPARER,
+            &FixturePromptActivityObserver::observed(),
+            dure_app::AgentProviderPromptTargetV1::LaunchArgument,
+        )),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(succeeded.state, AgentSpawnJournalStateV1::Succeeded);
+    assert_eq!(*launcher.bound_during_watch.lock().unwrap(), vec![true]);
 }
 
 /// Claude Code with a missing or expired login submits the brief that rode

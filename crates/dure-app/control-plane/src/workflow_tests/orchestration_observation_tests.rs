@@ -311,3 +311,68 @@ async fn enrolling_a_live_session_no_agent_binds_is_stale_not_retryable() {
             .is_none()
     );
 }
+
+/// `dure send --track` resolves the destination's context before it opens
+/// the Message. A live Session that never enrolled has no inbox yet: both
+/// steps name that reason instead of a bare generation conflict, refuse
+/// terminally, and enroll nothing on the destination's behalf (f-XHEFD).
+#[tokio::test]
+async fn exact_session_send_names_a_live_session_that_has_no_inbox() {
+    let (_root, state, launcher, prompt_deliverer) =
+        fixture_with_delivery(Vec::new(), Vec::new()).await;
+    let session_value = existing_session_run_body()["session"].clone();
+    let session = serde_json::from_value(session_value.clone()).unwrap();
+    verify_exact_orchestration_session(&state, &session)
+        .await
+        .unwrap();
+    for (request_id, method, body) in [
+        (
+            "unenrolled-context",
+            "dispatch.context.get.exact-session",
+            json!({ "schemaVersion": 1, "session": session_value }),
+        ),
+        (
+            "unenrolled-message",
+            "interaction.message.open.exact-session",
+            json!({
+                "schemaVersion": 1,
+                "session": session_value,
+                "expectedEndpointRef": "endpoint-unresolved",
+                "idempotencyKey": "message-to-unenrolled-session",
+                "interactionId": "message-to-unenrolled-session",
+                "title": "Review the bounded change",
+                "descriptionMarkdown": "Report through the durable inbox.",
+                "openedAtMs": 1_100
+            }),
+        ),
+    ] {
+        let error = dispatch(
+            &state,
+            &orchestration_backend_request(&state, request_id, method, body),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "orchestration_generation_conflict", "{method}");
+        assert_eq!(
+            error.details.as_ref().unwrap()["reasonCode"],
+            "session_dispatch_unassigned",
+            "{method}"
+        );
+        assert_eq!(
+            error.disposition,
+            BackendFailureDispositionV1::Terminal,
+            "{method}"
+        );
+    }
+    assert!(
+        state
+            .store
+            .inspect_orchestration_dispatch_session(&session)
+            .await
+            .unwrap()
+            .target
+            .is_none()
+    );
+    assert!(launcher.requests().is_empty());
+    assert!(prompt_deliverer.requests().is_empty());
+}

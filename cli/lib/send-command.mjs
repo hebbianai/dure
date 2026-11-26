@@ -59,6 +59,8 @@ The header marks input that an agent or script sent through dure send. It is not
 security control: a missing header does not prove that a person typed the text. Approvals
 for money, limits or credentials must come from the person in the app, not relayed text.
 Tracked messages require a managed Session and support 'dure wait --message <receiptPath>'.
+The target must have opened its durable inbox, which its provider does when it resolves
+its orchestration context (at session start or its first orchestration tool call).
 Tracked send cannot be combined with --no-enter or --idempotency-key.
 When the target's wake is held (unsubmitted input or a turn in progress), the output says
 why; --json reports it as diagnostic. The message stays in the inbox; do not resend.

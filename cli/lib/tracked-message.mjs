@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { resolveBackendProfilesPath } from "./backend-profiles.mjs";
 import { backendTransportErrorReport, performBackendProfileRequest } from "./backend-transport.mjs";
 import { createOrchestrationRequest, isOrchestrationResponse } from "./contracts/orchestration-envelope.mjs";
+import { orchestrationFailureGuidance } from "./orchestration-failure.mjs";
 import { collectSessionQuery } from "./session-query.mjs";
 import { sameGeneration } from "./session-runtime-projection.mjs";
 
@@ -39,11 +40,12 @@ export async function sendTrackedMessage(target, text, { backend, hmuxCommand, t
   try {
     context = await request(backend, "dispatch.context.get.exact-session", { schemaVersion: 1, session });
   } catch (error) {
-    // Nothing is opened before the context resolves. Report typed codes only;
-    // backend messages may carry private paths.
+    // Nothing is opened before the context resolves. Report typed codes and
+    // the guidance they map to only; backend messages may carry private paths.
     const detail = backendTransportErrorReport(error).error;
     const reason = [detail.remoteCode ?? detail.code, detail.reasonCode].filter(Boolean).join(": ");
-    throw Object.assign(new Error(`The Session's message context is unavailable (${reason}). Nothing was sent; check the target with dure ls --alive.`), { code: "dure_send_context_unavailable", cause: error });
+    const next = orchestrationFailureGuidance(detail)?.message ?? "Check the target with dure ls --alive.";
+    throw Object.assign(new Error(`The Session's message context is unavailable (${reason}). Nothing was sent. ${next}`), { code: "dure_send_context_unavailable", cause: error });
   }
   const interactionId = `message.${randomUUID()}`;
   const query = { schemaVersion: 1, authority: context.target.authority, interactionId,

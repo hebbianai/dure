@@ -84,7 +84,28 @@ test("a context lookup failure reports typed codes as unsent, without backend te
   expect(error.code).toBe("dure_send_context_unavailable");
   expect(error.message).toContain("orchestration_session_unavailable: hmux_descriptor_unavailable");
   expect(error.message).toContain("Nothing was sent");
+  expect(error.message).toContain("Retry the same context lookup after connectivity recovers");
   expect(request).toHaveBeenCalledTimes(1);
+});
+
+test("a live target that never opened its inbox is named as such, with how to open it", async () => {
+  const options = fixture();
+  const request = vi.fn(async () => { throw new BackendTransportError("backend_transport_remote_error", { details: { code: "orchestration_generation_conflict", reasonCode: "session_dispatch_unassigned", disposition: "terminal", message: "private-backend-text" } }); });
+  const error = await sendTrackedMessage({ sessionId: "session", workspaceId: "workspace" }, "hello", { ...options, request }).catch((caught) => caught);
+  expect(error.code).toBe("dure_send_context_unavailable");
+  expect(error.message).toContain("(orchestration_generation_conflict: session_dispatch_unassigned). Nothing was sent.");
+  expect(error.message).toContain("has not opened its durable inbox");
+  expect(error.message).toContain("dure orchestration tool orchestration_context_get_current");
+  expect(error.message).not.toContain("dure ls --alive");
+  expect(error.message).not.toContain("private-backend-text");
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(fs.existsSync(path.join(options.environment.DURE_HOME, "message-receipts"))).toBe(false);
+});
+
+test("a context refusal without guidance still points at the live listing", async () => {
+  const request = vi.fn(async () => { throw new BackendTransportError("backend_transport_remote_error", { details: { code: "orchestration_store_unavailable", disposition: "retry_same" } }); });
+  const error = await sendTrackedMessage({ sessionId: "session", workspaceId: "workspace" }, "hello", { ...fixture(), request }).catch((caught) => caught);
+  expect(error.message).toBe("The Session's message context is unavailable (orchestration_store_unavailable). Nothing was sent. Check the target with dure ls --alive.");
 });
 
 test("an exited target names Agents with similar names and the live listing", () => {

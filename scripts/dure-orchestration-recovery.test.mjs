@@ -108,3 +108,24 @@ it("corrects an older backend's invalid-request retry guidance without exposing 
   });
   expect(request).toHaveBeenCalledTimes(1);
 });
+
+it("explains a destination Session that has not opened its inbox instead of a bare conflict", async () => {
+  const failure = new BackendTransportError("backend_transport_remote_error", {
+    details: {
+      code: "orchestration_generation_conflict",
+      reasonCode: "session_dispatch_unassigned",
+      disposition: "terminal",
+    },
+  });
+  const request = vi.fn(async () => { throw failure; });
+  await expect(handleMcpRequest({ jsonrpc: "2.0", method: "tools/call",
+    params: { name: "orchestration_message_open_exact_session", arguments: { body: {} } },
+  }, environment, { request })).rejects.toMatchObject({
+    message: expect.stringMatching(new RegExp(
+      "^orchestration_generation_conflict: session_dispatch_unassigned \\(terminal\\): " +
+      "This managed Session is live, but it has not opened its durable inbox.*" +
+      "dure orchestration tool orchestration_context_get_current.*cannot succeed\\.$")),
+    cause: failure,
+  });
+  expect(request).toHaveBeenCalledTimes(1);
+});

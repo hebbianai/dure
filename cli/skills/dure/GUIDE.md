@@ -812,7 +812,12 @@ exact-session operation) and require resolving the current session again.
 as its current Session, so it cannot report yet: a restart that has not
 published its binding (`dure runs resume <agent>` shows it and how to finish
 it), or a provider started outside a Dure Agent. Resending the same lookup
-cannot help.
+cannot help. `session_dispatch_unassigned` on a lookup or send to another
+Session means that Session is live but has not opened its durable inbox: a
+Session opens its own inbox when its provider resolves its orchestration
+context, at session start or at its first orchestration tool call. Running
+`dure orchestration tool orchestration_context_get_current` in that Session
+opens it; no other Session can.
 
 ## Delegated workflows are not orchestration Dispatches
 

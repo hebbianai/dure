@@ -1,6 +1,4 @@
-use dure_app::{
-    AgentIdV1, AgentRuntimeCloseStore, DomainStoreErrorV1, WorkflowSessionGenerationV1,
-};
+use dure_app::{AgentIdV1, AgentRuntimeCloseStore, WorkflowSessionGenerationV1};
 use dure_app_sqlite::{
     MAX_ORCHESTRATION_CONTEXT_BATCH_ITEMS, OrchestrationDispatchContextResolutionV1,
     OrchestrationDispatchGenerationV1,
@@ -9,8 +7,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{
-    BackendDispatchError, BackendFailureDispositionV1, ServiceState, backend_error_body,
-    dispatch_context_error, orchestration_store_error, verify_exact_orchestration_session,
+    BackendDispatchError, ServiceState, backend_error_body, dispatch_context_error,
+    orchestration_store_error, session_dispatch_unassigned, verify_exact_orchestration_session,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -214,7 +212,7 @@ async fn no_dispatch_context_error(
             Ok(Some(_)) => {
                 return BackendDispatchError::terminal("orchestration_request_invalid");
             }
-            Ok(None) => return unassigned(session),
+            Ok(None) => return session_dispatch_unassigned(),
             Err(error) => return error,
         };
         let close = {
@@ -233,15 +231,5 @@ async fn no_dispatch_context_error(
             Err(error) => return error,
         }
     }
-    unassigned(session)
-}
-
-fn unassigned(session: &WorkflowSessionGenerationV1) -> BackendDispatchError {
-    dispatch_context_error(DomainStoreErrorV1::IdentityConflict {
-        entity: "orchestration_session_fence",
-        id: session.session_id.clone(),
-        reason: "the exact Session generation must resolve to one active or completed Dispatch"
-            .into(),
-    })
-    .with_disposition(BackendFailureDispositionV1::Unassigned)
+    session_dispatch_unassigned()
 }

@@ -3077,6 +3077,19 @@ fn run_authority_error(error: DomainStoreErrorV1) -> BackendDispatchError {
     }
 }
 
+/// Hmux observed this Session generation as live, but no Dispatch names it:
+/// its provider has not resolved its own orchestration context, which enrolls
+/// the Session and opens its durable inbox. Only that Session can enroll
+/// itself, so no other caller's retry succeeds until it has.
+fn session_dispatch_unassigned() -> BackendDispatchError {
+    BackendDispatchError {
+        code: "orchestration_generation_conflict".into(),
+        message: "No Dispatch names this live Session generation: its provider has not resolved its orchestration context, which opens its durable inbox.".into(),
+        details: Some(json!({ "reasonCode": "session_dispatch_unassigned" })),
+        disposition: BackendFailureDispositionV1::Unassigned,
+    }
+}
+
 fn rehost_generation_matches_session(
     generation: &hmux_client::ManagedRehostGeneration,
     session: &WorkflowSessionGenerationV1,
@@ -3300,11 +3313,15 @@ async fn exact_orchestration_context(
     session: &WorkflowSessionGenerationV1,
 ) -> Result<DispatchContextReceipt, BackendDispatchError> {
     verify_exact_orchestration_session(state, session).await?;
-    let target = state
-        .store
-        .orchestration_target_for_exact_session(session)
+    // Only the Session itself may enroll, so an exact caller never reads the
+    // refusal as unassigned.
+    let target = session_dispatch_target(state, session)
         .await
-        .map_err(exact_context_error)?;
+        .map_err(exact_context_error)?
+        .ok_or_else(|| {
+            session_dispatch_unassigned()
+                .with_disposition(BackendFailureDispositionV1::StaleGeneration)
+        })?;
     let task_id = TaskIdV1::new(target.task_id.as_str())
         .map_err(|_| BackendDispatchError::from("orchestration_context_invalid"))?;
     let dispatch_id = DispatchIdV1::new(target.dispatch_id.as_str())
@@ -3643,33 +3660,49 @@ fn exact_context_error(error: DomainStoreErrorV1) -> BackendDispatchError {
     orchestration_store_error(error).with_disposition(disposition)
 }
 
+/// The Session's own lookup: a live Session that no Dispatch names may enroll.
 async fn dispatch_context_target(
     state: &ServiceState,
     session: &WorkflowSessionGenerationV1,
 ) -> Result<InteractionTarget, BackendDispatchError> {
+    match session_dispatch_target(state, session)
+        .await
+        .map_err(dispatch_context_error)?
+    {
+        Some(target) => Ok(target),
+        None => {
+            verify_exact_orchestration_session(state, session).await?;
+            Err(session_dispatch_unassigned())
+        }
+    }
+}
+
+/// The Dispatch that names this exact Session generation, or `None` when no
+/// active or completed Dispatch names it: the Session has not enrolled. Any
+/// other refusal keeps its store error.
+async fn session_dispatch_target(
+    state: &ServiceState,
+    session: &WorkflowSessionGenerationV1,
+) -> Result<Option<InteractionTarget>, DomainStoreErrorV1> {
     let error = match state
         .store
         .orchestration_target_for_exact_session(session)
         .await
     {
-        Ok(target) => return Ok(target),
+        Ok(target) => return Ok(Some(target)),
         Err(error) => error,
     };
     if !matches!(&error, DomainStoreErrorV1::IdentityConflict { .. }) {
-        return Err(dispatch_context_error(error));
+        return Err(error);
     }
     let inspection = state
         .store
         .inspect_orchestration_dispatch_session(session)
-        .await
-        .map_err(dispatch_context_error)?;
-    let disposition = if inspection.target.is_none() {
-        verify_exact_orchestration_session(state, session).await?;
-        BackendFailureDispositionV1::Unassigned
-    } else {
-        BackendFailureDispositionV1::StaleGeneration
-    };
-    Err(orchestration_store_error(error).with_disposition(disposition))
+        .await?;
+    match inspection.target {
+        None => Ok(None),
+        Some(_) => Err(error),
+    }
 }
 
 fn exact_message_error(error: ServiceError) -> BackendDispatchError {

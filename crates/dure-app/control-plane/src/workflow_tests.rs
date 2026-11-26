@@ -7004,6 +7004,10 @@ async fn existing_exact_session_creates_one_durable_reporting_run_without_pty_de
     let wire_error = backend_error_body(unassigned);
     assert_eq!(wire_error["code"], "orchestration_generation_conflict");
     assert_eq!(wire_error["details"]["disposition"], "unassigned");
+    assert_eq!(
+        wire_error["details"]["reasonCode"],
+        "session_dispatch_unassigned"
+    );
 
     let fault_pool = sqlx::SqlitePool::connect_with(
         sqlx::sqlite::SqliteConnectOptions::new().filename(root.path().join("domain.sqlite")),
