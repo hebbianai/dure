@@ -133,6 +133,9 @@ pub(super) fn retain_newest_turn(entries: &mut Entries) -> Result<(), Error> {
         .ok_or_else(|| protocol_error("Pi branch entry missing"))?;
     entries.entries.drain(..start);
     entries.omits_older = true;
+    // The next projection continues the rows this one gave; it opens no
+    // window to place.
+    entries.offsets.clear();
     Ok(())
 }
 
@@ -143,6 +146,9 @@ pub(super) struct ProjectedHistory {
     /// Whether the conversation continues before the oldest entry the items
     /// show, which a window left out.
     pub(super) omits_older: bool,
+    /// Where that oldest entry starts in the session's transcript, when the
+    /// window read it from there: the history before it pages from here.
+    pub(super) window_start: Option<u64>,
 }
 
 pub(super) fn project(
@@ -162,6 +168,10 @@ pub(super) fn project(
         entries: selected,
         before,
     } = branch(entries)?;
+    let window_start = match (before, selected.first()) {
+        (Some(_), Some(oldest)) => entries.offsets.get(field(oldest, "id")?).copied(),
+        _ => None,
+    };
     // A prompt Dure sent follows the leaf it was sent at, which may precede
     // the branch's oldest entry in a window.
     let mut next = at_leaf.get(&before).copied();
@@ -299,6 +309,7 @@ pub(super) fn project(
         accepted,
         completed,
         omits_older: before.is_some(),
+        window_start,
     })
 }
 
@@ -329,27 +340,35 @@ impl ProjectedHistory {
     /// The items to append, oldest first. A window that `meets_timeline`,
     /// whose items the timeline partly holds, continues its rows. One that
     /// leaves out older history the timeline does not hold opens with the
-    /// existing boundary row. The shared transcript reader does not page Pi
-    /// sessions, so the row says only that the history is left out, not
-    /// where it is.
+    /// existing boundary row: placed at the window's start in the session's
+    /// transcript, where a reader pages the older history from, when it opens
+    /// the timeline. After turns the timeline `holds_turns` of, it marks the
+    /// gap between them and the window, at no place a reader could page
+    /// from: paging back from the window's start would show the held turns
+    /// again.
     pub(super) fn take_items(
         &mut self,
         meets_timeline: bool,
+        holds_turns: bool,
     ) -> Result<Vec<AgentTimelineItemDraftV1>, Error> {
         let mut items = std::mem::take(&mut self.items);
         if let Some(oldest) = items
             .first()
             .filter(|_| self.omits_older && !meets_timeline)
         {
+            let body = if holds_turns {
+                AgentTimelineItemBodyV1::history_gap(None)
+            } else {
+                AgentTimelineItemBodyV1::history_window(
+                    self.window_start
+                        .and_then(|start| i64::try_from(start).ok()),
+                )
+            };
             let boundary = item(
                 &format!("history-boundary:{}", oldest.item_id),
                 None,
                 None,
-                AgentTimelineItemBodyV1::HistoryBoundary {
-                    reason: PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1.into(),
-                    requested_after_provider_sequence: 0,
-                    dropped_through_provider_sequence: 1,
-                },
+                body,
                 oldest.created_at_ms,
             )?;
             items.insert(0, boundary);
@@ -436,6 +455,7 @@ mod tests {
             ],
             leaf_id: Some("b".into()),
             omits_older: false,
+            offsets: BTreeMap::new(),
         };
         assert_eq!(
             branch(&entries)
@@ -475,6 +495,7 @@ mod tests {
             ],
             leaf_id: Some("answer".into()),
             omits_older: false,
+            offsets: BTreeMap::new(),
         };
         let history = project(&entries, &anchors).unwrap();
         assert_eq!(
@@ -554,6 +575,7 @@ mod tests {
             ],
             leaf_id: Some("answer".into()),
             omits_older: false,
+            offsets: BTreeMap::new(),
         };
         let history = project(&entries, &BTreeMap::new()).unwrap();
         let tools = history
@@ -608,7 +630,8 @@ mod tests {
         entries
     }
 
-    /// The entries of `session` from `start` on, as a window reads them.
+    /// The entries of `session` from `start` on, as a window reads them from
+    /// the transcript, where entry `index` starts at [`offset`]`(index)`.
     fn window(session: &[Value], start: usize) -> Entries {
         Entries {
             entries: session[start..].to_vec(),
@@ -616,7 +639,17 @@ mod tests {
                 .last()
                 .map(|entry| entry["id"].as_str().unwrap().into()),
             omits_older: start > 0,
+            offsets: session
+                .iter()
+                .enumerate()
+                .skip(start)
+                .map(|(index, entry)| (entry["id"].as_str().unwrap().into(), offset(index)))
+                .collect(),
         }
+    }
+
+    fn offset(index: usize) -> u64 {
+        100 * (index as u64 + 1)
     }
 
     /// Each item as its kind, turn and text, oldest first.
@@ -670,15 +703,21 @@ mod tests {
         let mut history = project(&entries, &BTreeMap::new()).unwrap();
         assert!(history.omits_older);
         let mut timeline = Vec::new();
-        append(&mut timeline, history.take_items(false).unwrap());
+        append(&mut timeline, history.take_items(false, false).unwrap());
         assert_eq!(
             shown(&timeline)[..4],
             [
-                "boundary provider_history_truncated",
+                "boundary provider_transcript_window",
                 "- tool-2 Completed",
                 "- Answer 2",
                 "pi-turn-prompt-3 TurnStarted",
             ]
+        );
+        // The boundary is placed where the window's oldest entry starts in
+        // the transcript, which the older history pages back from.
+        assert_eq!(
+            timeline[0].body,
+            AgentTimelineItemBodyV1::history_window(Some(offset(10) as i64))
         );
 
         // Only the turn in progress stays for the next sync.
@@ -698,7 +737,7 @@ mod tests {
             .iter()
             .any(|item| timeline.iter().any(|held| held.item_id == item.item_id));
         assert!(meets);
-        append(&mut timeline, history.take_items(meets).unwrap());
+        append(&mut timeline, history.take_items(meets, true).unwrap());
 
         // The whole session's turns 3 to 5, unchanged and each once.
         let from = full
@@ -782,7 +821,8 @@ mod tests {
                 .items
                 .iter()
                 .any(|item| timeline.iter().any(|held| held.item_id == item.item_id));
-            append(timeline, history.take_items(meets).unwrap());
+            let holds_turns = timeline.iter().any(|item| item.turn_id.is_some());
+            append(timeline, history.take_items(meets, holds_turns).unwrap());
             retain_newest_turn(entries).unwrap();
             history
         };
@@ -919,19 +959,40 @@ mod tests {
     }
 
     /// Only a window that leaves out history the timeline does not hold opens
-    /// with a boundary. A whole session still needs every parent it names.
+    /// with a boundary: placed at the window's start when it opens the
+    /// timeline, and at no place after turns the timeline holds, between
+    /// which and the window history is missing. A whole session still needs
+    /// every parent it names.
     #[test]
     fn only_a_window_that_leaves_history_out_opens_with_a_boundary() {
         let whole = session(2);
-        let opens = |start, meets_timeline| {
-            let mut history = project(&window(&whole, start), &BTreeMap::new()).unwrap();
-            shown(&history.take_items(meets_timeline).unwrap())[0].clone()
+        let opens = |entries: Entries, meets_timeline, holds_turns| {
+            let mut history = project(&entries, &BTreeMap::new()).unwrap();
+            history
+                .take_items(meets_timeline, holds_turns)
+                .unwrap()
+                .remove(0)
         };
-        assert_eq!(opens(4, false), "boundary provider_history_truncated");
-        assert_eq!(opens(4, true), "pi-turn-prompt-1 TurnStarted");
-        assert_eq!(opens(0, false), "pi-turn-prompt-0 TurnStarted");
+        let boundary = |start| AgentTimelineItemBodyV1::history_window(start);
+        assert_eq!(
+            opens(window(&whole, 4), false, false).body,
+            boundary(Some(offset(4) as i64))
+        );
+        assert_eq!(opens(window(&whole, 4), false, true).body, boundary(None));
+        // An oldest entry Pi answered after the transcript has no place.
+        let mut answered = window(&whole, 4);
+        answered.offsets.clear();
+        assert_eq!(opens(answered, false, false).body, boundary(None));
+        assert_eq!(
+            shown(&[opens(window(&whole, 4), true, false)]),
+            ["pi-turn-prompt-1 TurnStarted"]
+        );
+        assert_eq!(
+            shown(&[opens(window(&whole, 0), false, false)]),
+            ["pi-turn-prompt-0 TurnStarted"]
+        );
         let mut empty = project(&window(&whole, 8), &BTreeMap::new()).unwrap();
-        assert!(empty.take_items(false).unwrap().is_empty());
+        assert!(empty.take_items(false, false).unwrap().is_empty());
         let mut cut = window(&whole, 4);
         cut.omits_older = false;
         assert!(project(&cut, &BTreeMap::new()).is_err());

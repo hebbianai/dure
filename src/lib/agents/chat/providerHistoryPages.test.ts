@@ -250,6 +250,26 @@ describe("Chat history older than its seeded window", () => {
 		]);
 	});
 
+	it("pages a Pi window back from its oldest entry in the session file", () => {
+		const base = seededPage();
+		const pi = seededPage({
+			binding: { ...base.binding, providerId: "pi" },
+		});
+		expect(seededProviderHistoryCursor(pi)).toBe(900);
+		const pages = withOlderProviderPage(providerHistoryPages(900), 900, {
+			...read(["ask before the window", "before the window"], 300),
+			provider: "pi",
+		});
+		const page = chatPageWithOlderProviderHistory(pi, pages);
+		expect(page.hasMore).toBe(true);
+		expect(messages(page)).toEqual([
+			"ask before the window",
+			"before the window",
+			"ask seeded",
+			"seeded answer",
+		]);
+	});
+
 	it("keeps the boundary where the pages do not belong to it", () => {
 		const unplaced = seededPage({}, "provider_history_truncated");
 		expect(

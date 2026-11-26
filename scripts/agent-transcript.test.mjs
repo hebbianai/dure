@@ -117,6 +117,27 @@ describe("agent transcript policy", () => {
     ).toEqual({ kind: "identity_unavailable" });
   });
 
+  it("reads Pi's own session as it reads Claude's and Codex's transcripts", () => {
+    const pi = {
+      id: "agent-pi",
+      provider: "pi",
+      sessionKind: "pty",
+      runtimeBinding: {
+        source: "local",
+        conversationIdentity: { providerId: "pi", conversationId: "pi-session" },
+      },
+    };
+    expect(nativeAgentTranscriptSource(pi)).toEqual({
+      kind: "local",
+      agentId: "agent-pi",
+      provider: "pi",
+      conversationId: "pi-session",
+    });
+    expect(
+      nativeAgentTranscriptSource({ ...pi, provider: "opencode" }),
+    ).toEqual({ kind: "unsupported" });
+  });
+
   it("applies the same last-entry selection to native provider transcripts", () => {
     const transcript = agentTranscriptFromProvider({
       source: {

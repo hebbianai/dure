@@ -40,7 +40,7 @@ export interface ProviderConversationTranscriptV1 {
 export type NativeAgentTranscriptSource = {
   kind: "local";
   agentId: string;
-  provider: "claude" | "codex";
+  provider: "claude" | "codex" | "pi";
   conversationId: string;
 };
 

@@ -329,8 +329,9 @@ function transcriptResult(bindingValue, entries, entryLimit) {
   };
 }
 
-/** The providers whose native CLI transcript this module reads. */
-const NATIVE_TRANSCRIPT_PROVIDERS = Object.freeze(["claude", "codex"]);
+/** The providers whose native CLI transcript this module reads: the ones the
+ * shared provider transcript reader (`dure-provider-transcript`) reads. */
+const NATIVE_TRANSCRIPT_PROVIDERS = Object.freeze(["claude", "codex", "pi"]);
 
 /** Whether `provider` keeps a native CLI transcript this module reads. */
 export function nativeTranscriptProvider(provider) {

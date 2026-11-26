@@ -6,8 +6,8 @@ pub use dure_provider_profile::transcript::{
 };
 use dure_provider_profile::transcript::{
     bounded_prefix, claude_turn, codex_content_text, codex_turn, find_claude_conversation,
-    find_codex_conversation, mtime, provider_context_injection, safe_id, text_content,
-    transcript_from_file, MAX_TRANSCRIPT_DISCOVERY_ENTRIES,
+    find_codex_conversation, find_pi_conversation, mtime, provider_context_injection, safe_id,
+    text_content, transcript_from_file, MAX_TRANSCRIPT_DISCOVERY_ENTRIES,
 };
 use serde::Serialize;
 #[path = "pi_sessions.rs"]
@@ -1601,7 +1601,13 @@ fn transcript_for_roots(
     conversation_id: &str,
 ) -> Result<ProviderConversationTranscript, String> {
     dure_provider_profile::transcript::read_roots(
-        &roots.claude_projects, &roots.codex_sessions, provider, conversation_id,
+        &dure_provider_profile::transcript::TranscriptRoots {
+            claude_projects: roots.claude_projects.clone(),
+            codex_sessions: roots.codex_sessions.clone(),
+            pi_sessions: roots.pi_sessions.clone(),
+        },
+        provider,
+        conversation_id,
     )
 }
 
@@ -1726,11 +1732,8 @@ fn transcript_for_roots_and_profiles(
     provider: &str,
     conversation_id: &str,
 ) -> Result<ProviderConversationTranscript, String> {
-    let parse: fn(&Value) -> Option<(ConversationTurnRole, String)> = match provider {
-        "claude" => claude_turn,
-        "codex" => codex_turn,
-        _ => return Err("provider transcript export is unsupported".to_string()),
-    };
+    let parse = dure_provider_profile::transcript::turn_parser(provider)
+        .ok_or_else(|| "provider transcript export is unsupported".to_string())?;
     let path = newest_conversation_file(roots, profiles, provider, conversation_id)?;
     transcript_from_file(&path, provider, conversation_id, parse)
 }
@@ -1785,6 +1788,8 @@ fn newest_conversation_file(
                 }))
                 .collect()
         }
+        // Pi has no account profiles: its sessions are where it keeps them.
+        "pi" => vec![roots.pi_sessions.clone()],
         _ => return Err("provider transcript export is unsupported".to_string()),
     };
     let mut searched = HashSet::new();
@@ -1796,10 +1801,12 @@ fn newest_conversation_file(
         if !searched.insert(canonical.clone()) {
             continue;
         }
-        let found = if provider == "claude" {
-            find_claude_conversation(&canonical, conversation_id).map(|(_, path)| (mtime(&path), path))
-        } else {
-            find_codex_conversation(&canonical, conversation_id, 0, &mut 0)
+        let found = match provider {
+            "claude" => find_claude_conversation(&canonical, conversation_id)
+                .map(|(_, path)| (mtime(&path), path)),
+            "pi" => find_pi_conversation(&canonical, conversation_id)
+                .map(|path| (mtime(&path), path)),
+            _ => find_codex_conversation(&canonical, conversation_id, 0, &mut 0),
         };
         if let Some((modified, path)) = found {
             if newest.as_ref().is_none_or(|(current, _)| modified > *current) {
@@ -3696,6 +3703,60 @@ mod tests {
         assert_eq!(older.transcript.entries.len(), 1);
         assert_eq!(older.transcript.entries[0].text, "Earlier request");
         assert_eq!(older.older_cursor, None);
+    }
+
+    /// A Pi Terminal Agent's conversation view reads Pi's own session file
+    /// under its sessions directory: the conversation's branch only, not a
+    /// prompt the person left with `/tree`.
+    #[test]
+    fn the_conversation_view_reads_a_pi_session() {
+        let temporary = tempfile::tempdir().unwrap();
+        let roots = roots(&temporary);
+        let conversation_id = "01a08472-815b-781e-b56a-89b2a12f7771";
+        let path = roots
+            .pi_sessions
+            .join("--repo--")
+            .join(format!("2026-11-27T00-00-00-000Z_{conversation_id}.jsonl"));
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let message = |id: &str, parent: Option<&str>, role: &str, text: &str| {
+            serde_json::json!({
+                "type": "message", "id": id, "parentId": parent,
+                "message": {
+                    "role": role, "content": [{"type": "text", "text": text}],
+                    "stopReason": "stop", "timestamp": 1,
+                },
+            })
+        };
+        let records = [
+            serde_json::json!({"type": "session", "version": 3, "id": conversation_id, "cwd": "/repo"}),
+            message("u1", None, "user", "Earlier request"),
+            message("a1", Some("u1"), "assistant", "Earlier answer"),
+            message("u2", Some("a1"), "user", "A prompt the person left with /tree"),
+            message("u3", Some("a1"), "user", "Latest request"),
+            message("a3", Some("u3"), "assistant", "Latest answer"),
+        ];
+        fs::write(
+            &path,
+            records.iter().map(|record| format!("{record}\n")).collect::<String>(),
+        )
+        .unwrap();
+
+        let activity =
+            activity_for_roots_and_profiles(&roots, &[], "pi", conversation_id, None).unwrap();
+        assert_eq!(
+            activity
+                .transcript
+                .entries
+                .iter()
+                .map(|entry| entry.text.as_str())
+                .collect::<Vec<_>>(),
+            ["Earlier request", "Earlier answer", "Latest request", "Latest answer"]
+        );
+        assert_eq!(activity.transcript.final_response.as_deref(), Some("Latest answer"));
+        assert_eq!(activity.older_cursor, None);
+        let transcript = transcript_for_roots(&roots, "pi", conversation_id).unwrap();
+        assert_eq!(transcript.entries, activity.transcript.entries);
+        assert!(activity_for_roots_and_profiles(&roots, &[], "pi", "missing", None).is_err());
     }
 
     /// A conversation moved between accounts can leave an older copy behind;

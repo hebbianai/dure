@@ -116,7 +116,7 @@ fn live_pi_opens_a_long_terminal_conversation_in_chat() {
             let opened = opening.elapsed();
 
             let shown = conversation(&service, &binding).await;
-            assert_eq!(shown[0], "boundary:provider_history_truncated");
+            assert_eq!(shown[0], "boundary:provider_transcript_window");
             let first = shown[1]
                 .strip_prefix("Terminal prompt ")
                 .and_then(|index| index.parse::<usize>().ok())
@@ -137,6 +137,60 @@ fn live_pi_opens_a_long_terminal_conversation_in_chat() {
             );
             println!(
                 "Chat opened in {opened:?} with Terminal prompts {first} to 199 behind a history boundary"
+            );
+
+            // "Show earlier history" pages back from the boundary's place in
+            // Pi's transcript, through the reader the backend answers it
+            // with: every earlier prompt, each once, in order.
+            let rows = timeline_rows(&service, &binding).await;
+            let AgentTimelineItemBodyV1::HistoryBoundary {
+                dropped_through_provider_sequence: window_start,
+                ..
+            } = rows
+                .iter()
+                .find(|row| matches!(row.item.body, AgentTimelineItemBodyV1::HistoryBoundary { .. }))
+                .unwrap()
+                .item
+                .body
+            else {
+                unreachable!()
+            };
+            let roots = dure_provider_profile::transcript::TranscriptRoots {
+                pi_sessions: env_path("PI_CODING_AGENT_DIR").join("sessions"),
+                ..dure_provider_profile::transcript::TranscriptRoots::in_state_directory(&root)
+            };
+            let paging = std::time::Instant::now();
+            let (mut before, mut older, mut pages) = (Some(window_start as u64), Vec::new(), 0);
+            while let Some(cursor) = before {
+                let page = dure_provider_profile::transcript::read_roots_activity_page(
+                    &roots, "pi", session, cursor, 0,
+                )
+                .expect("an older page of the Terminal history");
+                let prompts = page
+                    .transcript
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.role == dure_provider_profile::transcript::ConversationTurnRole::User)
+                    .map(|entry| prompt_words(&entry.text))
+                    .collect::<Vec<_>>();
+                older.splice(0..0, prompts);
+                before = page.older_cursor;
+                pages += 1;
+                if before.is_none() {
+                    assert!(page.transcript.history_complete, "the pages reach the start");
+                }
+            }
+            assert_eq!(
+                older,
+                (0..first)
+                    .map(|index| format!("Terminal prompt {index}"))
+                    .collect::<Vec<_>>(),
+                "the earlier prompts, each once, in order"
+            );
+            println!(
+                "Paged Terminal prompts 0 to {} in {pages} older pages in {:?}",
+                first - 1,
+                paging.elapsed()
             );
 
             let intent = turn_intent(

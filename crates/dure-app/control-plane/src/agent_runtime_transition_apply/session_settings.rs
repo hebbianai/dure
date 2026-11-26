@@ -14,7 +14,9 @@ use dure_app::{
     AgentRuntimeLaunchSelectionV1, AgentRuntimeTransitionIntentV1, AgentSpawnEffortSelectionV1,
     AgentSpawnModelSelectionV1, ProviderIdV1,
 };
-use dure_provider_profile::transcript::{ProviderSessionSettings, read_session_settings_roots};
+use dure_provider_profile::transcript::{
+    ProviderSessionSettings, TranscriptRoots, read_session_settings_roots,
+};
 
 /// The selection a native successor launches with. An explicit target
 /// selection is installed as requested; an inherited one adopts the settings
@@ -38,8 +40,7 @@ pub(super) async fn successor_launch_selection(
     // inherited selection unchanged.
     let observed = tokio::task::spawn_blocking(move || {
         read_session_settings_roots(
-            &home.join("projects"),
-            &home.join("sessions"),
+            &TranscriptRoots::in_state_directory(&home),
             &provider,
             &conversation,
         )

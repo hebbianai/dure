@@ -1,9 +1,5 @@
 use super::*;
 
-use dure_app::{
-    PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1, PROVIDER_TRANSCRIPT_WINDOW_HISTORY_BOUNDARY_V1,
-};
-
 use crate::codex_app_server_protocol::{thread_turns_page_params, thread_turns_paged};
 
 /// The turn data a resumed thread's history window holds before it stops
@@ -83,7 +79,7 @@ where
                     self.held_history_gap(&projection, start).await?,
                 )
             } else {
-                Self::window_boundary(start)
+                AgentTimelineItemBodyV1::history_window(start)
             };
             self.commit_history_boundary(oldest, boundary).await?;
         }
@@ -321,22 +317,6 @@ where
         .ok()
         .flatten();
         Ok(held_end.and_then(|end| Some((i64::try_from(end).ok()?, resumed_at))))
-    }
-
-    /// The boundary that opens a window of the thread's newest turns. Placed
-    /// at the oldest turn's `start` in the rollout, it is where the older
-    /// history pages in; unplaced, it says only that older turns precede the
-    /// window, not how many.
-    fn window_boundary(start: Option<i64>) -> AgentTimelineItemBodyV1 {
-        let (reason, dropped_through_provider_sequence) = match start {
-            Some(start) => (PROVIDER_TRANSCRIPT_WINDOW_HISTORY_BOUNDARY_V1, start),
-            None => (PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1, 1),
-        };
-        AgentTimelineItemBodyV1::HistoryBoundary {
-            reason: reason.into(),
-            requested_after_provider_sequence: 0,
-            dropped_through_provider_sequence,
-        }
     }
 
     /// Marks where a window that left older turns out starts: the existing

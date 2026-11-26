@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead, Read};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
@@ -104,6 +104,9 @@ pub(crate) struct Entries {
     /// Whether the session holds entries older than `entries`, which a
     /// window leaves out.
     pub(crate) omits_older: bool,
+    /// Where the entries read from the session's transcript start in it, by
+    /// entry id. The entries Pi answered after them have none.
+    pub(crate) offsets: BTreeMap<String, u64>,
 }
 
 #[derive(Deserialize)]
@@ -170,6 +173,7 @@ impl PiSessionClient {
                 entries: Vec::new(),
                 leaf_id: None,
                 omits_older: false,
+                offsets: BTreeMap::new(),
             },
         };
         self.read_newer(&mut entries).await?;
@@ -292,7 +296,10 @@ fn newest_entries(
     let (start, bytes) = bounded_suffix_records(file, len, bounds.bytes).map_err(store_error)?;
     let mut omits_older = start > header_end;
     let mut entries = VecDeque::new();
+    let mut offset = start;
     for line in bytes.split_inclusive(|byte| *byte == b'\n') {
+        let line_offset = offset;
+        offset += line.len() as u64;
         let Some(line) = line.strip_suffix(b"\n") else {
             break;
         };
@@ -302,16 +309,21 @@ fn newest_entries(
         if entry.get("type").and_then(Value::as_str) == Some("session") {
             continue;
         }
-        entries.push_back(entry);
+        entries.push_back((line_offset, entry));
         if entries.len() > bounds.entries {
             entries.pop_front();
             omits_older = true;
         }
     }
+    let offsets = entries
+        .iter()
+        .filter_map(|(offset, entry)| Some((entry.get("id")?.as_str()?.to_owned(), *offset)))
+        .collect();
     Ok(Entries {
-        entries: entries.into(),
+        entries: entries.into_iter().map(|(_, entry)| entry).collect(),
         leaf_id: None,
         omits_older,
+        offsets,
     })
 }
 
@@ -393,6 +405,15 @@ mod tests {
         let newest = read(16, last_two);
         assert_eq!(ids(&newest), ["e2", "e3"]);
         assert!(newest.omits_older);
+        // Each entry read keeps where its record starts in the transcript.
+        let e2 = (header.len() + records[0].len() + records[1].len() + malformed.len()) as u64;
+        assert_eq!(
+            newest.offsets,
+            BTreeMap::from([
+                ("e2".to_string(), e2),
+                ("e3".to_string(), e2 + records[2].len() as u64),
+            ])
+        );
         let inside = read(16, last_two - 1);
         assert_eq!(ids(&inside), ["e3"], "only whole records are read");
 

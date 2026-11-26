@@ -219,6 +219,37 @@ pub(super) async fn conversation(
     service: &AgentConversationService<SqliteDomainStore>,
     binding: &AgentInteractionBindingV1,
 ) -> Vec<String> {
+    timeline_rows(service, binding)
+        .await
+        .iter()
+        .filter_map(|row| match &row.item.body {
+            AgentTimelineItemBodyV1::HistoryBoundary { reason, .. } => {
+                Some(format!("boundary:{reason}"))
+            }
+            AgentTimelineItemBodyV1::Message {
+                role: AgentTimelineMessageRoleV1::User,
+                markdown,
+            } => Some(prompt_words(markdown)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A prompt's leading words: `Terminal prompt <index>` for the long prompts
+/// a recorded Terminal conversation holds, else the whole prompt.
+pub(super) fn prompt_words(markdown: &str) -> String {
+    markdown
+        .strip_prefix("Terminal prompt ")
+        .and_then(|rest| rest.split(' ').next())
+        .map(|index| format!("Terminal prompt {index}"))
+        .unwrap_or_else(|| markdown.to_owned())
+}
+
+/// Every row of the timeline, oldest first.
+pub(super) async fn timeline_rows(
+    service: &AgentConversationService<SqliteDomainStore>,
+    binding: &AgentInteractionBindingV1,
+) -> Vec<AgentTimelineRowV1> {
     let mut rows = Vec::new();
     let mut direction = AgentTimelineReadDirectionV1::Tail;
     let mut cursor = None;
@@ -244,22 +275,5 @@ pub(super) async fn conversation(
         }
         direction = AgentTimelineReadDirectionV1::Before;
     }
-    rows.iter()
-        .filter_map(|row| match &row.item.body {
-            AgentTimelineItemBodyV1::HistoryBoundary { reason, .. } => {
-                Some(format!("boundary:{reason}"))
-            }
-            AgentTimelineItemBodyV1::Message {
-                role: AgentTimelineMessageRoleV1::User,
-                markdown,
-            } => Some(
-                markdown
-                    .strip_prefix("Terminal prompt ")
-                    .and_then(|rest| rest.split(' ').next())
-                    .map(|index| format!("Terminal prompt {index}"))
-                    .unwrap_or_else(|| markdown.clone()),
-            ),
-            _ => None,
-        })
-        .collect()
+    rows
 }

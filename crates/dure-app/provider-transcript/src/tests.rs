@@ -1,6 +1,15 @@
 use super::*;
 use std::io::Write;
 
+/// The roots of a Claude and a Codex fixture; Pi's are never looked in.
+fn roots(claude_projects: &Path, codex_sessions: &Path) -> TranscriptRoots {
+    TranscriptRoots {
+        claude_projects: claude_projects.into(),
+        codex_sessions: codex_sessions.into(),
+        pi_sessions: claude_projects.join("no-pi-sessions"),
+    }
+}
+
 fn record(text: &str) -> String {
     format!(
         "{}\n",
@@ -174,7 +183,7 @@ fn claude_session_settings_follow_the_latest_main_thread_turn() {
     fs::write(project.join(format!("{id}.jsonl")), content).unwrap();
     let empty = root.path().join("sessions");
     assert_eq!(
-        read_session_settings_roots(&root.path().join("projects"), &empty, "claude", id),
+        read_session_settings_roots(&roots(&root.path().join("projects"), &empty), "claude", id),
         Ok(ProviderSessionSettings {
             model: Some("claude-sonnet-5-5".into()),
             effort: Some("low".into()),
@@ -193,12 +202,16 @@ fn claude_session_settings_follow_the_latest_main_thread_turn() {
     )
     .unwrap();
     assert_eq!(
-        read_session_settings_roots(&root.path().join("projects"), &empty, "claude", id),
+        read_session_settings_roots(&roots(&root.path().join("projects"), &empty), "claude", id),
         Ok(ProviderSessionSettings::default())
     );
     assert!(
-        read_session_settings_roots(&root.path().join("projects"), &empty, "claude", "missing")
-            .is_err()
+        read_session_settings_roots(
+            &roots(&root.path().join("projects"), &empty),
+            "claude",
+            "missing"
+        )
+        .is_err()
     );
 }
 
@@ -226,8 +239,7 @@ fn codex_session_settings_follow_the_latest_default_mode_turn() {
     .unwrap();
     assert_eq!(
         read_session_settings_roots(
-            &root.path().join("projects"),
-            &root.path().join("sessions"),
+            &roots(&root.path().join("projects"), &root.path().join("sessions")),
             "codex",
             id
         ),
@@ -628,9 +640,14 @@ fn backend_pages_fit_one_response_and_join_where_each_stopped() {
     let mut before = std::fs::metadata(&path).unwrap().len();
     let (mut joined, mut calls, mut pages) = (Vec::new(), Vec::new(), 0);
     loop {
-        let page =
-            read_roots_activity_page(root.path(), &codex, "claude", "conversation", before, 0)
-                .unwrap();
+        let page = read_roots_activity_page(
+            &roots(root.path(), &codex),
+            "claude",
+            "conversation",
+            before,
+            0,
+        )
+        .unwrap();
         let encoded = serde_json::to_vec(&page).unwrap();
         assert!(
             encoded.len() <= 1024 * 1024,
@@ -727,8 +744,7 @@ fn a_codex_turn_starts_at_its_task_started_event_where_the_page_before_it_ends()
         .unwrap()
         .unwrap();
     let older = read_roots_activity_page(
-        &root.path().join("projects"),
-        &sessions,
+        &roots(&root.path().join("projects"), &sessions),
         "codex",
         id,
         before,
@@ -859,8 +875,7 @@ fn a_gap_after_a_codex_turn_pages_only_the_turns_between() {
         .unwrap();
     assert_eq!(held_end, starts[1]);
     let gap = read_roots_activity_page(
-        &root.path().join("projects"),
-        &sessions,
+        &roots(&root.path().join("projects"), &sessions),
         "codex",
         id,
         starts[3],
@@ -1109,9 +1124,14 @@ fn pages_into_a_gap_stop_at_its_floor_and_join_both_sides() {
 
     // A backend page holds the whole gap at once and stops at the floor too.
     let codex = root.path().join("no-codex-sessions");
-    let whole =
-        read_roots_activity_page(root.path(), &codex, "claude", "conversation", resume, floor)
-            .unwrap();
+    let whole = read_roots_activity_page(
+        &roots(root.path(), &codex),
+        "claude",
+        "conversation",
+        resume,
+        floor,
+    )
+    .unwrap();
     assert_eq!(whole.older_cursor, None);
     assert_eq!(
         whole
@@ -1139,7 +1159,13 @@ fn a_floor_off_a_record_start_or_past_the_page_fails() {
     );
     let codex = root.path().join("no-codex-sessions");
     let read = |before, after| {
-        read_roots_activity_page(root.path(), &codex, "claude", "conversation", before, after)
+        read_roots_activity_page(
+            &roots(root.path(), &codex),
+            "claude",
+            "conversation",
+            before,
+            after,
+        )
     };
     assert!(read(starts[2], starts[1] + 1).is_err());
     assert!(read(starts[1], starts[2]).is_err());
