@@ -9,11 +9,13 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { AccountMenuLabel } from "@/components/usage/AccountMenuLabel";
+import {
+	AccountMenuLabel,
+	accountMenuLimit,
+} from "@/components/usage/AccountMenuLabel";
 import { useAccountUsageReport } from "@/components/usage/useAccountUsageReport";
 import { t } from "@/lib/i18n";
 import { providerAccountMeter } from "@/lib/usage/accountUsageMeter";
-import { usageDurationLabel, usageResetLabel } from "@/lib/usage/usageLabels";
 import { PROVIDERS, type Provider } from "@/types";
 
 export interface CredentialAccountChoice {
@@ -63,21 +65,17 @@ export function CredentialAccountMenu({
 }) {
 	const usage = useAccountUsageReport(provider, open && localUsage);
 	const limit = (account?: CredentialAccountChoice) => {
-		const meter = usage
-			? providerAccountMeter(
-					provider,
-					usage,
-					account?.id,
-					account?.dir,
-					Date.now() / 1000,
-				)
-			: null;
-		return meter
-			? {
-					pct: meter.pct,
-					reset: usageResetLabel(usageDurationLabel(meter.resetLabel)),
-				}
-			: null;
+		return accountMenuLimit(
+			usage
+				? providerAccountMeter(
+						provider,
+						usage,
+						account?.id,
+						account?.dir,
+						Date.now() / 1000,
+					)
+				: null,
+		);
 	};
 	const choices = [
 		{ id: null, name: t("agents.account.defaultCli") },

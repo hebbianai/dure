@@ -1,10 +1,13 @@
 import type { Ref } from "react";
+import { accountMenuLimit } from "@/components/usage/AccountMenuLabel";
 import {
+	claudeCheckSourceNotice,
 	type Report,
 	useClaudeUsage,
 } from "@/components/usage/ProviderUsageDetail";
 import {
 	ProviderUsagePopoverContent,
+	separateLimitRows,
 	type UsagePopoverAccount,
 	type UsagePopoverLimit,
 	type UsageRefreshAction,
@@ -13,8 +16,12 @@ import { UsageMeterPopover } from "@/components/usage/UsageMeterPopover";
 import { resolveLang, t } from "@/lib/i18n";
 import type { ClaudeCollectorState } from "@/lib/ipc";
 import { claudeAccountMeter } from "@/lib/usage/accountUsageMeter";
-import { usageDurationLabel, usageResetLabel } from "@/lib/usage/usageLabels";
-import { fmtReset, fmtTokens } from "@/lib/usage/usageMeter";
+import {
+	separateLimitTipLines,
+	usageDurationLabel,
+	usageResetLabel,
+} from "@/lib/usage/usageLabels";
+import { fmtReset, fmtTokens, highestPct } from "@/lib/usage/usageMeter";
 import { useStore } from "@/store";
 
 function weeklyResetLabel(
@@ -58,8 +65,19 @@ export function ClaudeUsagePopover({
 	restoreFocusOnClose?: boolean;
 }) {
 	const language = resolveLang(useStore((state) => state.language));
-	const { working, resolved, claude, used, meter, capturedAgo } =
-		useClaudeUsage(u5, nowSec);
+	const usage = useClaudeUsage(u5, nowSec);
+	const {
+		working,
+		resolved,
+		snapshot,
+		fromCheck,
+		claude,
+		used,
+		meter,
+		separateMeters,
+		capturedAgo,
+	} = usage;
+	const separateName = t("usage.limit.separateModel");
 	const rawReset =
 		meter.resetLabel ??
 		fmtReset(claude.resetsAt ?? claude.weeklyResetsAt, nowSec);
@@ -75,10 +93,26 @@ export function ClaudeUsagePopover({
 			cacheWrite: fmtTokens(claude.cacheWrite),
 		},
 	);
-	const tip =
-		meter.pct == null
-			? `${t("usage.claude.tipFiveHourTokens", { used: fmtTokens(used) })}\n${tokenDetail}`
-			: `${meter.window === "weekly" ? t("usage.claude.tipWeeklyPct", { pct: Math.round(meter.pct) }) : t("usage.claude.tipFiveHourPct", { pct: Math.round(meter.pct) })}${rawReset ? ` ${t("usage.reset.inlineDotted", { reset: rawReset })}` : ""}\n${tokenDetail}`;
+	const pct = meter.pct == null ? null : Math.round(meter.pct);
+	const generalPctTip =
+		pct == null
+			? null
+			: meter.window === "weekly"
+				? fromCheck
+					? t("usage.claude.tipWeeklyPctChecked", { pct })
+					: t("usage.claude.tipWeeklyPct", { pct })
+				: fromCheck
+					? t("usage.claude.tipFiveHourPctChecked", { pct })
+					: t("usage.claude.tipFiveHourPct", { pct });
+	const generalTip =
+		generalPctTip &&
+		`${generalPctTip}${rawReset ? ` ${t("usage.reset.inlineDotted", { reset: rawReset })}` : ""}`;
+	const tip = [
+		generalTip ??
+			t("usage.claude.tipFiveHourTokens", { used: fmtTokens(used) }),
+		...separateLimitTipLines(separateMeters, separateName),
+		tokenDetail,
+	].join("\n");
 	const foreignNotice = t(
 		"usage.collector.foreignStatusLine",
 	);
@@ -92,7 +126,8 @@ export function ClaudeUsagePopover({
 		"usage.attribution.sharedTokensLong",
 	).replace(" %", "\u00a0%");
 	const notice =
-		meter.pct != null
+		claudeCheckSourceNotice(usage, nowSec) ??
+		(meter.pct != null
 			? captured
 				? t("usage.source.statusLineCapturedDetail", { ago: captured })
 				: t("usage.source.statusLine")
@@ -102,7 +137,10 @@ export function ClaudeUsagePopover({
 					? scopedNotice
 					: collector === "installed"
 						? t("usage.collector.installedNotice")
-						: missingNotice;
+						: missingNotice);
+	// The check failed and the limits shown are not its own.
+	const checkFailedNotice =
+		snapshot?.error && !fromCheck ? t("usage.status.checkFailed") : null;
 	const limits: UsagePopoverLimit[] = [];
 	if (claude.usedPercent != null) {
 		limits.push({
@@ -122,6 +160,9 @@ export function ClaudeUsagePopover({
 			reset: weeklyReset,
 		});
 	}
+	limits.push(
+		...separateLimitRows(separateMeters, separateName, "claude-model-limit"),
+	);
 	const metrics =
 		limits.length === 0
 			? [
@@ -149,27 +190,24 @@ export function ClaudeUsagePopover({
 					},
 					{ label: t("usage.agents.working"), value: String(working) },
 				];
-	const accountLimit = (profile: UsagePopoverAccount) => {
-		const accountMeter = claudeAccountMeter(
-			u5.claudeAccounts,
-			profile.dir,
-			nowSec,
-		);
-		if (!accountMeter) return null;
-		return {
-			pct: accountMeter.pct,
-			reset: usageResetLabel(
-				usageDurationLabel(accountMeter.resetLabel),
+	const accountLimit = (profile: UsagePopoverAccount) =>
+		accountMenuLimit(
+			claudeAccountMeter(
+				u5.claudeAccounts,
+				u5.claudeAccountSnapshots,
+				profile.id,
+				profile.dir,
+				nowSec,
 			),
-		};
-	};
+			separateName,
+		);
 
 	return (
 		<UsageMeterPopover
 			provider="claude"
 			triggerRef={triggerRef}
 			restoreFocusOnClose={restoreFocusOnClose}
-			pct={meter.pct}
+			pct={highestPct([meter, ...separateMeters])}
 			tip={tip}
 			dataSlot="claude-usage-popover"
 		>
@@ -181,7 +219,11 @@ export function ClaudeUsagePopover({
 				accountLimit={accountLimit}
 				limits={limits}
 				metrics={metrics}
-				notices={limits.length > 0 ? [notice, aggregateNotice] : [notice]}
+				notices={[
+					notice,
+					checkFailedNotice,
+					limits.length > 0 ? aggregateNotice : null,
+				].filter((entry): entry is string => entry != null)}
 				secondaryAction={
 					meter.pct == null && collector === "not_installed"
 						? {

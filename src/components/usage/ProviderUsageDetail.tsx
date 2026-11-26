@@ -19,10 +19,17 @@ import {
 	providerLoginCmd,
 } from "@/lib/agents/providers";
 import {
+	accountSnapshotForCredential,
+	accountSnapshotFreshness,
+	applyClaudeSnapshot,
 	applyCodexSnapshot,
-	codexSnapshotForCredential,
-	codexSnapshotFreshness,
-} from "@/lib/usage/codexUsageSnapshots";
+	claudeCheckIsNewer,
+	claudeSeparateMeters,
+} from "@/lib/usage/accountUsageSnapshots";
+import {
+	separateLimitView,
+	usageDurationLabel,
+} from "@/lib/usage/usageLabels";
 import {
 	claudeUsageForAccount,
 	codexAccountUsage,
@@ -300,7 +307,7 @@ function codexCredentialUsageSummary(
 	u5: Report,
 	nowSec: number,
 ): CredentialSummary {
-	const snapshot = codexSnapshotForCredential(u5.codexAccountSnapshots, id);
+	const snapshot = accountSnapshotForCredential(u5.codexAccountSnapshots, id);
 	// 전체 fallback은 어느 credential 것인지 증명하지 못한다. 목록의 각 행에
 	// 같은 전역 값을 복제하지 않고, 저널로 귀속된 값만 세션 fallback으로 쓴다.
 	const logged = codexAccountUsage(u5.codexAccounts, id)?.usage ?? {
@@ -326,7 +333,7 @@ function codexCredentialUsageSummary(
 		.filter(Boolean)
 		.join(" / ");
 	const capturedAgo = fmtAgo(snapshot?.capturedAt, nowSec);
-	const freshness = codexSnapshotFreshness(snapshot, nowSec);
+	const freshness = accountSnapshotFreshness(snapshot, nowSec);
 	const source = snapshot?.capturedAt
 		? snapshot.error
 			? t("usage.source.refreshFailedKeepLast")
@@ -435,15 +442,41 @@ export function useClaudeUsage(u5: Report, nowSec: number) {
 		u5.claudeAccounts,
 		account?.dir,
 	);
-	const claude = resolved.usage;
+	const snapshot = accountSnapshotForCredential(
+		u5.claudeAccountSnapshots,
+		account?.id,
+	);
+	const claude = applyClaudeSnapshot(resolved.usage, snapshot, nowSec);
 	return {
 		working,
 		resolved,
+		snapshot,
+		/** The 5-hour and weekly limits come from the account usage check,
+		 * not the statusLine reading. */
+		fromCheck: claudeCheckIsNewer(
+			snapshot,
+			resolved.usage.usedPercentCapturedAt,
+		),
 		claude,
 		used: claudeUsedTokens(claude),
 		meter: claudeMeter(claude, nowSec),
+		separateMeters: claudeSeparateMeters(snapshot, nowSec),
 		capturedAgo: fmtAgo(claude.usedPercentCapturedAt, nowSec),
 	};
+}
+
+/** Where the active Claude account's limits came from, when the account
+ * usage check gave them; null when the statusLine reading did. */
+export function claudeCheckSourceNotice(
+	usage: Pick<ReturnType<typeof useClaudeUsage>, "fromCheck" | "snapshot">,
+	nowSec: number,
+): string | null {
+	if (!usage.fromCheck || !usage.snapshot?.capturedAt) return null;
+	const ago =
+		usageDurationLabel(fmtAgo(usage.snapshot.capturedAt, nowSec)) ?? "—";
+	return usage.snapshot.error
+		? t("usage.source.accountCheckFailedKeepLast", { ago })
+		: t("usage.source.accountCheckCaptured", { ago });
 }
 
 /** Claude 사용량 상세 본문 (배지 팝오버 / 설정 공용). */
@@ -463,14 +496,17 @@ export function ClaudeUsageDetail({
 	onInstall: () => void;
 }) {
 	const hasProfiles = useHasAccountProfiles("claude");
+	const usage = useClaudeUsage(u5, nowSec);
 	const {
 		working: clWorking,
 		resolved,
 		claude,
 		used: clUsed,
 		meter: cl,
+		separateMeters,
 		capturedAgo: clCapturedAgo,
-	} = useClaudeUsage(u5, nowSec);
+	} = usage;
+	const checkNotice = claudeCheckSourceNotice(usage, nowSec);
 
 	return (
 			<UsageSection
@@ -502,6 +538,20 @@ export function ClaudeUsageDetail({
 						)}
 					</>
 				)}
+				{separateMeters.map((meter) => {
+					const view = separateLimitView(
+						meter,
+						t("usage.limit.separateModel"),
+					);
+					return (
+						<div key={view.id} data-slot="claude-model-limit">
+							<UsageRow
+								label={view.label}
+								value={`${Math.round(view.pct)}%${view.resetLabel ? ` · ${t("usage.reset.inlineShort", { reset: view.resetLabel })}` : ""}`}
+							/>
+						</div>
+					);
+				})}
 				<UsageRow
 					label={t("usage.tokens.fiveHour")}
 					value={fmtTokens(clUsed)}
@@ -525,12 +575,16 @@ export function ClaudeUsageDetail({
 					</ScopeNote>
 				)}
 				{cl.pct != null ? (
-					clCapturedAgo && (
-						<ScopeNote>
-							{t("usage.source.statusLineCapturedDetail", {
-								ago: clCapturedAgo,
-							})}
-						</ScopeNote>
+					checkNotice ? (
+						<ScopeNote>{checkNotice}</ScopeNote>
+					) : (
+						clCapturedAgo && (
+							<ScopeNote>
+								{t("usage.source.statusLineCapturedDetail", {
+									ago: clCapturedAgo,
+								})}
+							</ScopeNote>
+						)
 					)
 				) : (
 					<>
@@ -579,7 +633,7 @@ export function useCodexUsage(
 		u5.codexAccounts,
 		account?.id,
 	);
-	const snapshot = codexSnapshotForCredential(
+	const snapshot = accountSnapshotForCredential(
 		u5.codexAccountSnapshots,
 		account?.id,
 	);

@@ -229,6 +229,54 @@ describe("AccountsPage", () => {
 		expect(scope.getByText(/3일 후 리셋|resets in 3d/i)).toBeTruthy();
 	});
 
+	it("shows each Claude account's own model weekly window from the account usage check", () => {
+		const nowSec = Math.floor(Date.now() / 1000);
+		useStore.setState({
+			accounts: [
+				{
+					id: "acc-work",
+					provider: "claude",
+					name: "work",
+					dir: "/Users/test/.dure/accounts/claude-work",
+				},
+			],
+			activeAccounts: { claude: "acc-work" },
+		});
+		useRecentUsageMock.mockReturnValue({
+			u5: {
+				claude: emptyUsage(),
+				codex: emptyUsage(),
+				claudeAccounts: [],
+				codexAccounts: [],
+				claudeAccountSnapshots: [
+					{
+						credentialId: "acc-work",
+						capturedAt: nowSec - 60,
+						attemptedAt: nowSec - 60,
+						error: null,
+						windows: [
+							{ id: "seven_day", kind: "weekly", model: null, usedPercent: 31, resetsAt: nowSec + 3 * 86_400 },
+							{ id: "seven_day_fable_5_1", kind: "modelWeekly", model: "Fable 5.1", usedPercent: 100, resetsAt: nowSec + 2 * 86_400 },
+						],
+					},
+				],
+			},
+			u24: null,
+			collector: null,
+			setCollector: vi.fn(),
+		});
+
+		render(<AccountsPage onClose={() => {}} />);
+		const claudeSection = screen.getByText(PROVIDERS.claude.label).closest("section");
+		const separate = (claudeSection as HTMLElement).querySelectorAll(
+			'[data-slot="account-usage-separate-limit"]',
+		);
+		expect(separate).toHaveLength(1);
+		expect(separate[0]?.textContent).toContain("Fable 5.1");
+		expect(separate[0]?.textContent).toContain("100%");
+		expect(within(claudeSection as HTMLElement).getByText("31%")).toBeTruthy();
+	});
+
 	it("계정 추가를 누르면 이름 입력이 같은 섹션에서 열린다", () => {
 		render(<AccountsPage onClose={() => {}} />);
 		const [first] = screen.getAllByRole("button", { name: /계정 추가/ });

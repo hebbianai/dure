@@ -1,18 +1,19 @@
 /** Projects the recent-usage report onto the per-account observations the
  * usage-limit handoff policy consumes. Keys differ per provider — Claude
- * readings are keyed by the profile directory leaf the statusLine collector
- * writes, Codex readings by credential id from the app-server poller — and
- * this is the one place that mapping lives. A reading that is absent, has
- * no capture time, or is not fresh comes back with observedAtSec null, so
- * the policy can distinguish observed headroom from an unobserved account. */
+ * readings come from the account usage check by credential id and from the
+ * statusLine collector by profile directory leaf, the newer of the two;
+ * Codex readings by credential id from the app-server poller — and this is
+ * the one place that mapping lives. A reading that is absent, has no
+ * capture time, or is not fresh comes back with observedAtSec null, so the
+ * policy can distinguish observed headroom from an unobserved account. */
 
 import type { AccountUsageObservation } from "@/lib/agents/usageLimitHandoffPolicy";
 import type { UsageRecentReport } from "@/lib/ipc";
+import { claudeAccountUsage } from "@/lib/usage/accountUsageMeter";
 import {
-	codexSnapshotForCredential,
-	codexSnapshotFreshness,
-} from "@/lib/usage/codexUsageSnapshots";
-import { claudeAccountRateLimit } from "@/lib/usage/usageAccounts";
+	accountSnapshotForCredential,
+	accountSnapshotFreshness,
+} from "@/lib/usage/accountUsageSnapshots";
 import type { AccountProfile, Provider } from "@/types";
 
 function earliestReset(
@@ -39,24 +40,30 @@ const READINGS: Partial<
 		) => AccountReading
 	>
 > = {
-	claude: (report, account) => {
-		const entry = claudeAccountRateLimit(report.claudeAccounts, account.dir);
+	claude: (report, account, nowSec) => {
+		const usage = claudeAccountUsage(
+			report.claudeAccounts,
+			report.claudeAccountSnapshots,
+			account.id,
+			account.dir,
+			nowSec,
+		)?.usage;
 		return {
-			usedPercent: entry?.usedPercent ?? null,
-			usedPercentWeekly: entry?.usedPercentWeekly ?? null,
-			resetsAtSec: earliestReset(entry?.resetsAt, entry?.weeklyResetsAt),
-			observedAtSec: entry?.usedPercentCapturedAt ?? null,
+			usedPercent: usage?.usedPercent ?? null,
+			usedPercentWeekly: usage?.usedPercentWeekly ?? null,
+			resetsAtSec: earliestReset(usage?.resetsAt, usage?.weeklyResetsAt),
+			observedAtSec: usage?.usedPercentCapturedAt ?? null,
 		};
 	},
 	codex: (report, account, nowSec) => {
-		const snapshot = codexSnapshotForCredential(
+		const snapshot = accountSnapshotForCredential(
 			report.codexAccountSnapshots,
 			account.id,
 		);
 		const general = snapshot?.rateLimits.find(
 			(limit) => limit.limitId === "codex",
 		);
-		const fresh = codexSnapshotFreshness(snapshot, nowSec) === "fresh";
+		const fresh = accountSnapshotFreshness(snapshot, nowSec) === "fresh";
 		return {
 			usedPercent: general?.usedPercent ?? null,
 			usedPercentWeekly: general?.usedPercentWeekly ?? null,

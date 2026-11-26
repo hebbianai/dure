@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe("useRecentUsage", () => {
-	it("requires a synchronized Codex catalog for manual collection but not for Claude", async () => {
+	it("requires a synchronized account catalog for either provider's manual check", async () => {
 		profilesSyncMock.mockRejectedValue(new Error("catalog unavailable"));
 		collectorStatusMock.mockResolvedValue("installed");
 		usageRecentMock.mockImplementation((hours: number) =>
@@ -36,16 +36,17 @@ describe("useRecentUsage", () => {
 		const accounts: AccountProfile[] = [];
 		const rendered = renderHook(() => useRecentUsage(accounts));
 		await waitFor(() => expect(rendered.result.current.u5).toBe(r5));
-		await act(() => rendered.result.current.refresh("codex"));
-		expect(rendered.result.current.refreshError).toBe("codex");
+		for (const provider of ["codex", "claude"] as const) {
+			await act(() => rendered.result.current.refresh(provider));
+			expect(rendered.result.current.refreshError).toBe(provider);
+		}
 		expect(usageRefreshMock).not.toHaveBeenCalled();
-		await act(() => rendered.result.current.refresh("claude"));
-		expect(usageRefreshMock).toHaveBeenCalledWith("claude");
-		expect(rendered.result.current.refreshError).toBeNull();
 		profilesSyncMock.mockResolvedValue(undefined);
-		await act(() => rendered.result.current.refresh("codex"));
-		expect(usageRefreshMock).toHaveBeenLastCalledWith("codex");
-		expect(rendered.result.current.refreshError).toBeNull();
+		for (const provider of ["codex", "claude"] as const) {
+			await act(() => rendered.result.current.refresh(provider));
+			expect(usageRefreshMock).toHaveBeenLastCalledWith(provider);
+			expect(rendered.result.current.refreshError).toBeNull();
+		}
 	});
 
 	it("does not apply a refresh from a retired account catalog", async () => {

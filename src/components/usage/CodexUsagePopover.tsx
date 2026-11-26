@@ -5,21 +5,24 @@ import {
 } from "@/components/usage/ProviderUsageDetail";
 import {
 	ProviderUsagePopoverContent,
+	separateLimitRows,
 	type UsagePopoverAccount,
 	type UsagePopoverLimit,
 	type UsageRefreshAction,
 } from "@/components/usage/ProviderUsagePopoverContent";
+import { accountMenuLimit } from "@/components/usage/AccountMenuLabel";
 import { UsageMeterPopover } from "@/components/usage/UsageMeterPopover";
 import { t } from "@/lib/i18n";
 import { codexAccountMeter } from "@/lib/usage/accountUsageMeter";
-import { codexSnapshotForCredential } from "@/lib/usage/codexUsageSnapshots";
+import { accountSnapshotForCredential } from "@/lib/usage/accountUsageSnapshots";
 import {
 	codexCreditsLabel,
 	codexResetCreditsLabel,
+	separateLimitTipLines,
 	usageDurationLabel,
 	usageResetLabel,
 } from "@/lib/usage/usageLabels";
-import { fmtAgo, fmtTokens } from "@/lib/usage/usageMeter";
+import { fmtAgo, fmtTokens, highestPct } from "@/lib/usage/usageMeter";
 
 export function CodexUsagePopover({
 	u5,
@@ -49,44 +52,11 @@ export function CodexUsagePopover({
 		modelMeters,
 		weeklyReset,
 	} = useCodexUsage(u5, u24, nowSec);
-	const headlinePct = [meter, ...modelMeters].reduce<number | null>(
-		(highest, candidate) =>
-			candidate.pct == null
-				? highest
-				: Math.max(highest ?? candidate.pct, candidate.pct),
-		null,
-	);
-	const modelTip = modelMeters
-		.flatMap((candidate) => {
-			const model = candidate.limitName ?? t("usage.codex.separateModel");
-			const primary =
-				candidate.window === "weekly"
-					? t("usage.codex.tipModelWeeklyPct", {
-							model,
-							pct: Math.round(candidate.pct ?? 0),
-						})
-					: t("usage.codex.tipModelFiveHourPct", {
-							model,
-							pct: Math.round(candidate.pct ?? 0),
-						});
-			const withReset = candidate.resetLabel
-				? `${primary} ${t("usage.reset.inlineDotted", { reset: candidate.resetLabel })}`
-				: primary;
-			if (candidate.window === "weekly" || candidate.weeklyPct == null) {
-				return [withReset];
-			}
-			const weekly = t("usage.codex.tipModelWeeklyPct", {
-				model,
-				pct: Math.round(candidate.weeklyPct),
-			});
-			return [
-				withReset,
-				candidate.weeklyResetLabel
-					? `${weekly} ${t("usage.reset.inlineDotted", { reset: candidate.weeklyResetLabel })}`
-					: weekly,
-			];
-		})
-		.join("\n");
+	const headlinePct = highestPct([meter, ...modelMeters]);
+	const modelTip = separateLimitTipLines(
+		modelMeters,
+		t("usage.codex.separateModel"),
+	).join("\n");
 	const tip =
 		(meter.pct == null
 			? modelMeters.length > 0
@@ -135,21 +105,11 @@ export function CodexUsagePopover({
 						} satisfies UsagePopoverLimit,
 					]
 				: []),
-		...modelMeters.map((candidate): UsagePopoverLimit => {
-			const weekly = candidate.weeklyPct != null;
-			return {
-				id: candidate.limitId,
-				dataSlot: "codex-model-limit",
-				label: `${weekly || candidate.window === "weekly" ? t("usage.window.weekly") : t("usage.window.fiveHour")} · ${candidate.limitName ?? t("usage.codex.separateModel")}`,
-				value: `${Math.round(candidate.weeklyPct ?? candidate.pct ?? 0)}%`,
-				pct: candidate.weeklyPct ?? candidate.pct,
-				reset: usageResetLabel(
-					usageDurationLabel(
-						weekly ? candidate.weeklyResetLabel : candidate.resetLabel,
-					),
-				),
-			};
-		}),
+		...separateLimitRows(
+			modelMeters,
+			t("usage.codex.separateModel"),
+			"codex-model-limit",
+		),
 	];
 	const aggregateNotice = t("usage.attribution.noneTotalLong");
 	const observedNotice = t("usage.attribution.observedOnly");
@@ -179,7 +139,7 @@ export function CodexUsagePopover({
 			: null,
 	].filter((notice): notice is string => notice != null);
 	const accountLimit = (profile: UsagePopoverAccount) => {
-		const accountSnapshot = codexSnapshotForCredential(
+		const accountSnapshot = accountSnapshotForCredential(
 			u5.codexAccountSnapshots,
 			profile.id,
 		);
@@ -190,10 +150,9 @@ export function CodexUsagePopover({
 			nowSec,
 		);
 		return {
-			pct: accountMeter?.pct ?? null,
-			reset: usageResetLabel(
-				usageDurationLabel(accountMeter?.resetLabel ?? null),
-			),
+			pct: null,
+			reset: null,
+			...accountMenuLimit(accountMeter, t("usage.codex.separateModel")),
 			credits: [
 				codexResetCreditsLabel(accountSnapshot, nowSec),
 				codexCreditsLabel(

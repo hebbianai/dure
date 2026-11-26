@@ -100,6 +100,8 @@ pub struct ClaudeUsageReading {
     pub windows: Vec<ClaudeUsageWindow>,
 }
 
+pub type ClaudeUsageSnapshot = AccountUsageSnapshot<ClaudeUsageReading>;
+
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderUsage {
@@ -168,6 +170,10 @@ pub struct UsageReport {
     /// 등록 credential별 Codex App Server 실측 snapshot. 세션 로그 창과
     /// 독립적으로 마지막 성공값을 보존한다.
     pub codex_account_snapshots: Vec<CodexUsageSnapshot>,
+    /// Each registered Claude account's latest account usage check, with
+    /// every window it reported (per-model weekly ones included). The
+    /// statusLine readings in `claude_accounts` stay the fallback.
+    pub claude_account_snapshots: Vec<ClaudeUsageSnapshot>,
 }
 
 #[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -1069,6 +1075,7 @@ fn usage_report(
         claude_accounts: claude_account_rate_limits(home, now_epoch),
         codex_accounts,
         codex_account_snapshots: Vec::new(),
+        claude_account_snapshots: Vec::new(),
     }
 }
 
@@ -1182,6 +1189,7 @@ pub fn usage_recent(hours: u64) -> UsageReport {
         claude_accounts: claude_account_rate_limits(&home, now_secs()),
         codex_accounts,
         codex_account_snapshots: Vec::new(),
+        claude_account_snapshots: Vec::new(),
     }
 }
 

@@ -1,4 +1,8 @@
-import type { CodexUsageSnapshot, UsageRecentReport } from "@/lib/ipc";
+import type {
+	ClaudeUsageSnapshot,
+	CodexUsageSnapshot,
+	UsageRecentReport,
+} from "@/lib/ipc";
 import {
 	claudeAccountRateLimit,
 	codexAccountUsage,
@@ -6,13 +10,17 @@ import {
 	type CodexAccountUsage,
 } from "@/lib/usage/usageAccounts";
 import {
+	accountSnapshotForCredential,
+	applyClaudeSnapshot,
 	applyCodexSnapshot,
-	codexSnapshotForCredential,
-} from "@/lib/usage/codexUsageSnapshots";
+	claudeSeparateMeters,
+} from "@/lib/usage/accountUsageSnapshots";
 import {
 	claudeMeter,
 	codexMeter,
+	codexModelMeters,
 	type CodexMeter,
+	type NamedLimitMeter,
 	type ProviderUsage,
 } from "@/lib/usage/usageMeter";
 import type { Provider } from "@/types";
@@ -31,25 +39,70 @@ const EMPTY_USAGE: ProviderUsage = {
 	rateLimits: [],
 };
 
-/** Provider-observed limit for one Claude profile. Missing profiles stay
- * absent instead of borrowing the active or aggregate account's limit. */
-export function claudeAccountMeter(
+/** One account's limits for choosing between accounts: the general meter,
+ * and the separate limits (a model's own budget) that are in use beside it.
+ * A limit at 0% says nothing about which account to pick. */
+export interface AccountUsageMeter extends CodexMeter {
+	separate: readonly NamedLimitMeter[];
+}
+
+function accountMeter(
+	general: CodexMeter,
+	separate: readonly NamedLimitMeter[],
+): AccountUsageMeter {
+	return {
+		...general,
+		separate: separate.filter((limit) => (limit.pct ?? 0) > 0),
+	};
+}
+
+/** One Claude account's 5-hour and weekly limits: the statusLine reading of
+ * its profile directory, with its account usage check laid over it when the
+ * check is newer. Undefined when neither has observed the account — it
+ * never borrows the active or aggregate account's limit. */
+export function claudeAccountUsage(
 	accounts: ClaudeAccountRateLimit[] | undefined,
+	snapshots: readonly ClaudeUsageSnapshot[] | undefined,
+	credentialId: string | undefined | null,
 	dir: string | undefined | null,
 	nowSec: number,
-): CodexMeter | null {
+): { usage: ProviderUsage; snapshot: ClaudeUsageSnapshot | undefined } | undefined {
 	const entry = claudeAccountRateLimit(accounts, dir);
-	if (!entry) return null;
-	return claudeMeter(
-		{
-			...EMPTY_USAGE,
-			usedPercent: entry.usedPercent,
-			usedPercentWeekly: entry.usedPercentWeekly,
-			resetsAt: entry.resetsAt,
-			weeklyResetsAt: entry.weeklyResetsAt,
-			usedPercentCapturedAt: entry.usedPercentCapturedAt,
-		},
+	const snapshot = accountSnapshotForCredential(snapshots, credentialId);
+	if (!entry && !snapshot) return undefined;
+	const statusLine: ProviderUsage = entry
+		? {
+				...EMPTY_USAGE,
+				usedPercent: entry.usedPercent,
+				usedPercentWeekly: entry.usedPercentWeekly,
+				resetsAt: entry.resetsAt,
+				weeklyResetsAt: entry.weeklyResetsAt,
+				usedPercentCapturedAt: entry.usedPercentCapturedAt,
+			}
+		: EMPTY_USAGE;
+	return { usage: applyClaudeSnapshot(statusLine, snapshot, nowSec), snapshot };
+}
+
+/** Provider-observed limits for one Claude account, with each model's own
+ * weekly window from its account usage check. */
+export function claudeAccountMeter(
+	accounts: ClaudeAccountRateLimit[] | undefined,
+	snapshots: readonly ClaudeUsageSnapshot[] | undefined,
+	credentialId: string | undefined | null,
+	dir: string | undefined | null,
+	nowSec: number,
+): AccountUsageMeter | null {
+	const observed = claudeAccountUsage(
+		accounts,
+		snapshots,
+		credentialId,
+		dir,
 		nowSec,
+	);
+	if (!observed) return null;
+	return accountMeter(
+		claudeMeter(observed.usage, nowSec),
+		claudeSeparateMeters(observed.snapshot, nowSec),
 	);
 }
 
@@ -60,11 +113,12 @@ export function codexAccountMeter(
 	snapshots: readonly CodexUsageSnapshot[] | undefined,
 	credentialId: string | undefined | null,
 	nowSec: number,
-): CodexMeter | null {
+): AccountUsageMeter | null {
 	const logged = codexAccountUsage(accounts, credentialId)?.usage;
-	const snapshot = codexSnapshotForCredential(snapshots, credentialId);
+	const snapshot = accountSnapshotForCredential(snapshots, credentialId);
 	if (!logged && !snapshot) return null;
-	return codexMeter(applyCodexSnapshot(logged ?? EMPTY_USAGE, snapshot), nowSec);
+	const usage = applyCodexSnapshot(logged ?? EMPTY_USAGE, snapshot);
+	return accountMeter(codexMeter(usage, nowSec), codexModelMeters(usage, nowSec));
 }
 
 type ProviderAccountMeterResolver = (
@@ -72,13 +126,19 @@ type ProviderAccountMeterResolver = (
 	credentialId: string | undefined,
 	dir: string | undefined,
 	nowSec: number,
-) => CodexMeter | null;
+) => AccountUsageMeter | null;
 
 const ACCOUNT_METER_RESOLVERS: Partial<
 	Record<Provider, ProviderAccountMeterResolver>
 > = {
-	claude: (report, _credentialId, dir, nowSec) =>
-		claudeAccountMeter(report.claudeAccounts, dir, nowSec),
+	claude: (report, credentialId, dir, nowSec) =>
+		claudeAccountMeter(
+			report.claudeAccounts,
+			report.claudeAccountSnapshots,
+			credentialId,
+			dir,
+			nowSec,
+		),
 	codex: (report, credentialId, _dir, nowSec) =>
 		codexAccountMeter(
 			report.codexAccounts,
@@ -100,7 +160,7 @@ export function providerAccountMeter(
 	credentialId: string | undefined,
 	dir: string | undefined,
 	nowSec: number,
-): CodexMeter | null {
+): AccountUsageMeter | null {
 	return (
 		ACCOUNT_METER_RESOLVERS[provider]?.(
 			report,

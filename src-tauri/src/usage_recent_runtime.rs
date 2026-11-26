@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::usage::UsageRecentSnapshot;
 
-#[derive(serde::Deserialize)]
+#[derive(Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum UsageRefreshProvider {
     Claude,

@@ -8,7 +8,7 @@ import {
 	within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CodexUsageSnapshot } from "@/lib/ipc";
+import type { ClaudeUsageSnapshot, CodexUsageSnapshot } from "@/lib/ipc";
 import type {
 	ClaudeAccountRateLimit,
 	CodexAccountUsage,
@@ -106,6 +106,7 @@ function mockUsage(
 		claudeAccounts?: ClaudeAccountRateLimit[];
 		codexAccounts?: CodexAccountUsage[];
 		codexSnapshots?: CodexUsageSnapshot[];
+		claudeSnapshots?: ClaudeUsageSnapshot[];
 	} = {},
 ) {
 	usageRecentMock.mockResolvedValue({
@@ -114,6 +115,7 @@ function mockUsage(
 		claudeAccounts: accounts.claudeAccounts ?? [],
 		codexAccounts: accounts.codexAccounts ?? [],
 		codexAccountSnapshots: accounts.codexSnapshots ?? [],
+		claudeAccountSnapshots: accounts.claudeSnapshots ?? [],
 	});
 }
 
@@ -748,6 +750,50 @@ describe("UsageBadge", () => {
 		);
 	});
 
+	it("lists the active Claude account's model weekly window in the usage detail", async () => {
+		const now = Math.floor(Date.now() / 1000);
+		seedAccounts([{ id: "detail-check", provider: "claude", name: "detail-check" }], {
+			claude: "detail-check",
+		});
+		render(
+			<ClaudeUsageDetail
+				u5={{
+					claude: provider(),
+					codex: provider(),
+					claudeAccounts: [],
+					codexAccounts: [],
+					codexAccountSnapshots: [],
+					claudeAccountSnapshots: [
+						{
+							credentialId: "detail-check",
+							capturedAt: now - 120,
+							attemptedAt: now - 60,
+							error: "claude_usage_login_expired",
+							windows: [
+								{ id: "seven_day", kind: "weekly", model: null, usedPercent: 44, resetsAt: now + 2 * 86400 },
+								{ id: "seven_day_fable_5_1", kind: "modelWeekly", model: "Fable 5.1", usedPercent: 97, resetsAt: now + 2 * 86400 },
+							],
+						},
+					],
+				}}
+				u24={null}
+				nowSec={now}
+				collector="installed"
+				installing={false}
+				onInstall={vi.fn()}
+			/>,
+		);
+		const row = document.querySelector('[data-slot="claude-model-limit"]');
+		expect(row?.textContent).toContain("주간 · Fable 5.1");
+		expect(row?.textContent).toContain("97%");
+		// A failed check keeps its last reading and says so.
+		expect(
+			screen.getByText(
+				t("usage.source.accountCheckFailedKeepLast", { ago: "2분" }),
+			),
+		).toBeTruthy();
+	});
+
 	it("Claude 팝오버 헤더의 계정 메뉴에서 활성 계정을 바꾼다", async () => {
 		const now = Math.floor(Date.now() / 1000);
 		accountLoginIdentityMock.mockImplementation(
@@ -815,6 +861,83 @@ describe("UsageBadge", () => {
 		).not.toContain("%");
 		fireEvent.click(otherRow);
 		expect(useStore.getState().activeAccounts.claude).toBe("acc-b");
+	});
+
+	it("shows each Claude account's own model weekly window from the account usage check", async () => {
+		const now = Math.floor(Date.now() / 1000);
+		const check = (
+			credentialId: string,
+			weekly: number,
+			fable: number,
+		): ClaudeUsageSnapshot => ({
+			credentialId,
+			capturedAt: now - 60,
+			attemptedAt: now - 60,
+			error: null,
+			windows: [
+				{ id: "five_hour", kind: "fiveHour", model: null, usedPercent: 12, resetsAt: now + 3600 },
+				{ id: "seven_day", kind: "weekly", model: null, usedPercent: weekly, resetsAt: now + 3 * 86400 },
+				{ id: "seven_day_fable_5_1", kind: "modelWeekly", model: "Fable 5.1", usedPercent: fable, resetsAt: now + 86400 + 7200 },
+			],
+		});
+		mockUsage(
+			{},
+			{},
+			{
+				// The active account's statusLine reading is older than its check.
+		// Names differ from other tests: login identities are cached by dir.
+				claudeAccounts: [
+					claudeLimit("check-a", 70, {
+						resetsAt: now + 1800,
+						usedPercentCapturedAt: now - 3600,
+					}),
+				],
+				claudeSnapshots: [check("acc-a", 30, 100), check("acc-b", 20, 10)],
+			},
+		);
+		seedAccounts(
+			[
+				{ id: "acc-a", provider: "claude", name: "check-a" },
+				{ id: "acc-b", provider: "claude", name: "check-b" },
+			],
+			{ claude: "acc-a" },
+		);
+		render(<UsageBadge />);
+		await screen.findByLabelText(CLAUDE_METER);
+		// The ring does not hide the full model window behind the 5h 12%.
+		expect(meterRing(CLAUDE_METER).dataset.pct).toBe("100");
+		fireEvent.click(screen.getByLabelText(CLAUDE_METER));
+
+		const popover = document.querySelector<HTMLElement>(
+			'[data-slot="claude-usage-popover"]',
+		) as HTMLElement;
+		const view = within(popover);
+		expect(view.getByText("5시간 한도")).toBeTruthy();
+		expect(view.getByText("12%")).toBeTruthy();
+		const modelLimits = popover.querySelectorAll(
+			'[data-slot="claude-model-limit"]',
+		);
+		expect(modelLimits).toHaveLength(1);
+		expect(modelLimits[0]?.textContent).toContain("주간 · Fable 5.1");
+		expect(modelLimits[0]?.textContent).toContain("100%");
+		expect(modelLimits[0]?.textContent).toContain("1일 2시간 후 재설정");
+		expect(
+			view.getByText(t("usage.source.accountCheckCaptured", { ago: "1분" })),
+		).toBeTruthy();
+
+		fireEvent.pointerDown(
+			screen.getByRole("button", { name: "Claude 계정 전환" }),
+			{ button: 0, ctrlKey: false },
+		);
+		const other = await screen.findByRole("menuitemradio", {
+			name: "Claude Code check-b",
+		});
+		const otherModel = other.querySelector(
+			'[data-slot="account-menu-separate-limit"]',
+		);
+		expect(otherModel?.textContent).toContain("주간 · Fable 5.1");
+		expect(otherModel?.textContent).toContain("10%");
+		expect(other.getAttribute("aria-description")).toContain("Fable 5.1");
 	});
 
 	it("shows each account's own reset credits separately from workspace credits", async () => {

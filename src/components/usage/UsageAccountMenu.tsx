@@ -12,6 +12,7 @@ import { Titled } from "@/components/ui/tooltip";
 import {
 	AccountMenuLabel,
 	type AccountMenuLimit,
+	accountMenuLimitDescription,
 } from "@/components/usage/AccountMenuLabel";
 import { useLoginIdentity } from "@/lib/agents/loginIdentity";
 import { providerLoginCmd } from "@/lib/agents/providers";
@@ -49,13 +50,7 @@ function AccountItem({
 	const identity = useLoginIdentity(provider, profile.dir);
 	const loggedOut = identity?.status === "unauthenticated";
 	const label = identity?.email ?? profile.name;
-	const usageDescription = [
-		limit?.reset,
-		limit?.pct != null ? `${Math.round(limit.pct)}%` : null,
-		...(limit?.credits ?? []),
-	]
-		.filter((value): value is string => value != null)
-		.join(" · ");
+	const usageDescription = accountMenuLimitDescription(limit);
 	const content = (
 		<AccountMenuLabel
 			label={label}

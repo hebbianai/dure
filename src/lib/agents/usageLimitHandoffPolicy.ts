@@ -3,7 +3,7 @@
  * Missing telemetry is not a provider failure; actual reported limits exclude
  * the account while that observation remains fresh. */
 
-import { USAGE_OBSERVATION_FRESH_FOR_SECONDS } from "@/lib/usage/codexUsageSnapshots";
+import { USAGE_OBSERVATION_FRESH_FOR_SECONDS } from "@/lib/usage/accountUsageSnapshots";
 
 export interface AccountUsageObservation {
 	readonly credentialId: string;

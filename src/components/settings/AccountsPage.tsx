@@ -44,20 +44,52 @@ import { loginCmd, supportsAccounts } from "@/lib/agents/providers";
 import { t } from "@/lib/i18n";
 import { createAccountDir } from "@/lib/ipc";
 import {
+	type AccountUsageMeter,
 	providerAccountMeter,
 	supportsProviderAccountMeter,
 } from "@/lib/usage/accountUsageMeter";
-import { usageDurationLabel } from "@/lib/usage/usageLabels";
-import type { CodexMeter } from "@/lib/usage/usageMeter";
+import {
+	separateLimitPhrases,
+	usageDurationLabel,
+} from "@/lib/usage/usageLabels";
 import { cn } from "@/lib/utils";
 import { getDockview } from "@/lib/workspace/dock/dockRegistry";
 import { openCommandTerminalOn } from "@/lib/workspace/dock/openCommandTerminal";
 import { PROVIDERS, type Provider } from "@/types";
 
+/** One window of the summary: what it is and when it resets, then its use. */
+function AccountUsageLine({
+	label,
+	pct,
+	dataSlot,
+}: {
+	label: string;
+	pct: number;
+	dataSlot: string;
+}) {
+	return (
+		<Titled title={`${label} · ${Math.round(pct)}%`}>
+			<div
+				data-slot={dataSlot}
+				className="grid w-40 shrink-0 grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-2 text-right"
+			>
+				<span className="min-w-0 truncate text-meta text-muted-foreground">
+					{label}
+				</span>
+				<span className="font-mono text-xs text-foreground tabular-nums">
+					{Math.round(pct)}%
+				</span>
+			</div>
+		</Titled>
+	);
+}
+
+/** The account's general limit, then each separate limit in use beside it
+ * (a model's own weekly window), one line each. */
 function AccountUsageSummary({
 	meter,
 }: {
-	meter: CodexMeter | null | undefined;
+	meter: AccountUsageMeter | null | undefined;
 }) {
 	if (meter === undefined) {
 		return (
@@ -69,7 +101,14 @@ function AccountUsageSummary({
 			</span>
 		);
 	}
-	if (meter === null || meter.pct == null || meter.window == null) {
+	const separate = separateLimitPhrases(
+		meter?.separate ?? [],
+		t("usage.limit.separateModel"),
+	);
+	if (
+		(meter === null || meter.pct == null || meter.window == null) &&
+		separate.length === 0
+	) {
 		return (
 			<Titled title={t("usage.status.noneObserved")}>
 				<span
@@ -80,31 +119,40 @@ function AccountUsageSummary({
 			</Titled>
 		);
 	}
-	const reset = usageDurationLabel(meter.resetLabel);
-	const windowLabel =
-		meter.window === "weekly"
-			? t("usage.window.weekly")
-			: t("usage.window.fiveHour");
-	const resetLabel = reset
-		? t("usage.reset.inlineShort", { reset })
-		: null;
+	const general =
+		meter?.pct != null && meter.window != null
+			? (() => {
+					const reset = usageDurationLabel(meter.resetLabel);
+					const windowLabel =
+						meter.window === "weekly"
+							? t("usage.window.weekly")
+							: t("usage.window.fiveHour");
+					return {
+						label: reset
+							? `${windowLabel} · ${t("usage.reset.inlineShort", { reset })}`
+							: windowLabel,
+						pct: meter.pct,
+					};
+				})()
+			: null;
 	return (
-		<Titled title={[windowLabel, resetLabel, `${Math.round(meter.pct)}%`]
-				.filter(Boolean)
-				.join(" · ")}>
-			<div
-				data-slot="account-usage-summary"
-				className="grid w-40 shrink-0 grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-2 text-right"
-			>
-				<span className="min-w-0 truncate text-meta text-muted-foreground">
-					{windowLabel}
-					{resetLabel ? ` · ${resetLabel}` : ""}
-				</span>
-				<span className="font-mono text-xs text-foreground tabular-nums">
-					{Math.round(meter.pct)}%
-				</span>
-			</div>
-		</Titled>
+		<div className="flex w-40 shrink-0 flex-col gap-0.5">
+			{general && (
+				<AccountUsageLine
+					label={general.label}
+					pct={general.pct}
+					dataSlot="account-usage-summary"
+				/>
+			)}
+			{separate.map((limit) => (
+				<AccountUsageLine
+					key={limit.id}
+					label={limit.label}
+					pct={limit.pct}
+					dataSlot="account-usage-separate-limit"
+				/>
+			))}
+		</div>
 	);
 }
 
