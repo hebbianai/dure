@@ -1040,6 +1040,24 @@ pub(crate) async fn runtime_workspace(
     Ok((runtime_workspace_id.as_str().into(), root))
 }
 
+/// The conversation an exact native source runs now. Its Host verifies the
+/// conversation of the exact Session generation and follows Claude's `/clear`
+/// and in-process continuations, so its identity wins over the one the binding
+/// recorded. The binding's identity stands while the Host reports none.
+pub(crate) fn native_source_conversation(
+    authority: &dure_app::AgentCheckpointBindingAuthorityV1,
+    inspection: &HmuxSessionInspection,
+) -> Option<String> {
+    inspection
+        .provider_conversation_identity
+        .as_ref()
+        .map(|identity| identity.conversation_id.clone())
+        .or_else(|| authority.binding.provider_conversation_id.clone())
+}
+
+/// Validates an exact native source against the conversation it runs now and
+/// records that conversation on its binding, so every plan made from the
+/// source resumes what the process runs rather than what it was bound with.
 async fn converge_native_provider_conversation(
     state: &ServiceState,
     source: &AgentRuntimeSelectionV1,
@@ -1052,26 +1070,15 @@ async fn converge_native_provider_conversation(
     ),
     super::BackendDispatchError,
 > {
-    let provider_conversation_ref =
-        authority
-            .binding
-            .provider_conversation_id
-            .clone()
-            .or_else(|| {
-                inspection
-                    .provider_conversation_identity
-                    .as_ref()
-                    .map(|identity| identity.conversation_id.clone())
-            });
+    let provider_conversation_ref = native_source_conversation(&authority, inspection);
     let provider_conversation =
         AgentProviderConversationPlanV1::from_option(provider_conversation_ref.clone())
             .map_err(store_error)?;
     validate_source_observation(source, &provider_conversation, inspection)
         .map_err(SourceObservationFailure::admission_error)?;
-    if authority.binding.provider_conversation_id.is_some() {
-        return Ok((authority, provider_conversation));
-    }
-    let Some(provider_conversation_ref) = provider_conversation_ref else {
+    let Some(provider_conversation_ref) = provider_conversation_ref.filter(|conversation| {
+        authority.binding.provider_conversation_id.as_ref() != Some(conversation)
+    }) else {
         return Ok((authority, provider_conversation));
     };
     let authority = state

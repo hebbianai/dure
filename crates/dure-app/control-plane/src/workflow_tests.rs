@@ -83,6 +83,7 @@ mod runtime_native_rehost_tests;
 mod runtime_preflight_tests;
 mod runtime_recovery_tests;
 mod runtime_stop_disposition_tests;
+mod runtime_transition_conversation_tests;
 mod runtime_transition_deferred_tests;
 mod runtime_transition_fresh_tests;
 mod runtime_transition_hmux_tests;

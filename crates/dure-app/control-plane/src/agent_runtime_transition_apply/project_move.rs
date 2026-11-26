@@ -132,12 +132,20 @@ async fn plan(
         .await?
         .into_explicit_successor_source()
         .map_err(|_| "agent_project_move_source_unavailable".to_string())?;
-    let (source_stop_policy, conversation) = match &source.authority {
+    let (source_stop_policy, conversation, source_authority) = match &source.authority {
         AgentRuntimeBindingAuthorityV1::NativeCli { authority } => {
             // An unreachable generation cannot grant a new launch.
             let inspection = inspect_native_source(state, &source.selection, authority)
                 .await
                 .map_err(|error| error.code().to_string())?;
+            // The moved Agent resumes the conversation its process runs now.
+            let (authority, conversation) = converge_native_provider_conversation(
+                state,
+                &source.selection,
+                authority.clone(),
+                &inspection,
+            )
+            .await?;
             let policy = if inspection.is_exited_exact() {
                 AgentRuntimeSourceStopPolicyV1::Preserve
             } else {
@@ -146,7 +154,7 @@ async fn plan(
                         state,
                         &source.selection,
                         &inspection,
-                        authority.binding.provider_conversation_id.as_deref(),
+                        conversation.as_option(),
                     )
                     .await);
                 };
@@ -157,10 +165,8 @@ async fn plan(
             };
             (
                 policy,
-                AgentProviderConversationPlanV1::from_option(
-                    authority.binding.provider_conversation_id.clone(),
-                )
-                .map_err(store_error)?,
+                conversation,
+                AgentRuntimeBindingAuthorityV1::NativeCli { authority },
             )
         }
         AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding } => {
@@ -179,6 +185,7 @@ async fn plan(
                     binding.provider_conversation_ref.clone(),
                 )
                 .map_err(store_error)?,
+                source.authority.clone(),
             )
         }
     };
@@ -186,7 +193,7 @@ async fn plan(
         return Err("agent_runtime_provider_conversation_unavailable".into());
     }
     let source_checkout =
-        crate::agent_runtime_checkout::resolve(state, &source.selection, &source.authority)
+        crate::agent_runtime_checkout::resolve(state, &source.selection, &source_authority)
             .await?
             .map(|checkout| {
                 if checkout.admission != dure_app::SessionCheckoutAdmissionV1::Open {
@@ -247,7 +254,7 @@ async fn plan(
         operation_id,
         idempotency_key: key.into(),
         source: selection.clone(),
-        source_authority: source.authority,
+        source_authority,
         source_stop_policy,
         provider_conversation_ref: conversation,
         target_interaction_profile: selection.interaction_profile,

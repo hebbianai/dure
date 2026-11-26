@@ -247,11 +247,13 @@ pub(super) async fn ensure(state: &ServiceState, body: BindingEnsureBody) -> Res
     };
     ensure_agent_identity(&state.store, &body, &provider_id, timestamp).await?;
     if let Some((_, authority)) = selected_native.as_ref()
-        && authority.binding.provider_conversation_id.is_none()
         && let Some(conversation) = provider_conversation_id.as_deref()
+        && authority.binding.provider_conversation_id.as_deref() != Some(conversation)
     {
-        // Only the exact observed native generation can fill a missing identity.
-        // Preserve its selection, binding generation, and any already-known ID.
+        // Only the exact observed native generation's Host names the
+        // conversation it runs: a missing identity, or the successor it
+        // verified after Claude's `/clear` or an in-process continuation.
+        // Preserve its selection and binding generation.
         state
             .store
             .converge_agent_checkpoint_provider_conversation(authority, conversation)

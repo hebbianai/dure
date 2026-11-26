@@ -1,4 +1,5 @@
 use super::*;
+use dure_app::AgentTimelineStore;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum TargetActivation {
@@ -379,6 +380,20 @@ pub(super) async fn preflight_transition_target(
                 })?;
             if plan.is_none() {
                 return Err("agent_runtime_structured_profile_unavailable".into());
+            }
+            // The Agent's Chat continues one provider conversation. Refuse a
+            // source that runs another one, such as a Terminal after Claude's
+            // `/clear`, before it stops: the runtime would refuse the target.
+            if let Some(chat) = state
+                .store
+                .agent_interaction_for_agent(&source.agent_id)
+                .await
+                .map_err(store_error)?
+                && !chat.continues_provider_conversation(provider_conversation_ref.as_option())
+            {
+                return Err(crate::BackendDispatchError::terminal(
+                    "agent_runtime_provider_conversation_changed",
+                ));
             }
         }
         TransitionKind::NativeTarget => {

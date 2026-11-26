@@ -199,6 +199,16 @@ impl AgentInteractionBindingV1 {
             && self.provider_conversation_ref == other.provider_conversation_ref
             && self.binding_revision == other.binding_revision
     }
+
+    /// Whether a runtime that resumes `conversation` may continue this
+    /// binding's timeline. A binding continues one provider conversation; a
+    /// runtime without one (`None`) continues the binding's own.
+    #[must_use]
+    pub fn continues_provider_conversation(&self, conversation: Option<&str>) -> bool {
+        conversation.is_none_or(|conversation| {
+            self.provider_conversation_ref.as_deref() == Some(conversation)
+        })
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

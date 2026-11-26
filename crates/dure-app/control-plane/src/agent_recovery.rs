@@ -604,11 +604,10 @@ async fn continue_native(
         return stop(state, &attempt, AgentRecoveryStopV1::Superseded).await;
     }
     let ready = switched.and_then(|(selection, authority, inspection)| {
-        let conversation = inspection
-            .provider_conversation_identity
-            .as_ref()
-            .map(|identity| identity.conversation_id.clone())
-            .or_else(|| authority.binding.provider_conversation_id.clone())?;
+        let conversation = crate::agent_runtime_transition_apply::native_source_conversation(
+            &authority,
+            &inspection,
+        )?;
         inspection.is_agent_quiescent().then_some((
             WorkflowSessionGenerationV1 {
                 session_id: authority.binding.session_id,
