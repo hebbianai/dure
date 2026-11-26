@@ -8,6 +8,7 @@ use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::domain_store::{validate_domain_id, validate_token};
 use crate::{AgentIdV1, DomainIdErrorV1, DomainStoreErrorV1, DomainStoreFuture, ProviderIdV1};
@@ -208,6 +209,41 @@ impl AgentInteractionBindingV1 {
         conversation.is_none_or(|conversation| {
             self.provider_conversation_ref.as_deref() == Some(conversation)
         })
+    }
+
+    /// The timeline epoch a replacement of this binding's runtime writes to
+    /// when its `target` runtime resumes `conversation`. A timeline holds one
+    /// provider conversation: a replacement that continues it keeps the epoch,
+    /// and one that resumes another conversation, as a Chat move after
+    /// Claude's `/clear` in the Terminal does, opens a new, empty epoch named
+    /// by its target runtime. That conversation's history then seeds the new
+    /// epoch as on a first move into Chat, and the earlier rows stay under
+    /// their own epoch.
+    pub fn replacement_timeline_epoch(
+        &self,
+        conversation: Option<&str>,
+        target: &AgentProviderRuntimeFenceV1,
+    ) -> Result<AgentTimelineEpochV1, DomainStoreErrorV1> {
+        let conversation = match conversation {
+            Some(conversation) if !self.continues_provider_conversation(Some(conversation)) => {
+                conversation
+            }
+            _ => return Ok(self.timeline_epoch.clone()),
+        };
+        let mut digest = Sha256::new();
+        for field in [
+            "agent-timeline-conversation-epoch/v1",
+            self.interaction_session_id.as_str(),
+            &target.runtime_generation,
+            &target.provider_epoch,
+            conversation,
+        ] {
+            digest.update(field.len().to_be_bytes());
+            digest.update(field.as_bytes());
+        }
+        let digest = format!("{:x}", digest.finalize());
+        AgentTimelineEpochV1::new(format!("timeline-{}", &digest[..32]))
+            .or_else(|_| invalid("timelineEpoch", "derived epoch is not a domain identifier"))
     }
 }
 
@@ -1420,6 +1456,63 @@ mod tests {
             created_at_ms: 1,
             updated_at_ms: 1,
         }
+    }
+
+    #[test]
+    fn a_replacement_onto_another_conversation_opens_its_own_timeline_epoch() {
+        let mut source = binding();
+        source.provider_conversation_ref = Some("conversation-before-clear".into());
+        let target = AgentProviderRuntimeFenceV1 {
+            runtime_generation: "runtime-2".into(),
+            provider_epoch: "epoch-2".into(),
+        };
+
+        for continuing in [None, Some("conversation-before-clear")] {
+            assert_eq!(
+                source
+                    .replacement_timeline_epoch(continuing, &target)
+                    .unwrap(),
+                source.timeline_epoch,
+                "a replacement that continues the conversation keeps its timeline",
+            );
+        }
+
+        let cleared = source
+            .replacement_timeline_epoch(Some("conversation-after-clear"), &target)
+            .unwrap();
+        assert_ne!(cleared, source.timeline_epoch);
+        assert_eq!(
+            source
+                .replacement_timeline_epoch(Some("conversation-after-clear"), &target)
+                .unwrap(),
+            cleared,
+            "a replayed replacement names the same epoch",
+        );
+        let other_target = AgentProviderRuntimeFenceV1 {
+            runtime_generation: "runtime-3".into(),
+            provider_epoch: "epoch-3".into(),
+        };
+        assert_ne!(
+            source
+                .replacement_timeline_epoch(Some("conversation-after-clear"), &other_target)
+                .unwrap(),
+            cleared,
+            "each replacement opens its own epoch",
+        );
+
+        // A binding whose runtime never learned its conversation holds no
+        // provider history to continue, so a resumed conversation opens one.
+        let unbound = binding();
+        assert_ne!(
+            unbound
+                .replacement_timeline_epoch(Some("conversation-after-clear"), &target)
+                .unwrap(),
+            unbound.timeline_epoch,
+        );
+        assert_eq!(
+            unbound.replacement_timeline_epoch(None, &target).unwrap(),
+            unbound.timeline_epoch,
+        );
     }
 
     #[test]

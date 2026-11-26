@@ -1971,6 +1971,9 @@ where
     /// Rotate one exact dormant Structured binding under a durable transition.
     /// The provider journal proves the old runtime is stopped; the transition
     /// operation deterministically names the only target that may replace it.
+    /// A target that resumes another conversation than the binding's, such as
+    /// the one a Terminal's `/clear` started, writes to its own timeline epoch
+    /// ([`AgentInteractionBindingV1::replacement_timeline_epoch`]).
     async fn replace_stopped_target(
         &self,
         context: &ClaudeRuntimeContext,
@@ -1979,9 +1982,7 @@ where
         operation_id: &OperationIdV1,
         target_context: &ClaudeRuntimeContext,
     ) -> Result<AgentInteractionBindingV1, ClaudeStructuredRuntimeErrorV1> {
-        if source.agent_id != request.agent_id
-            || source.provider_id.as_str() != CLAUDE_PROVIDER_ID
-            || !source.continues_provider_conversation(request.provider_conversation_ref.as_deref())
+        if source.agent_id != request.agent_id || source.provider_id.as_str() != CLAUDE_PROVIDER_ID
         {
             return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict);
         }
@@ -2988,7 +2989,12 @@ fn is_exact_replacement_target(
             candidate.binding_revision,
         )
         && &candidate.runtime == target_runtime
-        && candidate.timeline_epoch == failed.timeline_epoch
+        && failed
+            .replacement_timeline_epoch(
+                request.provider_conversation_ref.as_deref(),
+                target_runtime,
+            )
+            .is_ok_and(|epoch| candidate.timeline_epoch == epoch)
         && candidate.created_at_ms == failed.created_at_ms
         && candidate.updated_at_ms >= failed.updated_at_ms
 }

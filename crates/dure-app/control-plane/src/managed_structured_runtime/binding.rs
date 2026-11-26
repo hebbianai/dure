@@ -136,7 +136,9 @@ pub(super) fn is_structured_transition_target(
         && candidate.provider_id == source.provider_id
         && candidate.schema_version == source.schema_version
         && candidate.interaction_session_id == source.interaction_session_id
-        && candidate.timeline_epoch == source.timeline_epoch
+        && source
+            .replacement_timeline_epoch(request.provider_conversation_ref.as_deref(), target)
+            .is_ok_and(|epoch| candidate.timeline_epoch == epoch)
         && replacement_target_conversation_matches(
             request.provider_conversation_ref.as_deref(),
             candidate.provider_conversation_ref.as_deref(),

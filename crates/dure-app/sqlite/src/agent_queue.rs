@@ -116,6 +116,36 @@ pub(crate) async fn has_pending_on(
         .map_err(|error| map_sqlx("read_queued_turns", error))
 }
 
+/// Cancels the input still queued for `binding`'s conversation, in its own
+/// timeline, when a runtime replacement resumes another conversation: a
+/// prompt written for one conversation is never sent into another.
+pub(crate) async fn cancel_pending_on(
+    connection: &mut SqliteConnection,
+    binding: &AgentInteractionBindingV1,
+    at_ms: i64,
+) -> Result<(), DomainStoreErrorV1> {
+    let queued = sqlx::query_scalar::<_, String>(
+        "SELECT record_json FROM agent_queued_turns WHERE interaction_session_id = ?1 AND state = 'queued' \
+         ORDER BY queued_sequence",
+    )
+    .bind(binding.interaction_session_id.as_str())
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|error| map_sqlx("cancel_queued_turns", error))?;
+    for source in queued {
+        let record = decode(&source)?;
+        record_state_on(
+            connection,
+            binding,
+            &record.intent,
+            AgentQueuedTurnStateV1::Canceled,
+            at_ms,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 pub(crate) async fn ensure_not_queued_on(
     connection: &mut SqliteConnection,
     intent: &AgentStartTurnIntentV1,

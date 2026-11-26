@@ -318,6 +318,17 @@ async fn replace_runtime_on(
         ));
     }
     let next_revision = replay_revision;
+    // A replacement that resumes another conversation opens a new, empty
+    // timeline epoch whose history the target seeds.
+    let target_timeline_epoch = current.replacement_timeline_epoch(
+        replacement.provider_conversation_ref.as_deref(),
+        &replacement.target,
+    )?;
+    let opens_timeline = target_timeline_epoch != current.timeline_epoch;
+    if opens_timeline {
+        crate::agent_queue::cancel_pending_on(connection, &current, replacement.replaced_at_ms)
+            .await?;
+    }
     sqlx::query(
         r#"
         UPDATE agent_provider_streams SET retired_at_ms = ?4
@@ -395,7 +406,9 @@ async fn replace_runtime_on(
             provider_epoch = ?4,
             binding_revision = ?5,
             updated_at_ms = ?6,
-            execution_profile_json = ?7
+            execution_profile_json = ?7,
+            timeline_epoch = ?8,
+            history_complete = CASE WHEN ?9 THEN 0 ELSE history_complete END
         WHERE interaction_session_id = ?1
         "#,
     )
@@ -406,6 +419,8 @@ async fn replace_runtime_on(
     .bind(next_revision)
     .bind(replacement.replaced_at_ms)
     .bind(target_execution_profile)
+    .bind(target_timeline_epoch.as_str())
+    .bind(opens_timeline)
     .execute(&mut *connection)
     .await
     .map_err(|error| map_sqlx("replace_agent_interaction_runtime", error))?;

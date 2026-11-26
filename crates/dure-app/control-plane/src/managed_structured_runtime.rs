@@ -324,14 +324,12 @@ where
                             return Err(conflict());
                         }
                     } else {
+                        // The Agent's earlier Chat may hold another
+                        // conversation than the Terminal now runs, as after
+                        // `/clear`: the replacement then opens its own
+                        // timeline epoch for this one.
                         if existing.provider_id.as_str() != self.configuration.provider.kind.id()
                             || existing.agent_id != request.agent_id
-                            || request
-                                .provider_conversation_ref
-                                .as_ref()
-                                .is_some_and(|expected| {
-                                    existing.provider_conversation_ref.as_ref() != Some(expected)
-                                })
                         {
                             return Err(conflict());
                         }
