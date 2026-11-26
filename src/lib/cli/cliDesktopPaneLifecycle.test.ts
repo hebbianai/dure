@@ -49,7 +49,7 @@ describe("dispatchCliDesktopPaneRequest", () => {
 			params: { tool: "file", path: "/reports/a b.md", spaceId: "review" },
 		};
 		const forwarded = dependencies({
-			routeToSpaceOwner: vi.fn(async () => ({ kind: "forwarded" as const })),
+			routeToSpaceOwner: vi.fn(async () => ({ kind: "elsewhere" as const })),
 		});
 		await dispatchCliDesktopPaneRequest(request, forwarded);
 		expect(forwarded.claim).not.toHaveBeenCalled();
@@ -298,7 +298,7 @@ describe("dispatchCliDesktopPaneRequest", () => {
 			},
 		};
 		const forwarded = dependencies({
-			routeToSpaceOwner: vi.fn(async () => ({ kind: "forwarded" as const })),
+			routeToSpaceOwner: vi.fn(async () => ({ kind: "elsewhere" as const })),
 		});
 		await dispatchCliDesktopPaneRequest(request, forwarded);
 		expect(forwarded.claim).not.toHaveBeenCalled();
@@ -343,7 +343,7 @@ describe("dispatchCliDesktopPaneRequest", () => {
 	);
 	it("leaves a routed close unclaimed instead of closing a persisted projection", async () => {
 		const deps = dependencies({
-			routeToSpaceOwner: vi.fn(async () => ({ kind: "forwarded" as const })),
+			routeToSpaceOwner: vi.fn(async () => ({ kind: "elsewhere" as const })),
 		});
 		const request = {
 			reqId: "close-secondary",
@@ -504,7 +504,7 @@ it("routes a mobile open before claim and preserves exact Space authority", asyn
 		params: { spaceId: "space", tool: "mobile" },
 	};
 	const forwarded = dependencies({
-		routeToSpaceOwner: vi.fn(async () => ({ kind: "forwarded" as const })),
+		routeToSpaceOwner: vi.fn(async () => ({ kind: "elsewhere" as const })),
 	});
 	await dispatchCliDesktopPaneRequest(request, forwarded);
 	expect(forwarded.claim).not.toHaveBeenCalled();
