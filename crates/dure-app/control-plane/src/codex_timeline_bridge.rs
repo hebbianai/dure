@@ -1268,6 +1268,73 @@ mod tests {
         server.abort();
     }
 
+    async fn history_complete(
+        service: &AgentConversationService<crate::SqliteDomainStore>,
+        binding: &AgentInteractionBindingV1,
+    ) -> bool {
+        service
+            .binding(&binding.interaction_session_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .history_complete
+    }
+
+    /// A Terminal thread moved into Chat holds its whole history once Chat
+    /// has read it to its start, so automatic turns and recovery admit it.
+    #[tokio::test]
+    async fn a_thread_read_to_its_start_completes_the_moved_history() {
+        let (temporary, service, binding) = conversation_fixture().await;
+        assert!(!binding.history_complete);
+        let socket_path = temporary.path().join("app.sock");
+        let (server, _requests) = paged_thread_server(&socket_path, THREAD_PAGES);
+        let (bridge, incoming) = paged_bridge(&socket_path, &binding, &service, None).await;
+
+        bridge.reconcile_history(paged_resume()).await.unwrap();
+
+        assert!(history_complete(&service, &binding).await);
+        drop(bridge);
+        drop(incoming);
+        server.abort();
+    }
+
+    /// Terminal turns since the held history that exceed the window leave
+    /// the turns between out, so the history is no longer complete.
+    #[tokio::test]
+    async fn a_window_after_held_history_leaves_the_history_incomplete() {
+        let (temporary, service, binding) = conversation_fixture().await;
+        let socket_path = temporary.path().join("app.sock");
+        let (server, _requests) = paged_thread_server(&socket_path, THREAD_PAGES);
+        let (bridge, incoming) = paged_bridge(&socket_path, &binding, &service, None).await;
+        bridge
+            .reconcile_history(json!({
+                "thread": { "id": "thread-history", "turns": [history_turn(1)] },
+            }))
+            .await
+            .unwrap();
+        assert!(history_complete(&service, &binding).await);
+
+        let newest_page = encoded_len(&history_turn(5)) + encoded_len(&history_turn(4));
+        bridge
+            .reconcile_history_within(paged_resume(), newest_page)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            prompts_and_boundaries(&service, &binding).await,
+            [
+                "Prompt 1",
+                "boundary:provider_history_truncated",
+                "Prompt 4",
+                "Prompt 5"
+            ]
+        );
+        assert!(!history_complete(&service, &binding).await);
+        drop(bridge);
+        drop(incoming);
+        server.abort();
+    }
+
     #[tokio::test]
     async fn steering_targets_the_active_provider_turn_without_replacing_its_identity() {
         let (temporary, service, binding) = conversation_fixture().await;

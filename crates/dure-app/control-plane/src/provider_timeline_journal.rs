@@ -127,6 +127,15 @@ impl<S: AgentTimelineStore + 'static> ProviderTimelineJournal<S> {
         Ok(())
     }
 
+    /// Reports that the history read at attach is reconciled, so the store
+    /// settles whether the timeline holds all of it.
+    pub(crate) async fn settle_history(&self) -> Result<(), Error> {
+        self.commit(vec![AgentTimelineMutationV1::SettleHistory {
+            settled_at_ms: now_ms()?,
+        }])
+        .await
+    }
+
     pub(crate) async fn commit(
         &self,
         mutations: Vec<AgentTimelineMutationV1>,

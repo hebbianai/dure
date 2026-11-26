@@ -828,6 +828,10 @@ async fn apply_provider_event_on(
                 )
                 .await?;
             }
+            AgentTimelineMutationV1::SettleHistory { settled_at_ms } => {
+                // The binding a view reads changes with it.
+                timeline_changed |= settle_history_on(connection, &binding, *settled_at_ms).await?;
+            }
         }
     }
 
@@ -1164,18 +1168,13 @@ async fn continue_history_on(
         // A window leaves out history the provider resumes from; the summary
         // a compaction opens with stands in for the records before it.
         if behind_gap && snapshot.omits_older_history() && current.history_complete {
-            sqlx::query(
-                r#"
-                UPDATE agent_interaction_sessions
-                SET history_complete = 0, updated_at_ms = MAX(updated_at_ms, ?2)
-                WHERE interaction_session_id = ?1
-                "#,
+            set_history_complete_on(
+                connection,
+                &current.interaction_session_id,
+                false,
+                snapshot.observed_at_ms,
             )
-            .bind(current.interaction_session_id.as_str())
-            .bind(snapshot.observed_at_ms)
-            .execute(&mut *connection)
-            .await
-            .map_err(|error| map_sqlx("continue_agent_history", error))?;
+            .await?;
         }
     }
     let binding = required_binding(connection, &current.interaction_session_id).await?;
@@ -1441,6 +1440,84 @@ async fn has_history_boundary(
     .map_err(|error| map_sqlx("agent_history_hydration_authority", error))
 }
 
+/// Settles the history a runtime reconciled through its own events: complete
+/// unless a row marks provider history the timeline leaves out, such as the
+/// boundary of a window, of a message too large to read or of a replay gap.
+/// Derived from the rows alone, it also settles a binding whose history an
+/// earlier attach reconciled.
+async fn settle_history_on(
+    connection: &mut SqliteConnection,
+    binding: &AgentInteractionBindingV1,
+    settled_at_ms: i64,
+) -> Result<bool, DomainStoreErrorV1> {
+    // An earlier mutation of the same event may have revised the binding.
+    let current = required_binding(connection, &binding.interaction_session_id).await?;
+    let complete = !omits_provider_history(connection, &current).await?;
+    if current.history_complete == complete {
+        return Ok(false);
+    }
+    set_history_complete_on(
+        connection,
+        &current.interaction_session_id,
+        complete,
+        settled_at_ms,
+    )
+    .await?;
+    Ok(true)
+}
+
+async fn omits_provider_history(
+    connection: &mut SqliteConnection,
+    binding: &AgentInteractionBindingV1,
+) -> Result<bool, DomainStoreErrorV1> {
+    let boundaries = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT body_json FROM agent_timeline_rows
+        WHERE interaction_session_id = ?1
+          AND timeline_epoch = ?2
+          AND CASE
+                WHEN json_valid(body_json) = 1
+                    THEN json_extract(body_json, '$.type') = 'history_boundary'
+                ELSE 0
+              END = 1
+        "#,
+    )
+    .bind(binding.interaction_session_id.as_str())
+    .bind(binding.timeline_epoch.as_str())
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|error| map_sqlx("settle_agent_history", error))?;
+    for source in boundaries {
+        let body: AgentTimelineItemBodyV1 = decode("agent_timeline_rows.body_json", &source)?;
+        if body.omits_provider_history() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+async fn set_history_complete_on(
+    connection: &mut SqliteConnection,
+    interaction_session_id: &AgentInteractionSessionIdV1,
+    complete: bool,
+    observed_at_ms: i64,
+) -> Result<(), DomainStoreErrorV1> {
+    sqlx::query(
+        r#"
+        UPDATE agent_interaction_sessions
+        SET history_complete = ?3, updated_at_ms = MAX(updated_at_ms, ?2)
+        WHERE interaction_session_id = ?1
+        "#,
+    )
+    .bind(interaction_session_id.as_str())
+    .bind(observed_at_ms)
+    .bind(complete)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| map_sqlx("set_agent_history_complete", error))?;
+    Ok(())
+}
+
 async fn record_provider_gap_on(
     connection: &mut SqliteConnection,
     gap: &AgentProviderGapV1,
@@ -1514,18 +1591,13 @@ async fn record_provider_gap_on(
     .execute(&mut *connection)
     .await
     .map_err(|error| map_sqlx("record_agent_provider_gap", error))?;
-    sqlx::query(
-        r#"
-        UPDATE agent_interaction_sessions
-        SET history_complete = 0, updated_at_ms = MAX(updated_at_ms, ?2)
-        WHERE interaction_session_id = ?1
-        "#,
+    set_history_complete_on(
+        connection,
+        &gap.interaction_session_id,
+        false,
+        gap.observed_at_ms,
     )
-    .bind(gap.interaction_session_id.as_str())
-    .bind(gap.observed_at_ms)
-    .execute(&mut *connection)
-    .await
-    .map_err(|error| map_sqlx("record_agent_provider_gap", error))?;
+    .await?;
     let receipt = AgentTimelineCommitReceiptV1 {
         provider_cursor: AgentProviderCursorV1 {
             runtime: gap.runtime.clone(),

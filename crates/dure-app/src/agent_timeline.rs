@@ -370,6 +370,17 @@ pub enum AgentTimelineItemBodyV1 {
 }
 
 impl AgentTimelineItemBodyV1 {
+    /// Whether this row marks provider history that the timeline leaves out
+    /// and the provider resumes from: any history boundary but a compaction's,
+    /// whose summary stands in for the records before it.
+    pub fn omits_provider_history(&self) -> bool {
+        matches!(
+            self,
+            Self::HistoryBoundary { reason, .. }
+                if reason != PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1
+        )
+    }
+
     pub fn validate(&self) -> Result<(), DomainStoreErrorV1> {
         match self {
             Self::Lifecycle { detail, .. } => {
@@ -661,6 +672,15 @@ pub enum AgentTimelineMutationV1 {
         reason: String,
         canceled_at_ms: i64,
     },
+    /// A runtime that reconciles its provider's history through its own
+    /// events has reconciled what it read when it attached. The store then
+    /// settles whether the timeline holds the whole history the provider
+    /// resumes from: it does unless a row marks provider history it leaves
+    /// out ([`AgentTimelineItemBodyV1::omits_provider_history`]). A history
+    /// seeded from one snapshot is settled by that snapshot instead.
+    SettleHistory {
+        settled_at_ms: i64,
+    },
 }
 
 impl AgentTimelineMutationV1 {
@@ -695,6 +715,7 @@ impl AgentTimelineMutationV1 {
                 validate_token("pendingCancelReason", reason)?;
                 timestamp("canceledAtMs", *canceled_at_ms)
             }
+            Self::SettleHistory { settled_at_ms } => timestamp("settledAtMs", *settled_at_ms),
         }
     }
 }
@@ -782,11 +803,9 @@ impl AgentHistorySnapshotV1 {
     /// is the boundary that marks where the shown history starts. A
     /// compaction boundary omits nothing the provider resumes from.
     pub fn omits_older_history(&self) -> bool {
-        matches!(
-            self.items.first().map(|item| &item.body),
-            Some(AgentTimelineItemBodyV1::HistoryBoundary { reason, .. })
-                if reason != PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1
-        )
+        self.items
+            .first()
+            .is_some_and(|item| item.body.omits_provider_history())
     }
 
     /// The history boundary that opens this snapshot, if any.

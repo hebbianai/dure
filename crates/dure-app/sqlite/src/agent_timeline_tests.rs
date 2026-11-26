@@ -30,6 +30,8 @@ mod failure;
 mod goals;
 #[path = "agent_history_continuation_tests.rs"]
 mod history_continuation;
+#[path = "agent_history_settle_tests.rs"]
+mod history_settle;
 #[path = "agent_queue_tests.rs"]
 mod queue;
 #[path = "agent_recovery_tests.rs"]
