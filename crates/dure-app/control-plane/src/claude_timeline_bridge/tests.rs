@@ -1426,6 +1426,16 @@ async fn replace_with_second_chat_runtime(
     interaction: &AgentInteractionSessionIdV1,
 ) -> ClaudeDch1QueryIdentity {
     let current = store.agent_interaction(interaction).await.unwrap().unwrap();
+    replace_with_chat_runtime_resuming(store, interaction, current.provider_conversation_ref).await
+}
+
+/// Replaces the stopped Chat runtime with one that resumes `conversation`.
+async fn replace_with_chat_runtime_resuming(
+    store: &SqliteDomainStore,
+    interaction: &AgentInteractionSessionIdV1,
+    conversation: Option<String>,
+) -> ClaudeDch1QueryIdentity {
+    let current = store.agent_interaction(interaction).await.unwrap().unwrap();
     let second_identity = ClaudeDch1QueryIdentity {
         runtime_generation: "runtime-claude-2".into(),
         query_epoch: "query-claude-2".into(),
@@ -1443,12 +1453,94 @@ async fn replace_with_second_chat_runtime(
                 provider_epoch: second_identity.query_epoch.clone(),
             },
             target_execution_profile: current.execution_profile.clone(),
-            provider_conversation_ref: current.provider_conversation_ref.clone(),
+            provider_conversation_ref: conversation,
             replaced_at_ms: 30,
         })
         .await
         .unwrap();
     second_identity
+}
+
+/// An Agent moved into Chat, back to its Terminal, ran `/clear` there, and
+/// moved into Chat again. The second Chat session resumes the conversation
+/// `/clear` started and shows its history, as the Terminal does, instead of
+/// appending it to the cleared conversation's rows behind a gap.
+#[tokio::test]
+async fn a_chat_after_clear_in_the_terminal_shows_the_conversation_clear_started() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = fixture_with_history_state(
+        &temp_dir.path().join("domain.sqlite"),
+        Some("session-claude-1"),
+        false,
+    )
+    .await;
+    let interaction = AgentInteractionSessionIdV1::new("interaction-claude").unwrap();
+    let service = Arc::new(AgentConversationService::new(Arc::clone(&store)));
+    let first = FakeTransport::new(Arc::clone(&store), [empty_replay()], [no_pending()])
+        .with_history(history_snapshot(vec![
+            history_message("before-1", None, "user"),
+            history_message("before-2", Some("msg_before_2"), "assistant"),
+        ]));
+    ClaudeTimelineBridge::new(Arc::clone(&service), first, interaction.clone(), identity())
+        .unwrap()
+        .reconcile()
+        .await
+        .unwrap();
+    let cleared = tail(&store).await;
+    assert_eq!(markdown(&cleared), ["user before-1", "assistant before-2"]);
+
+    let second_identity = replace_with_chat_runtime_resuming(
+        &store,
+        &interaction,
+        Some("session-claude-after-clear".into()),
+    )
+    .await;
+    let second = FakeTransport::new(Arc::clone(&store), [empty_replay()], [no_pending()])
+        .with_history(history_snapshot(vec![
+            history_message("after-1", None, "user"),
+            history_message("after-2", Some("msg_after_2"), "assistant"),
+        ]));
+    ClaudeTimelineBridge::new(
+        Arc::clone(&service),
+        second,
+        interaction.clone(),
+        second_identity,
+    )
+    .unwrap()
+    .reconcile()
+    .await
+    .unwrap();
+
+    let page = tail(&store).await;
+    assert_eq!(markdown(&page), ["user after-1", "assistant after-2"]);
+    assert!(
+        !page.rows.iter().any(|row| matches!(
+            row.item.body,
+            AgentTimelineItemBodyV1::HistoryBoundary { .. }
+        )),
+        "the new conversation's history is whole, not a gap after the old one",
+    );
+    assert!(page.binding.history_complete);
+    assert_eq!(
+        page.binding.provider_conversation_ref.as_deref(),
+        Some("session-claude-after-clear")
+    );
+    assert_ne!(page.binding.timeline_epoch, cleared.binding.timeline_epoch);
+    // A Chat surface still reading the cleared conversation reloads.
+    let AgentTimelineReadV1::Reset { reason, .. } = store
+        .read_agent_timeline(&AgentTimelineReadRequestV1 {
+            schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+            interaction_session_id: interaction,
+            direction: AgentTimelineReadDirectionV1::After,
+            cursor: Some(cleared.final_cursor.clone()),
+            limit: 128,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("a cursor in the cleared conversation's timeline must reset");
+    };
+    assert_eq!(reason, "stale_cursor");
 }
 
 /// A Chat prompt that got no reply before the Agent moved back to its

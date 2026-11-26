@@ -1069,6 +1069,204 @@ async fn a_retried_chat_replacement_keeps_its_target_after_the_history_settles()
     );
 }
 
+/// An Agent that was in Chat moved to its Terminal, which then started a new
+/// conversation (as `/clear` does), and moves into Chat again. The Chat
+/// runtime resumes the Terminal's conversation in its own timeline instead of
+/// refusing the earlier Chat's binding.
+#[tokio::test]
+async fn a_chat_move_after_the_terminal_changed_conversation_opens_its_own_timeline() {
+    let root = tempfile::Builder::new()
+        .prefix("dcr-cleared-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let discovery_root = root.path().join("discovery");
+    let state_root = root.path().join("state");
+    let credential_home = root.path().join("credentials");
+    owner_directory(&discovery_root);
+    owner_directory(&state_root);
+    owner_directory(&credential_home);
+    let provider_launcher = root.path().join("provider-launcher");
+    let hmux_runtime = root.path().join("hmux-runtime");
+    for executable in [&provider_launcher, &hmux_runtime] {
+        fs::write(executable, "#!/bin/sh\nexit 97\n").unwrap();
+        fs::set_permissions(executable, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    let store = Arc::new(
+        SqliteDomainStore::open(root.path().join("domain.sqlite"))
+            .await
+            .unwrap(),
+    );
+    seed(&store, root.path(), 1).await;
+    let agent_id = AgentIdV1::new("agent-codex-scale-0").unwrap();
+    let agent = store.agent(&agent_id).await.unwrap().unwrap();
+    let conversation_service = Arc::new(AgentConversationService::new(Arc::clone(&store)));
+    // The earlier Chat, dormant since the Agent moved to its Terminal.
+    let earlier = conversation_service
+        .create(
+            &initial_binding(
+                &agent,
+                &StructuredProviderOpenRequestV1 {
+                    agent_id: agent_id.clone(),
+                    execution_profile: AgentExecutionProfileV1::ProviderDefault,
+                    provider_conversation_ref: Some("conversation-before-clear".into()),
+                    permission_mode: ProviderPermissionModeV1::Default,
+                    model: None,
+                    effort: None,
+                },
+                "generation-1",
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let source = AgentRuntimeSelectionV1 {
+        schema_version: 1,
+        agent_id: agent_id.clone(),
+        provider_id: ProviderIdV1::new(CODEX_PROVIDER_ID).unwrap(),
+        interaction_profile: AgentInteractionProfileV1::NativeCli,
+        execution_profile: AgentExecutionProfileV1::ProviderDefault,
+        permission_mode: ProviderPermissionModeV1::Default,
+        model: None,
+        effort: None,
+        revision: 1,
+        selected_by_operation_id: None,
+        updated_at_ms: 4,
+    };
+    store
+        .initialize_agent_runtime_selection(&source)
+        .await
+        .unwrap();
+    let source_authority = AgentCheckpointBindingAuthorityV1 {
+        schema_version: AGENT_CHECKPOINT_SCHEMA_VERSION_V1,
+        binding: SessionBindingRecordV1 {
+            agent_id: agent_id.clone(),
+            runtime_kind_id: RuntimeKindIdV1::new("runtime.hmux").unwrap(),
+            session_id: "native-source".into(),
+            provider_conversation_id: Some("conversation-after-clear".into()),
+            credential_reference_id: None,
+            binding_generation: 1,
+            bound_at_ms: 4,
+        },
+        runtime_workspace_id: "workspace-codex-scale-0".into(),
+        runner_principal: "local-user".into(),
+        runner_instance: "runner-source".into(),
+        channel_epoch: "1".into(),
+        host_instance_id: "host-source".into(),
+        terminal_epoch: "terminal-source".into(),
+        updated_at_ms: 4,
+    };
+    store
+        .upsert_agent_checkpoint_binding_authority(&source_authority)
+        .await
+        .unwrap();
+    let operation_id = OperationIdV1::new("cleared-terminal-to-chat").unwrap();
+    let admitted = store
+        .admit_agent_runtime_transition(&AgentRuntimeTransitionIntentV1 {
+            schema_version: 1,
+            operation_id: operation_id.clone(),
+            idempotency_key: "cleared-terminal-to-chat-key".into(),
+            source,
+            source_authority: AgentRuntimeBindingAuthorityV1::NativeCli {
+                authority: source_authority,
+            },
+            source_stop_policy: AgentRuntimeSourceStopPolicyV1::Preserve,
+            provider_conversation_ref: AgentProviderConversationPlanV1::resume(
+                "conversation-after-clear",
+            )
+            .unwrap(),
+            target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
+            target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
+            target_launch_selection: None,
+            workspace_move: None,
+            requested_at_ms: 10,
+        })
+        .await
+        .unwrap();
+    let stopped = store
+        .advance_agent_runtime_transition(&AgentRuntimeTransitionAdvanceRequestV1 {
+            schema_version: 1,
+            operation_id,
+            expected_journal_revision: admitted.journal_revision,
+            advance: AgentRuntimeTransitionAdvanceV1::SourceStopped,
+            advanced_at_ms: 11,
+        })
+        .await
+        .unwrap();
+    let request = StructuredProviderOpenRequestV1 {
+        agent_id: agent_id.clone(),
+        execution_profile: AgentExecutionProfileV1::ProviderDefault,
+        provider_conversation_ref: Some("conversation-after-clear".into()),
+        permission_mode: ProviderPermissionModeV1::Default,
+        model: None,
+        effort: None,
+    };
+    let configuration = ManagedStructuredRuntimeConfiguration::new(
+        "generation-1",
+        ManagedProviderExecutable::new(ManagedProviderKind::Codex, Some(provider_launcher.clone())),
+        provider_launcher,
+        hmux_runtime,
+        discovery_root,
+        state_root.clone(),
+        state_root,
+    )
+    .unwrap();
+    let manager = ManagedStructuredRuntimeManager::new(
+        configuration,
+        Arc::new(ProviderCredentialProfileRegistry::new(
+            credential_home,
+            Arc::clone(&store),
+        )),
+        Arc::clone(&conversation_service),
+        Arc::new(AgentConversationRuntimeRegistry::default()),
+        Arc::clone(&store),
+    );
+
+    // The fixture's provider exits at launch; the binding is replaced first.
+    let first = manager
+        .open_replacement_runtime(
+            request.clone(),
+            &stopped,
+            ProviderStateEnvironment::default(),
+        )
+        .await
+        .unwrap_err();
+    assert_ne!(first.kind, ErrorKind::RuntimeConflict, "{first:?}");
+    let target = conversation_service
+        .binding(&earlier.interaction_session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        target.provider_conversation_ref.as_deref(),
+        Some("conversation-after-clear")
+    );
+    assert_eq!(target.runtime, transition_runtime(&stopped));
+    assert_eq!(target.binding_revision, earlier.binding_revision + 1);
+    assert_ne!(target.timeline_epoch, earlier.timeline_epoch);
+    assert_eq!(
+        target.timeline_epoch,
+        earlier
+            .replacement_timeline_epoch(Some("conversation-after-clear"), &target.runtime)
+            .unwrap()
+    );
+    assert!(!target.history_complete);
+
+    // Applied again, as after a restart, the transition finds its target.
+    let retry = manager
+        .open_replacement_runtime(request, &stopped, ProviderStateEnvironment::default())
+        .await
+        .unwrap_err();
+    assert_eq!((retry.kind, retry.code), (first.kind, first.code));
+    assert_eq!(
+        conversation_service
+            .binding(&earlier.interaction_session_id)
+            .await
+            .unwrap(),
+        Some(target)
+    );
+}
+
 /// Settles `binding`'s history as a provider bridge does at attach, and
 /// returns the binding the store then holds.
 async fn settle_history(

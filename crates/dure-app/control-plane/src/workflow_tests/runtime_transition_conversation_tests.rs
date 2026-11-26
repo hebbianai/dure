@@ -54,6 +54,31 @@ impl structured_provider_runtime::StructuredProviderRuntime for ResumingChatRunt
         let store = Arc::clone(&self.store);
         let provider_id = transition.intent.source.provider_id.clone();
         Box::pin(async move {
+            let target = AgentProviderRuntimeFenceV1 {
+                runtime_generation: "cleared-terminal-chat-runtime".into(),
+                provider_epoch: "cleared-terminal-chat-provider".into(),
+            };
+            // An earlier Chat's binding is replaced, as both Chat runtimes do.
+            if let Some(earlier) = store
+                .agent_interaction_for_agent(&request.agent_id)
+                .await
+                .map_err(|_| unavailable())?
+            {
+                return store
+                    .replace_agent_interaction_runtime(&dure_app::AgentRuntimeReplacementV1 {
+                        schema_version: 1,
+                        interaction_session_id: earlier.interaction_session_id,
+                        expected_binding_revision: earlier.binding_revision,
+                        source: earlier.runtime,
+                        source_execution_profile: earlier.execution_profile,
+                        target,
+                        target_execution_profile: request.execution_profile,
+                        provider_conversation_ref: request.provider_conversation_ref,
+                        replaced_at_ms: 30,
+                    })
+                    .await
+                    .map_err(|_| unavailable());
+            }
             store
                 .create_agent_interaction(&AgentInteractionBindingV1 {
                     schema_version: 1,
@@ -65,10 +90,7 @@ impl structured_provider_runtime::StructuredProviderRuntime for ResumingChatRunt
                     provider_id,
                     execution_profile: request.execution_profile,
                     provider_conversation_ref: request.provider_conversation_ref,
-                    runtime: AgentProviderRuntimeFenceV1 {
-                        runtime_generation: "cleared-terminal-chat-runtime".into(),
-                        provider_epoch: "cleared-terminal-chat-provider".into(),
-                    },
+                    runtime: target,
                     timeline_epoch: AgentTimelineEpochV1::new("cleared-terminal-chat-timeline")
                         .unwrap(),
                     binding_revision: 1,
@@ -391,11 +413,12 @@ async fn a_terminal_agent_moves_into_chat_with_the_conversation_its_clear_starte
     );
 }
 
+/// The Agent was in Chat before it moved to the Terminal and ran `/clear`.
+/// Moving into Chat again resumes the conversation `/clear` started, in a new
+/// timeline of the same Chat, instead of refusing the move.
 #[tokio::test]
-async fn a_chat_that_continues_the_conversation_before_clear_refuses_the_move_before_the_terminal_stops()
- {
+async fn an_agent_back_from_chat_moves_into_chat_again_after_clear() {
     let terminal = cleared_terminal().await;
-    // The Agent was in Chat before it moved to the Terminal and ran `/clear`.
     let earlier_chat = AgentInteractionBindingV1 {
         schema_version: 1,
         interaction_session_id: AgentInteractionSessionIdV1::new("earlier-chat").unwrap(),
@@ -419,49 +442,51 @@ async fn a_chat_that_continues_the_conversation_before_clear_refuses_the_move_be
         .create_agent_interaction(&earlier_chat)
         .await
         .unwrap();
-    let selection = terminal
-        .state
-        .store
-        .agent_runtime_selection(&terminal.agent_id)
-        .await
-        .unwrap();
 
-    let error = move_into_chat(&terminal).await.unwrap_err();
+    let receipt = move_into_chat(&terminal).await.unwrap();
 
-    assert_eq!(error.code, "agent_runtime_provider_conversation_changed");
-    assert_eq!(error.disposition, BackendFailureDispositionV1::Terminal);
-    assert!(!terminal.stop_calls.exists(), "the Terminal keeps running");
-    assert!(terminal.resumed.lock().unwrap().is_empty());
+    assert_eq!(
+        serde_json::to_value(&receipt).unwrap()["providerConversationRef"],
+        AFTER_CLEAR
+    );
+    assert_eq!(
+        *terminal.resumed.lock().unwrap(),
+        vec![Some(AFTER_CLEAR.to_owned())],
+    );
+    assert_eq!(fs::read(&terminal.stop_calls).unwrap(), b"x");
     let (operation_id, _) =
         agent_runtime_transition_apply::runtime_transition_identity(ATTEMPT).unwrap();
-    assert!(
+    assert_eq!(
         terminal
             .state
             .store
             .agent_runtime_transition(&operation_id)
             .await
             .unwrap()
-            .is_none()
+            .unwrap()
+            .state,
+        AgentRuntimeTransitionStateV1::Committed
     );
+    let chat = terminal
+        .state
+        .store
+        .agent_interaction_for_agent(&terminal.agent_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
-        terminal
-            .state
-            .store
-            .agent_runtime_selection(&terminal.agent_id)
-            .await
-            .unwrap(),
-        selection
+        chat.interaction_session_id,
+        earlier_chat.interaction_session_id
     );
-    assert_eq!(
-        terminal
-            .state
-            .store
-            .agent_interaction(&earlier_chat.interaction_session_id)
-            .await
-            .unwrap(),
-        Some(earlier_chat)
+    assert_eq!(chat.provider_conversation_ref.as_deref(), Some(AFTER_CLEAR));
+    assert_ne!(
+        chat.timeline_epoch, earlier_chat.timeline_epoch,
+        "the cleared conversation's rows stay in their own timeline"
     );
-    // The binding still records what the Terminal runs now.
+    assert!(
+        !chat.history_complete,
+        "the new conversation's history seeds the new timeline"
+    );
     assert_eq!(
         bound_conversation(&terminal).await.as_deref(),
         Some(AFTER_CLEAR)

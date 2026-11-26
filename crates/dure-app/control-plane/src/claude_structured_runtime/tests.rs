@@ -210,6 +210,66 @@ fn replacement_target_stays_exact_after_its_attach_settles_the_history() {
 }
 
 #[test]
+fn replacement_onto_the_conversation_clear_started_targets_its_own_timeline() {
+    let source = AgentInteractionBindingV1 {
+        schema_version: 1,
+        interaction_session_id: AgentInteractionSessionIdV1::new("interaction-cleared").unwrap(),
+        agent_id: AgentIdV1::new("agent-cleared").unwrap(),
+        provider_id: ProviderIdV1::new("claude").unwrap(),
+        execution_profile: AgentExecutionProfileV1::ProviderDefault,
+        provider_conversation_ref: Some("conversation-before-clear".into()),
+        runtime: AgentProviderRuntimeFenceV1 {
+            runtime_generation: "runtime-source".into(),
+            provider_epoch: "query-source".into(),
+        },
+        timeline_epoch: dure_app::AgentTimelineEpochV1::new("timeline-before-clear").unwrap(),
+        binding_revision: 2,
+        history_complete: true,
+        created_at_ms: 10,
+        updated_at_ms: 20,
+    };
+    let request = ClaudeStructuredOpenRequestV1 {
+        agent_id: source.agent_id.clone(),
+        execution_profile: source.execution_profile.clone(),
+        provider_conversation_ref: Some("conversation-after-clear".into()),
+        permission_mode: ProviderPermissionModeV1::Default,
+        model: None,
+        effort: None,
+    };
+    let mut target = source.clone();
+    target.provider_conversation_ref = request.provider_conversation_ref.clone();
+    target.runtime = AgentProviderRuntimeFenceV1 {
+        runtime_generation: "runtime-target".into(),
+        provider_epoch: "query-target".into(),
+    };
+    target.timeline_epoch = source
+        .replacement_timeline_epoch(Some("conversation-after-clear"), &target.runtime)
+        .unwrap();
+    target.binding_revision = 3;
+    target.history_complete = false;
+    target.updated_at_ms = 30;
+
+    assert!(is_exact_replacement_target(
+        &target,
+        &source,
+        &request,
+        &target.runtime,
+        3,
+    ));
+    // The same conversation in the cleared conversation's timeline is not
+    // the target the replacement published.
+    let mut stale = target.clone();
+    stale.timeline_epoch = source.timeline_epoch.clone();
+    assert!(!is_exact_replacement_target(
+        &stale,
+        &source,
+        &request,
+        &stale.runtime,
+        3,
+    ));
+}
+
+#[test]
 fn fresh_replacement_accepts_the_identity_allocated_by_the_exact_target_runtime() {
     let source = AgentInteractionBindingV1 {
         schema_version: 1,

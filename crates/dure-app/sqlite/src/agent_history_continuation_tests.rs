@@ -354,3 +354,114 @@ async fn continued_history_requires_the_current_history_authority() {
     ));
     assert_eq!(item_ids(&tail(&store).await), ["chat-answer"]);
 }
+
+/// The Agent moved back into Chat after `/clear` in its Terminal: the new
+/// runtime resumes another conversation than the one the timeline holds. It
+/// opens an empty timeline for that conversation, which its history seeds as
+/// on a first move into Chat, and the cleared conversation's rows and queued
+/// input stay behind in their own timeline.
+#[tokio::test]
+async fn a_replacement_onto_another_conversation_opens_an_empty_timeline_for_it() {
+    use dure_app::{AgentInputReceiptV1, AgentQueuedTurnStateV1, AgentQueuedTurnStore};
+
+    let root = TempDir::new().unwrap();
+    let store = provision(&root.path().join("domain.sqlite")).await;
+    live(
+        &store,
+        1,
+        vec![user("cleared-user"), assistant("cleared-answer", "msg_1")],
+    )
+    .await;
+    let queued = AgentStartTurnIntentV1 {
+        turn_id: AgentTurnIdV1::new("queued-turn").unwrap(),
+        client_message_id: AgentClientMessageIdV1::new("queued-input").unwrap(),
+        input: "written for the cleared conversation".into(),
+        ..start_turn()
+    };
+    store.enqueue_agent_turn(&queued).await.unwrap();
+    let cleared = tail(&store).await;
+    assert_eq!(cleared.queued_inputs.inputs.len(), 1);
+
+    let replacement = AgentRuntimeReplacementV1 {
+        schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+        interaction_session_id: interaction(),
+        expected_binding_revision: 1,
+        source: runtime(1),
+        source_execution_profile: interaction_binding().execution_profile,
+        target: runtime(2),
+        target_execution_profile: interaction_binding().execution_profile,
+        provider_conversation_ref: Some("conversation-after-clear".into()),
+        replaced_at_ms: 150,
+    };
+    let replaced = store
+        .replace_agent_interaction_runtime(&replacement)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        replaced.provider_conversation_ref.as_deref(),
+        Some("conversation-after-clear")
+    );
+    assert_eq!(
+        replaced.timeline_epoch,
+        cleared
+            .binding
+            .replacement_timeline_epoch(Some("conversation-after-clear"), &runtime(2))
+            .unwrap(),
+        "the store opens the epoch the binding's rule names",
+    );
+    assert_ne!(replaced.timeline_epoch, cleared.binding.timeline_epoch);
+    assert!(!replaced.history_complete);
+    assert_eq!(
+        store
+            .agent_history_hydration_authority(&interaction())
+            .await
+            .unwrap()
+            .disposition,
+        AgentHistoryHydrationDispositionV1::Seedable
+    );
+    let opened = tail(&store).await;
+    assert!(opened.rows.is_empty(), "{:?}", item_ids(&opened));
+    assert!(opened.queued_inputs.inputs.is_empty());
+    let Some(AgentInputReceiptV1::Queued { receipt }) = store
+        .inspect_agent_input(&interaction(), &queued.client_message_id)
+        .await
+        .unwrap()
+    else {
+        panic!("the queued input keeps its receipt");
+    };
+    assert_eq!(receipt.state, AgentQueuedTurnStateV1::Canceled);
+    assert_eq!(
+        receipt.timeline_cursor.epoch, cleared.binding.timeline_epoch,
+        "the input is canceled where it was queued"
+    );
+    let mut retried = replacement.clone();
+    retried.replaced_at_ms = 999;
+    assert_eq!(
+        store
+            .replace_agent_interaction_runtime(&retried)
+            .await
+            .unwrap(),
+        replaced,
+        "a replayed replacement finds the timeline it opened"
+    );
+
+    let receipt = store
+        .reconcile_agent_history(
+            &snapshot(
+                &store,
+                vec![
+                    user("after-clear-user"),
+                    assistant("after-clear-answer", "msg_9"),
+                ],
+            )
+            .await,
+        )
+        .await
+        .unwrap();
+    assert!(receipt.binding.history_complete);
+    assert_eq!(
+        item_ids(&tail(&store).await),
+        ["after-clear-user", "after-clear-answer"]
+    );
+}
