@@ -30,7 +30,9 @@ export const RUNS_HELP = `Usage:
 Lists durable Run records, including headless Runs and earlier app/Host generations.
 launchState describes the original launch, not current process liveness. List is
 bounded to 64 records; continue with nextCursor until null. A name shared by
-several Runs or Agents is refused with each candidate's exact retry command.
+several Runs or Agents is refused with each candidate's exact retry command. A
+retry_required or failed launch whose Agent never got a runtime does not make
+its name ambiguous.
 Agents launched, resumed or imported by the app have no Run record. Every action
 also selects them by Agent ID, or by name or Session ID from the app's Agent list;
 the backend confirms each. A Session ID also resolves through the backend's own
@@ -152,8 +154,8 @@ export async function collectRunsCommand({
     const listed = await listRunRecords({ backend, requestBackend, selector, cursor: opts.cursor });
     if (listed.error) return failure(listed.error);
     if (action === "list") return { ...base, ok: true, backend: listed.backend, ...listed.page };
-    const selection = selectRunRecord(listed.page, selector,
-      (agentId) => exactRunRetry({ action, agentId, opts, backendId: backend.profile.id }));
+    const selection = await selectRunRecord({ page: listed.page, selector, backend, requestBackend,
+      retry: (agentId) => exactRunRetry({ action, agentId, opts, backendId: backend.profile.id }) });
     if (selection.error) return failure(selection.error);
     // App-launched, resumed and imported Agents have no spawn receipt; the
     // backend runtime projection still owns their account and recovery.

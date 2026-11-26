@@ -354,7 +354,8 @@ current existing runtime without launching another provider. `resume` preserves
 the conversation: a confirmed stopped source with a waiting deferred target uses
 backend wake; an existing native source uses the local recovery broker. Both work
 without an open app and publish the new binding. A retained Run record alone does
-not prove reboot recovery is possible.
+not prove reboot recovery is possible. A `retry_required` or `failed` launch whose
+Agent never got a runtime does not make its name ambiguous.
 
 When no Agent the backend holds can resume a conversation, for example after
 the Agent was removed, start a new one from its provider conversation ID:

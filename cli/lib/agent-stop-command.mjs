@@ -120,7 +120,8 @@ export async function collectRunRecordStop({
     }
     const listed = await listRunRecords({ backend, requestBackend, selector });
     if (listed.error) return { ok: false, error: listed.error };
-    const selection = selectRunRecord(listed.page, selector, (agentId) => ["stop", agentId, "--yes"]);
+    const selection = await selectRunRecord({ page: listed.page, selector, backend, requestBackend,
+      retry: (agentId) => ["stop", agentId, "--yes"] });
     if (selection.error) return { ok: false, error: selection.error };
     const run = selection.run;
     if (!run) return appReceipt;
