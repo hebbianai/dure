@@ -22,7 +22,7 @@ async function handleSpaceActivate(
     const route = await routeCliRequestToSpaceOwner({
       reqId, params, action: legacyAction ? "desktop.activate" : "space.activate",
     });
-    if (route.kind === "forwarded") return null;
+    if (route.kind === "elsewhere") return null;
     space = legacyAction
       ? resolveDesktopActivationTarget(useStore.getState().spaces, spaceId)
       : resolveSpaceActivationTarget(useStore.getState().spaces, spaceId);

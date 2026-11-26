@@ -221,7 +221,7 @@ describe("handleCliHmuxCreate", () => {
 		const run = harness();
 		run.getDockview.mockReturnValue(undefined);
 		const routeToSpaceOwner = vi.fn(async () => ({
-			kind: "forwarded" as const,
+			kind: "elsewhere" as const,
 		}));
 		const dependencies = {
 			...run.dependencies,

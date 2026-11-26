@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	type CliSpaceOwnerRoutingDependencies,
-	resolveMountedSpaceOwner,
+	resolveSpaceOwner,
 	routeCliRequestToSpaceOwner,
 	type SpaceOwnerCollector,
 	type SpaceOwnerObservation,
@@ -13,6 +13,38 @@ function observation(
 	options: { mounted: boolean; active: boolean },
 ): SpaceOwnerObservation {
 	return { spaceId, windowLabel, ...options };
+}
+
+/** Every listed window answers that it has not mounted the Space. */
+function unmountedCollector(
+	currentWindowLabel: string,
+	windowLabels: string[],
+	space: { id: string; kind?: "popout" } | undefined,
+): SpaceOwnerCollector {
+	let respond: (payload: unknown) => void = () => undefined;
+	return {
+		currentWindowLabel: () => currentWindowLabel,
+		listWindowLabels: async () => windowLabels,
+		readLocal: (spaceId) =>
+			observation(spaceId, currentWindowLabel, {
+				mounted: false,
+				active: false,
+			}),
+		readSpace: () => space,
+		listenResponse: async (listener) => {
+			respond = listener;
+			return () => undefined;
+		},
+		emitRequest: async (windowLabel, request) => {
+			respond({
+				requestId: request.requestId,
+				sample: observation(request.spaceId, windowLabel, {
+					mounted: false,
+					active: false,
+				}),
+			});
+		},
+	};
 }
 
 describe("presentation Space owner routing", () => {
@@ -57,7 +89,7 @@ describe("presentation Space owner routing", () => {
 				},
 				dependencies,
 			),
-		).resolves.toEqual({ kind: "forwarded" });
+		).resolves.toEqual({ kind: "elsewhere" });
 		expect(dependencies.resolveOwner).toHaveBeenCalledWith("space-active");
 		expect(forward).toHaveBeenCalledExactlyOnceWith("win-100-2", {
 			reqId: "default-space",
@@ -85,6 +117,7 @@ describe("presentation Space owner routing", () => {
 					mounted: true,
 					active: false,
 				}),
+			readSpace: (id) => ({ id }),
 			listenResponse: async (listener) => {
 				respond = listener;
 				return stop;
@@ -101,7 +134,7 @@ describe("presentation Space owner routing", () => {
 		};
 
 		await expect(
-			resolveMountedSpaceOwner("space-target", dependencies, 20),
+			resolveSpaceOwner("space-target", dependencies, 20),
 		).resolves.toBe("win-100-2");
 		expect(stop).toHaveBeenCalledOnce();
 	});
@@ -115,13 +148,80 @@ describe("presentation Space owner routing", () => {
 					mounted: true,
 					active: false,
 				}),
+			readSpace: (id) => ({ id }),
 			listenResponse: async () => () => undefined,
 			emitRequest: async () => undefined,
 		};
 
 		await expect(
-			resolveMountedSpaceOwner("space-target", dependencies, 20),
+			resolveSpaceOwner("space-target", dependencies, 20),
 		).resolves.toBe("main");
+	});
+
+	it("gives a Space no window shows to the window that mounts it", async () => {
+		// The Agent's large window cannot mount a Space, so the Space's own
+		// window presents it even while the large window has the request.
+		await expect(
+			resolveSpaceOwner(
+				"space-target",
+				unmountedCollector("win-session-agent", ["main", "win-100-1"], {
+					id: "space-target",
+				}),
+				20,
+			),
+		).resolves.toBe("main");
+		await expect(
+			resolveSpaceOwner(
+				"space-target",
+				unmountedCollector("win-100-1", ["main", "win-100-1"], {
+					id: "space-target",
+				}),
+				20,
+			),
+		).resolves.toBe("main");
+	});
+
+	it("gives an unshown Space to another window that can mount it", async () => {
+		await expect(
+			resolveSpaceOwner(
+				"space-target",
+				unmountedCollector("win-presentation", ["win-100-2", "win-100-1"], {
+					id: "space-target",
+				}),
+				20,
+			),
+		).resolves.toBe("win-100-1");
+		await expect(
+			resolveSpaceOwner(
+				"space-popout",
+				unmountedCollector(
+					"main",
+					["main", "win-100-1", "win-popout-space-popout"],
+					{ id: "space-popout", kind: "popout" },
+				),
+				20,
+			),
+		).resolves.toBe("win-popout-space-popout");
+	});
+
+	it("leaves an unknown or unshowable Space to the receiving window", async () => {
+		await expect(
+			resolveSpaceOwner(
+				"space-gone",
+				unmountedCollector("win-session-agent", ["main"], undefined),
+				20,
+			),
+		).resolves.toBeUndefined();
+		await expect(
+			resolveSpaceOwner(
+				"space-popout",
+				unmountedCollector("win-session-agent", ["main"], {
+					id: "space-popout",
+					kind: "popout",
+				}),
+				20,
+			),
+		).resolves.toBeUndefined();
 	});
 
 	it("uses an active local owner without a window census", async () => {
@@ -134,12 +234,13 @@ describe("presentation Space owner routing", () => {
 					mounted: true,
 					active: true,
 				}),
+			readSpace: (id) => ({ id }),
 			listenResponse: async () => () => undefined,
 			emitRequest: async () => undefined,
 		};
 
 		await expect(
-			resolveMountedSpaceOwner("space-target", dependencies, 20),
+			resolveSpaceOwner("space-target", dependencies, 20),
 		).resolves.toBe("main");
 		expect(listWindowLabels).not.toHaveBeenCalled();
 	});
@@ -161,7 +262,7 @@ describe("presentation Space owner routing", () => {
 					{ reqId: "request-1", action, params },
 					dependencies,
 				),
-			).resolves.toEqual({ kind: "forwarded" });
+			).resolves.toEqual({ kind: "elsewhere" });
 			expect(forward).toHaveBeenCalledOnce();
 			expect(forward).toHaveBeenCalledWith("win-100-2", {
 				reqId: "request-1",
@@ -195,6 +296,35 @@ describe("presentation Space owner routing", () => {
 		).resolves.toEqual({ kind: "local", spaceId: "space-target" });
 		expect(resolveOwner).not.toHaveBeenCalled();
 	});
+
+	it.each([
+		["pane.open", { spaceId: "space-target", tool: "file", path: "/a.png" }],
+		["pane.close", { targetPanelId: "term:a" }],
+	])(
+		"leaves %s addressed to another window to that window",
+		async (action, params) => {
+			// Every window receives every request; only the addressed one runs it.
+			const dependencies: CliSpaceOwnerRoutingDependencies = {
+				currentWindowLabel: () => "win-session-agent",
+				activeSpaceId: () => "space-active",
+				resolveOwner: vi.fn(async () => "main"),
+				forward: vi.fn(async () => undefined),
+			};
+
+			await expect(
+				routeCliRequestToSpaceOwner(
+					{
+						reqId: "request-3",
+						action,
+						params: { ...params, windowLabel: "main" },
+					},
+					dependencies,
+				),
+			).resolves.toEqual({ kind: "elsewhere" });
+			expect(dependencies.resolveOwner).not.toHaveBeenCalled();
+			expect(dependencies.forward).not.toHaveBeenCalled();
+		},
+	);
 
 	it("does not narrow a legacy unscoped close to the active Space", async () => {
 		const dependencies = {

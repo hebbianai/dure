@@ -231,7 +231,7 @@ export async function handleCliHmuxCreate(
 
 	try {
 		const route = await dependencies.routeToSpaceOwner({ reqId, params });
-		if (route.kind === "forwarded") return null;
+		if (route.kind === "elsewhere") return null;
 		if (!(await claim())) return null;
 		const desktopId = route.spaceId ?? dependencies.activeSpaceId();
 		const api = dependencies.getDockview(desktopId);

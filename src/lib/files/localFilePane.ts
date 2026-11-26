@@ -20,7 +20,10 @@ export async function openLocalFilePane(spaceId: string, path: string) {
 	}
 	state.setActiveSpace(spaceId);
 	const api = await waitForDesktopDockview(spaceId);
-	if (!api) throw new Error(`Space ${spaceId} is not mounted`);
+	if (!api)
+		throw new Error(
+			`Space ${spaceId} is not mounted; to show the file in front instead, use: dure client pane open file PATH --window`,
+		);
 	const existingIds = new Set(api.panels.map((pane) => pane.id));
 	const pane = openFileViewerOn(api, target);
 	return {
