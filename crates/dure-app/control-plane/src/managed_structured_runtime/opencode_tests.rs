@@ -307,3 +307,227 @@ async fn exercise(
     }
     (binding, descriptor, endpoint)
 }
+
+/// A Terminal Agent's OpenCode conversation moved into Chat, longer than one
+/// answer of the session client and than the window Chat seeds: 199 prompts
+/// of about 400 KB each and an answered last turn, recorded by OpenCode itself
+/// in the same disposable home before the managed runtime attaches to the
+/// conversation.
+#[test]
+#[ignore = "requires isolated OpenCode, fake LLM, and actual Hmux conformance fixture"]
+fn live_opencode_opens_a_long_terminal_conversation_in_chat() {
+    let root =
+        PathBuf::from(std::env::var_os("DURE_QA_OPENCODE_RUNTIME_ROOT").unwrap()).join("long");
+    tests::owner_directory(&root);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        use crate::opencode_session_client::SessionId;
+        let (store, service, manager) = fixture(
+            &root,
+            false,
+            ManagedProviderKind::OpenCode,
+            env_path("DURE_QA_OPENCODE_BIN"),
+        )
+        .await;
+        let session = SessionId::parse("ses_dure_terminal_history").unwrap();
+        record_terminal_conversation(&root.join("workspace-0"), &session, 200).await;
+        let agent_id = AgentIdV1::new("agent-opencode-scale-0").unwrap();
+        let settings = ProviderTurnSettings::new(
+            ProviderPermissionModeV1::Default,
+            Some(AgentSpawnModelSelectionV1::parse("fixture/fixture-model").unwrap()),
+            Some(AgentSpawnEffortSelectionV1::parse("low").unwrap()),
+        );
+        store
+            .initialize_agent_runtime_selection(&AgentRuntimeSelectionV1 {
+                schema_version: 1,
+                agent_id: agent_id.clone(),
+                provider_id: ProviderIdV1::new("opencode").unwrap(),
+                interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
+                execution_profile: AgentExecutionProfileV1::ProviderDefault,
+                permission_mode: settings.permission_mode.clone(),
+                model: settings.model.clone(),
+                effort: settings.effort.clone(),
+                revision: 1,
+                selected_by_operation_id: None,
+                updated_at_ms: 4,
+            })
+            .await
+            .unwrap();
+
+        let binding = manager
+            .open_runtime(open_request(
+                &agent_id,
+                Some(session.as_str().into()),
+                &settings,
+            ))
+            .await
+            .expect("a long Terminal conversation opens in Chat");
+
+        let shown = conversation(&service, &binding).await;
+        assert_eq!(shown[0], "boundary:provider_history_truncated");
+        let first = shown[1]
+            .strip_prefix("Terminal prompt ")
+            .and_then(|index| index.parse::<usize>().ok())
+            .unwrap();
+        let newest = (first..200)
+            .map(|index| format!("Terminal prompt {index}"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            shown[1..],
+            newest,
+            "the newest prompts, each once, in order"
+        );
+        // The window holds the newest 64 MiB of the about 80 MB conversation.
+        assert!((1..=40).contains(&first), "window starts at prompt {first}");
+        println!("Chat opened with Terminal prompts {first} to 199 behind a history boundary");
+
+        let bridge = bridge(&manager, &binding).await;
+        let intent = turn_intent(
+            &binding,
+            "after-terminal",
+            "Continue after the Terminal history.",
+        );
+        service.start_turn(bridge.as_ref(), &intent).await.unwrap();
+        wait_completed(&service, &binding, &intent.turn_id).await;
+        assert_eq!(
+            conversation(&service, &binding)
+                .await
+                .last()
+                .map(String::as_str),
+            Some("Continue after the Terminal history."),
+            "a Chat prompt follows the history"
+        );
+        manager.stop_binding(&binding, false).await.unwrap();
+    });
+}
+
+/// Records `count` large prompts in `session` through a separate OpenCode
+/// server, as a person's Terminal session of the same conversation would.
+async fn record_terminal_conversation(
+    workspace: &Path,
+    session: &crate::opencode_session_client::SessionId,
+    count: usize,
+) {
+    use crate::opencode_session_client::OpenCodeSessionClient;
+    use tokio::io::AsyncBufReadExt;
+    let password = "terminal-fixture-only";
+    let mut server = tokio::process::Command::new(env_path("DURE_QA_OPENCODE_BIN"))
+        .args(["serve", "--port", "0", "--hostname", "127.0.0.1"])
+        .current_dir(workspace)
+        .env("OPENCODE_SERVER_USERNAME", "opencode")
+        .env("OPENCODE_SERVER_PASSWORD", password)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut lines = tokio::io::BufReader::new(server.stdout.take().unwrap()).lines();
+    let port = timeout(Duration::from_secs(15), async {
+        loop {
+            let line = lines.next_line().await.unwrap().unwrap();
+            if let Some(port) = crate::opencode_connection_driver::ready_port(line.trim()) {
+                break port;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let client = OpenCodeSessionClient::new(port, password.into(), workspace).unwrap();
+    client.create(session).await.unwrap();
+    // The fixture model answers only the newest prompt, which ends the
+    // Terminal's last turn; asking it about each prompt would send it the
+    // whole growing conversation every time.
+    for index in 0..count - 1 {
+        let message = format!("msg_terminal{index:04}");
+        let input = format!("Terminal prompt {index} {}", "T".repeat(400_000));
+        client
+            .record_without_reply(session, &message, &input)
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(20), async {
+            while client.message(session, &message).await.unwrap().is_none() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    let message = format!("msg_terminal{:04}", count - 1);
+    client
+        .prompt(
+            session,
+            &message,
+            &format!("Terminal prompt {}", count - 1),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    timeout(Duration::from_secs(60), async {
+        loop {
+            let mut newest = client.message_pages(session).next().await.unwrap().unwrap();
+            let info = newest.messages.pop().unwrap()["info"].take();
+            if info["parentID"] == message.as_str() && info["finish"] == "stop" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the fixture model answers the Terminal's newest prompt");
+    server.kill().await.unwrap();
+}
+
+/// The timeline's history boundaries and the leading words of its prompts,
+/// oldest first.
+async fn conversation(
+    service: &AgentConversationService<SqliteDomainStore>,
+    binding: &AgentInteractionBindingV1,
+) -> Vec<String> {
+    let mut rows = Vec::new();
+    let mut direction = AgentTimelineReadDirectionV1::Tail;
+    let mut cursor = None;
+    loop {
+        let read = service
+            .read(&AgentTimelineReadRequestV1 {
+                schema_version: 1,
+                interaction_session_id: binding.interaction_session_id.clone(),
+                direction,
+                cursor,
+                limit: MAX_AGENT_TIMELINE_PAGE_ITEMS_V1,
+            })
+            .await
+            .unwrap();
+        let AgentTimelineReadV1::Page { page } = read else {
+            panic!("timeline reset")
+        };
+        cursor = page.rows.first().map(|row| row.cursor.clone());
+        let more = page.has_more;
+        rows.splice(0..0, page.rows);
+        if !more {
+            break;
+        }
+        direction = AgentTimelineReadDirectionV1::Before;
+    }
+    rows.iter()
+        .filter_map(|row| match &row.item.body {
+            AgentTimelineItemBodyV1::HistoryBoundary { reason, .. } => {
+                Some(format!("boundary:{reason}"))
+            }
+            AgentTimelineItemBodyV1::Message {
+                role: AgentTimelineMessageRoleV1::User,
+                markdown,
+            } => Some(
+                markdown
+                    .strip_prefix("Terminal prompt ")
+                    .and_then(|rest| rest.split(' ').next())
+                    .map(|index| format!("Terminal prompt {index}"))
+                    .unwrap_or_else(|| markdown.clone()),
+            ),
+            _ => None,
+        })
+        .collect()
+}

@@ -69,7 +69,10 @@ try {
     DURE_QA_OPENCODE_BIN: opencode, DURE_QA_CONTROL_PLANE_BIN: controlPlane, DURE_QA_HMUX_RUNTIME: hmuxRuntime, DURE_QA_OPENCODE_RUNTIME_ROOT: root,
   };
   assert.equal((await run(opencode, ["--version"], { env })).trim(), "1.18.29", "qualify and update the pinned provider contract before changing this version");
-  process.stdout.write(await run(testBinary, ["--ignored", "--exact", "managed_structured_runtime::opencode_tests::live_opencode_keeps_the_exact_conversation_across_settings_and_reconnect", "--nocapture"], { env }));
+  for (const test of [
+    "live_opencode_keeps_the_exact_conversation_across_settings_and_reconnect",
+    "live_opencode_opens_a_long_terminal_conversation_in_chat",
+  ]) process.stdout.write(await run(testBinary, ["--ignored", "--exact", `managed_structured_runtime::opencode_tests::${test}`, "--nocapture"], { env }));
   const actual = observations.filter((entry) => entry.mainTurn);
   for (const [modelId, effort] of [["fixture-model", "low"], ["fixture-alternate", "low"], ["fixture-alternate", "high"]]) {
     assert(actual.some((entry) => entry.model === modelId && entry.effort === effort), `missing actual LLM request for ${modelId}/${effort}`);
