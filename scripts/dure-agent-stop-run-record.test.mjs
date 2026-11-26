@@ -88,6 +88,19 @@ describe("stopping a Run the app has not opened", () => {
       .toContain("dure 'stop' 'agent-scheduled-2' '--yes'");
   });
 
+  it("stops the launched Run when a same-named launch stopped before its Agent had a runtime", async () => {
+    const stopped = { ...run, agentId: "agent-scheduled-0", operationId: "spawn-scheduled-0",
+      launchState: "retry_required" };
+    const f = stopWith({
+      "agent_runtime.projection.inspect": (body) => ({ schemaVersion: 1, state: "unmanaged", agentId: body.agentId }),
+      "dispatch.stop.status": stopResult({ status: "workspace_preserved", runtime: {} }, 3),
+    }, [stopped, run]);
+    const report = await f.stop("nightly-review");
+    expect(report).toMatchObject({ ok: true, agent: { id: run.agentId }, dispatchStop: { status: "workspace_preserved" } });
+    expect(f.operations()).toEqual(["agent_spawn.list", "agent_runtime.projection.inspect", "dispatch.stop.status"]);
+    expect(f.bodies()[1]).toEqual({ schemaVersion: 1, agentId: stopped.agentId });
+  });
+
   it("returns the app's answer when the backend has no Run record either", async () => {
     const f = stopWith({}, []);
     expect(await f.stop("ghost")).toBe(appReceipt);
