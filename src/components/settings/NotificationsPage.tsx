@@ -251,6 +251,12 @@ export function NotificationsPage() {
 						onCheckedChange={(v) => set({ agentExited: v })}
 					/>
 					<SwitchRow
+						title={t("settings.notifications.event.agentMessage.title")}
+						desc={t("settings.notifications.event.agentMessage.desc")}
+						checked={np.agentMessage}
+						onCheckedChange={(v) => set({ agentMessage: v })}
+					/>
+					<SwitchRow
 						title={t("settings.notifications.event.terminalBell.title")}
 						desc={t("settings.notifications.event.terminalBell.desc")}
 						checked={np.terminalBell}

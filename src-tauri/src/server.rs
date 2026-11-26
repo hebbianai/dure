@@ -48,6 +48,9 @@ const HMUX_REMOTE_SHELL_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(
 const PROJECT_ADD_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const SPAWN_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(35);
 const WORKSPACE_IMPORT_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(35);
+// Admission plus the OS notification request, which first reads the
+// notification settings; both are quick, but a loaded machine can pass 2 s.
+const AGENT_NOTIFY_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REQUEST_BODY_BYTES: u64 = 64 * 1024;
 const CLI_API_VERSION: u32 = 1;
 const SERVER_CAPABILITIES: &[&str] = &[
@@ -84,6 +87,9 @@ const SERVER_CAPABILITIES: &[&str] = &[
     // Run presentation requests may carry `startedAtMs`, which commits a
     // lead's concurrent workers in start order.
     "agent.run_start_order_v1",
+    // `/agent/notify` shows one message from an agent or a command to the
+    // person, under the Rust-owned rate limit in `agent_notice`.
+    "agent.notify_v1",
 ];
 fn claimed_request_timeout(action: &str) -> Duration {
     match action {
@@ -99,6 +105,7 @@ fn claimed_request_timeout(action: &str) -> Duration {
         "hmux.remote-shell" => HMUX_REMOTE_SHELL_CLAIMED_REQUEST_TIMEOUT,
         "project.add" => PROJECT_ADD_CLAIMED_REQUEST_TIMEOUT,
         "spawn" => SPAWN_CLAIMED_REQUEST_TIMEOUT,
+        "agent.notify" => AGENT_NOTIFY_CLAIMED_REQUEST_TIMEOUT,
         "sessions.recent"
         | "workspace.import.preview"
         | "workspace.import.status"
@@ -159,6 +166,17 @@ const FRONTEND_ROUTES: &[FrontendRoute] = &[
         method: Method::Post,
         path: "/agent/run-background",
         action: "agent.run-background",
+        waits_for_receipt: true,
+        scope: RouteScope::Control,
+        destructive: false,
+    },
+    // One message for the person. It waits for the receipt so the caller
+    // learns what was shown, which makes it a Control route: report-scope
+    // routes are fire-and-forget.
+    FrontendRoute {
+        method: Method::Post,
+        path: "/agent/notify",
+        action: "agent.notify",
         waits_for_receipt: true,
         scope: RouteScope::Control,
         destructive: false,
@@ -2507,6 +2525,14 @@ mod tests {
             Some(RouteScope::Control)
         );
         assert_eq!(
+            required_scope(&Method::Post, "/agent/notify"),
+            Some(RouteScope::Control)
+        );
+        assert_eq!(
+            frontend_action(&Method::Post, "/agent/notify"),
+            Some(("agent.notify", true))
+        );
+        assert_eq!(
             required_scope(&Method::Post, "/hooks"),
             Some(RouteScope::Report)
         );
@@ -2753,7 +2779,8 @@ mod tests {
                 "hmux.input.draft_guard_v1",
                 "hmux.attach.agent_runtime_v1",
                 "agent.run_parent_v1",
-                "agent.run_start_order_v1"
+                "agent.run_start_order_v1",
+                "agent.notify_v1"
             ])
         );
         std::fs::remove_dir_all(directory).unwrap();

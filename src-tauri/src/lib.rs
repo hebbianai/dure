@@ -3,6 +3,7 @@
 mod accounts;
 mod resources;
 mod agent_naming;
+mod agent_notice;
 mod agent_registry;
 mod app_channel;
 mod app_instance;
@@ -2245,6 +2246,7 @@ pub fn run() {
         .manage(plugin_issue_tracker::DureIssueTrackerState::default())
         .manage(mobile_pairing::PairingProcess::default())
         .manage(hub::commands::HubState::default())
+        .manage(agent_notice::AgentNoticeLimiter::default())
         .manage(cli_request_broker.clone());
     #[cfg(target_os = "macos")]
     let builder = builder
@@ -2492,6 +2494,7 @@ pub fn run() {
             desktop_notification::notification_dispatch,
             desktop_notification::notification_activation_take,
             desktop_notification::notification_open_settings,
+            agent_notice::agent_notice_admit,
             notification_click_qa::notification_click_qa_context,
             notification_click_qa::notification_click_qa_target_ready,
             notification_click_qa::notification_click_qa_target_is_ready,

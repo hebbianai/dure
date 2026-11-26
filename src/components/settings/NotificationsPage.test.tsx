@@ -67,6 +67,15 @@ describe("NotificationsPage", () => {
 		expect(screen.queryByText("Dock 배지")).toBeNull();
 	});
 
+	it("turns messages from agents (dure notify) off and on", () => {
+		render(<NotificationsPage />);
+		expect(useStore.getState().notifyPrefs.agentMessage).toBe(true);
+		fireEvent.click(screen.getByText("에이전트가 보낸 메시지"));
+		expect(useStore.getState().notifyPrefs.agentMessage).toBe(false);
+		fireEvent.click(screen.getByText("에이전트가 보낸 메시지"));
+		expect(useStore.getState().notifyPrefs.agentMessage).toBe(true);
+	});
+
 	it("페이지를 감싸던 720px 카드를 더 이상 그리지 않는다", () => {
 		const { container } = render(<NotificationsPage />);
 		expect(container.querySelector(".max-w-\\[720px\\]")).toBeNull();

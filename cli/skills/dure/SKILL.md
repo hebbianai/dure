@@ -13,7 +13,9 @@ produced, present it with `dure client pane open file PATH --window` (MCP:
 `app_file_present`) instead of only printing its path. It opens one large Dure
 window in front of them; without `--window` the file opens in a pane beside
 yours. Both render in Dure without a sign-in, unlike a hosted link tied to one
-account. The guide covers it. It also covers
+account. The guide covers it. When the person has to act or would want to know
+now (a decision, a blocker, the end of long work), tell them with
+`dure notify "..."`; the guide says when not to. It also covers
 `dispatch.deadline.set` / `dispatch.deadline.get` for durable coordinator attention.
 
 Use the `dure` executable selected for this session for both the guide and later
