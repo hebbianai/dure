@@ -163,6 +163,28 @@ export interface NamedLimitMeter extends CodexMeter {
   weeklyResetLabel: string | null;
 }
 
+/** Which window of a separate limit an account row shows: its weekly window
+ *  when the provider reports one, else the window that binds. The words
+ *  around it are each screen's own; this is the one choice of numbers. */
+export interface SeparateLimitReading {
+  limitId: string;
+  limitName: string | null;
+  window: "5h" | "weekly" | null;
+  pct: number;
+  resetLabel: string | null;
+}
+
+export function separateLimitReading(meter: NamedLimitMeter): SeparateLimitReading {
+  const weekly = meter.weeklyPct != null;
+  return {
+    limitId: meter.limitId,
+    limitName: meter.limitName,
+    window: weekly ? "weekly" : meter.window,
+    pct: meter.weeklyPct ?? meter.pct ?? 0,
+    resetLabel: weekly ? meter.weeklyResetLabel : meter.resetLabel,
+  };
+}
+
 /** 일반 codex 예산과 독립적인 모델별 bucket만 반환한다. 이름을 하드코딩하지
  *  않아 새 모델 limit_id가 추가돼도 백엔드가 보고한 이름으로 바로 표시된다. */
 export function codexModelMeters(u: ProviderUsage, nowSec: number): NamedLimitMeter[] {

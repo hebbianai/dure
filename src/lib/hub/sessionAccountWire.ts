@@ -17,6 +17,20 @@ export interface HubSessionAccountDispatch {
 	};
 }
 
+type SessionAccountUsageWindow = "five_hour" | "weekly";
+
+/** A limit beside the account's general one, such as a model's own weekly
+ * window. Matches `HubSeparateLimitReply` in `hub/commands.rs`. */
+export interface SessionAccountSeparateLimitReply {
+	/** The provider's name for it; absent when it gave none. */
+	readonly name?: string;
+	readonly usedPercent: number;
+	/** Absent when the provider does not say which period it covers. */
+	readonly window?: SessionAccountUsageWindow;
+	/** The desktop's compact duration, e.g. `1d 2h`. */
+	readonly resetsIn?: string;
+}
+
 /** One account the phone may pick. Matches `HubSessionAccountChoiceReply` in `hub/commands.rs`. */
 export interface SessionAccountChoiceReply {
 	readonly accountId: string | null;
@@ -26,10 +40,12 @@ export interface SessionAccountChoiceReply {
 	readonly pending: boolean;
 	readonly usage?: {
 		readonly usedPercent: number;
-		readonly window: "five_hour" | "weekly";
+		readonly window: SessionAccountUsageWindow;
 		/** The desktop's compact duration, e.g. `3h 40m`. */
 		readonly resetsIn?: string;
 	};
+	/** The separate limits the desktop's account rows list; absent when none is in use. */
+	readonly separateLimits?: readonly SessionAccountSeparateLimitReply[];
 }
 
 type HubSessionAccountOutcome =

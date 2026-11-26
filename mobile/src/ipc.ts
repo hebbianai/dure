@@ -169,6 +169,21 @@ export interface SessionAccountUsage {
   resets_in?: string | null;
 }
 
+/**
+ * A limit the provider keeps beside the account's general one, such as one
+ * model's own weekly window. It can be full while the general one has room.
+ */
+export interface SessionAccountSeparateLimit {
+  /** The provider's name for it (a model name). Absent when it gave none. */
+  name?: string | null;
+  /** 0–100, rounded as the computer draws it. */
+  used_percent: number;
+  /** Absent when the provider does not say which period it covers. */
+  window?: "five_hour" | "weekly" | null;
+  /** The computer's compact duration, e.g. `1d 2h`. Absent when not reported. */
+  resets_in?: string | null;
+}
+
 /** One account the computer's selector offers for a session's provider. */
 export interface SessionAccountChoice {
   /** Absent: the provider's default account. */
@@ -180,6 +195,8 @@ export interface SessionAccountChoice {
   pending: boolean;
   /** Absent when nothing was observed — never drawn as 0% or 100%. */
   usage?: SessionAccountUsage | null;
+  /** The separate limits in use. Absent from a computer that predates them. */
+  separate_limits?: SessionAccountSeparateLimit[] | null;
 }
 
 export type SessionAccountOutcomeKind =

@@ -23,6 +23,7 @@ import type {
   HubProbeSession,
   SessionAccountChoice,
   SessionAccountOutcome,
+  SessionAccountSeparateLimit,
   SessionAccountUsage,
 } from "./ipc";
 
@@ -88,20 +89,46 @@ export function durationText(compact: string): string {
   return words.every((word) => word !== undefined) ? words.join(" ") : compact.trim();
 }
 
+function withReset(used: string, resetsIn: string | null | undefined): string {
+  const resets = resetsIn?.trim();
+  return resets ? t("account.usage.withReset", { usage: used, reset: durationText(resets) }) : used;
+}
+
 /** "92% of the 5-hour limit used · resets in 1h 20m". */
 export function usageText(usage: SessionAccountUsage | null | undefined): string | undefined {
   if (!usage) return undefined;
   const used = t(usage.window === "weekly" ? "account.usage.weekly" : "account.usage.fiveHour", {
     percent: usage.used_percent,
   });
-  const resets = usage.resets_in?.trim();
-  return resets ? t("account.usage.withReset", { usage: used, reset: durationText(resets) }) : used;
+  return withReset(used, usage.resets_in);
+}
+
+const SEPARATE_LIMIT_KEYS = {
+  weekly: "account.usage.separateWeekly",
+  five_hour: "account.usage.separateFiveHour",
+} as const;
+
+/**
+ * "100% of the Fable 5.1 weekly limit used · resets in 1d 2h": one model's own
+ * limit, under the provider's name for it, or this phone's word when it gave
+ * none.
+ */
+export function separateLimitText(limit: SessionAccountSeparateLimit): string {
+  const name = limit.name?.trim() || t("account.usage.separateModel");
+  const key = limit.window ? SEPARATE_LIMIT_KEYS[limit.window] : "account.usage.separate";
+  return withReset(t(key, { percent: limit.used_percent, name }), limit.resets_in);
 }
 
 /** At or past this, the account is at its limit for the window shown. */
 const LIMIT_REACHED_PERCENT = 100;
 
-export function limitReached(usage: SessionAccountUsage | null | undefined): boolean {
+/**
+ * Whether a reading is at its limit. For a separate limit, that is one model's
+ * budget: the account may still run other models, so only that line says so.
+ */
+export function limitReached(
+  usage: SessionAccountUsage | SessionAccountSeparateLimit | null | undefined,
+): boolean {
   return usage != null && usage.used_percent >= LIMIT_REACHED_PERCENT;
 }
 

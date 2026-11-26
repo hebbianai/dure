@@ -18,6 +18,10 @@ const ACCOUNTS: SessionAccountChoice[] = [
     current: false,
     pending: false,
     usage: { used_percent: 12, window: "weekly" },
+    separate_limits: [
+      { name: "Fable 5.1", used_percent: 100, window: "weekly", resets_in: "1d 2h" },
+      { name: "Opus", used_percent: 30, window: "weekly" },
+    ],
   },
 ];
 
@@ -48,16 +52,37 @@ describe("renderAccountSheet", () => {
     expect(headings).toEqual([t("account.current"), t("account.switchTo")]);
     const current = host.querySelector<HTMLElement>('[data-account="acct-work"]');
     expect(current?.tagName).toBe("DIV");
-    expect(current?.classList.contains("account-sheet__row--limited")).toBe(true);
-    expect(current?.querySelector(".account-sheet__detail")?.textContent).toBe(
-      "100% of the 5-hour limit used · resets in 1h 20m",
-    );
+    const currentLine = current?.querySelector(".account-sheet__detail");
+    expect(currentLine?.textContent).toBe("100% of the 5-hour limit used · resets in 1h 20m");
+    expect(currentLine?.classList.contains("account-sheet__detail--limited")).toBe(true);
     expect(host.querySelector('[data-account="default"] .account-sheet__name')?.textContent).toBe(
       t("account.default"),
     );
     expect(host.querySelector('[data-account="default"] .account-sheet__detail')?.textContent).toBe(
       t("account.usage.unknown"),
     );
+  });
+
+  /** An account with room overall can still refuse one model: each separate
+   * limit gets its own line, and only the full one reads as at its limit. */
+  it("lists an account's separate limits under its general one", () => {
+    const host = renderAccountSheet(
+      { session: "claude-2", computer: "Laptop", stage: { kind: "ready", accounts: ACCOUNTS } },
+      actions(),
+    );
+    document.body.append(host);
+
+    const lines = [...host.querySelectorAll<HTMLElement>('[data-account="acct-spare"] .account-sheet__detail')];
+    expect(lines.map((line) => line.textContent)).toEqual([
+      "12% of the weekly limit used",
+      "100% of the Fable 5.1 weekly limit used · resets in 1d 2h",
+      "30% of the Opus weekly limit used",
+    ]);
+    expect(lines.map((line) => line.classList.contains("account-sheet__detail--limited"))).toEqual([
+      false,
+      true,
+      false,
+    ]);
   });
 
   it("chooses another account, never the current one", () => {

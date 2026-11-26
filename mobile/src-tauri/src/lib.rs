@@ -3474,7 +3474,7 @@ mod tests {
     #[test]
     fn an_account_answer_reaches_the_screen_in_the_protocol_shape() {
         use dure_hub_protocol::session_account::{
-            AccountUsage, HubSessionAccountResult, SessionAccountChoice,
+            AccountUsage, HubSessionAccountResult, SeparateLimitUsage, SessionAccountChoice,
             SessionAccountOutcome as Outcome, UsageWindow,
         };
         let outcome: SessionAccountOutcome = HubSessionAccountResult::answered(
@@ -3486,6 +3486,7 @@ mod tests {
                     current: false,
                     pending: false,
                     usage: None,
+                    separate_limits: Vec::new(),
                 },
                 SessionAccountChoice {
                     account_id: Some("account-work".into()),
@@ -3497,6 +3498,12 @@ mod tests {
                         window: UsageWindow::FiveHour,
                         resets_in: Some("1h 5m".into()),
                     }),
+                    separate_limits: vec![SeparateLimitUsage {
+                        name: Some("Fable 5.1".into()),
+                        used_percent: 100,
+                        window: Some(UsageWindow::Weekly),
+                        resets_in: Some("1d 2h".into()),
+                    }],
                 },
             ],
         )
@@ -3508,6 +3515,12 @@ mod tests {
             serde_json::json!({ "current": false, "pending": false })
         );
         assert_eq!(value["accounts"][1]["usage"]["window"], "five_hour");
+        assert_eq!(
+            value["accounts"][1]["separate_limits"],
+            serde_json::json!([
+                { "name": "Fable 5.1", "used_percent": 100, "window": "weekly", "resets_in": "1d 2h" }
+            ])
+        );
         assert_eq!(value["detail"], serde_json::Value::Null);
     }
 

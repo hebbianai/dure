@@ -1,7 +1,8 @@
 /**
  * The account sheet a session row's menu opens (#287): which account the
- * session runs on, how much of its limit is left, and the accounts the paired
- * computer would move it to.
+ * session runs on, how much of its limits is left (a model's own weekly
+ * window included, #723), and the accounts the paired computer would move it
+ * to.
  *
  * A sheet over the list, like the info sheet: the list is where the person
  * returns once the switch is asked for. Choosing an account opens the
@@ -14,7 +15,7 @@
 
 import iconCheck from "./assets/icon-check.svg";
 import iconHistory from "./assets/icon-history.svg";
-import { type AccountNotice, accountName, limitReached, usageText } from "./accountSwitch";
+import { type AccountNotice, accountName, limitReached, separateLimitText, usageText } from "./accountSwitch";
 import { renderConfirmDialog } from "./confirmDialog";
 import { element, glyph, loader, sheetShell } from "./dom";
 import { t } from "./i18n";
@@ -141,15 +142,28 @@ function accountRow(choice: SessionAccountChoice, press?: () => void): HTMLEleme
     row.type = "button";
     row.addEventListener("click", press);
   }
-  if (limitReached(choice.usage)) row.classList.add("account-sheet__row--limited");
 
   const copy = element("span", "account-sheet__copy");
   copy.append(element("span", "account-sheet__name", accountName(choice.label)));
   const usage = usageText(choice.usage) ?? t("account.usage.unknown");
   const detail = choice.pending ? t("account.pendingDetail", { usage }) : usage;
-  copy.append(element("span", "account-sheet__detail", detail));
+  copy.append(detailLine(detail, limitReached(choice.usage)));
+  for (const limit of choice.separate_limits ?? []) {
+    copy.append(detailLine(separateLimitText(limit), limitReached(limit)));
+  }
   row.append(copy);
   if (choice.current) row.append(glyph(iconCheck, 14, "account-sheet__mark"));
   else if (choice.pending) row.append(glyph(iconHistory, 14, "account-sheet__mark account-sheet__mark--pending"));
   return row;
+}
+
+/**
+ * One usage line under the account's name: the general limit, then each
+ * separate limit (a model's own weekly window) on its own line. A full model
+ * limit marks its line only, since the account still runs other models.
+ */
+function detailLine(text: string, reached: boolean): HTMLElement {
+  const line = element("span", "account-sheet__detail", text);
+  if (reached) line.classList.add("account-sheet__detail--limited");
+  return line;
 }
