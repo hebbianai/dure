@@ -7,6 +7,7 @@ import {
   peekPendingPanelFocus,
 } from "@/lib/workspace/dock/panelFocusHandoff";
 import { currentPaneContentFocus } from "@/lib/workspace/pane/paneContentFocusHandoff";
+import { useWindowSidebarStore } from "@/lib/sidebar/windowSidebarStore";
 import { useStore } from "@/store";
 
 /** visibility 복원과 setActive 호출을 관측하는 최소 dockview. */
@@ -87,6 +88,27 @@ describe("navigateToPanel", () => {
     );
     expect(peekPendingPanelFocus(here)).toBeUndefined();
   });
+
+  // Next up, a notification click, the team line and Show in Space all
+  // arrive here: going to a pane is a reveal, from the Work view too.
+  it.each(["same", "other"] as const)(
+    "brings the Spaces deck forward from Work for a pane in the %s Space",
+    (where) => {
+      const target = nextDesktopId();
+      register(target, ["pane-1"]);
+      useStore.setState({
+        activeSpaceId: where === "same" ? target : nextDesktopId(),
+      });
+      useWindowSidebarStore.getState().setTab("work");
+      try {
+        navigateToPanel(target, "pane-1");
+        expect(useWindowSidebarStore.getState().tab).toBe("spaces");
+        expect(useStore.getState().activeSpaceId).toBe(target);
+      } finally {
+        useWindowSidebarStore.getState().setTab("spaces");
+      }
+    },
+  );
 
   it("다른 데스크탑이면 전환하고 대기표를 남긴다", () => {
     const target = nextDesktopId();

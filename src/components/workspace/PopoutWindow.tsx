@@ -51,7 +51,7 @@ export function PopoutWindowRoot({ desktopId }: { desktopId: string }) {
   // Workspace의 explicit active prop이 별도로 소유한다.
   useEffect(() => {
     const state = useStore.getState();
-    if (state.activeSpaceId !== desktopId) state.setActiveSpace(desktopId);
+    if (state.activeSpaceId !== desktopId) state.setActiveSpace(desktopId, "reveal");
   }, [desktopId]);
   // 이 창에도 pane 단축키를 단다 — 창마다 keydown 리스너가 별개라 App에만
   // 설치하면 분리 창에서는 ⌘W·⌘D·⌥⌘화살표·폰트 조절이 전부 죽는다.

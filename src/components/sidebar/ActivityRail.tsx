@@ -1,5 +1,6 @@
 import {
 	AtSign,
+	Bot,
 	Download,
 	Folder,
 	GitBranch,
@@ -40,6 +41,7 @@ import {
 import { useUpdateNoticeSnapshot } from "@/lib/updates/useUpdateNoticeSnapshot";
 import { SIDEBAR_RAIL_WIDTH } from "@/lib/sidebar/windowSidebarState";
 import { useWindowSidebarStore } from "@/lib/sidebar/windowSidebarStore";
+import { isMainWindow } from "@/lib/workspace/window/windows";
 import { useStore } from "@/store";
 
 /** 왼쪽 아이콘 레일 — 항상 고정. 아이콘 클릭으로 오른쪽 패널 내용을 전환하고,
@@ -67,7 +69,13 @@ import { useStore } from "@/store";
 // 매일 쓰는 내비게이션이라 아이콘이 바뀌는 것과 자리가 바뀌는 것은 비용이 다르다.
 // Labels are thunks so t() resolves at render time — a module-scope t() call
 // would freeze the boot language.
+//
+// Work leads the rail: it is the overview of every agent across projects, and
+// Spaces, right below it, stays the hands-on workplace. Bot is the agent-list
+// glyph this rail used before Spaces became repository-centred (see above),
+// which is what Work is. It moved the other items down once (#732).
 const RAIL_TABS = [
+	{ id: "work", icon: Bot, label: () => t("work.title") },
 	{ id: "spaces", icon: LayoutGrid, label: () => t("common.space") },
 	{ id: "tag", icon: AtSign, label: () => t("tag.title") },
 	// id는 영속 키라 "recovery" 유지 — 라벨만 "세션" 패널로 승격(2026-08-01)
@@ -132,13 +140,22 @@ export function ActivityRail({
 	// 기본 모드 간소화(2026-08-31): pro 표면 탭들은 공유 해석기 하나가 접고,
 	// 저장된 선택은 같은 훅이 spaces로 읽어 칩과 패널이 함께 움직인다.
 	const foldedRailTabs = useBasicFoldedRailTabs();
-	const railTabs = RAIL_TABS.filter((tab) => !foldedRailTabs.has(tab.id));
+	// Work belongs to the main window, like Next up: it reveals agents into
+	// that window's Spaces, and only it observes attention for notifications.
+	const railTabs = RAIL_TABS.filter(
+		(tab) =>
+			!foldedRailTabs.has(tab.id) && (tab.id !== "work" || isMainWindow()),
+	);
 	const sidebarTab = useEffectiveSidebarTab();
 	const setSidebarTab = useWindowSidebarStore((state) => state.setTab);
 	const toggleSidebar = useWindowSidebarStore((state) => state.toggle);
 	// The same needs-person map as Next up, the Dock badge and the Spaces
-	// rollups, so the count never disagrees with the list it leads to.
-	const spacesAttentionCount = useNeedsPerson().size;
+	// rollups, so the count never disagrees with the list it leads to: Work's
+	// Needs you. Without Work (another window) it stays on Spaces.
+	const attentionCount = useNeedsPerson().size;
+	const attentionTab = railTabs.some((tab) => tab.id === "work")
+		? "work"
+		: "spaces";
 	const language = useStore((state) => state.language);
 	const lang = resolveLang(language);
 	const updateNotices = useUpdateNoticeSnapshot();
@@ -200,8 +217,8 @@ export function ActivityRail({
 				const selected = sidebarTab === id;
 				const labelText = label();
 				const attentionLabel =
-					id === "spaces" && spacesAttentionCount > 0
-						? `${labelText} · ${t("spaces.rail.needsAttention", { n: spacesAttentionCount })}`
+					id === attentionTab && attentionCount > 0
+						? `${labelText} · ${t("spaces.rail.needsAttention", { n: attentionCount })}`
 						: labelText;
 				// Clicking the item you are already on toggles the sidebar rather
 				// than switching to it, so on that item the tooltip says what the
@@ -237,12 +254,12 @@ export function ActivityRail({
 								}}
 							>
 								<Icon className={RAIL_ICON_SIZE} />
-								{id === "spaces" && spacesAttentionCount > 0 ? (
+								{id === attentionTab && attentionCount > 0 ? (
 									<span
 										className="absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full bg-status-blocked px-1 text-center text-[9px] leading-3.5 font-semibold text-background"
 										aria-hidden="true"
 									>
-										{Math.min(spacesAttentionCount, 99)}
+										{Math.min(attentionCount, 99)}
 									</span>
 								) : null}
 							</button>

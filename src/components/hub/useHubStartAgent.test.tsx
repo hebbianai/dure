@@ -41,6 +41,7 @@ vi.mock("@/lib/workspace/dock/dockRegistry", () => ({
 }));
 
 import { useHubStartAgent } from "@/components/hub/useHubStartAgent";
+import { useWindowSidebarStore } from "@/lib/sidebar/windowSidebarStore";
 import { useStore } from "@/store";
 
 const press = {
@@ -268,6 +269,22 @@ describe("useHubStartAgent", () => {
 			started: false,
 			code: "target_missing",
 		});
+	});
+
+	it("mounts an unmounted Space for a phone start without leaving the Work view", async () => {
+		useStore.setState({ activeSpaceId: "other" });
+		useWindowSidebarStore.getState().setTab("work");
+		// The Space has no Dockview until making it active mounts it.
+		mocks.getDockview.mockReturnValueOnce(undefined);
+		try {
+			renderHook(() => useHubStartAgent());
+			mocks.handlers[0]?.({ payload: press });
+			await waitFor(() => expect(mocks.createSaga).toHaveBeenCalledTimes(1));
+			expect(useStore.getState().activeSpaceId).toBe("s1");
+			expect(useWindowSidebarStore.getState().tab).toBe("work");
+		} finally {
+			useWindowSidebarStore.getState().setTab("spaces");
+		}
 	});
 
 	it("runs the spawn saga for the seat that was pressed", async () => {

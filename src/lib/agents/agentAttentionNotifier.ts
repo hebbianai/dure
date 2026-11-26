@@ -26,7 +26,7 @@ import { selectNotificationPaneTarget } from "@/lib/settings/notificationPaneTar
 import { notifyPrefs, systemNotify } from "@/lib/settings/notify";
 import {
   agentPaneLocations,
-  isPanelApiInView,
+  isAgentPaneSeen,
 } from "@/lib/workspace/layout/agentPaneLocations";
 import { findAgentPanel } from "@/lib/workspace/dock/dockPanelParameters";
 import { getDockview, mountedDockviewEntries } from "@/lib/workspace/dock/dockRegistry";
@@ -273,8 +273,9 @@ export async function notifyAgentEvent(
     const api = getDockview(st.activeSpaceId);
     const panel = api && findAgentPanel(api, agent.id);
     // AgentPanel의 unread ack와 같은 술어 — 억제와 ack가 어긋나면 알림 없이
-    // 보이지 않는 dot만 남는다 (최대화된 다른 그룹 케이스).
-    if (isPanelApiInView(panel?.api, document.hasFocus())) {
+    // 보이지 않는 dot만 남는다 (최대화된 다른 그룹 케이스). A pane behind the
+    // Work view is not seen either.
+    if (isAgentPaneSeen(panel?.api, document.hasFocus())) {
       return { agent: sender, desktop: { status: "not_sent", reason: "visible" }, phone };
     }
   }

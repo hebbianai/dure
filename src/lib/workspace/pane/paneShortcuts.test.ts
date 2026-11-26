@@ -10,6 +10,7 @@ import {
 } from "@/lib/workspace/dock/dockRegistry";
 import { recordPaneFocus } from "@/lib/workspace/pane/paneFocusHistory";
 import { installPaneShortcuts } from "@/lib/workspace/pane/paneShortcuts";
+import { useWindowSidebarStore } from "@/lib/sidebar/windowSidebarStore";
 import { useStore } from "@/store";
 import { agentFixture } from "@/test/agentFixtures";
 
@@ -684,6 +685,29 @@ describe("pane maximize shortcuts", () => {
 				.defaultPrevented,
 		).toBe(true);
 		expect(api.hasMaximizedGroup()).toBe(false);
+	});
+
+	it("acts on no pane while the Work view covers the Spaces deck", () => {
+		const desktopId = `shortcut-maximize-work-${++sequence}`;
+		const api = realDockview(desktopId);
+		useStore.setState({ activeSpaceId: desktopId, shortcutOverrides: {} });
+		disposers.push(installPaneShortcuts());
+		useWindowSidebarStore.getState().setTab("work");
+		try {
+			expect(
+				press(window, "Enter", { metaKey: true, shiftKey: true })
+					.defaultPrevented,
+			).toBe(false);
+			expect(api.hasMaximizedGroup()).toBe(false);
+			expect(press(window, "d", { metaKey: true }).defaultPrevented).toBe(false);
+			expect(paneSplitMocks.openSplitLauncherPanel).not.toHaveBeenCalled();
+		} finally {
+			useWindowSidebarStore.getState().setTab("spaces");
+		}
+		// Back on Spaces the same chord acts again.
+		expect(
+			press(window, "Enter", { metaKey: true, shiftKey: true }).defaultPrevented,
+		).toBe(true);
 	});
 
 	it("consumes Ctrl+Shift+Enter before a focused terminal can send it as Enter", () => {

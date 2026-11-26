@@ -748,9 +748,7 @@ export function withDesktopDockview(
   // 삭제된 데스크탑이면 activeSpaceId를 유령 id로 만들지 않는다
   // (다이얼로그가 열려 있는 사이 데스크탑이 지워질 수 있다).
   if (!useStore.getState().spaces.some((desktop) => desktop.id === desktopId)) return;
-  if (useStore.getState().activeSpaceId !== desktopId) {
-    useStore.getState().setActiveSpace(desktopId);
-  }
+  useStore.getState().setActiveSpace(desktopId, "reveal");
   const run = (attempt: number) => {
     const api = registry.get(desktopId);
     if (api) {

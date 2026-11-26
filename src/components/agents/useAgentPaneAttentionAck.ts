@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
-import { isPanelApiInView } from "@/lib/workspace/layout/agentPaneLocations";
+import { useWindowMainView } from "@/lib/sidebar/windowSidebarStore";
+import { isAgentPaneSeen } from "@/lib/workspace/layout/agentPaneLocations";
 
 export interface AgentPaneAttentionApi {
 	readonly isActive: boolean;
@@ -10,7 +11,9 @@ export interface AgentPaneAttentionApi {
 }
 
 /** A visible, focused pane acknowledges each attention episode exactly where
- * notification suppression makes the same user-presence decision. */
+ * notification suppression makes the same user-presence decision. While the
+ * Work view covers the Spaces deck nothing is seen; returning to Spaces
+ * checks again. */
 export function useAgentPaneAttentionAck(
 	agentId: string,
 	api: AgentPaneAttentionApi,
@@ -18,9 +21,11 @@ export function useAgentPaneAttentionAck(
 	const attentionEpisode = useAgentAttention(
 		(state) => state.episodes[agentId] ?? 0,
 	);
+	const mainView = useWindowMainView();
 	useEffect(() => {
+		if (mainView !== "spaces") return;
 		const acknowledgeIfVisible = () => {
-			if (isPanelApiInView(api, document.hasFocus())) {
+			if (isAgentPaneSeen(api, document.hasFocus())) {
 				useAgentAttention.getState().ack(agentId);
 			}
 		};
@@ -33,5 +38,5 @@ export function useAgentPaneAttentionAck(
 			visibleDisposable.dispose();
 			window.removeEventListener("focus", acknowledgeIfVisible);
 		};
-	}, [agentId, api, attentionEpisode]);
+	}, [agentId, api, attentionEpisode, mainView]);
 }

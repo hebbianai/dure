@@ -8,6 +8,7 @@ import {
 import { ActivityRail } from "@/components/sidebar/ActivityRail";
 import { SidebarTitleBar } from "@/components/workspace/WindowTitleBar";
 import { SpacesPane } from "@/components/spaces/SpacesPane";
+import { WorkPane } from "@/components/work/WorkPane";
 import type { PageId } from "@/components/settings/settingsNav";
 import { onOpenSettings } from "@/lib/settings/settingsBus";
 import {
@@ -213,6 +214,7 @@ export function Sidebar({ fullscreen = false }: { fullscreen?: boolean } = {}) {
         }}
       />
       <Suspense fallback={<SidebarSurfaceFallback />}>
+        {sidebarOpen && sidebarTab === "work" && <WorkPane />}
         {sidebarOpen && sidebarTab === "spaces" && <SpacesPane />}
         {sidebarOpen && sidebarTab === "tag" && <LazyDureTagPane />}
         {/* tab id "recovery"는 영속 상태라 유지한다 — 패널만 “세션”으로 승격

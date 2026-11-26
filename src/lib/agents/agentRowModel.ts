@@ -35,6 +35,9 @@ export interface AgentRowFacts {
 	readonly needsPerson?: NeedsPerson;
 	/** Whether the agent has a result in the surface's own window. */
 	readonly hasResult?: boolean;
+	/** Whether that result has not been looked at in this window. A surface
+	 * that lists only unread results (Next up) leaves it out. */
+	readonly unread?: boolean;
 	/** When the wait or result began; absent when unseen. */
 	readonly sinceMs?: number;
 	readonly projectName?: string;
@@ -89,7 +92,10 @@ export function agentRowModel(facts: AgentRowFacts): AgentRowModel {
 		agentId: facts.agentId,
 		title: facts.title,
 		// A result nobody has looked at keeps the unread ring.
-		dot: { state: facts.state, unread: status === "result" },
+		dot: {
+			state: facts.state,
+			unread: status === "result" && facts.unread !== false,
+		},
 		...(status ? { status } : {}),
 		...(facts.sinceMs === undefined ? {} : { sinceMs: facts.sinceMs }),
 		context,

@@ -281,7 +281,7 @@ describe("Spaces pane layout publications", () => {
 		expect(
 			hook.result.current.find((row) => row.key === "term:other")?.desktopId,
 		).toBe("two");
-		act(() => useStore.getState().setActiveSpace("two"));
+		act(() => useStore.getState().setActiveSpace("two", "reveal"));
 		expect(hook.result.current.map((row) => row.key)).toEqual([
 			"term:one",
 			"term:live",

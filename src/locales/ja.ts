@@ -10,6 +10,7 @@ import { settings } from "./ja/settings";
 import { sourceControl } from "./ja/sourceControl";
 import { terminal } from "./ja/terminal";
 import { workspace } from "./ja/workspace";
+import { work } from "./ja/work";
 import { agents } from "./ja/agents";
 import { sessions } from "./ja/sessions";
 import { plugins } from "./ja/plugins";
@@ -46,6 +47,7 @@ export const ja: Record<string, string> = {
 	...sourceControl,
 	...terminal,
 	...workspace,
+	...work,
 	...agents,
 	...sessions,
 	...plugins,

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
 	getDockview: vi.fn(),
-	isPanelApiInView: vi.fn(() => false),
+	isAgentPaneSeen: vi.fn(() => false),
 	notifyPrefs: vi.fn(),
 	systemNotify: vi.fn(async () => ({ accepted: true })),
 }));
@@ -18,7 +18,7 @@ vi.mock("@/lib/settings/notify", () => ({
 }));
 vi.mock("@/lib/workspace/layout/agentPaneLocations", async (original) => ({
 	...(await original<typeof import("@/lib/workspace/layout/agentPaneLocations")>()),
-	isPanelApiInView: mocks.isPanelApiInView,
+	isAgentPaneSeen: mocks.isAgentPaneSeen,
 }));
 vi.mock("@/lib/workspace/dock/dockRegistry", async (importOriginal) => ({
 	...(await importOriginal<
@@ -137,7 +137,7 @@ beforeEach(() => {
 		suppressWhenVisible: false,
 	});
 	mocks.getDockview.mockReturnValue(undefined);
-	mocks.isPanelApiInView.mockReturnValue(false);
+	mocks.isAgentPaneSeen.mockReturnValue(false);
 	useStore.setState({
 		agents: [agent],
 		projects: [

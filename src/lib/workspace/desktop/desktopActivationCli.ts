@@ -37,10 +37,7 @@ async function handleSpaceActivate(
     };
   }
   if (!(await claimCliRequest(reqId))) return null;
-  const state = useStore.getState();
-  if (state.activeSpaceId !== space.id) {
-    state.setActiveSpace(space.id);
-  }
+  useStore.getState().setActiveSpace(space.id, "reveal");
   const identity = {
     windowLabel: getCurrentWebviewWindow().label,
     id: space.id,

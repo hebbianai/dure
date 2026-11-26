@@ -248,9 +248,9 @@ async function runDeskSwitchProbe() {
     dock.openLocalTerminalPanel(b);
     await sleep(5000);
     for (let i = 0; i < 5; i++) {
-      state().setActiveSpace(a);
+      state().setActiveSpace(a, "reveal");
       await sleep(1500);
-      state().setActiveSpace(b);
+      state().setActiveSpace(b, "reveal");
       await sleep(1500);
     }
     const snapshot = perf.getWorkspacePerformanceSnapshot();
@@ -742,7 +742,7 @@ function runE2eOnce(force = false) {
         };
       };
       const afterAdd = visibleCounts();
-      st().setActiveSpace(firstId);
+      st().setActiveSpace(firstId, "reveal");
       await new Promise((res) => setTimeout(res, 300));
       const afterBack = visibleCounts();
       st().removeSpace(secondId);

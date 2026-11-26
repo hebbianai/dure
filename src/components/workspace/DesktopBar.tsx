@@ -121,6 +121,7 @@ export function DesktopBar() {
   const {
     spaces,
     activeSpaceId,
+    shownSpaceId,
     setActiveSpace,
     addSpace,
     renameSpace,
@@ -309,7 +310,7 @@ export function DesktopBar() {
         )[n - 1];
         if (d) {
           e.preventDefault();
-          setActiveSpace(d.id);
+          setActiveSpace(d.id, "reveal");
         }
       }
     };
@@ -377,7 +378,7 @@ export function DesktopBar() {
             <div
               id={`desktop-tab-${d.id}`}
               className={cn(
-                desktopTabClass(d.id === activeSpaceId),
+                desktopTabClass(d.id === shownSpaceId),
                 // The sidebar's drop-target vocabulary (SpacesDesktopSection): a
                 // tint plus a thin ring. The 2px full-strength ring read as a
                 // solid box behind the tab on the glass (owner report 2026-09-10).
@@ -390,12 +391,12 @@ export function DesktopBar() {
                   "shadow-[2px_0_0_0_var(--link)]",
               )}
               role="tab"
-              aria-selected={d.id === activeSpaceId}
+              aria-selected={d.id === shownSpaceId}
               aria-controls={`desktop-panel-${d.id}`}
               tabIndex={d.id === activeSpaceId ? 0 : -1}
               data-nodrag
               draggable={manualReorder}
-              onClick={() => setActiveSpace(d.id)}
+              onClick={() => setActiveSpace(d.id, "reveal")}
               // hover-intent preload — 클릭 전에 워크스페이스 마운트를 앞당긴다.
               // 스트립을 스쳐 지나가는 포인터가 경유 탭을 전부 premount해 진짜
               // warm을 밀어내지 않도록, 잠깐 머문(dwell) 탭만 요청한다.
@@ -428,7 +429,7 @@ export function DesktopBar() {
                 event.preventDefault();
                 const next = visibleDesktops[nextIndex];
                 if (!next) return;
-                setActiveSpace(next.id);
+                setActiveSpace(next.id, "reveal");
                 requestAnimationFrame(() => document.getElementById(`desktop-tab-${next.id}`)?.focus());
               }}
               onDragStart={(e) => {
@@ -456,7 +457,7 @@ export function DesktopBar() {
                 e.stopPropagation();
                 setDropTarget(null);
                 void dropPanesOnSpace(e.dataTransfer, d.id).then((moved) => {
-                  if (moved) setActiveSpace(d.id);
+                  if (moved) setActiveSpace(d.id, "reveal");
                 });
               }}
               onDoubleClick={(e) => {

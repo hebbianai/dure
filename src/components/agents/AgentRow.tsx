@@ -81,10 +81,13 @@ export type AgentRowVariant = "list" | "card" | "line";
 export function AgentRow({
 	row,
 	variant = "list",
+	selected = false,
 	onSelect,
 }: {
 	row: AgentRowModel;
 	variant?: AgentRowVariant;
+	/** The row a list shows in detail beside it (the Work view). */
+	selected?: boolean;
 	onSelect?: (agentId: string) => void;
 }) {
 	const now = useNowTick();
@@ -141,11 +144,16 @@ export function AgentRow({
 			type="button"
 			data-slot="agent-row"
 			data-variant={variant}
+			data-agent-row-key={row.agentId}
+			aria-current={selected ? "true" : undefined}
 			className={cn(
 				"flex w-full min-w-0 items-start gap-2 text-left outline-none focus-visible:inset-ring-1 focus-visible:inset-ring-ring",
 				card
 					? "rounded-lg bg-glass-tint p-3 inset-ring-1 inset-ring-glass-hairline hover:bg-glass-tint-hover"
-					: "rounded-md px-2 py-1.5 hover:bg-glass-tint-hover",
+					: cn(
+							"rounded-md px-2 py-1.5",
+							selected ? "bg-glass-tint-selected" : "hover:bg-glass-tint-hover",
+						),
 			)}
 			onClick={select}
 		>

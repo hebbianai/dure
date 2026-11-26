@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { normalizeSidebarTab } from "@/lib/sidebar/sidebarTabs";
+import { mainViewOf, normalizeSidebarTab } from "@/lib/sidebar/sidebarTabs";
 
 describe("normalizeSidebarTab", () => {
   it("keeps supported tabs", () => {
+    expect(normalizeSidebarTab("work")).toBe("work");
     expect(normalizeSidebarTab("files")).toBe("files");
     expect(normalizeSidebarTab("recovery")).toBe("recovery");
     expect(normalizeSidebarTab("github")).toBe("github");
@@ -26,5 +27,14 @@ describe("normalizeSidebarTab", () => {
   it("uses spaces for missing or unknown persisted values", () => {
     expect(normalizeSidebarTab(undefined)).toBe("spaces");
     expect(normalizeSidebarTab("unknown")).toBe("spaces");
+  });
+});
+
+describe("mainViewOf", () => {
+  it("shows Work for the Work tab and the Spaces deck for every other tab", () => {
+    expect(mainViewOf("work")).toBe("work");
+    for (const tab of ["spaces", "files", "recovery", "plugin", "automations"] as const) {
+      expect(mainViewOf(tab)).toBe("spaces");
+    }
   });
 });

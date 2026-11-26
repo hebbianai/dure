@@ -120,6 +120,9 @@ export function storeMockFactory() {
 		sshStates: {},
 		sshMessages: {},
 		activeSpaceId: "structured-focus-desktop",
+		setActiveSpace: (id: string) => {
+			state.activeSpaceId = id;
+		},
 		agents: [],
 		customThemes: [],
 		notifyPrefs: {},

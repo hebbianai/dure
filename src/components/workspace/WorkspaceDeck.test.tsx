@@ -8,8 +8,20 @@ import type {
 } from "@/lib/workspace/performance/tierReconcileScheduler";
 
 vi.mock("@/components/workspace/Workspace", () => ({
-  Workspace: ({ desktopId }: { desktopId: string }) => (
-    <div data-testid={`workspace-${desktopId}`} />
+  Workspace: ({
+    desktopId,
+    active,
+    frozen,
+  }: {
+    desktopId: string;
+    active: boolean;
+    frozen?: boolean;
+  }) => (
+    <div
+      data-testid={`workspace-${desktopId}`}
+      data-active={String(active)}
+      data-frozen={String(Boolean(frozen))}
+    />
   ),
 }));
 
@@ -89,5 +101,38 @@ describe("WorkspaceDeck speculative prewarm", () => {
     });
 
     expect(screen.queryByTestId("workspace-far")).toBeNull();
+  });
+});
+
+describe("WorkspaceDeck behind the Work view", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useStore.setState({ layouts: {} });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("keeps the active Space mounted and warm, rendered inactive, and never freezes it", async () => {
+    const view = render(<WorkspaceDeck spaces={spaces} activeSpaceId="active" />);
+    const shell = () => screen.getByTestId("workspace-active");
+    expect(shell().dataset.active).toBe("true");
+
+    view.rerender(
+      <WorkspaceDeck spaces={spaces} activeSpaceId="active" occluded />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(shell().dataset.active).toBe("false");
+    expect(shell().dataset.frozen).toBe("false");
+
+    view.rerender(<WorkspaceDeck spaces={spaces} activeSpaceId="active" />);
+    expect(shell().dataset.active).toBe("true");
+    expect(shell().dataset.frozen).toBe("false");
   });
 });

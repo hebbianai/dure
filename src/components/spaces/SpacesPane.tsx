@@ -477,7 +477,7 @@ export function SpacesPane() {
   const onActivateDesktop = useCallback(
     (desktopId: string) => {
       clearSelection();
-      setActiveDesktop(desktopId);
+      setActiveDesktop(desktopId, "reveal");
     },
     [clearSelection, setActiveDesktop],
   );

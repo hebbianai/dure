@@ -213,3 +213,43 @@ describe("window sidebar state", () => {
 		});
 	});
 });
+
+describe("window main view", () => {
+	it("keeps a saved Work tab, so a window that showed Work opens on it", () => {
+		const saved = serializeWindowSidebarState({
+			...MAIN_WINDOW_SIDEBAR_DEFAULT,
+			tab: "work",
+		});
+		expect(initialWindowSidebarState("main", saved, null).tab).toBe("work");
+		expect(MAIN_WINDOW_SIDEBAR_DEFAULT.tab).toBe("spaces");
+	});
+
+	it("returns from Work to the tab Spaces was last shown with", () => {
+		const store = createWindowSidebarStore(MAIN_WINDOW_SIDEBAR_DEFAULT);
+		store.getState().setTab("github");
+		store.getState().setTab("work");
+		store.getState().showSpaces();
+		expect(store.getState().tab).toBe("github");
+		// Any other tab already shows Spaces and stays.
+		store.getState().showSpaces();
+		expect(store.getState().tab).toBe("github");
+	});
+
+	it("returns to Spaces when the tab it came from was a retired plugin view", () => {
+		const store = createWindowSidebarStore(MAIN_WINDOW_SIDEBAR_DEFAULT);
+		store.getState().openPluginView({ containerKey: "tracker", viewId: null });
+		store.getState().setTab("work");
+		store.getState().selectPluginView(null);
+		store.getState().showSpaces();
+		expect(store.getState().tab).toBe("spaces");
+	});
+
+	it("starts a window restored on Work with Spaces to return to", () => {
+		const store = createWindowSidebarStore({
+			...MAIN_WINDOW_SIDEBAR_DEFAULT,
+			tab: "work",
+		});
+		store.getState().showSpaces();
+		expect(store.getState().tab).toBe("spaces");
+	});
+});

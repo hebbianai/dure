@@ -55,6 +55,7 @@ import {
   installAgentAttentionNotifier,
   notifyAgentEvent,
 } from "@/lib/agents/agentAttentionNotifier";
+import { useWindowSidebarStore } from "@/lib/sidebar/windowSidebarStore";
 
 function mountedPane(panelId: string, component = "agent", params: Record<string, unknown> = { agentRef: { agentId: "agent-a" } }) {
   const panel = { id: panelId, params, api: { component, getParameters: () => params, isActive: true, isVisible: true } };
@@ -356,6 +357,28 @@ describe("desktop notification policy", () => {
 
     expect(mocks.systemNotify).not.toHaveBeenCalled();
   });
+
+  it.each(["done", "approval"] as const)(
+    "still delivers %s for the focused pane of a Space the Work view covers",
+    (kind) => {
+      mocks.notifyPrefs.mockReturnValue({
+        enabled: true,
+        agentDone: true,
+        approvalRequired: true,
+        agentExited: true,
+        suppressWhenVisible: true,
+      });
+      useWindowSidebarStore.getState().setTab("work");
+      try {
+        notifyAgentEvent("agent-a", kind, "Turn finished", {
+          eventId: `hmux:session-a:terminal-a:${kind}:4`,
+        });
+      } finally {
+        useWindowSidebarStore.getState().setTab("spaces");
+      }
+      expect(mocks.systemNotify).toHaveBeenCalledOnce();
+    },
+  );
 });
 
 describe("dispatch-spawned agents suppress only their own done notification", () => {

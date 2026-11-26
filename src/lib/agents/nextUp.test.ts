@@ -120,6 +120,36 @@ describe("deriveNextUp", () => {
 		]);
 	});
 
+	it("lists results since a moment for a surface with its own window, read ones included", () => {
+		const input = facts({
+			agentIds: ["read", "unread", "yesterday", "waiting"],
+			displayStates: {
+				read: "waiting",
+				unread: "waiting",
+				yesterday: "waiting",
+				waiting: "blocked",
+			},
+			episodes: { read: 2, unread: 2, yesterday: 1, waiting: 1 },
+			acks: { read: 2 },
+			episodeKinds: {
+				read: "done",
+				unread: "done",
+				yesterday: "done",
+				waiting: "approval",
+			},
+			episodeAt: { read: 2_000, unread: 3_000, yesterday: 500, waiting: 2_500 },
+		});
+		const today = deriveNextUp(input, 1_000);
+		expect(today.results.map((entry) => entry.agentId)).toEqual(["read", "unread"]);
+		// The needs-you half is the same either way.
+		expect(today.needsYou).toEqual(deriveNextUp(input).needsYou);
+		// Next up's own window: unread ones, oldest first.
+		expect(deriveNextUp(input).results.map((entry) => entry.agentId)).toEqual([
+			"yesterday",
+			"unread",
+		]);
+	});
+
 	it("breaks equal waits by agent order", () => {
 		const nextUp = deriveNextUp(
 			facts({

@@ -55,8 +55,12 @@ export function readAppCommandContext(): AppCommandContext {
 	};
 }
 
-function activeSpaceId(): string {
-	return useStore.getState().activeSpaceId;
+/** The Space a command opens its new pane in: the active one, brought
+ * forward from the Work view so the person sees the pane it opened. */
+function revealActiveSpace(): string {
+	const state = useStore.getState();
+	state.setActiveSpace(state.activeSpaceId, "reveal");
+	return state.activeSpaceId;
 }
 
 function changeTerminalFontSize(size: number | ((current: number) => number)) {
@@ -68,7 +72,7 @@ function changeTerminalFontSize(size: number | ((current: number) => number)) {
 function switchToSpace(spaceId: string) {
 	const state = useStore.getState();
 	if (state.spaces.some((space) => space.id === spaceId)) {
-		state.setActiveSpace(spaceId);
+		state.setActiveSpace(spaceId, "reveal");
 	}
 }
 
@@ -96,12 +100,12 @@ const RUNNERS: Record<PlainAppCommandId, () => void> = {
 	"pinpoint-self": () => void toggleDesignMode(),
 	"pinpoint-browser": () => requestPinpointBrowser(),
 	"send-feedback": () => requestFeedback(),
-	"new-terminal": () => openInheritedTerminalPanel(activeSpaceId()),
-	"open-browser": () => openBrowserPanelOnDesktop(activeSpaceId()),
+	"new-terminal": () => openInheritedTerminalPanel(revealActiveSpace()),
+	"open-browser": () => openBrowserPanelOnDesktop(revealActiveSpace()),
 	"open-mobile-simulator": () =>
-		openMobileSimulatorPanelOnDesktop(activeSpaceId()),
-	"open-onboarding": () => openOnboardingPanel(activeSpaceId()),
-	"open-token-inspector": () => openTokenInspectorPanel(activeSpaceId()),
+		openMobileSimulatorPanelOnDesktop(revealActiveSpace()),
+	"open-onboarding": () => openOnboardingPanel(revealActiveSpace()),
+	"open-token-inspector": () => openTokenInspectorPanel(revealActiveSpace()),
 };
 
 const SPACE_RUNNERS: Record<SpaceCommandId, (spaceId: string) => void> = {

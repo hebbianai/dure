@@ -30,14 +30,15 @@ import {
 	restoreMaximizedPane,
 	toggleMaximizedPane,
 } from "@/lib/workspace/pane/paneMaximize";
+import { paneCommandSpaceId } from "@/lib/workspace/pane/paneCommandSpace";
 import { DEFAULT_UI_PREFS, useStore } from "@/store";
 
 function splitActivePane(
 	direction: "right" | "below",
 	targetDesktopId?: string,
 ): boolean {
-	const state = useStore.getState();
-	const desktopId = targetDesktopId ?? state.activeSpaceId;
+	const desktopId = paneCommandSpaceId(targetDesktopId);
+	if (desktopId === undefined) return false;
 	const api = getDockview(desktopId);
 	const active = api?.activePanel;
 	if (!api || !active) return false;
@@ -59,7 +60,8 @@ function focusPaneDirection(
 	targetDesktopId?: string,
 ): boolean {
 	const state = useStore.getState();
-	const desktopId = targetDesktopId ?? state.activeSpaceId;
+	const desktopId = paneCommandSpaceId(targetDesktopId);
+	if (desktopId === undefined) return false;
 	const api = getDockview(desktopId);
 	const activeGroup = api?.activeGroup;
 	if (!api || !activeGroup) return false;
@@ -107,7 +109,7 @@ function focusPaneDirection(
 			? selected?.activePanel?.id
 			: visiblePaneFromLayout(state.layouts[next.id]);
 		if (panelId) navigateToPanel(next.id, panelId);
-		else state.setActiveSpace(next.id);
+		else state.setActiveSpace(next.id, "reveal");
 		return true;
 	}
 	const target = (api.groups ?? []).find((group) => group.id === targetId);
@@ -119,8 +121,8 @@ export function navigatePaneHistory(
 	direction: "back" | "forward",
 	targetDesktopId?: string,
 ): boolean {
-	const state = useStore.getState();
-	const desktopId = targetDesktopId ?? state.activeSpaceId;
+	const desktopId = paneCommandSpaceId(targetDesktopId);
+	if (desktopId === undefined) return false;
 	const api = getDockview(desktopId);
 	if (!api) return false;
 	const panelId = paneFromFocusHistory(api, direction);
@@ -130,7 +132,8 @@ export function navigatePaneHistory(
 }
 
 function paneDockview(targetDesktopId?: string) {
-	return getDockview(targetDesktopId ?? useStore.getState().activeSpaceId);
+	const desktopId = paneCommandSpaceId(targetDesktopId);
+	return desktopId === undefined ? undefined : getDockview(desktopId);
 }
 
 export function toggleActivePaneMaximized(targetDesktopId?: string): boolean {
@@ -145,7 +148,8 @@ export function canBalanceActiveSpacePanes(): boolean {
 }
 
 export function balanceActiveSpacePanes(): void {
-	const desktopId = useStore.getState().activeSpaceId;
+	const desktopId = paneCommandSpaceId();
+	if (desktopId === undefined) return;
 	const api = getDockview(desktopId);
 	if (!api || !canBalanceActiveSpacePanes()) return;
 	// Branch resizing does not emit Dockview's structural/sash events. Use
@@ -209,8 +213,7 @@ export function installPaneShortcuts(targetDesktopId?: string): () => void {
 			matchesChord(shortcutChord("undo-pane-move", overrides), event) &&
 			!focusOwnsUndo(event.target)
 		) {
-			const api = getDockview(useStore.getState().activeSpaceId);
-			if (undoPaneMove(api)) event.preventDefault();
+			if (undoPaneMove(paneDockview(targetDesktopId))) event.preventDefault();
 			return;
 		}
 		// Esc is a fixed restore path beside the rebindable toggle. It is never

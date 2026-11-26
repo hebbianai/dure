@@ -160,7 +160,7 @@ function fixture(
 			string,
 			unknown
 		>,
-		setActiveSpace: vi.fn((id: string) => {
+		setActiveSpace: vi.fn((id: string, _intent: "reveal" | "mount") => {
 			state.activeSpaceId = id;
 			for (const listener of storeListeners) listener();
 		}),
@@ -344,7 +344,7 @@ describe("Dure client view workspace sync", () => {
 			layouts: { "desktop-a": layout(), "desktop-b": layout() },
 		});
 		const installing = installDureClientViewWorkspaceSync();
-		useStore.getState().setActiveSpace("desktop-b");
+		useStore.getState().setActiveSpace("desktop-b", "reveal");
 		expect(useStore.getState().activeSpaceId).toBe("desktop-b");
 		resolveIdentity?.(localIdentity);
 
@@ -461,7 +461,7 @@ describe("Dure client view workspace sync", () => {
 	it("keeps local interaction nonblocking and separates offline health", () => {
 		const view = fixture();
 		view.sync().update.mockClear();
-		view.state.setActiveSpace("desktop-b");
+		view.state.setActiveSpace("desktop-b", "reveal");
 		expect(view.sync().update).toHaveBeenCalledOnce();
 
 		view.sync().emit({
@@ -526,7 +526,7 @@ describe("Dure client view workspace sync", () => {
 			automaticRetryCount: 0,
 		});
 		view.sync().update.mockClear();
-		view.state.setActiveSpace("desktop-a");
+		view.state.setActiveSpace("desktop-a", "reveal");
 		expect(view.sync().update).toHaveBeenLastCalledWith(
 			expect.objectContaining({
 				viewports: [
@@ -553,7 +553,7 @@ describe("Dure client view workspace sync", () => {
 			automaticRetryCount: 0,
 		});
 		view.sync().update.mockClear();
-		view.state.setActiveSpace("desktop-b");
+		view.state.setActiveSpace("desktop-b", "reveal");
 		expect(view.sync().update).toHaveBeenLastCalledWith(
 			expect.objectContaining({
 				filters: [{ filterId: "working", enabled: true }],

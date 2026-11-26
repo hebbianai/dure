@@ -368,7 +368,7 @@ export function useSpacesSelection({
           targetDesktopId,
         );
         if (receipt.movedPanelIds.length > 0) {
-          useStore.getState().setActiveSpace(targetDesktopId);
+          useStore.getState().setActiveSpace(targetDesktopId, "reveal");
         } else if (!receipt.error) {
           // 이 액션이 만든 아직 비활성·빈 데스크탑만 되돌린다.
           useStore.getState().removeSpace(targetDesktopId);

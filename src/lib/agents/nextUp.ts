@@ -7,7 +7,11 @@ import {
 	type AttentionEpisodeKind,
 	isAgentUnread,
 } from "@/lib/agents/agentAttentionStore";
-import { compareWaitStart, hasResult } from "@/lib/agents/agentResult";
+import {
+	type AgentResultWindow,
+	compareWaitStart,
+	hasResult,
+} from "@/lib/agents/agentResult";
 import type { AgentRowFacts } from "@/lib/agents/agentRowModel";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
 import type {
@@ -74,10 +78,13 @@ export function nextUpAgentFacts(
 }
 
 /** Why one agent is in Next up, if it is. Any surface that reports an agent
- * the way Next up does (a crowded pane's status card) reads this. */
+ * the way Next up does (a crowded pane's status card, the Work view) reads
+ * this. Next up's own result window is "not looked at yet"; a surface with
+ * another window (the Work view's local day) passes it. */
 export function nextUpEntry(
 	agentId: string,
 	facts: NextUpAgentFacts,
+	window: AgentResultWindow = { unread: facts.unread },
 ): NextUpEntry | undefined {
 	const { needsPerson: need, state, resultAtMs } = facts;
 	if (need) {
@@ -100,7 +107,7 @@ export function nextUpEntry(
 			turnFinished: facts.turnFinished,
 			...(resultAtMs === undefined ? {} : { resultAtMs }),
 		},
-		{ unread: facts.unread },
+		window,
 	)
 		? {
 				agentId,
@@ -111,11 +118,21 @@ export function nextUpEntry(
 		: undefined;
 }
 
-export function deriveNextUp(facts: NextUpFacts): NextUp {
+/** `resultsSinceMs` lists results since that moment instead of the ones not
+ * looked at yet; the needs-you half is the same either way. */
+export function deriveNextUp(
+	facts: NextUpFacts,
+	resultsSinceMs?: number,
+): NextUp {
 	const needsYou: NextUpEntry[] = [];
 	const results: NextUpEntry[] = [];
 	for (const agentId of facts.agentIds) {
-		const entry = nextUpEntry(agentId, nextUpAgentFacts(facts, agentId));
+		const agentFacts = nextUpAgentFacts(facts, agentId);
+		const entry = nextUpEntry(
+			agentId,
+			agentFacts,
+			resultsSinceMs === undefined ? undefined : { sinceMs: resultsSinceMs },
+		);
 		if (entry) (entry.reason === "result" ? results : needsYou).push(entry);
 	}
 	const order = new Map(facts.agentIds.map((agentId, index) => [agentId, index]));
