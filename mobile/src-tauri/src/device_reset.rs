@@ -5,6 +5,11 @@
 //! makes the visible transition from the complete old snapshot to no snapshot
 //! one filesystem operation; deleting each store in turn would expose a
 //! half-reset device when a later delete fails.
+//!
+//! The push key ([`crate::push_key`]) lives in a folder of its own, outside
+//! the configuration directory that may move into the App Group. The reset
+//! takes that folder the same way, right after, so "device keys will be
+//! deleted" stays true for it too.
 
 use std::ffi::OsString;
 use std::fs;
@@ -70,26 +75,35 @@ pub(crate) fn mutation_guard(
     }
 }
 
-/// Removes all device-local connection state as one visible snapshot change.
+/// Removes all device-local connection state: each of `roots` (the
+/// configuration directory first, then the push key folder) as one visible
+/// snapshot change.
 ///
 /// A failed cleanup leaves only the quarantined snapshot. The ordinary store
 /// paths already read as empty, and the next call finishes removing that
-/// quarantine before attempting another reset.
-pub fn reset(config_root: &Path) -> Result<(), DeviceResetError> {
+/// quarantine before attempting another reset. A root that fails does not
+/// keep the next one: each is attempted, and the first failure is returned.
+pub fn reset(roots: &[PathBuf]) -> Result<(), DeviceResetError> {
     let _guard = config_guard();
-    let quarantine = quarantine_path(config_root)?;
-    remove_snapshot(&quarantine)?;
+    let result = roots
+        .iter()
+        .map(|root| reset_root(root))
+        .fold(Ok(()), Result::and);
+    CONFIG_GENERATION.fetch_add(1, Ordering::AcqRel);
+    result
+}
 
-    let result = match fs::rename(config_root, &quarantine) {
+fn reset_root(root: &Path) -> Result<(), DeviceResetError> {
+    let quarantine = quarantine_path(root)?;
+    remove_snapshot(&quarantine)?;
+    match fs::rename(root, &quarantine) {
         Ok(()) => remove_snapshot(&quarantine),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(source) => Err(DeviceResetError::Io {
             operation: "quarantine device configuration",
             source,
         }),
-    };
-    CONFIG_GENERATION.fetch_add(1, Ordering::AcqRel);
-    result
+    }
 }
 
 fn config_guard() -> MutexGuard<'static, ()> {
@@ -139,12 +153,18 @@ mod tests {
             fs::write(root.join(relative), b"private device state").expect("seed state");
         }
 
+        let push = directory.path().join("dev.hebbian.ide.mobile.push");
+        fs::create_dir_all(&push).expect("create push key folder");
+        fs::write(push.join("push-key.p8"), b"private key").expect("seed push key");
+
         // When
-        reset(&root).expect("reset device");
+        reset(&[root.clone(), push.clone()]).expect("reset device");
 
         // Then
-        assert!(!root.exists());
-        assert!(!quarantine_path(&root).expect("quarantine path").exists());
+        for removed in [&root, &push] {
+            assert!(!removed.exists());
+            assert!(!quarantine_path(removed).expect("quarantine path").exists());
+        }
     }
 
     #[test]
@@ -161,7 +181,7 @@ mod tests {
         .expect("seed interrupted reset");
 
         // When
-        reset(&root).expect("finish reset");
+        reset(std::slice::from_ref(&root)).expect("finish reset");
 
         // Then
         assert!(!quarantine.exists());
@@ -190,7 +210,7 @@ mod tests {
         started_rx.recv().expect("writer started");
 
         // When
-        reset(&root).expect("reset device");
+        reset(std::slice::from_ref(&root)).expect("reset device");
         continue_tx.send(()).expect("resume writer");
         let result = writer.join().expect("join writer");
 

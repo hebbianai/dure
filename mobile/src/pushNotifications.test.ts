@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
-import { createPushSync } from "./pushNotifications";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { t } from "./i18n";
+import { en } from "./locales/en";
+import { ko } from "./locales/ko";
+import { createPushSync, pushSyncNote } from "./pushNotifications";
+import { DEFAULT_SETTINGS_PREFERENCES, saveSettingsPreferences } from "./settingsPreferences";
 
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -63,5 +67,70 @@ describe("push registration lifetime", () => {
     complete?.();
     await tick();
     expect(changed).not.toHaveBeenCalled();
+  });
+});
+
+describe("why a computer's alerts are not ready", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("reports the first failing computer with its code and name", async () => {
+    const changed = vi.fn();
+    const sync = createPushSync({ permission: async () => "granted", changed,
+      synchronize: async () => ({ supported: true, outcomes: [
+        { id: "desk", computer: "Desk", error: null },
+        { id: "laptop", computer: "Laptop", error: "The grant has expired", code: "grant_expired" },
+        { id: "studio", computer: "Studio", error: "Offline", code: "computer_unreachable" },
+      ] }),
+    });
+    sync.request({ preference: "all", language: "en" });
+    await tick();
+    expect(changed).toHaveBeenLastCalledWith({
+      kind: "error", detail: "The grant has expired", code: "grant_expired", computer: "Laptop",
+    });
+    sync.dispose();
+  });
+
+  it.each(["en", "ko"] as const)("names the computer in a localized note (%s)", (language) => {
+    saveSettingsPreferences({ ...DEFAULT_SETTINGS_PREFERENCES, language });
+    const description = t("notifications.push.description");
+    const note = (code: string) =>
+      pushSyncNote({ kind: "error", detail: "the computer's sentence", code, computer: "Laptop" });
+    for (const [code, key] of [
+      ["setup_pending", "notifications.push.setupPending"],
+      ["computer_unreachable", "notifications.push.computerUnreachable"],
+      ["computer_update", "notifications.push.computerUpdate"],
+      ["grant_refused", "notifications.push.grantRefused"],
+      ["grant_expired", "notifications.push.grantExpired"],
+      ["rate_limited", "notifications.push.rateLimited"],
+      ["service_unreachable", "notifications.push.serviceUnavailable"],
+      ["service_outdated", "notifications.push.serviceOutdated"],
+    ] as const) {
+      expect(note(code)).toBe(`${description} ${t(key, { computer: "Laptop" })}`);
+      expect(note(code)).toContain("Laptop");
+      expect(note(code)).not.toContain("the computer's sentence");
+    }
+    // A reason without a note of its own shows the computer's sentence.
+    for (const code of ["phone_update_required", "other", "phone_on_fire"]) {
+      expect(note(code)).toBe(
+        `${description} ${t("notifications.push.failed", { detail: "the computer's sentence" })}`);
+    }
+    expect(pushSyncNote({ kind: "error", detail: "Offline" })).toContain("Offline");
+  });
+
+  it("has every note in English and Korean, with the computer's name", () => {
+    for (const key of [
+      "notifications.push.setupPending",
+      "notifications.push.computerUnreachable",
+      "notifications.push.computerUpdate",
+      "notifications.push.grantRefused",
+      "notifications.push.grantExpired",
+      "notifications.push.rateLimited",
+      "notifications.push.serviceUnavailable",
+      "notifications.push.serviceOutdated",
+    ]) {
+      expect(en[key]).toContain("{computer}");
+      expect(ko[key]).toContain("{computer}");
+    }
+    expect(en["notifications.push.grantExpired"]).toMatch(/date and time/);
   });
 });

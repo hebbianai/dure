@@ -1273,6 +1273,7 @@ dependencies = [
  "rand",
  "rand_core",
  "rcgen",
+ "ring",
  "russh",
  "rustls",
  "serde",
