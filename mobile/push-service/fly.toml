@@ -1,5 +1,19 @@
-# Deploy from the repository root after configuring the approved provider key
-# and Hub allowlist. This service is independent of the terminal relay.
+# The Dure push service. Deploy from the repository root, because the
+# Dockerfile copies paths relative to it:
+#
+#   fly deploy -c mobile/push-service/fly.toml .
+#
+# Exactly one machine. The proven bindings live on its volume, and pending
+# challenges, abuse limits and delivery dedupe live in its memory: a second
+# machine would split them. `fly deploy` can add one, so after every deploy
+# run `fly scale count 1 -a dure-push --yes` and check `fly status -a dure-push`.
+#
+# Secrets, by name: DURE_APNS_KEY_BASE64 (the APNs provider key, written to
+# DURE_APNS_KEY_FILE), DURE_APNS_KEY_ID, DURE_APNS_TEAM_ID and, while the
+# transition lasts, DURE_PUSH_HUB_FINGERPRINTS (the computers /v1 still
+# serves; unset it to end /v1).
+#
+# Runbook: docs/maintainers/push-service.md
 app = "dure-push"
 primary_region = "nrt"
 kill_signal = "SIGTERM"
@@ -12,10 +26,21 @@ kill_timeout = "15s"
 [env]
   PORT = "8080"
   DURE_APNS_KEY_FILE = "/app/apns-key.p8"
+  DURE_PUSH_STATE_DIR = "/data"
+  # Every base URL a desktop may name in a signed v2 request.
+  DURE_PUSH_AUDIENCE = "https://push.dureai.dev/,https://dure-push.fly.dev/"
+  # Fly's proxy sets this header to the client's address; rate limits per
+  # client read it.
+  DURE_PUSH_CLIENT_IP_HEADER = "fly-client-ip"
 
 [[files]]
   guest_path = "/app/apns-key.p8"
   secret_name = "DURE_APNS_KEY_BASE64"
+
+# Created once, by hand: fly volumes create dure_push_state -a dure-push -r nrt -s 1
+[mounts]
+  source = "dure_push_state"
+  destination = "/data"
 
 [http_service]
   internal_port = 8080

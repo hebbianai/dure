@@ -13,7 +13,7 @@
     "test": "vitest run && pnpm test:push-service",
     "test:wide": "node qa/wide-window.mjs",
     "test:commit-keyboard": "node qa/commit-keyboard.mjs",
-    "test:push-service": "node --test push-service/service.test.mjs",
+    "test:push-service": "node --test \"push-service/**/*.test.mjs\"",
     "tauri": "tauri",
     "ios:init": "tauri ios init",
     "ios:dev": "node ../scripts/ios-device-dev.mjs",
