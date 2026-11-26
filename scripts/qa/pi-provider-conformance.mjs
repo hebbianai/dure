@@ -34,7 +34,9 @@ const server = http.createServer(async (request, response) => {
   const toolResult = body.messages.at(-1)?.role === "tool";
   const question = user.includes("DURE_PI_QUESTION") && !toolResult;
   const largeWrite = user.includes("DURE_PI_LARGE_WRITE") && !toolResult;
-  observations.push({ model: body.model, effort: body.reasoning_effort, user, toolResult });
+  // Which shell command outputs the model's context holds (pi_tests.rs runs them).
+  const shell = ["DURE_PI_SHELL_OUTPUT", "DURE_PI_PRIVATE_OUTPUT"].filter((marker) => bytes.includes(marker));
+  observations.push({ model: body.model, effort: body.reasoning_effort, user, toolResult, shell });
   if (block && !released.has(block)) await new Promise((resolve) => waiting.set(block, resolve));
   const tool = question || largeWrite || (block && block !== "0" && !toolResult);
   const call = question ? { id: "pi-question", name: "dure_qa_question", arguments: {} }
@@ -64,6 +66,7 @@ try {
   for (const name of [
     "live_pi_preserves_conversation_across_settings_busy_turns_and_reconnect",
     "live_pi_opens_a_long_terminal_conversation_in_chat",
+    "live_pi_opens_a_terminal_conversation_with_shell_commands_in_chat",
   ]) process.stdout.write(await run(test, ["--ignored", "--exact", `managed_structured_runtime::pi_tests::${name}`, "--nocapture"], { env }));
   for (const [model, effort] of [["model-a", "high"], ["model-b", "high"], ["model-b", "low"]]) {
     assert(observations.some((entry) => entry.model === model && entry.effort === effort));
@@ -71,6 +74,7 @@ try {
   assert.equal(observations.filter((entry) => entry.toolResult && entry.user.includes("DURE_PI_BLOCK_")).length, 3, "each blocked turn must execute its real Pi bash tool exactly once");
   assert.equal(observations.filter((entry) => entry.toolResult && entry.user.includes("DURE_PI_QUESTION")).length, 1);
   assert.equal(observations.filter((entry) => entry.toolResult && entry.user.includes("DURE_PI_LARGE_WRITE")).length, 1, "Pi must write the oversized file exactly once");
+  assert.deepEqual(observations.filter((entry) => entry.user.includes("DURE_PI_SHELL_CONTEXT")).map((entry) => entry.shell), [["DURE_PI_SHELL_OUTPUT"]], "Chat's prompt after the Terminal's shell commands must reach a model that has the ! output and not the !! output");
   const evidence = process.env.DURE_QA_PI_EVIDENCE ?? `/tmp/dure-pi-conformance-${process.pid}.json`;
   fs.writeFileSync(evidence, JSON.stringify({ version: "0.85.1", observations }, null, 2), { mode: 0o600 });
   console.log(`Pi 0.85.1 conformance passed; evidence: ${evidence}`);
