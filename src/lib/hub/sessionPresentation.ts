@@ -40,6 +40,12 @@ export interface SessionPresentation
 	 * (`agentRelations.ts`). Absent when no fact names one: the phone then
 	 * lists the agent at the top level. */
 	readonly managerAgentId?: string;
+	/** When the Agent's backend continues it by itself after its usage
+	 * limit resets, while recovery waits for that: the backend's own wait
+	 * (`agent_recovery.waits`), not a row's words. The phone reads it with
+	 * the shared needs-person and row rules, as the desktop does. Absent
+	 * while no wait is known. */
+	readonly continuesAtMs?: number;
 }
 
 /** The Agent a row shows and who manages it, as the relation owner says. */
@@ -54,6 +60,7 @@ export function sessionPresentation(
 		readonly pinned?: boolean;
 		readonly approval?: PendingApproval;
 		readonly notificationsMuted?: boolean;
+		readonly continuesAtMs?: number;
 	},
 	git?: {
 		readonly ahead: number;
@@ -91,5 +98,6 @@ export function sessionPresentation(
 		...(row.notificationsMuted ? { notificationsMuted: true } : {}),
 		...(relation ? { agentId: relation.agentId } : {}),
 		...(relation?.managerAgentId ? { managerAgentId: relation.managerAgentId } : {}),
+		...(row.continuesAtMs === undefined ? {} : { continuesAtMs: row.continuesAtMs }),
 	};
 }

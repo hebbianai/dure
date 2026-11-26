@@ -155,6 +155,13 @@ pub struct SessionPresentation {
     /// older desktops: the phone then lists the agent at the top level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manager_agent_id: Option<String>,
+    /// When the Agent's backend continues it by itself after its usage
+    /// limit resets, in Unix milliseconds, while recovery waits for that
+    /// (`agent_recovery.waits`). The phone's shared needs-person authority
+    /// then leaves its error out of Needs you. Absent while no wait is
+    /// known, and from older desktops; an older phone ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continues_at_ms: Option<u64>,
 }
 
 /// What the Host recorded about a provider that exited on its own: only
@@ -567,6 +574,36 @@ mod tests {
         let written = serde_json::to_value(older).unwrap();
         assert!(written.get("agentId").is_none());
         assert!(written.get("managerAgentId").is_none());
+    }
+
+    /// A recovery wait travels under the name the phone's shared
+    /// presentation type reads, and an older desktop's presentation reads
+    /// as "no wait known".
+    #[test]
+    fn the_recovery_wait_is_optional_in_both_directions() {
+        let mut current = catalog();
+        current.sessions[0].presentation = Some(SessionPresentation {
+            display_state: Some("error".into()),
+            continues_at_ms: Some(1_700_000_600_000),
+            ..Default::default()
+        });
+        let encoded = encode(&current).unwrap();
+        assert_eq!(read(&mut encoded.as_slice()).unwrap(), current);
+        let wire = serde_json::to_value(&current.sessions[0].presentation).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({ "displayState": "error", "continuesAtMs": 1_700_000_600_000u64 })
+        );
+
+        let older: SessionPresentation =
+            serde_json::from_str(r#"{"displayState":"error"}"#).unwrap();
+        assert_eq!(older.continues_at_ms, None);
+        assert!(
+            serde_json::to_value(older)
+                .unwrap()
+                .get("continuesAtMs")
+                .is_none()
+        );
     }
 
     /// The failure summary is optional both ways: an older desktop sends

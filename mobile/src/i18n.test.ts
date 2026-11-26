@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { t } from "./i18n";
+import { continuationTimeLabel } from "@/lib/agents/chat/turnFailureReason";
+import { continuesText } from "./agentRowText";
+import { currentLanguage, t } from "./i18n";
 import { DEFAULT_SETTINGS_PREFERENCES, saveSettingsPreferences } from "./settingsPreferences";
 
 describe("mobile message resolution", () => {
@@ -42,11 +44,25 @@ describe("mobile message resolution", () => {
 			"home.row.manages",
 			"home.row.managedNeedYou",
 			"home.row.managedWorking",
+			"home.row.continuesAt",
 		]) {
 			expect(t(id)).not.toBe(id);
 		}
 		},
 	);
+
+	/** The time is formatted in the language of the words around it. */
+	it.each([
+		["en", "Continues at"],
+		["ko", "이어서 진행"],
+	] as const)("says when an agent continues in %s", (language, words) => {
+		saveSettingsPreferences({ ...DEFAULT_SETTINGS_PREFERENCES, language });
+		expect(currentLanguage()).toBe(language);
+		const atMs = new Date(2026, 10, 27, 15, 10).getTime();
+		const text = continuesText(atMs, atMs - 60_000);
+		expect(text).toContain(words);
+		expect(text).toContain(continuationTimeLabel(atMs, language, atMs - 60_000));
+	});
 
 	/** A finished turn is all Dure knows, so a result never reads as "done". */
 	it.each([

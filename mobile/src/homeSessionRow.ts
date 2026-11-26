@@ -1,6 +1,6 @@
 import { visibleSpacesRowMetadata } from "@/lib/spaces/spacesViewProjection";
 import type { SpacesViewOptions } from "@/lib/spaces/spacesViewOptions";
-import { agentPathText, managedText } from "./agentRowText";
+import { agentPathText, continuesText, managedText } from "./agentRowText";
 import { element, loader } from "./dom";
 import type { CensusActions } from "./censusView";
 import type { HomeRow } from "./homeProjection";
@@ -52,6 +52,13 @@ export function renderHomeSessionRow(
 		body.append(element("span", "session-row__path", agentPathText(path)));
 	body.append(element("span", "session-row__title", row.title));
 	const metadata = element("span", "session-row__meta");
+	// What the agent does next on its own leads the line whatever the visible
+	// fields, as on the desktop's row.
+	const continuesAtMs = view.agent?.continuesAtMs;
+	if (continuesAtMs !== undefined)
+		metadata.append(
+			element("span", "session-row__field", continuesText(continuesAtMs, now)),
+		);
 	for (const field of visibleSpacesRowMetadata(
 		view,
 		options.visibleFields,

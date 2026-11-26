@@ -99,6 +99,9 @@ export function useHubSidebarLayout(send: LayoutSink): void {
 	const relations = useAgentRelations();
 	const sessionActivity = useStore((state) => state.sessionActivity);
 	const displayStates = useAgentAttention((state) => state.displayStates);
+	// Each Agent's backend wait to continue it after its usage limit resets:
+	// the phone's needs-person authority reads it beside the display state.
+	const recoveryWaits = useAgentAttention((state) => state.recoveryWaits);
 	const activity = useStore((state) => state.agentActivity);
 	// The Host's runtime state, for the approval a row waits on: the phone's
 	// home answers it beside the row's `displayState`.
@@ -172,13 +175,14 @@ export function useHubSidebarLayout(send: LayoutSink): void {
 					detail: sessionActivity[agent.sessionId]?.text || conversationPrompt(agent.id, managedConversationId(agent)),
 					approval: pendingApproval(runtimeStates[agent.sessionId]),
 					notificationsMuted: agentNotificationsMuted(agent),
+					continuesAtMs: recoveryWaits[agent.id],
 				}, diffBadges[agent.id] ? normalizeDiffBadge(diffBadges[agent.id]) : undefined,
 				sessionAccountSummary(agent, accounts), agentRelation(relations, agent.id)),
 			};
 		});
 		// `titleRevision` is not read; it is what makes a newly published live
 		// title re-run this and reach the phone.
-	}, [agents, accounts, projects, spaces, branchOf, sessionTitle, conversationIndex, titleRevision, sshHosts, displayStates, activity, sessionActivity, diffBadges, runtimeStates, relations]);
+	}, [agents, accounts, projects, spaces, branchOf, sessionTitle, conversationIndex, titleRevision, sshHosts, displayStates, activity, sessionActivity, diffBadges, runtimeStates, relations, recoveryWaits]);
 
 	// 브랜치는 space 자체의 값이 아니라 그 space 가 붙어 있는 에이전트의 값이라,
 	// 표를 만들기 직전에 얹는다.
@@ -195,12 +199,14 @@ export function useHubSidebarLayout(send: LayoutSink): void {
 					...space,
 					pinned: isPanePinned(pinnedPanes, panePinKey(space.desktopId, space.key)),
 					approval: agent && pendingApproval(runtimeStates[agent.sessionId]),
+					// The backend's wait itself, not the row's words for it.
+					continuesAtMs: agent && recoveryWaits[agent.id],
 				}, space.agentId && diffBadges[space.agentId] ? normalizeDiffBadge(diffBadges[space.agentId]) : undefined,
 				agent && sessionAccountSummary(agent, accounts),
 				agent && agentRelation(relations, agent.id)),
 			};
 		}),
-		[spaces, agents, accounts, branchOf, diffBadges, pinnedPanes, runtimeStates, relations],
+		[spaces, agents, accounts, branchOf, diffBadges, pinnedPanes, runtimeStates, relations, recoveryWaits],
 	);
 
 	useEffect(() => {

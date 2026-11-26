@@ -22,6 +22,7 @@ vi.mock("@tauri-apps/plugin-biometric", () => ({
 
 import { startApp } from "./app";
 import { renderHomeScreen, type CensusModel } from "./censusView";
+import { continuesText } from "./agentRowText";
 import { homeRows, needsYou, type NeedsYouCard } from "./homeProjection";
 import { t } from "./i18n";
 import type { PushActivation } from "./pushActivation";
@@ -111,6 +112,30 @@ describe("needsYou", () => {
 			["question", "input"],
 			["older-approval", "approval"],
 		]);
+	});
+
+	/** #726: the computer's backend continues a limited agent by itself
+	 * after the reset, so its error waits for no one on the phone either. A
+	 * question or an approval still does. */
+	it("leaves out an error the computer continues after its limit resets", () => {
+		const waiting = { presentation: { continuesAtMs: now + 600_000 } };
+		const sessions = [
+			session("limited", "error", waiting),
+			session("question", "input", waiting),
+			session("approval", "blocked", waiting),
+			session("errored", "error"),
+		];
+		expect(cardsOf(sessions).map((card) => [card.view.row.sessionId, card.status])).toEqual([
+			["approval", "approval"],
+			["errored", "error"],
+			["question", "input"],
+		]);
+		const rows = homeRows(model(sessions)).rows;
+		const row = (id: string) => rows.find((view) => view.row.sessionId === id);
+		expect(row("limited")?.need).toBeUndefined();
+		// The row says when it continues; a row listed for a person says why.
+		expect(row("limited")?.agent?.continuesAtMs).toBe(now + 600_000);
+		expect(row("question")?.agent?.continuesAtMs).toBeUndefined();
 	});
 
 	/** The Host's exit record, as the computer copies it to the catalog. */
@@ -217,6 +242,17 @@ describe("the Needs you section on home", () => {
 		draw([session("working", "working"), session("idle", "waiting")]);
 		expect(section()).toBeNull();
 		expect(document.querySelectorAll(".session-row")).toHaveLength(1);
+	});
+
+	it("says on the agent's row when it continues instead of listing it", () => {
+		const at = Date.now() + 600_000;
+		draw([session("limited", "error", { presentation: { continuesAtMs: at } })]);
+		expect(section()).toBeNull();
+		const meta = document.querySelector(".session-row .session-row__meta");
+		expect(meta?.firstElementChild?.textContent).toBe(continuesText(at, Date.now()));
+
+		draw([session("limited", "error")]);
+		expect(section()).not.toBeNull();
 	});
 
 	it("shows the agent, its project and the approval it asks, with Allow once and Deny", () => {

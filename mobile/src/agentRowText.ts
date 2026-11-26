@@ -11,7 +11,8 @@ import type {
 	AgentRowManagedSummary,
 	AgentRowStatus,
 } from "@/lib/agents/agentRowModel";
-import { t } from "./i18n";
+import { continuationTimeLabel } from "@/lib/agents/chat/turnFailureReason";
+import { currentLanguage, t } from "./i18n";
 
 /** Why only a person can move the agent forward. "result" is not a wait. */
 export type NeedsPersonStatus = Exclude<AgentRowStatus, "result">;
@@ -46,4 +47,12 @@ export function managedText(managed: AgentRowManagedSummary): string {
 	]
 		.filter((part): part is string => part !== undefined)
 		.join(" · ");
+}
+
+/** When the agent continues by itself after its usage limit resets, in the
+ * desktop's words: the time alone today, with the weekday on another day. */
+export function continuesText(atMs: number, nowMs: number): string {
+	return t("home.row.continuesAt", {
+		time: continuationTimeLabel(atMs, currentLanguage(), nowMs),
+	});
 }
