@@ -498,6 +498,25 @@ function resultSummary(message, sdkUserMessageId, assistantError, usageLimitPref
 	});
 }
 
+/** Whether a result ends a turn Claude started itself rather than the host's
+ * turn. Claude runs such turns between the host's, chiefly when a background
+ * task it started reports back; their result names that provenance (`origin`,
+ * such as a task notification) and not the host's prompt. The host never
+ * stamps an origin on the prompts it sends. */
+function providerInitiatedResult(message, sdkUserMessageId) {
+	const origin = message.origin;
+	if (
+		!origin ||
+		typeof origin !== "object" ||
+		Array.isArray(origin) ||
+		typeof origin.kind !== "string" ||
+		origin.kind === "human"
+	) {
+		return false;
+	}
+	return sdkUserMessageId === undefined || message.user_message_uuid !== sdkUserMessageId;
+}
+
 function mainToolResultBlocks(message) {
 	if (message.parent_tool_use_id !== null || message.isReplay === true) return [];
 	const content = message.message?.content;
@@ -1002,7 +1021,19 @@ export function createClaudeAgentSdkQueryFactory({
 				activeTurn.rejectedResetsAtMs =
 					info?.status === "rejected" ? resetMs(info.resetsAt) : undefined;
 			}
-			if (message.type === "result") {
+			if (
+				message.type === "result" &&
+				providerInitiatedResult(message, activeTurn?.sdkUserMessageId)
+			) {
+				// Claude's own turn ended; its result stays provider evidence. A
+				// host prompt sent meanwhile is queued by Claude and answered by a
+				// later result, so the active turn stays open, and what Claude's
+				// own turn said last is not that turn's answer.
+				if (activeTurn) {
+					activeTurn.finalAssistantTextBlock = null;
+					activeTurn.lastAssistantError = undefined;
+				}
+			} else if (message.type === "result") {
 				if (!activeTurn) throw adapterError("result_without_turn");
 				const turn = activeTurn;
 				const summary = resultSummary(
