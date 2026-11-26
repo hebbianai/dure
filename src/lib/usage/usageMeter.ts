@@ -153,7 +153,10 @@ export function codexMeter(u: ProviderUsage, nowSec: number): CodexMeter {
   );
 }
 
-export interface NamedCodexMeter extends CodexMeter {
+/** A limit the provider reports beside its general one, such as one model's
+ *  own budget, by the provider's id and name. `window` is null when the
+ *  provider does not say which period the limit covers. */
+export interface NamedLimitMeter extends CodexMeter {
   limitId: string;
   limitName: string | null;
   weeklyPct: number | null;
@@ -162,7 +165,7 @@ export interface NamedCodexMeter extends CodexMeter {
 
 /** 일반 codex 예산과 독립적인 모델별 bucket만 반환한다. 이름을 하드코딩하지
  *  않아 새 모델 limit_id가 추가돼도 백엔드가 보고한 이름으로 바로 표시된다. */
-export function codexModelMeters(u: ProviderUsage, nowSec: number): NamedCodexMeter[] {
+export function codexModelMeters(u: ProviderUsage, nowSec: number): NamedLimitMeter[] {
   return (u.rateLimits ?? [])
     .filter((limit) => limit.limitId !== "codex")
     .map((limit) => ({
@@ -179,6 +182,16 @@ export function codexModelMeters(u: ProviderUsage, nowSec: number): NamedCodexMe
       ),
     }))
     .filter((limit) => limit.pct != null);
+}
+
+/** The fullest of several meters, for a headline that must not hide a limit
+ *  that is closer to running out; null when none has a reading. */
+export function highestPct(meters: readonly CodexMeter[]): number | null {
+  return meters.reduce<number | null>(
+    (highest, meter) =>
+      meter.pct == null ? highest : Math.max(highest ?? meter.pct, meter.pct),
+    null,
+  );
 }
 
 /** Claude: statusLine 수집기 캐시의 실측 %가 있으면 Codex와 같은 의미의 미터.

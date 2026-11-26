@@ -141,14 +141,36 @@ export interface CodexPolledRateLimit {
 	} | null;
 }
 
-export interface CodexUsageSnapshot {
+/** One account's latest periodic usage check. `capturedAt` is the last
+ * success, whose reading is kept; a failed check sets only `attemptedAt`
+ * and `error`. A null credential is the provider's default login. */
+export interface AccountUsageCheck {
 	credentialId: string | null;
 	capturedAt: number | null;
 	attemptedAt: number | null;
 	error: string | null;
+}
+
+export interface CodexUsageSnapshot extends AccountUsageCheck {
 	rateLimits: CodexPolledRateLimit[];
 	/** Earned usage-limit resets; absent when the service has not reported them. */
 	rateLimitResetsAvailable?: number | null;
+}
+
+/** One limit window Claude's account usage request reported. `other` is a
+ * window Dure does not know yet, kept under the response's name (`id`). */
+export interface ClaudeUsageWindow {
+	id: string;
+	kind: "fiveHour" | "weekly" | "modelWeekly" | "other";
+	/** The model a `modelWeekly` window limits, as Claude names it. */
+	model: string | null;
+	usedPercent: number;
+	/** Epoch seconds; null when the window has not started. */
+	resetsAt: number | null;
+}
+
+export interface ClaudeUsageSnapshot extends AccountUsageCheck {
+	windows: ClaudeUsageWindow[];
 }
 
 /** 등록된 Claude·Codex credential catalog를 backend 수집기에 동기화한다. 토큰이나
@@ -166,6 +188,8 @@ export interface UsageRecentReport {
 	codexAccounts: import("@/lib/usage/usageAccounts").CodexAccountUsage[];
 	/** 사용 여부와 무관하게 주기 수집한 credential별 마지막 성공 snapshot. */
 	codexAccountSnapshots?: CodexUsageSnapshot[];
+	/** Each Claude account's latest account usage check, used or not. */
+	claudeAccountSnapshots?: ClaudeUsageSnapshot[];
 }
 
 interface UsageScanTelemetry {

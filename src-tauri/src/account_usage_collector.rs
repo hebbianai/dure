@@ -23,7 +23,8 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::claude_usage_reader::ClaudeUsage;
 use crate::codex_usage_collector::CodexUsage;
-use crate::usage::AccountUsageSnapshot;
+use crate::usage::{AccountUsageSnapshot, UsageReport};
+use crate::usage_recent_runtime::UsageRefreshProvider;
 
 const CACHE_SCHEMA_VERSION: u32 = 1;
 const POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
@@ -378,8 +379,19 @@ pub struct AccountUsageCollector {
 }
 
 impl AccountUsageCollector {
-    pub(crate) fn codex(&self) -> &ProviderAccounts<CodexUsage> {
-        &self.shared.codex
+    /// Check one provider's accounts now, for a manual refresh. It joins a
+    /// collection already running for that provider.
+    pub(crate) async fn refresh(&self, provider: UsageRefreshProvider) -> bool {
+        match provider {
+            UsageRefreshProvider::Codex => self.shared.codex.refresh().await,
+            UsageRefreshProvider::Claude => self.shared.claude.refresh().await,
+        }
+    }
+
+    /// Put every provider's latest account readings on a usage report.
+    pub(crate) fn attach_snapshots(&self, report: &mut UsageReport) {
+        report.codex_account_snapshots = self.shared.codex.snapshots();
+        report.claude_account_snapshots = self.shared.claude.snapshots();
     }
 
     fn sync_profiles(&self, profiles: Vec<AccountUsageProfileInput>) -> Result<(), String> {
@@ -630,6 +642,93 @@ mod tests {
         assert_eq!(restarted.snapshots()[0].captured_at, Some(100));
         restarted.sync(BTreeMap::new()).1.unwrap();
         assert!(restarted.snapshots().is_empty());
+    }
+
+    fn collector_in(root: &Path) -> AccountUsageCollector {
+        AccountUsageCollector {
+            shared: Arc::new(CollectorShared {
+                codex: ProviderAccounts::with_cache_path(root.join("codex-usage-snapshots.json")),
+                claude: ProviderAccounts::with_cache_path(root.join("claude-usage-snapshots.json")),
+                ..CollectorShared::default()
+            }),
+        }
+    }
+
+    /// A usage report carries every provider's account readings, each window
+    /// typed, in the shape the desktop reads.
+    #[test]
+    fn a_usage_report_carries_every_providers_account_readings() {
+        let root = tempfile::tempdir().unwrap();
+        let collector = collector_in(root.path());
+        let account = UsageAccount {
+            credential_id: Some("acc-a".into()),
+            directory: Some(root.path().join("claude-a")),
+        };
+        let catalog = BTreeMap::from([(credential_key(Some("acc-a")), account.clone())]);
+        collector.shared.claude.sync(catalog).1.unwrap();
+        collector
+            .shared
+            .claude
+            .record_result(&account, 100, Ok(reading(100.0)));
+
+        let mut report = UsageReport::default();
+        collector.attach_snapshots(&mut report);
+        let wire = serde_json::to_value(&report).unwrap();
+        assert_eq!(
+            wire["claudeAccountSnapshots"],
+            serde_json::json!([{
+                "credentialId": "acc-a",
+                "capturedAt": 100,
+                "attemptedAt": 100,
+                "error": null,
+                "windows": [{
+                    "id": "seven_day_fable",
+                    "kind": "modelWeekly",
+                    "model": "Fable",
+                    "usedPercent": 100.0,
+                    "resetsAt": 500,
+                }],
+            }])
+        );
+        assert_eq!(wire["codexAccountSnapshots"], serde_json::json!([]));
+    }
+
+    /// A manual Claude refresh checks the Claude accounts, not Codex's.
+    #[tokio::test]
+    async fn a_manual_refresh_checks_only_the_provider_asked_for() {
+        let root = tempfile::tempdir().unwrap();
+        let collector = collector_in(root.path());
+        // A directory that did not validate fails the check without a request.
+        let unavailable = |id: &str| {
+            BTreeMap::from([(
+                credential_key(Some(id)),
+                UsageAccount {
+                    credential_id: Some(id.into()),
+                    directory: None,
+                },
+            )])
+        };
+        collector
+            .shared
+            .claude
+            .sync(unavailable("claude-a"))
+            .1
+            .unwrap();
+        collector
+            .shared
+            .codex
+            .sync(unavailable("codex-a"))
+            .1
+            .unwrap();
+
+        assert!(!collector.refresh(UsageRefreshProvider::Claude).await);
+        let claude = collector.shared.claude.snapshots();
+        assert_eq!(claude.len(), 1);
+        assert_eq!(
+            claude[0].error.as_deref(),
+            Some(ClaudeUsage::CREDENTIAL_UNAVAILABLE)
+        );
+        assert!(collector.shared.codex.snapshots().is_empty());
     }
 
     #[test]

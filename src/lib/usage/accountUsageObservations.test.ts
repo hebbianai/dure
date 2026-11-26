@@ -89,6 +89,52 @@ describe("accountUsageObservations", () => {
 		]);
 	});
 
+	it("takes a Claude account's check by credential id when it is newer than the statusLine", () => {
+		const pool: AccountProfile[] = [
+			{ id: "acc-c", provider: "claude", name: "c", dir: "/Users/x/.dure/accounts/claude-c" },
+			{ id: "acc-d", provider: "claude", name: "d", dir: "/Users/x/.dure/accounts/claude-d" },
+		];
+		const report: UsageRecentReport = {
+			...empty,
+			claudeAccounts: [
+				{
+					profileKey: "claude-c",
+					usedPercent: 88,
+					usedPercentWeekly: 30,
+					resetsAt: NOW + 100,
+					weeklyResetsAt: NOW + 10_000,
+					usedPercentCapturedAt: NOW - 120,
+				},
+			],
+			claudeAccountSnapshots: [
+				{
+					credentialId: "acc-c",
+					capturedAt: NOW - 60,
+					attemptedAt: NOW - 60,
+					error: null,
+					windows: [
+						{ id: "five_hour", kind: "fiveHour", model: null, usedPercent: 4, resetsAt: NOW + 18_000 },
+						{ id: "seven_day", kind: "weekly", model: null, usedPercent: 31, resetsAt: NOW + 10_000 },
+					],
+				},
+				{
+					// An inactive account no statusLine has seen is observed too.
+					credentialId: "acc-d",
+					capturedAt: NOW - 30,
+					attemptedAt: NOW - 30,
+					error: null,
+					windows: [
+						{ id: "seven_day", kind: "weekly", model: null, usedPercent: 12, resetsAt: NOW + 20_000 },
+					],
+				},
+			],
+		};
+		expect(accountUsageObservations("claude", report, pool, NOW)).toEqual([
+			{ credentialId: "acc-c", usedPercent: 4, usedPercentWeekly: 31, resetsAtSec: NOW + 10_000, observedAtSec: NOW - 60 },
+			{ credentialId: "acc-d", usedPercent: null, usedPercentWeekly: 12, resetsAtSec: NOW + 20_000, observedAtSec: NOW - 30 },
+		]);
+	});
+
 	it("has nothing to say for providers without account meters", () => {
 		expect(accountUsageObservations("gemini", empty, [], NOW)).toEqual([]);
 	});

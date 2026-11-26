@@ -1392,11 +1392,8 @@ async fn usage_recent_snapshot(
     collector: tauri::State<'_, account_usage_collector::AccountUsageCollector>,
     refresh: Option<usage_recent_runtime::UsageRefreshProvider>,
 ) -> Result<usage::UsageRecentSnapshot, String> {
-    if matches!(
-        refresh,
-        Some(usage_recent_runtime::UsageRefreshProvider::Codex)
-    ) {
-        collector.codex().refresh().await;
+    if let Some(provider) = refresh {
+        collector.refresh(provider).await;
     }
     let runtime = runtime.inner().clone();
     let mut snapshot = tauri::async_runtime::spawn_blocking(move || {
@@ -1408,9 +1405,8 @@ async fn usage_recent_snapshot(
     })
     .await
     .map_err(|error| format!("usage snapshot task failed: {error}"))?;
-    let account_snapshots = collector.codex().snapshots();
-    snapshot.five_hours.codex_account_snapshots = account_snapshots.clone();
-    snapshot.twenty_four_hours.codex_account_snapshots = account_snapshots;
+    collector.attach_snapshots(&mut snapshot.five_hours);
+    collector.attach_snapshots(&mut snapshot.twenty_four_hours);
     Ok(snapshot)
 }
 
@@ -1432,7 +1428,7 @@ async fn usage_recent(
             .await
             .map_err(|error| format!("usage scan task failed: {error}"))?
     };
-    report.codex_account_snapshots = collector.codex().snapshots();
+    collector.attach_snapshots(&mut report);
     Ok(report)
 }
 

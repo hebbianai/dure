@@ -12,6 +12,12 @@ import {
 import { useLoginIdentity } from "@/lib/agents/loginIdentity";
 import { t } from "@/lib/i18n";
 import { openSettingsPage } from "@/lib/settings/settingsBus";
+import {
+	separateLimitView,
+	usageDurationLabel,
+	usageResetLabel,
+} from "@/lib/usage/usageLabels";
+import type { NamedLimitMeter } from "@/lib/usage/usageMeter";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/store";
 import type { Provider } from "@/types";
@@ -25,6 +31,26 @@ export interface UsagePopoverLimit {
 	value: string;
 	pct: number | null;
 	reset?: string | null;
+}
+
+/** Popover rows for the limits a provider reports beside its general one,
+ * such as each model's own budget. */
+export function separateLimitRows(
+	meters: readonly NamedLimitMeter[],
+	fallbackName: string,
+	dataSlot: string,
+): UsagePopoverLimit[] {
+	return meters.map((meter) => {
+		const view = separateLimitView(meter, fallbackName);
+		return {
+			id: view.id,
+			dataSlot,
+			label: view.label,
+			value: `${Math.round(view.pct)}%`,
+			pct: view.pct,
+			reset: usageResetLabel(usageDurationLabel(view.resetLabel)),
+		};
+	});
 }
 
 export interface UsagePopoverMetric {
