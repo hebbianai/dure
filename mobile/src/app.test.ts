@@ -106,6 +106,7 @@ const sentNotifications: unknown[] = [];
 let notificationPermission: "granted" | "denied" | "default" = "default";
 let pushSupported = false;
 let pushFailure: string | null = null;
+let pushCode: string | undefined;
 /**
  * What the notification plugin's JS surface believes: the real plugin snapshots
  * the state once at page load and only refreshes it from `requestPermission`,
@@ -651,7 +652,8 @@ vi.mock("@tauri-apps/api/core", () => ({
           },
         });
       case "sync_push_notifications":
-        return Promise.resolve({ supported: pushSupported, outcomes: [{ id: "hub-1", error: pushFailure }] });
+        return Promise.resolve({ supported: pushSupported,
+          outcomes: [{ id: "hub-1", computer: "Laptop", error: pushFailure, code: pushCode }] });
       case "plugin:notification|is_permission_granted":
         return Promise.resolve(
           notificationPermission === "granted"
@@ -1041,6 +1043,7 @@ beforeEach(() => {
   notificationPermission = "default";
   pushSupported = false;
   pushFailure = null;
+  pushCode = undefined;
   pluginPermissionCache = "default";
   permissionRequests = 0;
   sheetAnswer = "granted";
@@ -3586,6 +3589,20 @@ describe("알림", () => {
     root.querySelectorAll<HTMLButtonElement>(".settings-choice__row")[1]?.click();
     await settle();
     expect(pick(root, ".settings-choice__note").textContent).not.toContain("Push service unavailable");
+  });
+
+  it("names the computer whose alerts need a newer Dure there", async () => {
+    pushSupported = true;
+    pushFailure = "This computer has no configured push service";
+    pushCode = "computer_update";
+    const root = await launch();
+    pick(root, ".home__settings").click();
+    await settle();
+    settingsRow(root, "notifications").click();
+    await settle();
+    const note = pick(root, ".settings-choice__note").textContent ?? "";
+    expect(note).toContain(t("notifications.push.computerUpdate", { computer: "Laptop" }));
+    expect(note).not.toContain(pushFailure);
   });
 
   it("백그라운드에서 새 승인이 오면 세션 이름을 담아 알린다", async () => {

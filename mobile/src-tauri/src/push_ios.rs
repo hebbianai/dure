@@ -11,7 +11,13 @@
 //! every other callback is forwarded to the plugin unchanged. The notice this
 //! module posts when such an answer or reply did not land is its own too,
 //! never the plugin's.
+//!
+//! One remote alert is caught before it shows: the push service's challenge
+//! for this phone's push key (#660). In the foreground it goes to
+//! [`PushChallenges`] for the sync to sign back, with no banner. Delivered in
+//! the background, it keeps the service's fixed setup text.
 use crate::push::{FailureNotice, PushActivation, PushActivations};
+use crate::push_sync::PushChallenges;
 use block2::{DynBlock, RcBlock};
 use dure_hub_protocol::push::{ApnsEnvironment, ApnsToken, PUSH_ALERT_CONTEXT_KEY};
 use objc2::{
@@ -193,10 +199,20 @@ define_class!(
             notification: &UNNotification,
             completion: &DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
         ) {
-            if is_notice(&notification.request()) {
+            let request = notification.request();
+            if is_notice(&request) {
                 completion.call((UNNotificationPresentationOptions::Banner
                     | UNNotificationPresentationOptions::List
                     | UNNotificationPresentationOptions::Sound,));
+                return;
+            }
+            // This phone's own challenge is for the sync, not for the person.
+            if is_remote(&request)
+                && payload(&request.content()).is_some_and(|payload| {
+                    self.ivars().app.state::<PushChallenges>().capture(&payload)
+                })
+            {
+                completion.call((UNNotificationPresentationOptions::empty(),));
                 return;
             }
             match self.previous(
@@ -220,10 +236,7 @@ define_class!(
             completion: &DynBlock<dyn Fn()>,
         ) {
             let request = response.notification().request();
-            let remote = request
-                .trigger()
-                .is_some_and(|trigger| trigger.isKindOfClass(UNPushNotificationTrigger::class()));
-            if !remote && !is_notice(&request) {
+            if !is_remote(&request) && !is_notice(&request) {
                 match self.previous(sel!(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:)) {
                     Some(previous) => previous
                         .userNotificationCenter_didReceiveNotificationResponse_withCompletionHandler(
@@ -315,6 +328,13 @@ const NOTICE_PREFIX: &str = "dure.notice.";
 
 fn is_notice(request: &UNNotificationRequest) -> bool {
     request.identifier().to_string().starts_with(NOTICE_PREFIX)
+}
+
+/// Whether APNs delivered it, rather than this app posting it.
+fn is_remote(request: &UNNotificationRequest) -> bool {
+    request
+        .trigger()
+        .is_some_and(|trigger| trigger.isKindOfClass(UNPushNotificationTrigger::class()))
 }
 
 /// Tells the person an answer from an alert did not land. A tap opens the

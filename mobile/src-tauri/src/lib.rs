@@ -37,6 +37,10 @@ pub mod pairing;
 pub mod push;
 #[cfg(target_os = "ios")]
 mod push_ios;
+pub mod push_key;
+/// Run by the iOS push sync; tested everywhere.
+#[cfg(any(target_os = "ios", test))]
+mod push_sync;
 pub mod relay;
 pub mod server_conversation;
 pub mod server_store;
@@ -203,6 +207,25 @@ fn config_root(app: &AppHandle) -> Result<PathBuf, CommandError> {
 
 fn store_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
     Ok(config_root(app)?.join("servers.json"))
+}
+
+/// This install's push key folder ([`push_key::root_for`]): in the app's own
+/// sandbox, outside the configuration directory that may move into the App
+/// Group, so the notification service extension never holds the key.
+fn push_root(app: &AppHandle) -> Result<PathBuf, CommandError> {
+    let error = |message: String| CommandError {
+        code: "push_root_unavailable".to_string(),
+        message,
+    };
+    let own = app
+        .path()
+        .app_config_dir()
+        .map_err(|failure| error(failure.to_string()))?;
+    let local = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|failure| error(failure.to_string()))?;
+    push_key::root_for(&own, &local).ok_or_else(|| error("The app folder has no name".into()))
 }
 
 /// The keypair this install pairs with, minted on first use and kept until a
@@ -518,8 +541,8 @@ fn server_public_key(app: AppHandle, id: String) -> Result<String, CommandError>
 
 #[tauri::command]
 async fn reset_device(app: AppHandle) -> Result<(), CommandError> {
-    let root = config_root(&app)?;
-    tauri::async_runtime::spawn_blocking(move || device_reset::reset(&root))
+    let roots = [config_root(&app)?, push_root(&app)?];
+    tauri::async_runtime::spawn_blocking(move || device_reset::reset(&roots))
         .await
         .map_err(|error| CommandError {
             code: "device_reset_join_failed".to_string(),
@@ -994,6 +1017,8 @@ async fn hub_probe(
         token: offer.token.clone(),
         relay_endpoint: offer.relay_endpoint.clone(),
         server_id: offer.server_id.clone(),
+        // Learned from the catalog this scan reads, below.
+        push_registration: None,
     };
 
     // 붙는 것은 블로킹이다. 여기서 그대로 돌면 webview 가 그동안 멈춘다.
@@ -1036,6 +1061,10 @@ async fn hub_probe(
         let _guard = device_reset::mutation_guard(generation)?;
         let path = hub_store_path(&app)?;
         let mut document = hub_store::load(&path)?;
+        let saved = hub_store::HubEntry {
+            push_registration: probe.push_registration,
+            ..saved
+        };
         hub_store::upsert(&mut document, saved)?;
         hub_store::save(&path, &document)?;
     }
@@ -1084,7 +1113,37 @@ async fn hub_open(app: AppHandle, id: String) -> Result<HubProbe, CommandError> 
         }
     };
 
+    remember_push_registration(&app, &probe, generation);
     Ok(remember_layout(&app, probe, generation))
+}
+
+/// Keeps what this computer's catalog says about push registration on its
+/// entry, so the next push sync speaks V2 to it only once it advertised V2
+/// (and V1 again if it stops). Written only when the value changed.
+///
+/// Best effort, like [`remember_layout`]: the connection already succeeded,
+/// and a stale value only means one more sync in the older version. The
+/// notification service extension reads catalogs too, but never writes here:
+/// it runs in its own process, outside the reset guard.
+pub(crate) fn remember_push_registration(
+    app: &AppHandle,
+    probe: &HubProbe,
+    generation: device_reset::ConfigGeneration,
+) {
+    let Ok(path) = hub_store_path(app) else {
+        return;
+    };
+    let Ok(_guard) = device_reset::mutation_guard(generation) else {
+        return;
+    };
+    let Ok(mut document) = hub_store::load(&path) else {
+        return;
+    };
+    if hub_store::learn_push_registration(&mut document, &probe.id, probe.push_registration) {
+        if let Err(error) = hub_store::save(&path, &document) {
+            eprintln!("Could not remember a computer's push registration: {error}");
+        }
+    }
 }
 
 /// 취소된 짝짓기가 이 기기에 남긴 것을 전부 버린다.
@@ -2697,6 +2756,7 @@ fn describe(
             .iter()
             .map(|box_| format!("{}: {}", box_.box_label, box_.detail))
             .collect(),
+        push_registration: catalog.push_registration,
     }
 }
 
@@ -2779,6 +2839,10 @@ pub struct HubProbe {
     pub direct_pairing: Option<PairingOutcome>,
     pub direct_pairing_error: Option<CommandError>,
     pub unreachable: Vec<String>,
+    /// The catalog's `push_registration`, for [`remember_push_registration`].
+    /// The screen has no use for it.
+    #[serde(skip)]
+    pub push_registration: Option<u16>,
 }
 
 /// 세션 하나가 사이드바에서 앉아 있는 자리.
@@ -3056,6 +3120,9 @@ pub fn run() {
         .manage(LiveAttach::production())
         .manage(hub_chat_watch::ChatWatches::default())
         .manage(push::PushActivations::default());
+    // Challenge alerts are caught by the iOS alert delegate (`push_ios`).
+    #[cfg(target_os = "ios")]
+    let builder = builder.manage(push_sync::PushChallenges::default());
 
     // The camera plugin exists on Android and iOS only — its crate is literally
     // `#![cfg(mobile)]`, so `init()` does not exist on a desktop build. The

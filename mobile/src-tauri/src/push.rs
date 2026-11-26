@@ -1,22 +1,15 @@
-#[cfg(target_os = "ios")]
-use crate::hub_store;
 use crate::{
-    hub_client,
     hub_conversation::{ApprovalAnswerInput, PromptInput},
     CommandError, HubProbe,
 };
 use dure_hub_protocol::{
     conversation::{AgentPromptState, HubAgentPromptResult},
-    frame,
-    hello::HubRequest,
     push::{
-        PushAlertContext, PushApproval, PushId, PushLanguage, PushPreference, PushReply,
-        PushSubscription, PushSubscriptionResult, MAX_RESULT_BYTES, PUSH_APPROVAL_CATEGORY,
-        PUSH_REPLY_CATEGORY,
+        PushAlertContext, PushApproval, PushId, PushLanguage, PushPreference, PushRefusal,
+        PushReply, PUSH_APPROVAL_CATEGORY, PUSH_REPLY_CATEGORY,
     },
 };
 use serde::{Deserialize, Serialize};
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{ipc::Channel, Manager};
@@ -332,11 +325,14 @@ async fn reply_here(
 
 /// The paired computer's catalog, read the way the screen's `hub_open` reads it.
 async fn catalog_of(app: &tauri::AppHandle, hub: &str) -> Option<HubProbe> {
+    let generation = crate::device_reset::current_generation();
     let entry = crate::hub_target(app, hub).ok()?;
-    tauri::async_runtime::spawn_blocking(move || crate::connect_to(&entry))
+    let probe = tauri::async_runtime::spawn_blocking(move || crate::connect_to(&entry))
         .await
         .ok()?
-        .ok()
+        .ok()?;
+    crate::remember_push_registration(app, &probe, generation);
+    Some(probe)
 }
 
 /// Whether the Host confirmed it wrote the answer or prompt.
@@ -462,43 +458,36 @@ pub struct PushSyncResult {
     outcomes: Vec<HubPushOutcome>,
 }
 
-#[derive(Serialize)]
-struct HubPushOutcome {
-    id: String,
-    error: Option<String>,
+/// One computer's part of a sync, as the screen reports it. Built by
+/// [`crate::push_sync`].
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct HubPushOutcome {
+    pub(crate) id: String,
+    /// The computer's name, for the note that says which computer it was.
+    pub(crate) computer: String,
+    pub(crate) error: Option<String>,
+    /// Why, when the phone or the computer could name it. The screen picks
+    /// its note by this; `error` is the computer's own sentence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) code: Option<SyncCode>,
 }
 
-pub fn update_on_stream(
-    stream: &mut (impl Read + Write),
-    pairing_token: &str,
-    subscription: Option<PushSubscription>,
-) -> Result<(), hub_client::HubClientError> {
-    hub_client::handshake_for(
-        stream,
-        pairing_token,
-        HubRequest::UpdatePushSubscriptionV1 { subscription },
-    )?;
-    let result: PushSubscriptionResult = frame::read(stream, MAX_RESULT_BYTES)
-        .map_err(|error| hub_client::HubClientError::Protocol(error.to_string()))?;
-    match result {
-        PushSubscriptionResult::Saved => Ok(()),
-        PushSubscriptionResult::Refused { detail } => {
-            Err(hub_client::HubClientError::Protocol(detail))
-        }
-    }
-}
-
-#[cfg(target_os = "ios")]
-fn synchronize(
-    entry: &hub_store::HubEntry,
-    subscription: Option<PushSubscription>,
-) -> Result<(), hub_client::HubClientError> {
-    let relay = entry
-        .relay_endpoint
-        .as_deref()
-        .zip(entry.server_id.as_deref());
-    let mut stream = hub_client::dial_tls(&entry.endpoint, relay, &entry.fingerprint)?;
-    update_on_stream(&mut stream, &entry.token, subscription)
+/// Why one computer's registration did not finish.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncCode {
+    /// The service challenged this phone's key and the challenge alert did
+    /// not arrive in time to be signed back; the next sync finishes it.
+    SetupPending,
+    /// The connection ended before the computer answered. Retried on the
+    /// next sync, never by asking in the older version.
+    ComputerUnreachable,
+    /// A computer that reads only the first version refused: updating Dure
+    /// there is what makes alerts work.
+    ComputerUpdate,
+    /// The computer or its push service named the reason.
+    #[serde(untagged)]
+    Refused(PushRefusal),
 }
 
 #[tauri::command]
@@ -521,7 +510,8 @@ pub async fn sync_push_notifications(
             code: "push_registration_failed".into(),
             message,
         };
-        let hubs = hub_store::load(&crate::hub_store_path(&app)?)?.hubs;
+        let generation = crate::device_reset::current_generation();
+        let hubs = crate::hub_store::load(&crate::hub_store_path(&app)?)?.hubs;
         let subscription = if let Some(preference) = preference {
             if hubs.is_empty() {
                 return Ok(PushSyncResult {
@@ -530,7 +520,7 @@ pub async fn sync_push_notifications(
                 });
             }
             let (token, environment) = crate::push_ios::register(&app).await.map_err(error)?;
-            Some(PushSubscription {
+            Some(dure_hub_protocol::push::PushSubscription {
                 token,
                 environment,
                 preference,
@@ -540,18 +530,35 @@ pub async fn sync_push_notifications(
             crate::push_ios::unregister(&app).map_err(error)?;
             None
         };
+        let push_root = crate::push_root(&app)?;
         let outcomes = tauri::async_runtime::spawn_blocking(move || {
-            hubs.into_iter()
-                .map(|entry| HubPushOutcome {
-                    id: entry.id.clone(),
-                    error: synchronize(&entry, subscription.clone())
-                        .err()
-                        .map(|error| error.to_string()),
-                })
-                .collect()
+            // Made under the reset guard, so a key written after a reset
+            // cannot undo it.
+            let key = match &subscription {
+                Some(_) => {
+                    let _guard = crate::device_reset::mutation_guard(generation)
+                        .map_err(|failure| error(failure.to_string()))?;
+                    Some(crate::push_key::PushKey::load_or_create(&push_root).map_err(error)?)
+                }
+                None => None,
+            };
+            let alerts = subscription
+                .as_ref()
+                .zip(key.as_ref())
+                .map(|(subscription, key)| crate::push_sync::Alerts { subscription, key });
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_secs());
+            let challenges = app.state::<crate::push_sync::PushChallenges>();
+            Ok::<_, CommandError>(crate::push_sync::synchronize(
+                &hubs,
+                alerts,
+                &challenges,
+                now,
+            ))
         })
         .await
-        .map_err(|_| error("Push synchronization was interrupted".into()))?;
+        .map_err(|_| error("Push synchronization was interrupted".into()))??;
         Ok(PushSyncResult {
             supported: true,
             outcomes,
@@ -562,59 +569,6 @@ pub async fn sync_push_notifications(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dure_hub_protocol::{
-        hello,
-        push::{ApnsEnvironment, PushLanguage, PushPreference},
-    };
-    use std::io::Cursor;
-
-    struct Stream {
-        reply: Cursor<Vec<u8>>,
-        request: Vec<u8>,
-    }
-    impl Read for Stream {
-        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
-            self.reply.read(bytes)
-        }
-    }
-    impl Write for Stream {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.request.write(bytes)
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    fn stream(result: Option<PushSubscriptionResult>) -> Stream {
-        let mut reply = hello::encode_ack("device-1", "Phone").unwrap();
-        if let Some(result) = result {
-            reply.extend(frame::encode(&result, 4096).unwrap());
-        }
-        Stream {
-            reply: Cursor::new(reply),
-            request: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn registration_and_off_use_the_paired_request_without_terminal_attachment() {
-        let subscription = PushSubscription {
-            token: "aa12".to_string().try_into().unwrap(),
-            environment: ApnsEnvironment::Sandbox,
-            preference: PushPreference::Approvals,
-            language: PushLanguage::Ko,
-        };
-        for subscription in [Some(subscription), None] {
-            let mut stream = stream(Some(PushSubscriptionResult::Saved));
-            update_on_stream(&mut stream, "paired-token", subscription.clone()).unwrap();
-            let hello = hello::read_hello(&mut Cursor::new(stream.request)).unwrap();
-            assert_eq!(hello.token, "paired-token");
-            assert_eq!(
-                hello.request,
-                HubRequest::UpdatePushSubscriptionV1 { subscription }
-            );
-        }
-    }
 
     #[test]
     fn a_tap_that_launched_the_app_waits_for_the_screen_and_the_latest_wins() {
@@ -842,16 +796,5 @@ mod tests {
         older.as_object_mut().unwrap().remove("details");
         std::fs::write(&path, serde_json::to_vec(&older).unwrap()).unwrap();
         assert!(!AlertActions::load(&path).unwrap().details());
-    }
-
-    #[test]
-    fn old_hubs_and_refused_registrations_are_not_reported_as_saved() {
-        let mut old_hub = stream(None);
-        assert!(update_on_stream(&mut old_hub, "paired-token", None).is_err());
-        let mut refused = stream(Some(PushSubscriptionResult::Refused {
-            detail: "Service unavailable".into(),
-        }));
-        let error = update_on_stream(&mut refused, "paired-token", None).unwrap_err();
-        assert!(error.to_string().contains("Service unavailable"));
     }
 }

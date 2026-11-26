@@ -2,14 +2,25 @@ import { t } from "./i18n";
 import type { NotificationPermission } from "./notificationPolicy";
 import type { NotificationPreference } from "./settingsPreferences";
 
+/** One paired computer's part of a sync (`HubPushOutcome`). `code` names
+ * the reason when the phone or the computer could: a `PushRefusal` value, or
+ * one of the phone's own `setup_pending`, `computer_unreachable` and
+ * `computer_update`. `error` is the computer's own sentence. */
+export interface PushSyncOutcome {
+  id: string;
+  computer?: string;
+  error: string | null;
+  code?: string;
+}
+
 export interface PushSyncResult {
   supported: boolean;
-  outcomes: { id: string; error: string | null }[];
+  outcomes: PushSyncOutcome[];
 }
 
 export type PushSyncState =
   | { kind: "syncing" | "registered" | "off" | "unsupported" | "unpaired" }
-  | { kind: "error"; detail: string };
+  | { kind: "error"; detail: string; code?: string; computer?: string };
 
 interface DesiredPush {
   preference: NotificationPreference;
@@ -42,7 +53,7 @@ export function createPushSync(options: {
           if (desired || disposed) continue;
           const failure = result.outcomes.find((outcome) => outcome.error);
           options.changed(!result.supported ? { kind: "unsupported" }
-            : failure ? { kind: "error", detail: failure.error ?? "" }
+            : failure ? failed(failure)
             : preference === null ? { kind: "off" }
             : result.outcomes.length === 0 ? { kind: "unpaired" }
             : { kind: "registered" });
@@ -62,11 +73,45 @@ export function createPushSync(options: {
   };
 }
 
+function failed(outcome: PushSyncOutcome): PushSyncState {
+  return {
+    kind: "error",
+    detail: outcome.error ?? "",
+    ...(outcome.code ? { code: outcome.code } : {}),
+    ...(outcome.computer ? { computer: outcome.computer } : {}),
+  };
+}
+
+/** The note for each reason a computer's alerts are not ready. A reason
+ * without one (`phone_update_required`, `other`, a later value) shows the
+ * computer's own sentence. */
+const REASON_NOTES: Record<string, string> = {
+  setup_pending: "notifications.push.setupPending",
+  computer_unreachable: "notifications.push.computerUnreachable",
+  computer_update: "notifications.push.computerUpdate",
+  grant_refused: "notifications.push.grantRefused",
+  grant_superseded: "notifications.push.grantRefused",
+  refused: "notifications.push.grantRefused",
+  grant_expired: "notifications.push.grantExpired",
+  rate_limited: "notifications.push.rateLimited",
+  not_configured: "notifications.push.serviceUnavailable",
+  service_unreachable: "notifications.push.serviceUnavailable",
+  capacity: "notifications.push.serviceUnavailable",
+  token_invalid: "notifications.push.serviceUnavailable",
+  service_outdated: "notifications.push.serviceOutdated",
+};
+
+function failureNote(state: { detail: string; code?: string; computer?: string }): string {
+  const note = state.code && state.computer ? REASON_NOTES[state.code] : undefined;
+  return note ? t(note, { computer: state.computer ?? "" })
+    : t("notifications.push.failed", { detail: state.detail });
+}
+
 function deliveryNote(state: PushSyncState | undefined): string {
   const description = t("notifications.push.description");
   if (!state) return description;
   switch (state.kind) {
-    case "error": return `${description} ${t("notifications.push.failed", { detail: state.detail })}`;
+    case "error": return `${description} ${failureNote(state)}`;
     case "syncing": return `${description} ${t("notifications.push.syncing")}`;
     case "registered": return `${description} ${t("notifications.push.registered")}`;
     case "unpaired": return `${description} ${t("notifications.push.noComputer")}`;
