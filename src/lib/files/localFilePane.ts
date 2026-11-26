@@ -18,7 +18,7 @@ export async function openLocalFilePane(spaceId: string, path: string) {
 			`Space ${spaceId} does not exist`,
 		);
 	}
-	state.setActiveSpace(spaceId);
+	state.setActiveSpace(spaceId, "reveal");
 	const api = await waitForDesktopDockview(spaceId);
 	if (!api)
 		throw new Error(

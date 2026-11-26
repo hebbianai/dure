@@ -4,9 +4,16 @@
 // the same order and the same row destinations.
 import { useEffect, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
+import type { AgentRowPlacement } from "@/components/agents/useAgentRowFacts";
 import { useNeedsPerson } from "@/components/agents/useNeedsPerson";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
-import { deriveNextUp, type NextUp } from "@/lib/agents/nextUp";
+import {
+	deriveNextUp,
+	type NextUp,
+	nextUpAgentFacts,
+	nextUpEntry,
+	nextUpRowPlacement,
+} from "@/lib/agents/nextUp";
 import { agentRevealTargets, goToNextUp } from "@/lib/agents/nextUpNavigation";
 import {
 	chordToLabels,
@@ -17,7 +24,9 @@ import { shouldYieldToTerminal } from "@/lib/settings/shortcutPriority";
 import { useHiddenPanes } from "@/lib/workspace/pane/hiddenPanesStore";
 import { useStore } from "@/store";
 
-export function useNextUp(): NextUp {
+/** `resultsSinceMs`: a surface whose result window is a moment (the Work
+ * view's local day) rather than Next up's "not looked at yet". */
+export function useNextUp(resultsSinceMs?: number): NextUp {
 	const agentIds = useStore(
 		useShallow((state) => state.agents.map((agent) => agent.id)),
 	);
@@ -32,9 +41,33 @@ export function useNextUp(): NextUp {
 		})),
 	);
 	return useMemo(
-		() => deriveNextUp({ agentIds, needsPerson, ...facts }),
-		[agentIds, needsPerson, facts],
+		() => deriveNextUp({ agentIds, needsPerson, ...facts }, resultsSinceMs),
+		[agentIds, needsPerson, facts, resultsSinceMs],
 	);
+}
+
+/** Where one agent stands, for its row: why a person is needed, or a result
+ * in the surface's window, as Next up reports it; otherwise its display state
+ * alone. Next up's window is results not looked at yet; `resultsSinceMs`
+ * lists results since that moment, and only the ones nobody has looked at
+ * keep the unread ring. */
+export function useAgentAttentionPlacement(
+	agentId: string,
+	resultsSinceMs?: number,
+): AgentRowPlacement {
+	const needsPerson = useNeedsPerson();
+	const facts = useAgentAttention(
+		useShallow((state) => nextUpAgentFacts({ ...state, needsPerson }, agentId)),
+	);
+	const entry = nextUpEntry(
+		agentId,
+		facts,
+		resultsSinceMs === undefined ? undefined : { sinceMs: resultsSinceMs },
+	);
+	if (!entry) return facts.state ? { state: facts.state } : {};
+	return entry.reason === "result"
+		? { ...nextUpRowPlacement(entry), unread: facts.unread }
+		: nextUpRowPlacement(entry);
 }
 
 /** The shortcut walks the same order the list shows. With nothing waiting the
@@ -63,29 +96,52 @@ export function useNextUpKeys(): string[] {
 	}, [overrides]);
 }
 
-/** The Space each listed agent's row leads to, named only when going there
- * leaves the Space on screen. Pane locations are read once per change, not
+/** Where revealing each listed agent lands, read once per change rather than
  * once per row; pass a memoized list. */
-export function useAgentRevealSpaceNames(
+export function useAgentRevealTargets(
 	agentIds: readonly string[],
-): ReadonlyMap<string, string> {
+): ReturnType<typeof agentRevealTargets> {
 	const activeSpaceId = useStore((state) => state.activeSpaceId);
 	const spaces = useStore((state) => state.spaces);
 	const layouts = useStore((state) => state.layouts);
 	const hidden = useHiddenPanes((state) => state.hidden);
+	return useMemo(
+		() =>
+			agentRevealTargets(agentIds, {
+				activeSpaceId,
+				spaces,
+				layouts,
+				hidden,
+			}),
+		[agentIds, activeSpaceId, spaces, layouts, hidden],
+	);
+}
+
+/** The Space each listed agent's row leads to, named only when going there
+ * leaves the Space on screen. With `"pane"`, for a list shown in front of
+ * the Spaces deck (the Work view): the Space that holds the agent's pane,
+ * the active one included, and none for an agent without a pane. Pass a
+ * memoized list. */
+export function useAgentRevealSpaceNames(
+	agentIds: readonly string[],
+	named: "elsewhere" | "pane" = "elsewhere",
+): ReadonlyMap<string, string> {
+	const activeSpaceId = useStore((state) => state.activeSpaceId);
+	const spaces = useStore((state) => state.spaces);
+	const targets = useAgentRevealTargets(agentIds);
 	return useMemo(() => {
-		const targets = agentRevealTargets(agentIds, {
-			activeSpaceId,
-			spaces,
-			layouts,
-			hidden,
-		});
 		const names = new Map<string, string>();
-		for (const [agentId, { desktopId }] of targets) {
-			if (desktopId === activeSpaceId) continue;
-			const name = spaces.find((space) => space.id === desktopId)?.name;
+		for (const [agentId, target] of targets) {
+			if (
+				named === "pane"
+					? target.kind !== "pane"
+					: target.desktopId === activeSpaceId
+			) {
+				continue;
+			}
+			const name = spaces.find((space) => space.id === target.desktopId)?.name;
 			if (name) names.set(agentId, name);
 		}
 		return names;
-	}, [agentIds, activeSpaceId, spaces, layouts, hidden]);
+	}, [targets, activeSpaceId, spaces, named]);
 }

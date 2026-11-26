@@ -91,7 +91,7 @@ async function run(report: (phase: string, facts?: object) => void) {
 	};
 	// Leave first: a hidden window releases the active Space's stream, while a
 	// retained Space out of sight stays attached, which is the case under test.
-	useStore.getState().setActiveSpace(origin);
+	useStore.getState().setActiveSpace(origin, "reveal");
 	await waitFor("The Host did not identify a running provider", () =>
 		runtime()?.lifecycle === "running",
 	);

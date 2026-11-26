@@ -2,6 +2,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
+import { useWindowSidebarStore } from "@/lib/sidebar/windowSidebarStore";
 import {
 	type AgentPaneAttentionApi,
 	useAgentPaneAttentionAck,
@@ -62,5 +63,21 @@ describe("useAgentPaneAttentionAck", () => {
 		rendered.unmount();
 		expect(pane.activeDispose).toHaveBeenCalledOnce();
 		expect(pane.visibilityDispose).toHaveBeenCalledOnce();
+	});
+
+	it("leaves the episode unread behind the Work view and acknowledges on returning to Spaces", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(true);
+		act(() => useWindowSidebarStore.getState().setTab("work"));
+		const pane = paneApi();
+		try {
+			renderHook(() => useAgentPaneAttentionAck("agent-1", pane.api));
+			act(() => window.dispatchEvent(new Event("focus")));
+			expect(useAgentAttention.getState().acks["agent-1"]).toBeUndefined();
+
+			act(() => useWindowSidebarStore.getState().showSpaces());
+			expect(useAgentAttention.getState().acks["agent-1"]).toBe(3);
+		} finally {
+			act(() => useWindowSidebarStore.getState().setTab("spaces"));
+		}
 	});
 });

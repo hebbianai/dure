@@ -4,11 +4,15 @@
 // selector stays its own useStore subscription so rerender semantics match
 // the previous inline wiring exactly.
 import { DEFAULT_UI_PREFS } from "@/lib/settings/uiPrefs";
+import { useWindowMainView } from "@/lib/sidebar/windowSidebarStore";
 import { useStore } from "@/store";
 
 export function useDesktopBarState() {
   const spaces = useStore((s) => s.spaces);
   const activeSpaceId = useStore((s) => s.activeSpaceId);
+  // The Space on screen: none while the Work view is in front of the deck,
+  // so no tab reads as shown; clicking one brings it forward.
+  const shownSpaceId = useWindowMainView() === "spaces" ? activeSpaceId : undefined;
   const setActiveSpace = useStore((s) => s.setActiveSpace);
   const addSpace = useStore((s) => s.addSpace);
   const renameSpace = useStore((s) => s.renameSpace);
@@ -21,6 +25,7 @@ export function useDesktopBarState() {
   return {
     spaces,
     activeSpaceId,
+    shownSpaceId,
     setActiveSpace,
     addSpace,
     renameSpace,

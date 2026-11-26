@@ -99,7 +99,7 @@ const cliDesktopPaneDependencies = {
     const state = useStore.getState();
     if (!state.spaces.some((space) => space.id === spaceId))
       throw new Error(`Space ${spaceId} does not exist`);
-    state.setActiveSpace(spaceId);
+    state.setActiveSpace(spaceId, "reveal");
     const api = await waitForDesktopDockview(spaceId);
     if (!api) throw new Error(`Space ${spaceId} is not mounted`);
     return openMobileSimulatorPanel(api);

@@ -10,6 +10,7 @@ import { settings } from "./fr/settings";
 import { sourceControl } from "./fr/sourceControl";
 import { terminal } from "./fr/terminal";
 import { workspace } from "./fr/workspace";
+import { work } from "./fr/work";
 import { agents } from "./fr/agents";
 import { sessions } from "./fr/sessions";
 import { plugins } from "./fr/plugins";
@@ -46,6 +47,7 @@ export const fr: Record<string, string> = {
 	...sourceControl,
 	...terminal,
 	...workspace,
+	...work,
 	...agents,
 	...sessions,
 	...plugins,

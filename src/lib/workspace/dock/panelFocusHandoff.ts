@@ -77,11 +77,13 @@ export function applyPendingPanelFocus(desktopId: string): boolean {
  */
 export function navigateToPanel(desktopId: string, panelKey: string): void {
   if (desktopId === useStore.getState().activeSpaceId) {
+    // Already the active Space, perhaps behind the Work view.
+    useStore.getState().setActiveSpace(desktopId, "reveal");
     const api = dockviewRegistry.get(desktopId);
     if (api) focusPanelContent(api, panelKey);
     return;
   }
   pendingPanelFocus.set(desktopId, panelKey);
   setTimeout(() => pendingPanelFocus.delete(desktopId), PENDING_FOCUS_TTL_MS);
-  useStore.getState().setActiveSpace(desktopId);
+  useStore.getState().setActiveSpace(desktopId, "reveal");
 }

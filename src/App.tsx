@@ -9,6 +9,7 @@ import { Sidebar } from "@/components/sidebar/Sidebar";
 import { BriefToasts, Toaster } from "@/components/Toaster";
 import { WorkspaceTitleBar } from "@/components/workspace/WindowTitleBar";
 import { WorkspaceDeck } from "@/components/workspace/WorkspaceDeck";
+import { WorkMain } from "@/components/work/WorkMain";
 import { visibleActiveDesktopId } from "@/lib/workspace/desktop/activeDesktop";
 import { installAgentAttentionWatch } from "@/lib/agents/agentAttentionWatch";
 import { installStructuredAgentRuntimeWatch } from "@/lib/agents/structuredAgentRuntimeWatch";
@@ -54,7 +55,10 @@ import { useNativeWindowTheme } from "@/lib/platform/windowAppearance";
 import { useResolvedDark } from "@/lib/theme/themePreference";
 import { shellChromeClass, useWindowShellShape } from "@/lib/workspace/window/windowShellShape";
 import { useSidebarShortcut } from "@/lib/sidebar/useSidebarShortcut";
-import { useWindowSidebarStore } from "@/lib/sidebar/windowSidebarStore";
+import {
+  useWindowMainView,
+  useWindowSidebarStore,
+} from "@/lib/sidebar/windowSidebarStore";
 import {
   initialDesktopId,
   isMainWindow,
@@ -148,6 +152,7 @@ export default function App() {
   const activeSpaceId = useStore((s) => s.activeSpaceId);
   const activeVisible = visibleActiveDesktopId(spaces, activeSpaceId);
   const sidebarOpen = useWindowSidebarStore((state) => state.open);
+  const mainView = useWindowMainView();
   // 언어: 모듈 전역에 반영하고 루트 key 리마운트로 전체 UI에 전파.
   // bare-root 창들도 같은 훅을 써야 한다 — 창마다 i18n 전역이 별개다.
   const lang = useAppLanguage();
@@ -268,7 +273,9 @@ export default function App() {
     const candidate = explicit ?? rememberedMainDesktopId();
     const target =
       state.spaces.find((space) => space.id === candidate)?.id ?? state.spaces[0]?.id;
-    if (target && target !== state.activeSpaceId) state.setActiveSpace(target);
+    // Restoring the remembered Space is not a person going to it: a window
+    // that last showed Work opens on Work.
+    if (target && target !== state.activeSpaceId) state.setActiveSpace(target, "mount");
     if (mainWindow && target) rememberMainDesktopId(target);
 
     if (!mainWindow) return;
@@ -434,7 +441,14 @@ export default function App() {
             className="relative flex min-h-0 flex-1 flex-col pt-0.5 pr-2 pb-2 pl-(--workspace-inset)"
           >
             <main className="relative min-h-0 flex-1">
-              <WorkspaceDeck spaces={spaces} activeSpaceId={activeVisible} />
+              {/* The deck stays mounted behind Work; Work mounts only while
+                  it is shown. */}
+              <WorkspaceDeck
+                spaces={spaces}
+                activeSpaceId={activeVisible}
+                occluded={mainView === "work"}
+              />
+              {mainView === "work" && <WorkMain />}
               {/* Brief toasts centre on the workspace, not the window. */}
               <BriefToasts className="absolute inset-x-0 bottom-4" />
             </main>

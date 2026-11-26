@@ -7,6 +7,7 @@ import { persist } from "zustand/middleware";
 import { track } from "@/lib/ipc/telemetry";
 import { reorderDesktopItems } from "@/lib/workspace/desktop/desktopOrder";
 import { recordDesktopVisit } from "@/lib/workspace/desktop/desktopTabOrder";
+import { useWindowSidebarStore } from "@/lib/sidebar/windowSidebarStore";
 import { dropPinnedPanesForDesktop, togglePinnedPane } from "@/lib/workspace/pane/panePin";
 import { capFileTreeRoots } from "@/lib/persistence/storeCollections";
 import {
@@ -204,6 +205,8 @@ export const useStore = create<AppState>()(
         if (opts?.kind) space.kind = opts.kind;
         if (opts?.originSpaceId) space.originSpaceId = opts.originSpaceId;
         if (opts?.returnLayout !== undefined) space.returnLayout = opts.returnLayout;
+        // Making the new Space active is a reveal, like setActiveSpace's.
+        if (opts?.activate !== false) useWindowSidebarStore.getState().showSpaces();
         // Space creation can carry one atomic set of initial layout updates.
         // Popout stages an empty Space; its move commits after native creation.
         set((s) => ({
@@ -266,15 +269,22 @@ export const useStore = create<AppState>()(
         set((s) => ({ pinnedPanes: togglePinnedPane(s.pinnedPanes, paneId) })),
 
       // 최근순 정렬일 때만 기록한다 — 수동에서도 쓰면 전환마다 영속 슬라이스 전체가 직렬화된다.
-      setActiveSpace: (id) =>
+      // A reveal is a person going to the Space, so it also brings the Spaces
+      // deck forward from Work, even for the Space already active; a mount
+      // only makes the Space's Dockview exist and leaves the view alone.
+      setActiveSpace: (id, intent) => {
+        if (intent === "reveal") useWindowSidebarStore.getState().showSpaces();
         set((s) =>
           (s.uiPrefs?.tabOrder ?? DEFAULT_UI_PREFS.tabOrder) !== "recent"
-            ? { activeSpaceId: id }
+            ? s.activeSpaceId === id
+              ? s
+              : { activeSpaceId: id }
             : {
                 activeSpaceId: id,
                 spaceVisits: recordDesktopVisit(s.spaceVisits, id, Date.now(), s.spaces.map((d) => d.id)),
               },
-        ),
+        );
+      },
 
       saveLayout: (spaceId, layout) =>
         set((s) => ({
@@ -293,7 +303,7 @@ export const useStore = create<AppState>()(
       renameDesktop: (id, name) => get().renameSpace(id, name),
       reorderDesktop: (sourceId, targetId, position) =>
         get().reorderSpace(sourceId, targetId, position),
-      setActiveDesktop: (id) => get().setActiveSpace(id),
+      setActiveDesktop: (id, intent) => get().setActiveSpace(id, intent),
 
       setFileDraft: (key, content) =>
         set((st) => {

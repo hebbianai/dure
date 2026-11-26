@@ -7,6 +7,7 @@ import { useEffect } from "react";
 import { getDockview } from "@/lib/workspace/dock/dockRegistry";
 import { closePaneWithPinGuard } from "@/lib/workspace/pane/paneClose";
 import { closePanelById } from "@/lib/workspace/pane/paneCloseCoordinator";
+import { paneCommandSpaceId } from "@/lib/workspace/pane/paneCommandSpace";
 import { panePinKey } from "@/lib/workspace/pane/panePin";
 import { matchesChord, shortcutChord } from "@/lib/settings/shortcutBindings";
 import { shouldYieldToTerminal } from "@/lib/settings/shortcutPriority";
@@ -41,7 +42,8 @@ export function useTerminalFontShortcut() {
 /** Close a Space's active pane through the pin and session-end confirmations
  *  the pane's X button uses. False when there is no active pane. */
 export function closeActivePane(targetDesktopId?: string): boolean {
-  const desktopId = targetDesktopId ?? useStore.getState().activeSpaceId;
+  const desktopId = paneCommandSpaceId(targetDesktopId);
+  if (desktopId === undefined) return false;
   const active = getDockview(desktopId)?.activePanel;
   if (!active) return false;
   void closePaneWithPinGuard({

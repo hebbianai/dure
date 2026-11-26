@@ -10,6 +10,7 @@ import { settings } from "./es/settings";
 import { sourceControl } from "./es/sourceControl";
 import { terminal } from "./es/terminal";
 import { workspace } from "./es/workspace";
+import { work } from "./es/work";
 import { agents } from "./es/agents";
 import { sessions } from "./es/sessions";
 import { plugins } from "./es/plugins";
@@ -46,6 +47,7 @@ export const es: Record<string, string> = {
 	...sourceControl,
 	...terminal,
 	...workspace,
+	...work,
 	...agents,
 	...sessions,
 	...plugins,

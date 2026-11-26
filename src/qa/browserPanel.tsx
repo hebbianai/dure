@@ -214,7 +214,7 @@ export async function runBrowserPanelProbe(): Promise<void> {
 					spaceId = useStore
 						.getState()
 						.addSpace({ name: "Browser presentation QA" });
-					if (config.hidden) useStore.getState().setActiveSpace(previousSpace);
+					if (config.hidden) useStore.getState().setActiveSpace(previousSpace, "reveal");
 				}
 				root = createRoot(element);
 				const dockview = (
@@ -282,7 +282,7 @@ export async function runBrowserPanelProbe(): Promise<void> {
 			} else if (config.action === "reveal") {
 				if (!spaceId || !renderWorkspace)
 					throw new Error("Hidden workspace is not mounted");
-				useStore.getState().setActiveSpace(spaceId);
+				useStore.getState().setActiveSpace(spaceId, "reveal");
 				renderWorkspace(true);
 			} else if (config.action === "frame-fail") {
 				const session = observedSession;

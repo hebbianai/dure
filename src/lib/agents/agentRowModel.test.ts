@@ -66,6 +66,18 @@ describe("agentRowModel", () => {
 		expect(row.sinceMs).toBe(7);
 	});
 
+	it("keeps a looked-at result listed without the unread ring", () => {
+		const row = agentRowModel({
+			agentId: "a",
+			title: "t",
+			state: "waiting",
+			hasResult: true,
+			unread: false,
+		});
+		expect(row.status).toBe("result");
+		expect(row.dot).toEqual({ state: "waiting", unread: false });
+	});
+
 	it("says when an agent continues by itself, while nothing else lists it", () => {
 		// A failed turn its backend continues after the limit resets keeps
 		// its error dot and says when.

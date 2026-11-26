@@ -10,6 +10,7 @@ import { settings } from "./zh/settings";
 import { sourceControl } from "./zh/sourceControl";
 import { terminal } from "./zh/terminal";
 import { workspace } from "./zh/workspace";
+import { work } from "./zh/work";
 import { agents } from "./zh/agents";
 import { sessions } from "./zh/sessions";
 import { plugins } from "./zh/plugins";
@@ -46,6 +47,7 @@ export const zh: Record<string, string> = {
 	...sourceControl,
 	...terminal,
 	...workspace,
+	...work,
 	...agents,
 	...sessions,
 	...plugins,

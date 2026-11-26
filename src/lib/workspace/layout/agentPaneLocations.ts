@@ -1,4 +1,5 @@
 import type { DockviewApi } from "dockview-react";
+import { windowMainView } from "@/lib/sidebar/windowSidebarStore";
 import {
 	dockPanelReference,
 	findAgentPanel,
@@ -55,9 +56,19 @@ export function isAgentPaneMounted(
 /** "사용자가 이 pane을 보고 있는가" — 알림 억제와 unread ack가 같은 술어를
  *  써야 한다. isActive는 "자기 그룹 안에서 활성 탭"일 뿐이라(다른 그룹 최대화
  *  시에도 true) isVisible을 함께 본다. */
-export function isPanelApiInView(
+function isPanelApiInView(
 	api: { readonly isActive: boolean; readonly isVisible: boolean } | undefined,
 	hasFocus: boolean,
 ): boolean {
 	return Boolean(api?.isActive && api.isVisible && hasFocus);
+}
+
+/** Whether the person can see this agent pane now: its window shows the
+ *  Spaces deck, not the Work view in front of it, and the pane is in view.
+ *  Notification suppression and the unread ack both decide presence here. */
+export function isAgentPaneSeen(
+	api: { readonly isActive: boolean; readonly isVisible: boolean } | undefined,
+	hasFocus: boolean,
+): boolean {
+	return windowMainView() === "spaces" && isPanelApiInView(api, hasFocus);
 }

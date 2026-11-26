@@ -86,7 +86,9 @@ async function revealSpace(spaceId: string): Promise<boolean> {
 	if (getDockview(spaceId)) return true;
 	const store = useStore.getState();
 	if (!store.desktops.some((space) => space.id === spaceId)) return false;
-	store.setActiveSpace(spaceId);
+	// A start from the phone needs the Space's Dockview, not the person's
+	// attention: the desk stays on whatever view it shows.
+	store.setActiveSpace(spaceId, "mount");
 	const deadline = Date.now() + REVEAL_DEADLINE_MS;
 	while (Date.now() < deadline) {
 		await new Promise((resolve) => setTimeout(resolve, REVEAL_POLL_MS));

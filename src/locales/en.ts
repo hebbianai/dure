@@ -31,6 +31,7 @@ import { settingsEnglishTranslations } from "./en/settings";
 import { sourceControlEnglishTranslations } from "./en/sourceControl";
 import { terminalEnglishTranslations } from "./en/terminal";
 import { workspaceEnglishTranslations } from "./en/workspace";
+import { workEnglishTranslations } from "./en/work";
 
 /** 한국어 원문 → 영어. 기능별 사전은 src/locales/en/에서 소유한다. */
 export const en = composeEnglishTranslations([
@@ -38,6 +39,7 @@ export const en = composeEnglishTranslations([
 	{ name: "common", translations: commonEnglishTranslations },
 	{ name: "interactions", translations: interactionsEnglishTranslations },
 	{ name: "workspace", translations: workspaceEnglishTranslations },
+	{ name: "work", translations: workEnglishTranslations },
 	{ name: "agentsSessions", translations: agentsSessionsEnglishTranslations },
 	{ name: "terminal", translations: terminalEnglishTranslations },
 	{ name: "settings", translations: settingsEnglishTranslations },

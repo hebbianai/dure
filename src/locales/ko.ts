@@ -25,6 +25,7 @@ import { updates } from "@/locales/ko/updates";
 import { persistence } from "@/locales/ko/persistence";
 import { cli } from "@/locales/ko/cli";
 import { workspace } from "@/locales/ko/workspace";
+import { work } from "@/locales/ko/work";
 import { sourceControl } from "@/locales/ko/sourceControl";
 import { onboarding } from "@/locales/ko/onboarding";
 import { settings } from "@/locales/ko/settings";
@@ -61,6 +62,7 @@ export const ko: Record<string, string> = {
 	...persistence,
 	...cli,
 	...workspace,
+	...work,
 	...sourceControl,
 	...onboarding,
 	...settings,

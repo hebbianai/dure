@@ -427,12 +427,19 @@ function useDesktopTiers(spaces: Space[], activeSpaceId: string | undefined) {
   return tiers;
 }
 
+/** `occluded`: another main view (Work) is in front of the deck. The deck
+ * never unmounts for it. The active Space keeps its place in the cache as the
+ * active one, so it stays in the warm tier and is never frozen, but it renders
+ * as an inactive warm shell: its terminals keep their attachments, publish no
+ * geometry and lose input focus, exactly as behind another Space. */
 export function WorkspaceDeck({
   spaces,
   activeSpaceId,
+  occluded = false,
 }: {
   spaces: Space[];
   activeSpaceId: string | undefined;
+  occluded?: boolean;
 }) {
   const tiers = useDesktopTiers(spaces, activeSpaceId);
 
@@ -444,7 +451,7 @@ export function WorkspaceDeck({
           <Workspace
             key={desktop.id}
             desktopId={desktop.id}
-            active={desktop.id === activeSpaceId}
+            active={!occluded && desktop.id === activeSpaceId}
             frozen={tiers.frozen.includes(desktop.id)}
           />
         ))}

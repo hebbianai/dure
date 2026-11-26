@@ -26,6 +26,12 @@ const permissionMocks = vi.hoisted(() => ({
 	permission: null as DurePluginPermissionSnapshot | null,
 	usePermission: vi.fn(),
 }));
+const windows = vi.hoisted(() => ({ isMainWindow: vi.fn(() => true) }));
+
+vi.mock("@/lib/workspace/window/windows", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/workspace/window/windows")>()),
+	isMainWindow: windows.isMainWindow,
+}));
 
 vi.mock("@/components/plugins/usePluginPermissionWorkspace", () => ({
 	usePluginPermissionWorkspace: permissionMocks.usePermission,
@@ -60,6 +66,7 @@ describe("ActivityRail", () => {
 	});
 
 	beforeEach(() => {
+		windows.isMainWindow.mockReturnValue(true);
 		setPermission(true);
 		permissionMocks.usePermission.mockImplementation((input) => ({
 			permission: input ? permissionMocks.permission : null,
@@ -106,7 +113,26 @@ describe("ActivityRail", () => {
 		expect(collapsed).toContain("text-sidebar-foreground");
 	});
 
-	it("badges the Spaces item with the agents the needs-person map holds", () => {
+	it("leads the main window's rail with Work, which switches the main view", () => {
+		useWindowSidebarStore.setState({ open: true });
+		useWindowSidebarStore.getState().setTab("files");
+		render(<ActivityRail onOpenSettings={vi.fn()} />);
+		const items = screen.getAllByRole("button");
+		expect(items[0].getAttribute("aria-label")).toBe(t("work.title"));
+		act(() => screen.getByRole("button", { name: t("work.title") }).click());
+		expect(useWindowSidebarStore.getState().tab).toBe("work");
+		// Revealing Spaces returns to the tab Spaces was last shown with.
+		act(() => useWindowSidebarStore.getState().showSpaces());
+		expect(useWindowSidebarStore.getState().tab).toBe("files");
+	});
+
+	it("leaves Work out of other windows' rails", () => {
+		windows.isMainWindow.mockReturnValue(false);
+		render(<ActivityRail onOpenSettings={vi.fn()} />);
+		expect(screen.queryByRole("button", { name: t("work.title") })).toBeNull();
+	});
+
+	it("badges the Work item with the agents the needs-person map holds", () => {
 		const previous = useStore.getState();
 		useStore.setState({
 			agents: [
@@ -143,10 +169,18 @@ describe("ActivityRail", () => {
 		});
 		try {
 			render(<ActivityRail onOpenSettings={vi.fn()} />);
-			const spacesItem = screen.getByRole("button", {
-				name: /스페이스 · 주의 필요 3개/,
+			const workItem = screen.getByRole("button", {
+				name: /작업 · 주의 필요 3개/,
 			});
-			expect(spacesItem.textContent).toContain("3");
+			expect(workItem.textContent).toContain("3");
+			expect(screen.getByRole("button", { name: "스페이스" }).textContent).toBe("");
+			cleanup();
+			// A window without Work keeps the count on Spaces.
+			windows.isMainWindow.mockReturnValue(false);
+			render(<ActivityRail onOpenSettings={vi.fn()} />);
+			expect(
+				screen.getByRole("button", { name: /스페이스 · 주의 필요 3개/ }).textContent,
+			).toContain("3");
 		} finally {
 			useAgentAttention.setState({ displayStates: {} });
 			useStore.setState({
@@ -383,6 +417,8 @@ describe("ActivityRail", () => {
 		expect(
 			screen.getByRole("button", { name: t("common.sourceControl") }),
 		).toBeTruthy();
+		// Work, the overview of every agent, is never folded.
+		expect(screen.getByRole("button", { name: t("work.title") })).toBeTruthy();
 		expect(
 			screen.getByRole("button", { name: t("common.session") }),
 		).toBeTruthy();

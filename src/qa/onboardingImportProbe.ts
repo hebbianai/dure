@@ -303,7 +303,7 @@ export async function runOnboardingImportProbe(
 			.agents.filter((agent) => committedJournal.agentIds.includes(agent.id));
 	const desktopRuntime: OnboardingImportDesktopRuntimeReceipt[] = [];
 	for (const desktopId of committedJournal.desktopIds) {
-		useStore.getState().setActiveSpace(desktopId);
+		useStore.getState().setActiveSpace(desktopId, "reveal");
 		const api = await waitForDesktopDockview(desktopId, 5_000);
 		const expectedPanes = panelsFromLayout(
 			useStore.getState().layouts[desktopId],

@@ -29,7 +29,13 @@ import type { Agent } from "@/types";
 /** What the list knows about the row's place in it. */
 export type AgentRowPlacement = Pick<
 	AgentRowFacts,
-	"state" | "needsPerson" | "hasResult" | "sinceMs" | "branch" | "spaceName"
+	| "state"
+	| "needsPerson"
+	| "hasResult"
+	| "unread"
+	| "sinceMs"
+	| "branch"
+	| "spaceName"
 > & {
 	/** The agent the list sits under, as a manager's team line does: the
 	 * row's path then names only the managers below it. */

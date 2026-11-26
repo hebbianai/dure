@@ -1,23 +1,16 @@
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Expand } from "lucide-react";
 import type { ReactNode } from "react";
-import { useShallow } from "zustand/react/shallow";
 import { AgentRow } from "@/components/agents/AgentRow";
 import {
 	type AgentRowPlacement,
 	useAgentRowFacts,
 } from "@/components/agents/useAgentRowFacts";
-import { useNeedsPerson } from "@/components/agents/useNeedsPerson";
+import { useAgentAttentionPlacement } from "@/components/agents/useNextUp";
 import { Button } from "@/components/ui/button";
 import { useAgentLargeViewSource } from "@/components/workspace/AgentLargeViewSourceProxy";
 import { useWorkspaceRuntimeDesktopId } from "@/components/workspace/WorkspaceRuntimeContext";
-import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
 import { agentRowModel } from "@/lib/agents/agentRowModel";
-import {
-	nextUpAgentFacts,
-	nextUpEntry,
-	nextUpRowPlacement,
-} from "@/lib/agents/nextUp";
 import { t } from "@/lib/i18n";
 import { agentSessionWindowTarget } from "@/lib/workspace/window/agentSessionWindowTarget";
 import { openAgentSessionWindow } from "@/lib/workspace/window/windows";
@@ -28,19 +21,8 @@ import type { Agent } from "@/types";
  * result nobody has looked at yet (focusing the pane clears it). Otherwise
  * it shows the agent's display state alone. */
 function useStatusCardPlacement(agent: Agent): AgentRowPlacement {
-	const needsPerson = useNeedsPerson();
-	const facts = useAgentAttention(
-		useShallow((state) =>
-			nextUpAgentFacts({ ...state, needsPerson }, agent.id),
-		),
-	);
-	const entry = nextUpEntry(agent.id, facts);
 	return {
-		...(entry
-			? nextUpRowPlacement(entry)
-			: facts.state
-				? { state: facts.state }
-				: {}),
+		...useAgentAttentionPlacement(agent.id),
 		...(agent.branch ? { branch: agent.branch } : {}),
 	};
 }
