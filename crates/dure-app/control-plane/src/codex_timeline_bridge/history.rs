@@ -73,19 +73,23 @@ where
         if window.omits_older
             && let Some(oldest) = window.turns.first()
         {
+            let start = self.transcript_start(oldest).await?;
             let boundary = if projection.holds_turns() {
                 // A window that does not reach the turns the timeline holds
-                // follows them behind the gap between them, which has no
-                // place in the rollout here: a view never pages from the
-                // window's start back over the held turns.
-                AgentTimelineItemBodyV1::history_gap(None)
+                // follows them behind the gap between them. A view pages the
+                // gap only between its two ends, never from the window's
+                // start back over the held turns.
+                AgentTimelineItemBodyV1::history_gap(
+                    self.held_history_gap(&projection, start).await?,
+                )
             } else {
-                Self::window_boundary(self.transcript_start(oldest).await?)
+                Self::window_boundary(start)
             };
             self.commit_history_boundary(oldest, boundary).await?;
         }
         for turn in &window.turns {
             let provider_turn_id = field_string(turn, "id")?;
+            let provider_turn = provider_turn_identity(provider_turn_id);
             let (client_message_id, turn_id) = projection.history_turn_identity(turn)?;
             let started_at_ms = provider_timestamp_ms(turn, "startedAt")?.unwrap_or(now_ms()?);
             let terminal_state = terminal_turn_state(turn);
@@ -97,7 +101,7 @@ where
                 observed_at_ms: started_at_ms,
             };
             let mut mutations = Vec::new();
-            if !projection.turn_lifecycle.contains_key(turn_id.as_str()) {
+            if projection.turn_state(&turn_id).is_none() {
                 mutations.push(AgentTimelineMutationV1::Append {
                     item: self.item_for_turn(
                         provider_turn_id,
@@ -109,14 +113,15 @@ where
                         TimelineItemContext {
                             turn_id: Some(turn_id.clone()),
                             client_message_id: Some(client_message_id.clone()),
-                            provider_message_id: None,
+                            provider_message_id: provider_turn.clone(),
                             created_at_ms: started_at_ms,
                         },
                     )?,
                 });
-                projection.turn_lifecycle.insert(
-                    turn_id.as_str().into(),
+                projection.observe_turn_lifecycle(
+                    &turn_id,
                     AgentTimelineLifecycleStateV1::TurnStarted,
+                    provider_turn.as_ref(),
                 );
             }
             projection
@@ -177,7 +182,7 @@ where
                 }
             }
             if let Some(state) = terminal_state
-                && projection.turn_lifecycle.get(turn_id.as_str()) != Some(&state)
+                && projection.turn_state(&turn_id) != Some(&state)
             {
                 mutations.push(AgentTimelineMutationV1::Append {
                     item: self.item_for_turn(
@@ -193,14 +198,12 @@ where
                         TimelineItemContext {
                             turn_id: Some(turn_id.clone()),
                             client_message_id: Some(client_message_id.clone()),
-                            provider_message_id: None,
+                            provider_message_id: provider_turn.clone(),
                             created_at_ms: completed_at_ms,
                         },
                     )?,
                 });
-                projection
-                    .turn_lifecycle
-                    .insert(turn_id.as_str().into(), state);
+                projection.observe_turn_lifecycle(&turn_id, state, provider_turn.as_ref());
             }
             if !mutations.is_empty() {
                 self.commit_history_turn(provider_turn_id, turn, mutations)
@@ -286,6 +289,38 @@ where
         .ok()
         .flatten();
         Ok(start.and_then(|start| i64::try_from(start).ok()))
+    }
+
+    /// Where the turns a window leaves out after the ones the timeline holds
+    /// lie in the rollout: from where the records of the newest held turn end
+    /// to `resumed_at`, where the window starts. `None` when this backend
+    /// cannot find either end, or the newest held turn's rows do not name its
+    /// provider turn.
+    async fn held_history_gap(
+        &self,
+        projection: &CodexTimelineProjection,
+        resumed_at: Option<i64>,
+    ) -> Result<Option<(i64, i64)>, AgentProviderCommandErrorV1> {
+        let (Some(home), Some(held_turn), Some(resumed_at)) = (
+            self.provider_home.clone(),
+            projection.newest_provider_turn().map(str::to_owned),
+            resumed_at,
+        ) else {
+            return Ok(None);
+        };
+        let thread_id = self.thread_id.clone();
+        let held_end = tokio::task::spawn_blocking(move || {
+            crate::agent_conversation_history::codex_turn_end_cursor(
+                &home,
+                &thread_id,
+                &held_turn,
+                u64::try_from(resumed_at).ok()?,
+            )
+        })
+        .await
+        .ok()
+        .flatten();
+        Ok(held_end.and_then(|end| Some((i64::try_from(end).ok()?, resumed_at))))
     }
 
     /// The boundary that opens a window of the thread's newest turns. Placed

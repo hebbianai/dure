@@ -1336,12 +1336,184 @@ mod tests {
         server.abort();
     }
 
+    /// The gap boundary of a timeline whose held turns a window follows: the
+    /// rollout offsets where the held turns end and the window starts.
+    async fn gap_offsets(
+        service: &AgentConversationService<crate::SqliteDomainStore>,
+        binding: &AgentInteractionBindingV1,
+    ) -> (i64, i64) {
+        timeline_rows(service, binding)
+            .await
+            .iter()
+            .find_map(|row| match &row.item.body {
+                AgentTimelineItemBodyV1::HistoryBoundary {
+                    reason,
+                    requested_after_provider_sequence,
+                    dropped_through_provider_sequence,
+                } if reason == dure_app::PROVIDER_TRANSCRIPT_GAP_HISTORY_BOUNDARY_V1 => Some((
+                    *requested_after_provider_sequence,
+                    *dropped_through_provider_sequence,
+                )),
+                _ => None,
+            })
+            .expect("a placed gap")
+    }
+
+    /// The prompts and answers the backend pages into a gap between `after`
+    /// and `before` of the thread's rollout.
+    fn gap_page(home: &std::path::Path, (after, before): (i64, i64)) -> Vec<String> {
+        dure_provider_profile::transcript::read_roots_activity_page(
+            &home.join("projects"),
+            &home.join("sessions"),
+            "codex",
+            "thread-history",
+            u64::try_from(before).unwrap(),
+            u64::try_from(after).unwrap(),
+        )
+        .unwrap()
+        .transcript
+        .entries
+        .into_iter()
+        .map(|entry| entry.text)
+        .collect()
+    }
+
     /// The same window after held turns, with the rollout on this machine:
-    /// its start in the rollout is no place to page back from, since the
-    /// history before it runs over the turns the timeline already shows. It
-    /// follows them behind the gap at no place.
+    /// the gap is placed from where the newest held turn ends to where the
+    /// window starts, so the backend pages exactly the turns between them,
+    /// never the window's start back over the held turns.
     #[tokio::test]
-    async fn a_window_after_held_history_is_never_placed_over_the_held_turns() {
+    async fn a_window_after_held_turns_places_the_gap_between_them() {
+        let (temporary, service, binding) = conversation_fixture().await;
+        let home = temporary.path().join("codex-home");
+        let starts = rollout_home(&home, 1..=5);
+        let socket_path = temporary.path().join("app.sock");
+        let (server, _requests) = paged_thread_server(&socket_path, THREAD_PAGES);
+        let (bridge, incoming) =
+            paged_bridge(&socket_path, &binding, &service, Some(home.clone())).await;
+        bridge
+            .reconcile_history(json!({
+                "thread": { "id": "thread-history", "turns": [history_turn(1)] },
+            }))
+            .await
+            .unwrap();
+
+        let newest_page = encoded_len(&history_turn(5)) + encoded_len(&history_turn(4));
+        bridge
+            .reconcile_history_within(paged_resume(), newest_page)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            prompts_and_boundaries(&service, &binding).await,
+            [
+                "Prompt 1",
+                "boundary:provider_transcript_gap",
+                "Prompt 4",
+                "Prompt 5"
+            ]
+        );
+        // Turn 1 ends where turn 2 starts, and the window starts at turn 4.
+        let gap = gap_offsets(&service, &binding).await;
+        assert_eq!(gap, (starts[1] as i64, starts[3] as i64));
+        assert_eq!(
+            gap_page(&home, gap),
+            ["Prompt 2", "Answer 2", "Prompt 3", "Answer 3"]
+        );
+        assert!(!history_complete(&service, &binding).await);
+        drop(bridge);
+        drop(incoming);
+        server.abort();
+    }
+
+    /// Chat → Terminal → Chat: the first Chat session's own turn keeps its
+    /// provider turn in its rows, so the second session places the gap after
+    /// it, where the Terminal's turns begin.
+    #[tokio::test]
+    async fn a_chat_turn_keeps_its_provider_turn_for_the_gap_after_it() {
+        let (temporary, service, binding) = conversation_fixture().await;
+        let home = temporary.path().join("codex-home");
+        let starts = rollout_home(&home, 1..=5);
+        let socket_path = temporary.path().join("app.sock");
+        let (server, _requests) = paged_thread_server(&socket_path, THREAD_PAGES);
+        let (bridge, incoming) =
+            paged_bridge(&socket_path, &binding, &service, Some(home.clone())).await;
+        // The first Chat session sends turn 1 itself, under Dure's ids.
+        *bridge.active_turn.lock().await = Some(ActiveTurn {
+            turn_id: AgentTurnIdV1::new("chat-turn-1").unwrap(),
+            client_message_id: AgentClientMessageIdV1::new("chat-message-1").unwrap(),
+            provider_turn_id: Some("provider-turn-1".into()),
+        });
+        for (method, turn) in [
+            (
+                "turn/started",
+                json!({ "id": "provider-turn-1", "status": "inProgress", "items": [] }),
+            ),
+            (
+                "turn/completed",
+                json!({
+                    "id": "provider-turn-1",
+                    "status": "completed",
+                    "items": [
+                        { "type": "userMessage", "id": "chat-user-1",
+                          "clientId": "chat-message-1",
+                          "content": [{ "text": "Prompt 1" }] },
+                        { "type": "agentMessage", "id": "chat-answer-1", "text": "Answer 1" },
+                    ],
+                }),
+            ),
+        ] {
+            bridge
+                .handle_incoming(JsonRpcSocketIncomingV1 {
+                    method: method.into(),
+                    id: None,
+                    params: json!({ "threadId": "thread-history", "turn": turn }),
+                })
+                .await
+                .unwrap();
+        }
+        let lifecycle_turns = timeline_rows(&service, &binding)
+            .await
+            .into_iter()
+            .filter(|row| matches!(row.item.body, AgentTimelineItemBodyV1::Lifecycle { .. }))
+            .filter_map(|row| row.item.provider_message_id)
+            .map(|turn| turn.as_str().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(lifecycle_turns, ["provider-turn-1", "provider-turn-1"]);
+
+        // The second Chat session's window holds only the Terminal's newest
+        // turns.
+        let newest_page = encoded_len(&history_turn(5)) + encoded_len(&history_turn(4));
+        bridge
+            .reconcile_history_within(paged_resume(), newest_page)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            prompts_and_boundaries(&service, &binding).await,
+            [
+                "Prompt 1",
+                "boundary:provider_transcript_gap",
+                "Prompt 4",
+                "Prompt 5"
+            ]
+        );
+        let gap = gap_offsets(&service, &binding).await;
+        assert_eq!(gap, (starts[1] as i64, starts[3] as i64));
+        assert_eq!(
+            gap_page(&home, gap),
+            ["Prompt 2", "Answer 2", "Prompt 3", "Answer 3"]
+        );
+        drop(bridge);
+        drop(incoming);
+        server.abort();
+    }
+
+    /// A timeline whose newest turn was stored before a turn's rows kept its
+    /// provider turn cannot say where its held turns end, so its gap stays
+    /// at no place rather than paging over held turns.
+    #[tokio::test]
+    async fn held_turns_that_do_not_name_their_provider_turn_keep_the_gap_unplaced() {
         let (temporary, service, binding) = conversation_fixture().await;
         let home = temporary.path().join("codex-home");
         rollout_home(&home, 1..=5);
@@ -1352,6 +1524,29 @@ mod tests {
             .reconcile_history(json!({
                 "thread": { "id": "thread-history", "turns": [history_turn(1)] },
             }))
+            .await
+            .unwrap();
+        // A later Chat turn, stored before its rows named the provider turn.
+        bridge
+            .commit(
+                "turn/completed",
+                &json!({ "threadId": "thread-history", "stored": "before" }),
+                vec![AgentTimelineMutationV1::Append {
+                    item: bridge
+                        .item(
+                            "turn-completed",
+                            AgentTimelineItemBodyV1::Lifecycle {
+                                state: AgentTimelineLifecycleStateV1::TurnCompleted,
+                                detail: None,
+                            },
+                            Some(AgentTurnIdV1::new("chat-turn-2").unwrap()),
+                            Some(AgentClientMessageIdV1::new("chat-message-2").unwrap()),
+                            None,
+                            2,
+                        )
+                        .unwrap(),
+                }],
+            )
             .await
             .unwrap();
 

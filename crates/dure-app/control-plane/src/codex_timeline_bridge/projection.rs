@@ -56,7 +56,11 @@ pub(super) struct CodexTimelineProjection {
     text_provider_ids_by_turn: BTreeMap<String, Vec<AgentProviderMessageIdV1>>,
     pub(super) tools: BTreeMap<String, AgentTimelineItemBodyV1>,
     pub(super) turn_by_client_message: BTreeMap<String, AgentTurnIdV1>,
-    pub(super) turn_lifecycle: BTreeMap<String, AgentTimelineLifecycleStateV1>,
+    turn_lifecycle: BTreeMap<String, AgentTimelineLifecycleStateV1>,
+    /// The provider turn that the newest turn lifecycle row names: the turn
+    /// the held history ends with. `None` when that row names none, as rows
+    /// stored before a turn's rows kept it.
+    newest_provider_turn: Option<AgentProviderMessageIdV1>,
     conversation_title: Option<String>,
 }
 
@@ -115,6 +119,35 @@ impl CodexTimelineProjection {
         Ok(self.turn_lifecycle.contains_key(turn_id.as_str()))
     }
 
+    /// The lifecycle state the timeline holds for a turn.
+    pub(super) fn turn_state(
+        &self,
+        turn_id: &AgentTurnIdV1,
+    ) -> Option<&AgentTimelineLifecycleStateV1> {
+        self.turn_lifecycle.get(turn_id.as_str())
+    }
+
+    /// Records a turn lifecycle row, newest last, with the provider turn it
+    /// names ([`provider_turn_identity`]).
+    pub(super) fn observe_turn_lifecycle(
+        &mut self,
+        turn_id: &AgentTurnIdV1,
+        state: AgentTimelineLifecycleStateV1,
+        provider_turn: Option<&AgentProviderMessageIdV1>,
+    ) {
+        self.turn_lifecycle.insert(turn_id.as_str().into(), state);
+        self.newest_provider_turn = provider_turn.cloned();
+    }
+
+    /// The provider id of the newest turn the timeline holds, where a
+    /// continued history's gap starts in the rollout; `None` when its rows
+    /// do not name it.
+    pub(super) fn newest_provider_turn(&self) -> Option<&str> {
+        self.newest_provider_turn
+            .as_ref()
+            .map(AgentProviderMessageIdV1::as_str)
+    }
+
     pub(super) fn adopt_conversation_title(&mut self, title: &str) -> bool {
         let title = title.trim();
         if title.is_empty() || self.conversation_title.as_deref() == Some(title) {
@@ -142,8 +175,13 @@ impl CodexTimelineProjection {
         if let (Some(turn_id), AgentTimelineItemBodyV1::Lifecycle { state, .. }) =
             (&row.item.turn_id, &row.item.body)
         {
-            self.turn_lifecycle
-                .insert(turn_id.as_str().into(), state.clone());
+            // A turn's lifecycle row names its provider turn, not a message.
+            self.observe_turn_lifecycle(
+                turn_id,
+                state.clone(),
+                row.item.provider_message_id.as_ref(),
+            );
+            return;
         }
         let Some(provider_message_id) = &row.item.provider_message_id else {
             return;
@@ -317,6 +355,15 @@ pub(super) fn codex_turn_id(
         &digest(&json!(provider_turn_id))[..24]
     ))
     .map_err(|_| AgentProviderCommandErrorV1::new("event_invalid", "invalid turn id"))
+}
+
+/// The provider identity a Codex turn's lifecycle rows keep: the turn's own
+/// id in the thread, by which its records are found in the rollout. A turn's
+/// timeline id never names it: a turn sent from Chat has Dure's id, and a
+/// seeded one a digest of the provider's. `None` for an id a timeline row
+/// cannot hold.
+pub(super) fn provider_turn_identity(provider_turn_id: &str) -> Option<AgentProviderMessageIdV1> {
+    AgentProviderMessageIdV1::new(provider_turn_id).ok()
 }
 
 pub(super) fn provider_timestamp_ms(

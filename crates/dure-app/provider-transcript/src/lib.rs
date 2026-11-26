@@ -861,15 +861,69 @@ pub fn codex_turn_start_cursor(
         .ok_or_else(|| "provider conversation was not found".to_string())?;
     let read_error = |error| format!("read provider transcript: {error}");
     let mut file = fs::File::open(path).map_err(read_error)?;
-    let opens_turn = |value: &Value| {
-        value.get("type").and_then(Value::as_str) == Some("event_msg")
-            && value.pointer("/payload/type").and_then(Value::as_str) == Some("task_started")
-            && value.pointer("/payload/turn_id").and_then(Value::as_str) == Some(turn_id)
-    };
     let end = file.metadata().map_err(read_error)?.len();
-    last_record(&mut file, end, turn_id.as_bytes(), opens_turn)
-        .map(|record| record.map(|(offset, _)| offset))
-        .map_err(read_error)
+    last_record(&mut file, end, turn_id.as_bytes(), |_, value| {
+        codex_opened_turn(value) == Some(turn_id)
+    })
+    .map(|record| record.map(|(offset, _)| offset))
+    .map_err(read_error)
+}
+
+/// Where the records of turn `turn_id` of a Codex conversation end, looking
+/// back from `before`: the offset of the `task_started` event of the first
+/// turn the rollout opens after it, or `before` when none opens between them.
+/// Records the provider writes for the turn after it completes, such as a
+/// command that finishes later, stay with it. A timeline that holds the
+/// conversation through that turn and resumes it at `before` leaves out the
+/// records between them, which [`read_roots_activity_page`] pages with this
+/// as its floor. `None` when no turn the rollout opens before `before` is
+/// `turn_id`.
+pub fn codex_turn_end_cursor(
+    codex_sessions: &Path,
+    conversation_id: &str,
+    turn_id: &str,
+    before: u64,
+) -> Result<Option<u64>, String> {
+    if !safe_id(conversation_id) || !safe_id(turn_id) {
+        return Err("provider conversation id is invalid".to_string());
+    }
+    let path = codex_rollout(codex_sessions, conversation_id)
+        .ok_or_else(|| "provider conversation was not found".to_string())?;
+    let read_error = |error| format!("read provider transcript: {error}");
+    let mut file = fs::File::open(path).map_err(read_error)?;
+    if before > file.metadata().map_err(read_error)?.len() {
+        return Err("provider transcript changed since the newer page was read".to_string());
+    }
+    // Reading back from `before`, the earliest turn found so far starts where
+    // the turn before it ends.
+    let mut next_turn_start = before;
+    let turn =
+        last_record(
+            &mut file,
+            before,
+            b"task_started",
+            |offset, value| match codex_opened_turn(value) {
+                Some(opened) if opened == turn_id => true,
+                Some(_) => {
+                    next_turn_start = offset;
+                    false
+                }
+                None => false,
+            },
+        )
+        .map_err(read_error)?;
+    Ok(turn.map(|_| next_turn_start))
+}
+
+/// The turn a Codex rollout record opens: the `turn_id` of its `task_started`
+/// event, the first record the rollout writes for a turn.
+fn codex_opened_turn(value: &Value) -> Option<&str> {
+    if value.get("type").and_then(Value::as_str) != Some("event_msg")
+        || value.pointer("/payload/type").and_then(Value::as_str) != Some("task_started")
+    {
+        return None;
+    }
+    value.pointer("/payload/turn_id").and_then(Value::as_str)
 }
 
 /// Where the records of message `provider_message_id` of a Claude
@@ -910,7 +964,7 @@ pub fn claude_message_end_cursor(
         &mut file,
         before,
         provider_message_id.as_bytes(),
-        carries_message,
+        |_, value| carries_message(value),
     )
     .map(|record| record.map(|(offset, length)| offset + length))
     .map_err(read_error)
@@ -921,12 +975,13 @@ const BACKWARD_READ_BYTES: u64 = 1024 * 1024;
 
 /// The offset and length of the last whole record that ends by `end` in
 /// `file` and `matches`, reading back from `end`. Only records that contain
-/// `needle` are decoded.
+/// `needle` are decoded, and `matches` sees them newest first, each with its
+/// offset.
 fn last_record(
     file: &mut fs::File,
     mut end: u64,
     needle: &[u8],
-    matches: impl Fn(&Value) -> bool,
+    mut matches: impl FnMut(u64, &Value) -> bool,
 ) -> std::io::Result<Option<(u64, u64)>> {
     let metadata = file.metadata()?;
     if !metadata.is_file() {
@@ -966,7 +1021,7 @@ fn last_record(
         }
         for (offset, line) in lines.into_iter().rev() {
             if line.windows(needle.len()).any(|window| window == needle)
-                && serde_json::from_slice::<Value>(line).is_ok_and(|value| matches(&value))
+                && serde_json::from_slice::<Value>(line).is_ok_and(|value| matches(offset, &value))
             {
                 return Ok(Some((offset, line.len() as u64)));
             }
