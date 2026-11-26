@@ -184,6 +184,21 @@ function errorResult(secret) {
 	};
 }
 
+// A turn Claude runs on its own, as the pinned CLI does when a background
+// task it started reports back: no host prompt, a fresh init, the answer, and
+// a result that names the task notification instead of a prompt uuid.
+function pushProviderInitiatedTurn(output, prepared, text) {
+	output.push(initializationMessage(prepared));
+	pushAssistantMessage(output, { delta: text, providerMessageId: "message-provider-turn" });
+	const result = {
+		...successResult(undefined, text),
+		duration_ms: 99,
+		origin: { kind: "task-notification" },
+	};
+	delete result.user_message_uuid;
+	output.push(result);
+}
+
 function createRelaySpawnerProbe(observations) {
 	return (configuration) => {
 		observations.relayConfigurations.push(configuration);
@@ -576,6 +591,10 @@ function interactiveQuery(observed) {
 					await new Promise((resolve) => {
 						interruptRelease = resolve;
 					});
+				} else if (turnInput === "provider turn first") {
+					// The prompt arrived while Claude ran a turn of its own; the
+					// CLI queued it and answers it once that turn's result is out.
+					pushProviderInitiatedTurn(output, observed.bindings.at(-1), "background task finished");
 				} else if (turnInput.startsWith("background ")) {
 					// The CLI's level signal: every live background task after a change.
 					const count = Number(turnInput.slice("background ".length));
@@ -593,6 +612,10 @@ function interactiveQuery(observed) {
 				}
 				output.push(successResult(message.uuid));
 				activeMessage = undefined;
+				if (turnInput === "provider turn after") {
+					// The turn left a background task that reports back after it.
+					pushProviderInitiatedTurn(output, observed.bindings.at(-1), "background task finished");
+				}
 			}
 		})().catch((error) => output.fail(error));
 		return {
@@ -977,6 +1000,72 @@ test("the provider's background task level outlives the turn and replaces itself
 		false,
 		"the level is Query state, not a timeline event",
 	);
+	await controller.close();
+});
+
+test("a turn Claude runs on its own after a background task leaves the Query open", async () => {
+	const prepared = binding();
+	const observed = observations(prepared);
+	const controller = await createController(prepared, observed, interactiveQuery(observed));
+
+	await controller.startTurn({ clientMessageId: "provider-turn-message-1", input: "provider turn after" });
+	await waitForCondition(
+		() =>
+			observed.terminals.length > 0 ||
+			observed.events.some(
+				({ kind, payload }) => kind === "provider_event" && payload.type === "result",
+			),
+	);
+	assert.deepEqual(observed.terminals, [], "Claude's own turn is not a stream failure");
+	assert.equal(observed.closeCalls, 0);
+	assert.equal(observed.children[0].killed, false);
+	assert.ok(
+		observed.events.some(
+			({ kind, payload }) =>
+				kind === "assistant_delta" && payload.text === "background task finished",
+		),
+		"what Claude said in its own turn still reaches the timeline",
+	);
+	assert.equal(
+		observed.events.filter(({ kind }) => kind === "provider_turn_result").length,
+		1,
+		"only the host's turn has a turn result",
+	);
+
+	const next = await controller.startTurn({ clientMessageId: "provider-turn-message-2", input: "hello" });
+	assert.equal(next.sdkUserMessageId, observed.inputs[1].uuid);
+	await controller.close();
+});
+
+test("a host turn queued behind Claude's own turn completes with its own result", async () => {
+	const prepared = binding();
+	const observed = observations(prepared);
+	const controller = await createController(prepared, observed, interactiveQuery(observed));
+
+	const result = await controller.startTurn({
+		clientMessageId: "queued-behind-provider-turn-1",
+		input: "provider turn first",
+	});
+	assert.equal(result.durationMs, 11, "the turn ends on its own result, not on Claude's");
+	assert.equal(result.sdkUserMessageId, observed.inputs[0].uuid);
+	const turnResults = observed.events.filter(({ kind }) => kind === "provider_turn_result");
+	assert.deepEqual(
+		turnResults.map(({ payload }) => payload.durationMs),
+		[11],
+	);
+	assert.ok(
+		observed.events.some(
+			({ kind, payload }) =>
+				kind === "assistant_delta" &&
+				payload.providerMessageId === `result-${observed.inputs[0].uuid}` &&
+				payload.text === "hello from Claude",
+		),
+		"the turn's own answer is not taken for the text of Claude's turn",
+	);
+
+	const next = await controller.startTurn({ clientMessageId: "queued-behind-provider-turn-2", input: "hello" });
+	assert.equal(next.sdkUserMessageId, observed.inputs[1].uuid);
+	assert.deepEqual(observed.terminals, []);
 	await controller.close();
 });
 
