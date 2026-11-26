@@ -35,6 +35,7 @@ export function ProBrowserPanel(
 		url: string;
 		browserBinding?: unknown;
 		browserCreation?: unknown;
+		backendProfileId?: unknown;
 	}>,
 ) {
 	const pane = useProBrowserPane(props);

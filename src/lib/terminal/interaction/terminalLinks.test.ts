@@ -320,6 +320,46 @@ describe("terminal link destinations", () => {
 		).toMatchObject({ kind: "file" });
 	});
 
+	it("opens a machine-local address printed on an SSH Host in that Host's Browser", () => {
+		const ssh: TerminalLinkContext = {
+			...context,
+			backend: { source: "ssh", hostId: "h1" },
+		};
+		const url = (value: string) =>
+			({ kind: "url", url: value, start: 0, end: value.length }) as const;
+		for (const address of [
+			"http://localhost:5173/",
+			"http://127.0.0.1:8080/api",
+			"http://0.0.0.0:8000/docs",
+		]) {
+			expect(terminalLinkDestination(url(address), ssh, opened)).toEqual({
+				kind: "host_browser",
+				url: address,
+				hostId: "h1",
+			});
+		}
+		// Another machine's address, a local pane, Shift and a nested hop keep
+		// going to the operating system.
+		expect(
+			terminalLinkDestination(url("https://example.com/"), ssh, opened),
+		).toEqual({ kind: "external_url", url: "https://example.com/" });
+		expect(
+			terminalLinkDestination(url("http://localhost:5173/"), context, opened),
+		).toEqual({ kind: "external_url", url: "http://localhost:5173/" });
+		expect(
+			terminalLinkDestination(url("http://localhost:5173/"), ssh, {
+				external: true,
+			}),
+		).toEqual({ kind: "external_url", url: "http://localhost:5173/" });
+		expect(
+			terminalLinkDestination(
+				url("http://localhost:5173/"),
+				{ ...ssh, nestedRemote: true },
+				opened,
+			),
+		).toEqual({ kind: "external_url", url: "http://localhost:5173/" });
+	});
+
 	it("does not open paths printed inside a nested ssh hop or without a folder", () => {
 		expect(
 			terminalLinkDestination(path, { ...context, nestedRemote: true }, opened),

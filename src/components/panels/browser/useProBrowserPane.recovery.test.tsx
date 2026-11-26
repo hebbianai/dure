@@ -83,6 +83,58 @@ it("installs on the bound backend and creates only after installation is ready",
 	}
 });
 
+it("connects a view opened for a backend profile to that profile until it has its own route", async () => {
+	const hostRoute = {
+		...otherRoute,
+		profileId: "ssh-rts",
+		target: {
+			source: "ssh",
+			hostId: "ssh-rts",
+			remote: { host: "rts.example.com", port: 22, user: "rts" },
+		},
+	};
+	const params: Parameters<typeof fixture>[0] = {
+		url: "http://localhost:5173/",
+		backendProfileId: "ssh-rts",
+	};
+	const f = fixture(params, async (body) => {
+		if (body.kind === "list")
+			return { workspace_id: resource.workspace_id, resources: [] };
+		if (body.kind === "create") return { control };
+		throw Error(`Unexpected request ${body.kind}`);
+	});
+	const served = mocks.invoke.getMockImplementation()!;
+	mocks.invoke.mockImplementation(async (command, args) =>
+		command === "dure_backend_route_assert" && args.route.kind === "selected"
+			? args.route.profileId === "ssh-rts"
+				? hostRoute
+				: route
+			: served(command, args),
+	);
+	const pane = f.mount();
+	try {
+		await waitFor(() => expect(pane.result.current.connected).toBe(true));
+		expect(f.requests("list")[0].route.authority).toEqual(hostRoute);
+		await act(() => pane.result.current.create());
+		expect(f.requests("create")[0].route.authority).toEqual(hostRoute);
+		expect(params.browserBinding).toMatchObject({ authority: hostRoute });
+	} finally {
+		pane.unmount();
+	}
+});
+
+it("does not fall back to the selected backend for a malformed opened profile", async () => {
+	const f = fixture({ url: "about:blank", backendProfileId: "../other" });
+	const pane = f.mount();
+	try {
+		await waitFor(() => expect(pane.result.current.error).toBeDefined());
+		expect(pane.result.current.connected).toBe(false);
+		expect(mocks.invoke).not.toHaveBeenCalled();
+	} finally {
+		pane.unmount();
+	}
+});
+
 it("does not create a browser after installation finishes for a detached pane", async () => {
 	const ready = deferred<unknown>();
 	const f = fixture({ url: "about:blank" }, async (body) => {
@@ -118,6 +170,7 @@ function fixture(
 		url: string;
 		browserBinding?: unknown;
 		browserCreation?: unknown;
+		backendProfileId?: unknown;
 	} = { url: "about:blank" },
 	handle: (body: Record<string, unknown>) => Promise<unknown> = async (
 		body,

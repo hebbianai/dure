@@ -7,6 +7,7 @@ import type {
 	TerminalRow,
 	TerminalTables,
 } from "@/contracts/terminalStateProtocol";
+import { isMachineLocalUrl } from "@/lib/browser/browserAddress";
 import type { FileTarget } from "@/lib/files/fileTarget";
 import type { DesktopPlatform } from "@/lib/workspace/desktop/desktopPlatform";
 
@@ -28,9 +29,16 @@ export type TerminalTextLink =
 	  };
 
 /** Where an activated link goes. A file opens in the file viewer on the
- * pane's backend; everything else goes to the operating system. */
+ * pane's backend, and an address that names the machine an SSH-backed pane
+ * runs on opens in the Browser on that Host. Everything else goes to the
+ * operating system. */
 export type TerminalLinkDestination =
 	| { readonly kind: "external_url"; readonly url: string }
+	| {
+			readonly kind: "host_browser";
+			readonly url: string;
+			readonly hostId: string;
+	  }
 	| { readonly kind: "external_path"; readonly path: string }
 	| {
 			readonly kind: "file";
@@ -178,7 +186,18 @@ export function terminalLinkDestination(
 	options: { readonly external: boolean },
 ): TerminalLinkDestination | null {
 	if (link.kind === "url") {
-		return isHttpUrl(link.url) ? { kind: "external_url", url: link.url } : null;
+		if (!isHttpUrl(link.url)) return null;
+		// `localhost` printed on an SSH Host names that Host, not this computer.
+		return context.backend.source === "ssh" &&
+			!context.nestedRemote &&
+			!options.external &&
+			isMachineLocalUrl(link.url)
+			? {
+					kind: "host_browser",
+					url: link.url,
+					hostId: context.backend.hostId,
+				}
+			: { kind: "external_url", url: link.url };
 	}
 	if (context.nestedRemote) return null;
 	const path = resolveTerminalLinkPath(link.path, context);
