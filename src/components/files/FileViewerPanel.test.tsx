@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   hostToOpts: vi.fn(() => ({ host: "example.com", user: "dev" })),
   sshReadFile: vi.fn(),
   sshWriteFile: vi.fn(),
+  revealedLine: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", () => ({
@@ -20,24 +21,37 @@ vi.mock("@/lib/ipc", () => ({
   sshWriteFile: mocks.sshWriteFile,
   writeFile: vi.fn(),
 }));
-vi.mock("@/components/editor/LazyCodeEditor", () => ({
-  LazyCodeEditor: (props: {
-    value: string;
-    onChange: (value: string) => void;
-    onSave: () => void;
-  }) => (
-    <textarea
-      aria-label="code editor"
-      value={props.value}
-      onChange={(event) => props.onChange(event.target.value)}
-      onKeyDown={(event) => {
-        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
-          props.onSave();
-        }
-      }}
-    />
-  ),
-}));
+vi.mock("@/components/editor/LazyCodeEditor", async () => {
+  const { useEffect } = await import("react");
+  return {
+    LazyCodeEditor: (props: {
+      value: string;
+      onChange: (value: string) => void;
+      onSave: () => void;
+      reveal?: { id: number; line: number };
+      onRevealed?: (id: number) => void;
+    }) => {
+      const { reveal, onRevealed } = props;
+      useEffect(() => {
+        if (!reveal) return;
+        mocks.revealedLine(reveal.line);
+        onRevealed?.(reveal.id);
+      }, [reveal, onRevealed]);
+      return (
+        <textarea
+          aria-label="code editor"
+          value={props.value}
+          onChange={(event) => props.onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+              props.onSave();
+            }
+          }}
+        />
+      );
+    },
+  };
+});
 vi.mock("@/lib/workspace/performance/workspacePerformance", () => ({
   workspacePerformance: { beginPaneOpen: vi.fn(), markPaneReady: vi.fn() },
 }));
@@ -59,6 +73,7 @@ import { t } from "@/lib/i18n";
 import { publishFileDeletion } from "@/lib/files/fileDeletionEvents";
 import { FileDocumentIOContext } from "@/components/files/fileDocumentIOContext";
 import { fileDocumentIO } from "@/lib/files/fileDocumentIO";
+import { readFileReveal, requestFileReveal } from "@/lib/files/fileReveal";
 
 function panelProps(params: FileViewerParams): IDockviewPanelProps<FileViewerParams> {
   return {
@@ -303,6 +318,16 @@ it("restores Markdown in source mode and keeps that mode when explicitly discard
   fireEvent.click(screen.getByRole("button", { name: t("common.refresh") }));
   await waitFor(() => expect(editor().value).toBe("# Disk"));
   expect(useStore.getState().fileDrafts["local::/notes.md"]).toBeUndefined();
+});
+
+it("shows the line a link asked for, in the source of a Markdown file", async () => {
+  vi.mocked(readFile).mockResolvedValue({ ...textFile("/docs/guide.md", "# Guide"), kind: "markdown" });
+  const target = { path: "/docs/guide.md", source: "local" as const };
+  requestFileReveal(target, { line: 42 });
+  render(<FileViewerPanel {...panelProps(target)} />);
+  await screen.findByRole("textbox", { name: "code editor" });
+  await waitFor(() => expect(readFileReveal(target)).toBeUndefined());
+  expect(mocks.revealedLine).toHaveBeenCalledExactlyOnceWith(42);
 });
 
 it("shows Markdown images that use a path relative to the document", async () => {

@@ -1,4 +1,3 @@
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { useLayoutEffect, useRef } from "react";
 import type { TerminalBoxCache } from "@/lib/terminal/geometry/terminalBoxCache";
 import type { InstalledTerminalViewportFrame } from "@/lib/terminal/state/structuredTerminalViewport";
@@ -43,6 +42,8 @@ interface StructuredTerminalViewportPaintOptions {
 	readonly canvasTheme: TerminalCanvasTheme;
 	readonly canvasRenderer: TerminalCanvasRenderer;
 	readonly viewportRenderer: TerminalViewportDomRenderer;
+	/** Opens an OSC 8 hyperlink the person clicked. Must be stable. */
+	readonly openHyperlink: (uri: string) => void;
 	readonly reportPresentationPainted: (
 		presentation: PaintedPresentation,
 	) => void;
@@ -82,6 +83,7 @@ export function useStructuredTerminalViewportPaint({
 	canvasTheme,
 	canvasRenderer,
 	viewportRenderer,
+	openHyperlink,
 	reportPresentationPainted,
 	afterPresentationPainted,
 	onResizePresentationPainted,
@@ -151,9 +153,7 @@ export function useStructuredTerminalViewportPaint({
 			focused: focusedRef.current,
 			theme: canvasTheme,
 			metrics,
-			openHyperlink: (uri) => {
-				void openUrl(uri).catch(() => {});
-			},
+			openHyperlink,
 		});
 		// The browser-owned IME overlay is a sibling of the imperative terminal
 		// DOM, so publish its cursor-cell colors at their shared paint boundary.
@@ -217,6 +217,7 @@ export function useStructuredTerminalViewportPaint({
 		installedFrame,
 		onFirstPaint,
 		onResizePresentationPainted,
+		openHyperlink,
 		paintedPresentationRef,
 		paintedRef,
 		presentationLayerRef,

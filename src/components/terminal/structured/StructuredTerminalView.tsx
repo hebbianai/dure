@@ -54,6 +54,7 @@ import { useStructuredTerminalFind } from "./useStructuredTerminalFind";
 import { useStructuredTerminalInputLatency } from "./useStructuredTerminalInputLatency";
 import { useStructuredTerminalKeyInput } from "./useStructuredTerminalKeyInput";
 import { useStructuredTerminalLargeViewLifecycle } from "./useStructuredTerminalLargeViewLifecycle";
+import { useStructuredTerminalLinkActivation } from "./useStructuredTerminalLinkActivation";
 import { useStructuredTerminalPaneHealth } from "./useStructuredTerminalPaneHealth";
 import { useStructuredTerminalReceiptObservers } from "./useStructuredTerminalReceiptObservers";
 import { useStructuredTerminalQuickCommands } from "./useStructuredTerminalQuickCommands";
@@ -77,6 +78,7 @@ export function StructuredTerminalView({
 	surfaceId = sessionId,
 	paneHealthId,
 	binding,
+	runtimeWorkingDirectory,
 	inputDisabled = false,
 	paneApi,
 	presentationRole = "ungated",
@@ -584,6 +586,13 @@ export function StructuredTerminalView({
 		surfaceBox,
 	]);
 
+	const linkActivation = useStructuredTerminalLinkActivation({
+		sessionId,
+		binding,
+		runtimeWorkingDirectory,
+		terminalSurfaceRef,
+		paintedPresentationRef,
+	});
 	useStructuredTerminalViewportPaint({
 		sessionId,
 		terminalSurfaceRef,
@@ -608,6 +617,7 @@ export function StructuredTerminalView({
 		canvasTheme,
 		canvasRenderer,
 		viewportRenderer,
+		openHyperlink: linkActivation.openHyperlink,
 		reportPresentationPainted: reportStructuredPresentationPainted,
 		afterPresentationPainted,
 		onResizePresentationPainted: resolveResizeFailure,
@@ -805,6 +815,8 @@ export function StructuredTerminalView({
 								event.preventDefault();
 								return;
 							}
+							// A link claims its click before selection and mouse reporting.
+							if (linkActivation.begin(event.nativeEvent)) return;
 							const reportClick = !inputDisabled && mouseReporting && !event.shiftKey;
 							const selecting = selectionDrag.begin(
 								event.nativeEvent,
@@ -814,11 +826,13 @@ export function StructuredTerminalView({
 						}}
 						onPointerMove={(event) => {
 							if (!paintedAttachmentIsCurrent) return;
+							if (linkActivation.ownsPointer(event.pointerId)) return;
 							if (selectionDrag.ownsPointer(event.pointerId)) return;
 							if (mouseReporting)
 								issuePointer(event.nativeEvent, PointerKind.MOVE);
 						}}
 						onPointerUp={(event) => {
+							if (linkActivation.ownsPointer(event.pointerId)) return;
 							if (selectionDrag.ownsPointer(event.pointerId)) return;
 							if (
 								!inputDisabled &&
