@@ -18,18 +18,19 @@ fn policy() -> ProviderRecoveryPolicyPutV1 {
         expected_revision: 0,
         idempotency_key: "enable-recovery".into(),
         enabled: true,
+        // Each login has its own generation; account-a is the source's.
         accounts: [
-            "credential.account-a",
-            "credential.account-b",
-            "credential.account-c",
+            ("credential.account-a", "credential-generation-7"),
+            ("credential.account-b", "credential-generation-8"),
+            ("credential.account-c", "credential-generation-9"),
         ]
         .into_iter()
-        .map(|reference| ProviderRecoveryAccountV1 {
+        .map(|(reference, generation)| ProviderRecoveryAccountV1 {
             profile: ProviderCredentialProfileV1 {
                 schema_version: 1,
                 provider_id: provider_id.clone(),
                 reference_id: reference.into(),
-                credential_generation: "credential-generation-7".into(),
+                credential_generation: generation.into(),
             },
             name: reference.into(),
         })
@@ -370,7 +371,7 @@ async fn fresh_usage_precedes_unknown_and_recent_limits_survive_restart() {
     let mut connection = reopened.pool.acquire().await.unwrap();
     let source = profiles[2].execution_profile();
     let picked =
-        crate::provider_recovery_usage::select_on(&mut connection, &profiles, &source, 400)
+        crate::provider_recovery_usage::select_on(&mut connection, &profiles, &source, &[], 400)
             .await
             .unwrap()
             .unwrap();
@@ -384,7 +385,7 @@ async fn fresh_usage_precedes_unknown_and_recent_limits_survive_restart() {
     .await
     .unwrap();
     assert!(
-        crate::provider_recovery_usage::select_on(&mut connection, &profiles, &source, 420)
+        crate::provider_recovery_usage::select_on(&mut connection, &profiles, &source, &[], 420)
             .await
             .unwrap()
             .is_none()
@@ -394,6 +395,7 @@ async fn fresh_usage_precedes_unknown_and_recent_limits_survive_restart() {
             &mut connection,
             &profiles,
             &source,
+            &[],
             31 * 60 * 1000
         )
         .await
@@ -1147,4 +1149,154 @@ mod native {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn set_aside_logins_are_skipped_until_none_remains() {
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("reselect.sqlite");
+    let store = initialized(&path).await;
+    let profiles = policy().accounts;
+    let first = prepare(&store).await;
+    // Account-a is the source; unknown usage keeps policy order.
+    assert_eq!(first.target.as_ref().unwrap().profile, profiles[1].profile);
+    assert!(
+        serde_json::to_value(&first)
+            .unwrap()
+            .get("unusableTargets")
+            .is_none(),
+        "a record with nothing set aside keeps its stored shape"
+    );
+    // Fresh usage alone reorders the choice and keeps the first transition.
+    store
+        .observe_provider_recovery_usage(&ProviderRecoveryUsageV1 {
+            profile: profiles[2].profile.clone(),
+            used_percent: Some(10.0),
+            observed_at_ms: 290,
+        })
+        .await
+        .unwrap();
+    let reordered = store
+        .reselect_agent_recovery_target(&first.attempt_id, &[], None, 300)
+        .await
+        .unwrap();
+    assert!(reordered.unusable_targets().is_empty());
+    assert_eq!(reordered.runtime_attempt_id(), first.attempt_id);
+    let reordered = reordered.into_conversation().unwrap();
+    assert_eq!(
+        reordered.target.as_ref().unwrap().profile,
+        profiles[2].profile
+    );
+    // A failed target is set aside, and the next one gets its own transition.
+    let next = store
+        .reselect_agent_recovery_target(
+            &first.attempt_id,
+            &[profiles[2].profile.clone()],
+            Some("agent_runtime_repair_required"),
+            300,
+        )
+        .await
+        .unwrap();
+    let first_attempt = AgentRecoveryAttemptV1::Conversation(Box::new(first.clone()));
+    assert_eq!(next.target().unwrap().profile, profiles[1].profile);
+    assert_eq!(next.unusable_targets(), [profiles[2].profile.clone()]);
+    assert_eq!(next.stopped(), None);
+    let (first_operation, _) = agent_runtime_transition_identity(&first.attempt_id).unwrap();
+    let next_operation = next.runtime_operation_id().unwrap();
+    assert_ne!(next_operation, first_operation);
+    assert!(next.owns_runtime_operation(&first_operation));
+    assert!(next.owns_runtime_operation(&next_operation));
+    assert!(!first_attempt.owns_runtime_operation(&next_operation));
+    store.close().await;
+    let reopened = SqliteDomainStore::open(&path).await.unwrap();
+    assert_eq!(
+        reopened
+            .prepare_agent_recovery(&interaction_binding().agent_id, 310, None)
+            .await
+            .unwrap(),
+        Some(next.clone()),
+        "an unfinished attempt resumes with what it set aside"
+    );
+    // With nothing left, a failed target stops the attempt with its reason.
+    let stopped = reopened
+        .reselect_agent_recovery_target(
+            &first.attempt_id,
+            &[profiles[1].profile.clone()],
+            Some("agent_runtime_repair_required"),
+            320,
+        )
+        .await
+        .unwrap();
+    assert_eq!(stopped.target(), None);
+    assert_eq!(
+        stopped.stopped(),
+        Some(&AgentRecoveryStopV1::Failed {
+            code: "agent_runtime_repair_required".into()
+        })
+    );
+    assert_eq!(
+        reopened
+            .reselect_agent_recovery_target(&first.attempt_id, &[], None, 330)
+            .await
+            .unwrap(),
+        stopped,
+        "a finished attempt is not selected again"
+    );
+}
+
+#[tokio::test]
+async fn logins_set_aside_without_a_failure_exhaust_the_attempt() {
+    let root = TempDir::new().unwrap();
+    let store = initialized(&root.path().join("exhausted.sqlite")).await;
+    let profiles = policy().accounts;
+    let record = prepare(&store).await;
+    let exhausted = store
+        .reselect_agent_recovery_target(
+            &record.attempt_id,
+            &[profiles[1].profile.clone(), profiles[2].profile.clone()],
+            None,
+            300,
+        )
+        .await
+        .unwrap();
+    assert_eq!(exhausted.target(), None);
+    assert_eq!(exhausted.stopped(), Some(&AgentRecoveryStopV1::Exhausted));
+}
+
+#[tokio::test]
+async fn selection_skips_every_id_of_the_source_or_a_set_aside_login() {
+    let root = TempDir::new().unwrap();
+    let store = initialized(&root.path().join("aliases.sqlite")).await;
+    let mut accounts = policy().accounts;
+    // A second ID registered for account-c's profile directory is one login.
+    let mut alias = accounts[2].clone();
+    alias.profile.reference_id = "credential.account-c-alias".into();
+    accounts.push(alias);
+    // A second ID for the source's login shares its generation.
+    let mut source_alias = accounts[0].clone();
+    source_alias.profile.reference_id = "credential.account-a-alias".into();
+    accounts.insert(0, source_alias);
+    let source = interaction_binding().execution_profile;
+    let mut connection = store.pool.acquire().await.unwrap();
+    // accounts: a-alias, a (the source), b, c, c-alias.
+    let picked = crate::provider_recovery_usage::select_on(
+        &mut connection,
+        &accounts,
+        &source,
+        &[accounts[2].profile.clone()],
+        300,
+    )
+    .await
+    .unwrap();
+    assert_eq!(picked.unwrap().profile.reference_id, "credential.account-c");
+    let picked = crate::provider_recovery_usage::select_on(
+        &mut connection,
+        &accounts,
+        &source,
+        &[accounts[2].profile.clone(), accounts[3].profile.clone()],
+        300,
+    )
+    .await
+    .unwrap();
+    assert_eq!(picked, None, "the alias of a set-aside login is that login");
 }

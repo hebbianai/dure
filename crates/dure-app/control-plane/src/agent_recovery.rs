@@ -19,13 +19,13 @@ use dure_app::{
     AgentTimelineReadRequestV1, AgentTimelineReadV1, AgentTimelineStore, AgentTurnEffectStateV1,
     OperationIdV1, ProviderRecoveryStore, RuntimeKindIdV1, WorkflowPromptDeliveryIntentV1,
     WorkflowPromptDeliveryRequestV1, WorkflowSessionGenerationV1,
-    agent_runtime_transition_identity,
 };
 
 use crate::agent_conversation_api::AgentConversationApiErrorV1;
 use crate::agent_runtime_projection::{AgentRuntimeObservedV1, read_locked};
 use crate::agent_runtime_transition_apply::{self, AgentRuntimeTransitionApplyBodyV1};
 use crate::hmux_session_inspection::{HmuxSessionInspection, HmuxSessionInspectionFailure};
+use crate::provider_credential_profile::ProviderCredentialProfileErrorV1;
 use crate::{
     ServiceState, authority_stop_fence, now_ms, pro_features, query_hmux_for_runtime_transition,
 };
@@ -85,14 +85,126 @@ async fn policy_allows(
     }))
 }
 
+const REPAIR_REQUIRED: &str = "agent_runtime_repair_required";
+
+/// Before a target's first apply, read what this host observes about the pool:
+/// the app's latest usage feeds the usage owner, and logins known signed out or
+/// shared with the source are set aside before the owner selects again. Then
+/// the chosen login is asked whether it is signed in, the way its launch would.
+async fn check_target(
+    state: &ServiceState,
+    record: AgentRecoveryAttemptV1,
+) -> Result<AgentRecoveryAttemptV1, &'static str> {
+    let Some(policy) = state
+        .store
+        .provider_recovery_policy(record.provider_id())
+        .await
+        .map_err(|_| "agent_recovery_store_failed")?
+    else {
+        return Ok(record);
+    };
+    let observed_at_ms = now_ms().map_err(|_| "agent_recovery_clock_unavailable")?;
+    let pool = state
+        .credential_profiles
+        .observe_recovery_pool(
+            record.provider_id(),
+            record.source_execution_profile(),
+            &policy.accounts,
+            observed_at_ms,
+        )
+        .await;
+    for usage in &pool.usage {
+        state
+            .store
+            .observe_provider_recovery_usage(usage)
+            .await
+            .map_err(|_| "agent_recovery_store_failed")?;
+    }
+    let mut record = state
+        .store
+        .reselect_agent_recovery_target(record.attempt_id(), &pool.unusable, None, observed_at_ms)
+        .await
+        .map_err(|_| "agent_recovery_store_failed")?;
+    while let Some(target) = record.target().filter(|_| record.stopped().is_none()) {
+        if !state
+            .credential_profiles
+            .login_signed_out(
+                record.provider_id(),
+                &target.execution_profile(),
+                observed_at_ms,
+            )
+            .await
+        {
+            break;
+        }
+        record = set_aside_target(state, &record, "agent_recovery_target_signed_out").await?;
+    }
+    Ok(record)
+}
+
+/// Sets the current target aside for this attempt and selects the next one.
+async fn set_aside_target(
+    state: &ServiceState,
+    record: &AgentRecoveryAttemptV1,
+    code: &str,
+) -> Result<AgentRecoveryAttemptV1, &'static str> {
+    let unusable = record
+        .target()
+        .map(|target| vec![target.profile.clone()])
+        .unwrap_or_default();
+    state
+        .store
+        .reselect_agent_recovery_target(
+            record.attempt_id(),
+            &unusable,
+            Some(code),
+            now_ms().map_err(|_| "agent_recovery_clock_unavailable")?,
+        )
+        .await
+        .map_err(|_| "agent_recovery_store_failed")
+}
+
+/// A target failed when it could not start after the source stopped, or its
+/// login was refused before anything was admitted. Source-side refusals are
+/// not the account's fault and stop the attempt as before.
+async fn target_failed(
+    state: &ServiceState,
+    record: &AgentRecoveryAttemptV1,
+    code: &str,
+) -> Result<bool, &'static str> {
+    let operation_id = record
+        .runtime_operation_id()
+        .map_err(|_| "agent_recovery_identity_invalid")?;
+    let transition = state
+        .store
+        .agent_runtime_transition(&operation_id)
+        .await
+        .map_err(|_| "agent_recovery_store_failed")?;
+    Ok(match transition.map(|transition| transition.state) {
+        Some(AgentRuntimeTransitionStateV1::RepairRequired) => true,
+        None => [
+            ProviderCredentialProfileErrorV1::Unavailable,
+            ProviderCredentialProfileErrorV1::StaleGeneration,
+        ]
+        .iter()
+        .any(|error| error.code() == code),
+        Some(_) => false,
+    })
+}
+
+/// `after_failed_target` means an earlier target of this attempt failed to
+/// start after it stopped the source, so the native Host failure that started
+/// the attempt is already consumed and only the policy is checked again.
 async fn may_start(
     state: &ServiceState,
     record: &AgentRecoveryAttemptV1,
+    after_failed_target: bool,
 ) -> Result<bool, &'static str> {
     if !policy_allows(state, record).await? {
         return Ok(false);
     }
     let record = match record {
+        AgentRecoveryAttemptV1::Native(_) if after_failed_target => return Ok(true),
         AgentRecoveryAttemptV1::Native(record) => {
             // A person who resumed the conversation, or a new turn, wins:
             // the Host must still show the exact failure that was recorded.
@@ -175,7 +287,7 @@ pub(crate) async fn advance(
 async fn advance_locked(state: &ServiceState, agent_id: &AgentIdV1) -> Result<bool, &'static str> {
     let observed_at_ms = now_ms().map_err(|_| "agent_recovery_clock_unavailable")?;
     let native = observe_native_failure(state, agent_id, observed_at_ms).await?;
-    let Some(record) = state
+    let Some(mut record) = state
         .store
         .prepare_agent_recovery(agent_id, observed_at_ms, native.as_ref())
         .await
@@ -183,67 +295,82 @@ async fn advance_locked(state: &ServiceState, agent_id: &AgentIdV1) -> Result<bo
     else {
         return Ok(false);
     };
-    if record.stopped().is_some() {
-        return stopped_result(record.stopped());
-    }
-    let (operation_id, _) = agent_runtime_transition_identity(record.attempt_id())
-        .map_err(|_| "agent_recovery_identity_invalid")?;
-    let current = read_locked(state, agent_id)
-        .await
-        .map_err(|_| "agent_recovery_store_failed")?;
-    let owns_runtime = match current {
-        AgentRuntimeObservedV1::Stable { selection, .. } => {
-            (selection.revision == record.source_selection_revision()
-                && selection.interaction_profile == record.source_interaction_profile()
-                && &selection.execution_profile == record.source_execution_profile())
-                || selection.selected_by_operation_id.as_ref() == Some(&operation_id)
+    // Each pass returns or sets one more login aside, so the pool bounds it.
+    let operation_id = loop {
+        if record.stopped().is_some() {
+            return stopped_result(record.stopped());
         }
-        AgentRuntimeObservedV1::Transitioning { transition, .. } => {
-            transition.intent.operation_id == operation_id
-        }
-        AgentRuntimeObservedV1::Closed { .. } | AgentRuntimeObservedV1::Unmanaged => false,
-    };
-    if !owns_runtime {
-        return stop(state, &record, AgentRecoveryStopV1::Superseded).await;
-    }
-    let transition = state
-        .store
-        .agent_runtime_transition(&operation_id)
-        .await
-        .map_err(|_| "agent_recovery_store_failed")?;
-    match transition.as_ref().map(|transition| transition.state) {
-        Some(
-            AgentRuntimeTransitionStateV1::RepairRequired
-            | AgentRuntimeTransitionStateV1::SourceRetained,
-        ) => {
-            return stop(
-                state,
-                &record,
-                AgentRecoveryStopV1::Failed {
-                    code: "agent_runtime_repair_required".into(),
-                },
-            )
-            .await;
-        }
-        Some(AgentRuntimeTransitionStateV1::Superseded) => {
+        let operation_id = record
+            .runtime_operation_id()
+            .map_err(|_| "agent_recovery_identity_invalid")?;
+        let current = read_locked(state, agent_id)
+            .await
+            .map_err(|_| "agent_recovery_store_failed")?;
+        // Owned and not this try's journal: an earlier target's failed one.
+        let after_failed_target = matches!(current, AgentRuntimeObservedV1::Transitioning { .. });
+        let owns_runtime = match current {
+            AgentRuntimeObservedV1::Stable { selection, .. } => {
+                (selection.revision == record.source_selection_revision()
+                    && selection.interaction_profile == record.source_interaction_profile()
+                    && &selection.execution_profile == record.source_execution_profile())
+                    || selection.selected_by_operation_id.as_ref() == Some(&operation_id)
+            }
+            // A target that failed to start leaves its journal for the next.
+            AgentRuntimeObservedV1::Transitioning { transition, .. } => {
+                record.owns_runtime_operation(&transition.intent.operation_id)
+            }
+            AgentRuntimeObservedV1::Closed { .. } | AgentRuntimeObservedV1::Unmanaged => false,
+        };
+        if !owns_runtime {
             return stop(state, &record, AgentRecoveryStopV1::Superseded).await;
         }
-        None if !may_start(state, &record).await? => {
-            return stop(state, &record, AgentRecoveryStopV1::Superseded).await;
+        let transition = state
+            .store
+            .agent_runtime_transition(&operation_id)
+            .await
+            .map_err(|_| "agent_recovery_store_failed")?;
+        match transition.as_ref().map(|transition| transition.state) {
+            Some(AgentRuntimeTransitionStateV1::RepairRequired) => {
+                record = set_aside_target(state, &record, REPAIR_REQUIRED).await?;
+                continue;
+            }
+            Some(AgentRuntimeTransitionStateV1::SourceRetained) => {
+                return stop(
+                    state,
+                    &record,
+                    AgentRecoveryStopV1::Failed {
+                        code: REPAIR_REQUIRED.into(),
+                    },
+                )
+                .await;
+            }
+            Some(AgentRuntimeTransitionStateV1::Superseded) => {
+                return stop(state, &record, AgentRecoveryStopV1::Superseded).await;
+            }
+            None if !may_start(state, &record, after_failed_target).await? => {
+                return stop(state, &record, AgentRecoveryStopV1::Superseded).await;
+            }
+            None => {
+                record = check_target(state, record).await?;
+                if record.stopped().is_some() {
+                    continue;
+                }
+            }
+            _ => {}
         }
-        _ => {}
-    }
-    if !transition
-        .is_some_and(|transition| transition.state == AgentRuntimeTransitionStateV1::Committed)
-    {
+        if transition
+            .is_some_and(|transition| transition.state == AgentRuntimeTransitionStateV1::Committed)
+        {
+            break operation_id;
+        }
         let Some(target) = record.target() else {
             return Err("agent_recovery_accounts_exhausted");
         };
         // The conversation stays in the runtime mode it failed in. Preserve
         // stops a native source only at its exact settled failure.
-        if let Err(error) = agent_runtime_transition_apply::apply_locked(
+        let Err(error) = agent_runtime_transition_apply::apply_locked(
             state,
-            record.attempt_id(),
+            &record.runtime_attempt_id(),
             AgentRuntimeTransitionApplyBodyV1 {
                 schema_version: 1,
                 agent_id: agent_id.clone(),
@@ -256,15 +383,22 @@ async fn advance_locked(state: &ServiceState, agent_id: &AgentIdV1) -> Result<bo
             },
         )
         .await
-        {
-            return stop(
-                state,
-                &record,
-                AgentRecoveryStopV1::Failed { code: error.code },
-            )
-            .await;
+        else {
+            break record
+                .runtime_operation_id()
+                .map_err(|_| "agent_recovery_identity_invalid")?;
+        };
+        if target_failed(state, &record, &error.code).await? {
+            record = set_aside_target(state, &record, &error.code).await?;
+            continue;
         }
-    }
+        return stop(
+            state,
+            &record,
+            AgentRecoveryStopV1::Failed { code: error.code },
+        )
+        .await;
+    };
     let record = match record {
         AgentRecoveryAttemptV1::Native(native) => {
             return continue_native(state, &native, &operation_id).await;

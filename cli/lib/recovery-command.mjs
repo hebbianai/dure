@@ -38,6 +38,11 @@ exact profiles from get --json.
 Use revision 0 for a new policy. Only explicitly allowed accounts are used.
 Joining a workspace does not register or offer personal accounts. Unknown usage
 is eligible; optional observations contain {profile, usedPercent, observedAtMs}.
+Before switching, the backend also reads the usage the app last observed on
+its host. An attempt skips a login the app or the provider reports signed out
+(or past its time limit), a login that signs in as the same provider account as
+the agent's current login, and a target that fails to start, then tries the
+next allowed account; each account is tried at most once per attempt.
 A failed or uncertain attempt is retained. Reading status never resends work.
 For a manual same-conversation account change (Claude or Codex), use
 dure runs switch-account <name-or-id> --account ACCOUNT_ID; see dure runs --help.

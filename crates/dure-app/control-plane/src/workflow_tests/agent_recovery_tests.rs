@@ -7,10 +7,11 @@ use crate::structured_provider_runtime::{
     StructuredProviderOpenRequestV1, StructuredProviderRuntime, StructuredProviderRuntimeFuture,
 };
 use dure_app::{
-    AgentQueuedTurnStore, AgentRecoveryAttemptV1, AgentRecoveryStore, AgentStartTurnIntentV1,
-    AgentTimelineStore, ProviderRecoveryAccountV1, ProviderRecoveryPolicyPutV1,
-    ProviderRecoveryStore,
+    AgentQueuedTurnStore, AgentRecoveryAttemptV1, AgentRecoveryRecordV1, AgentRecoveryStopV1,
+    AgentRecoveryStore, AgentStartTurnIntentV1, AgentTimelineStore, ProviderRecoveryAccountV1,
+    ProviderRecoveryPolicyPutV1, ProviderRecoveryStore, agent_runtime_transition_identity,
 };
+use std::path::Path;
 
 #[derive(Default)]
 struct RecoveryCommands {
@@ -53,7 +54,10 @@ struct RecoveryRuntime {
     commands: Arc<RecoveryCommands>,
     stops: AtomicUsize,
     opens: AtomicUsize,
+    /// Every target start fails with a retryable runtime error.
     fail: bool,
+    /// Accounts whose target start finds no usable credential.
+    credential_unavailable: Vec<String>,
 }
 
 impl StructuredProviderRuntime for RecoveryRuntime {
@@ -80,6 +84,16 @@ impl StructuredProviderRuntime for RecoveryRuntime {
             self.opens.fetch_add(1, Ordering::SeqCst);
             if self.fail {
                 return Err(CountingStructuredRuntime::unavailable().without_target());
+            }
+            if matches!(&request.execution_profile,
+                AgentExecutionProfileV1::CredentialReference { reference_id, .. }
+                    if self.credential_unavailable.contains(reference_id))
+            {
+                return Err(structured_provider_runtime::StructuredProviderRuntimeErrorV1::new(
+                    structured_provider_runtime::StructuredProviderRuntimeErrorKindV1::CredentialUnavailable,
+                    "recovery_test_credential_unavailable",
+                )
+                .without_target());
             }
             let AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding: source } =
                 &transition.intent.source_authority
@@ -141,6 +155,18 @@ impl StructuredProviderRuntime for RecoveryRuntime {
 async fn recovery_fixture(
     fail: bool,
 ) -> (TempDir, Arc<ServiceState>, Arc<RecoveryRuntime>, AgentIdV1) {
+    recovery_pool_fixture(&["recovery-test"], &[], move |_, _| fail).await
+}
+
+/// One structured Codex agent on the default login, stopped at a usage limit,
+/// with `accounts` allowed for recovery in that order. `prepare_host` runs
+/// after registration and before the failure, with the backend home, and
+/// says whether every target start fails with a retryable runtime error.
+async fn recovery_pool_fixture(
+    accounts: &[&str],
+    credential_unavailable: &[&str],
+    prepare_host: impl FnOnce(&mut ServiceState, &Path) -> bool,
+) -> (TempDir, Arc<ServiceState>, Arc<RecoveryRuntime>, AgentIdV1) {
     let (root, mut state, _, _) = fixture(Vec::new()).await;
     make_fixture_mutation_authority(&mut state);
     state.agent_providers = Arc::new(provider_extension::test_structured_agent_provider_registry(
@@ -163,29 +189,37 @@ async fn recovery_fixture(
     let (_, binding) =
         initialize_structured_source_for_provider(&state, agent_id.clone(), provider_id.clone())
             .await;
-    let accounts = state
+    let accounts_root = state
         .descriptor
         .database_path
         .parent()
         .unwrap()
         .join("accounts");
-    fs::create_dir_all(&accounts).unwrap();
-    fs::set_permissions(&accounts, fs::Permissions::from_mode(0o700)).unwrap();
-    let profile_directory = accounts.join("codex-recovery-test");
-    fs::create_dir(&profile_directory).unwrap();
-    fs::set_permissions(&profile_directory, fs::Permissions::from_mode(0o700)).unwrap();
-    let profile = state
-        .credential_profiles
-        .register(
-            provider_credential_profile::RegisterProviderCredentialProfileBodyV1 {
-                schema_version: 1,
-                provider_id: "codex".into(),
-                reference_id: "recovery-test".into(),
-                profile_directory_name: "codex-recovery-test".into(),
-            },
-        )
-        .await
-        .unwrap();
+    fs::create_dir_all(&accounts_root).unwrap();
+    fs::set_permissions(&accounts_root, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut pool = Vec::new();
+    for reference in accounts {
+        let directory_name = format!("codex-{reference}");
+        let profile_directory = accounts_root.join(&directory_name);
+        fs::create_dir(&profile_directory).unwrap();
+        fs::set_permissions(&profile_directory, fs::Permissions::from_mode(0o700)).unwrap();
+        let profile = state
+            .credential_profiles
+            .register(
+                provider_credential_profile::RegisterProviderCredentialProfileBodyV1 {
+                    schema_version: 1,
+                    provider_id: "codex".into(),
+                    reference_id: (*reference).into(),
+                    profile_directory_name: directory_name,
+                },
+            )
+            .await
+            .unwrap();
+        pool.push(ProviderRecoveryAccountV1 {
+            profile,
+            name: format!("Shared account {reference}"),
+        });
+    }
     state
         .store
         .put_provider_recovery_policy(
@@ -195,15 +229,13 @@ async fn recovery_fixture(
                 expected_revision: 0,
                 idempotency_key: "enable-recovery".into(),
                 enabled: true,
-                accounts: vec![ProviderRecoveryAccountV1 {
-                    profile,
-                    name: "Shared account".into(),
-                }],
+                accounts: pool,
             },
             now_ms().unwrap(),
         )
         .await
         .unwrap();
+    let fail = prepare_host(&mut state, accounts_root.parent().unwrap());
     let service = Arc::new(AgentConversationService::new(Arc::clone(&state.store)));
     let registry = Arc::new(AgentConversationRuntimeRegistry::default());
     let runtime = Arc::new(RecoveryRuntime {
@@ -213,6 +245,10 @@ async fn recovery_fixture(
         stops: AtomicUsize::new(0),
         opens: AtomicUsize::new(0),
         fail,
+        credential_unavailable: credential_unavailable
+            .iter()
+            .map(|reference| (*reference).into())
+            .collect(),
     });
     registry
         .register(binding.clone(), runtime.commands.clone())
@@ -696,4 +732,248 @@ async fn continuation_advances_an_agent_without_a_conversation() {
         crate::agent_conversation::continuation::advance(&state, &agent_id, None).await,
         Ok(())
     );
+}
+
+/// Answers the provider's login check from a fixed set of signed-out profile
+/// directories and delegates everything else to the native preparer.
+struct SignedOutProfiles {
+    signed_out: Vec<String>,
+    delegate: provider_credential_profile::NativeProviderCredentialProfileLaunchPreparer,
+}
+
+impl provider_credential_profile::ProviderCredentialProfileLaunchPreparer for SignedOutProfiles {
+    fn prepare(
+        &self,
+        provider_id: &ProviderIdV1,
+        directory: &Path,
+    ) -> Result<
+        dure_provider_profile::PreparedProviderProfileLaunch,
+        provider_credential_profile::ProviderCredentialLaunchFailureV1,
+    > {
+        self.delegate.prepare(provider_id, directory)
+    }
+
+    fn observe_login(
+        &self,
+        provider_id: &ProviderIdV1,
+        directory: Option<&Path>,
+        reference_ids: &[String],
+        observed_at_ms: i64,
+    ) -> crate::provider_login_observation::ProviderLoginObservationV1 {
+        self.delegate
+            .observe_login(provider_id, directory, reference_ids, observed_at_ms)
+    }
+
+    fn login_signed_in<'a>(
+        &'a self,
+        _: &'a ProviderIdV1,
+        environment: &'a ProviderStateEnvironment,
+        _: i64,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<bool>> + Send + 'a>> {
+        Box::pin(async move {
+            Some(!environment.values().values().any(|value| {
+                self.signed_out
+                    .iter()
+                    .any(|directory| value.ends_with(directory.as_str()))
+            }))
+        })
+    }
+}
+
+async fn recovery_record(state: &ServiceState, agent_id: &AgentIdV1) -> AgentRecoveryRecordV1 {
+    let observation = state
+        .store
+        .latest_agent_recovery(agent_id)
+        .await
+        .unwrap()
+        .expect("the recovery stays observable");
+    state
+        .store
+        .agent_recovery(&observation.attempt_id)
+        .await
+        .unwrap()
+        .and_then(AgentRecoveryAttemptV1::into_conversation)
+        .unwrap()
+}
+
+fn reference_ids(profiles: &[dure_app::ProviderCredentialProfileV1]) -> Vec<&str> {
+    profiles
+        .iter()
+        .map(|profile| profile.reference_id.as_str())
+        .collect()
+}
+
+async fn selected_reference(state: &ServiceState, agent_id: &AgentIdV1) -> String {
+    match state
+        .store
+        .agent_runtime_selection(agent_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .execution_profile
+    {
+        AgentExecutionProfileV1::CredentialReference { reference_id, .. } => reference_id,
+        AgentExecutionProfileV1::ProviderDefault => "default".into(),
+    }
+}
+
+#[tokio::test]
+async fn a_target_that_fails_to_start_moves_the_conversation_to_the_next_account() {
+    let (_root, state, runtime, agent_id) =
+        recovery_pool_fixture(&["broken", "working"], &["broken"], |_, _| false).await;
+    let advanced = crate::agent_recovery::advance(&state, &agent_id).await;
+    let record = recovery_record(&state, &agent_id).await;
+    assert_eq!(advanced, Ok(true), "{record:?}");
+    // One source stop, then the failed target's journal is replaced in place.
+    assert_eq!(runtime.stops.load(Ordering::SeqCst), 1);
+    assert_eq!(runtime.opens.load(Ordering::SeqCst), 2);
+    assert_eq!(reference_ids(&record.unusable_targets), ["broken"]);
+    assert_eq!(
+        record.target.as_ref().unwrap().profile.reference_id,
+        "working"
+    );
+    assert_eq!(record.stopped, None);
+    let (first, _) = agent_runtime_transition_identity(&record.attempt_id).unwrap();
+    assert_eq!(
+        state
+            .store
+            .agent_runtime_transition(&first)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        AgentRuntimeTransitionStateV1::Superseded
+    );
+    assert_eq!(selected_reference(&state, &agent_id).await, "working");
+    {
+        let inputs = runtime.commands.inputs.lock().unwrap();
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].input, "Create the requested marketing draft");
+        assert_eq!(inputs[0].runtime.runtime_generation, "recovery-target");
+    }
+    // Replaying the attempt neither launches nor sends again.
+    crate::agent_recovery::advance(&state, &agent_id)
+        .await
+        .unwrap();
+    assert_eq!(runtime.opens.load(Ordering::SeqCst), 2);
+    assert_eq!(runtime.commands.inputs.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn recovery_tries_each_account_once_when_every_target_fails() {
+    let (_root, state, runtime, agent_id) = recovery_pool_fixture(
+        &["broken-a", "broken-b"],
+        &["broken-a", "broken-b"],
+        |_, _| false,
+    )
+    .await;
+    assert_eq!(
+        crate::agent_recovery::advance(&state, &agent_id).await,
+        Err("agent_recovery_failed")
+    );
+    let record = recovery_record(&state, &agent_id).await;
+    assert_eq!(
+        reference_ids(&record.unusable_targets),
+        ["broken-a", "broken-b"]
+    );
+    assert_eq!(
+        record.stopped,
+        Some(AgentRecoveryStopV1::Failed {
+            code: "agent_runtime_repair_required".into()
+        })
+    );
+    assert!(
+        crate::agent_recovery::advance(&state, &agent_id)
+            .await
+            .is_err()
+    );
+    assert_eq!(runtime.opens.load(Ordering::SeqCst), 2);
+    assert!(runtime.commands.inputs.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn recovery_skips_signed_out_full_and_same_logins_the_app_observed() {
+    let now = now_ms().unwrap() / 1000;
+    let (_root, state, runtime, agent_id) = recovery_pool_fixture(
+        &["signed-out", "same-login", "full", "working"],
+        &[],
+        |_, home| {
+            let write = |path: std::path::PathBuf, value: serde_json::Value| {
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(&path, value.to_string()).unwrap();
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+            };
+            let limit = |used: f64| {
+                json!([{"limitId": "codex", "usedPercent": used, "resetsAt": now + 600,
+                    "usedPercentWeekly": used, "weeklyResetsAt": now + 6000}])
+            };
+            // The app's latest Codex usage check for each account.
+            write(
+                home.join("codex-usage-snapshots.json"),
+                json!({"schemaVersion": 1, "snapshots": [
+                    {"credentialId": "signed-out", "capturedAt": now - 900, "attemptedAt": now - 10,
+                        "error": "codex_usage_not_signed_in", "rateLimits": limit(1.0)},
+                    {"credentialId": "full", "capturedAt": now - 10, "attemptedAt": now - 10,
+                        "error": null, "rateLimits": limit(100.0)},
+                    {"credentialId": "working", "capturedAt": now - 10, "attemptedAt": now - 10,
+                        "error": null, "rateLimits": limit(30.0)},
+                ]}),
+            );
+            // The source runs on the default login, which is also registered.
+            write(
+                home.join(".codex/auth.json"),
+                json!({"tokens": {"account_id": "chatgpt-shared"}}),
+            );
+            write(
+                home.join("accounts/codex-same-login/auth.json"),
+                json!({"tokens": {"account_id": "chatgpt-shared"}}),
+            );
+            false
+        },
+    )
+    .await;
+    let advanced = crate::agent_recovery::advance(&state, &agent_id).await;
+    let record = recovery_record(&state, &agent_id).await;
+    assert_eq!(advanced, Ok(true), "{record:?}");
+    assert_eq!(
+        reference_ids(&record.unusable_targets),
+        ["signed-out", "same-login"]
+    );
+    assert_eq!(
+        record.target.as_ref().unwrap().profile.reference_id,
+        "working"
+    );
+    // Nothing was launched on an account the app already knew was unusable.
+    assert_eq!(runtime.opens.load(Ordering::SeqCst), 1);
+    assert_eq!(selected_reference(&state, &agent_id).await, "working");
+    assert_eq!(runtime.commands.inputs.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn recovery_skips_a_login_its_provider_reports_signed_out() {
+    let (_root, state, runtime, agent_id) =
+        recovery_pool_fixture(&["expired", "working"], &[], |state, home| {
+            state.credential_profiles = Arc::new(
+                provider_credential_profile::ProviderCredentialProfileRegistry::with_launch_preparer(
+                    home.to_path_buf(),
+                    Arc::clone(&state.store),
+                    Arc::new(SignedOutProfiles {
+                        signed_out: vec!["codex-expired".into()],
+                        delegate: provider_credential_profile::NativeProviderCredentialProfileLaunchPreparer::new(
+                            home.to_path_buf(),
+                            Some(home.to_path_buf()),
+                        ),
+                    }),
+                ),
+            );
+            false
+        })
+        .await;
+    let advanced = crate::agent_recovery::advance(&state, &agent_id).await;
+    let record = recovery_record(&state, &agent_id).await;
+    assert_eq!(advanced, Ok(true), "{record:?}");
+    assert_eq!(reference_ids(&record.unusable_targets), ["expired"]);
+    assert_eq!(runtime.stops.load(Ordering::SeqCst), 1);
+    assert_eq!(runtime.opens.load(Ordering::SeqCst), 1);
+    assert_eq!(selected_reference(&state, &agent_id).await, "working");
 }
