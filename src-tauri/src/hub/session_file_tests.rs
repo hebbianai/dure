@@ -21,6 +21,7 @@ impl CatalogSource for EmptyCatalog {
             chat_sessions: Vec::new(),
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
+            push_registration: None,
             sessions: vec![],
             unreachable: vec![],
         }

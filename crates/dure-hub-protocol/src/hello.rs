@@ -31,6 +31,15 @@ pub enum HubRequest {
     UpdatePushSubscriptionV1 {
         subscription: Option<crate::push::PushSubscription>,
     },
+    /// Replaces this authenticated device's subscription together with the
+    /// phone's grant for this computer (#660). None disables push.
+    ///
+    /// Answered with a [`crate::push::PushRegistrationResult`]. The phone
+    /// sends it only to a computer whose catalog carries `push_registration`;
+    /// a desktop that predates it reads it as [`Self::Unsupported`].
+    UpdatePushSubscriptionV2 {
+        registration: Option<crate::push::PushRegistration>,
+    },
     /// A version-closed operation: old hubs cannot reinterpret a file as another write.
     StageSessionFileV1 {
         session_id: String,
@@ -1178,5 +1187,43 @@ mod tests {
                 box_id: "b-1".to_string()
             }
         );
+    }
+
+    /// A registration crosses as the phone wrote it, grant bytes included,
+    /// and fits the greeting's bound with the longest token and claims.
+    #[test]
+    fn a_push_registration_round_trips_within_the_greeting_bound() {
+        use crate::push::{
+            ApnsEnvironment, MAX_GRANT_CLAIMS_BYTES, MAX_GRANT_SIGNATURE_BYTES, PushGrant,
+            PushLanguage, PushPreference, PushRegistration, PushSubscription,
+        };
+        let mut key = vec![0x04];
+        key.extend([7; 64]);
+        let registration = PushRegistration {
+            subscription: PushSubscription {
+                token: "ab".repeat(256).try_into().unwrap(),
+                environment: ApnsEnvironment::Production,
+                preference: PushPreference::All,
+                language: PushLanguage::Ko,
+            },
+            grant: PushGrant::new(
+                key,
+                vec![b'x'; MAX_GRANT_CLAIMS_BYTES],
+                vec![1; MAX_GRANT_SIGNATURE_BYTES],
+            )
+            .unwrap(),
+        };
+        for request in [
+            HubRequest::UpdatePushSubscriptionV2 {
+                registration: Some(registration),
+            },
+            HubRequest::UpdatePushSubscriptionV2 { registration: None },
+        ] {
+            let framed = encode_hello_for("token-1", request.clone()).expect("fits the bound");
+            assert_eq!(
+                read_hello(&mut framed.as_slice()).expect("reads").request,
+                request
+            );
+        }
     }
 }

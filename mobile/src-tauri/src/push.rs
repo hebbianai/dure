@@ -11,7 +11,8 @@ use dure_hub_protocol::{
     hello::HubRequest,
     push::{
         PushAlertContext, PushApproval, PushId, PushLanguage, PushPreference, PushReply,
-        PushSubscription, PushSubscriptionResult, PUSH_APPROVAL_CATEGORY, PUSH_REPLY_CATEGORY,
+        PushSubscription, PushSubscriptionResult, MAX_RESULT_BYTES, PUSH_APPROVAL_CATEGORY,
+        PUSH_REPLY_CATEGORY,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -477,7 +478,7 @@ pub fn update_on_stream(
         pairing_token,
         HubRequest::UpdatePushSubscriptionV1 { subscription },
     )?;
-    let result: PushSubscriptionResult = frame::read(stream, 4096)
+    let result: PushSubscriptionResult = frame::read(stream, MAX_RESULT_BYTES)
         .map_err(|error| hub_client::HubClientError::Protocol(error.to_string()))?;
     match result {
         PushSubscriptionResult::Saved => Ok(()),
@@ -744,6 +745,7 @@ mod tests {
             sessions: sessions.iter().map(entry).collect(),
             unreachable: Vec::new(),
             layout: None,
+            push_registration: None,
             chat_sessions: Vec::new(),
         };
         let ack = dure_hub_protocol::hello::HubHelloAck {
