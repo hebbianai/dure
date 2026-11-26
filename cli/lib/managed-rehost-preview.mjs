@@ -114,10 +114,8 @@ export async function collectManagedRehostPreview({
   if (!backend?.profile || backend.error) {
     return failure(backendRequestFailure(backend?.error, backend?.profile), { agentId });
   }
-  if (backend.profile.transport.kind !== "local") {
-    return failure({ code: "rehost_preview_local_only",
-      message: "Native start/status run on their execution host. Remote rehost planning is not supported here." }, { agentId });
-  }
+  // Wake and restart are backend transitions, so they reach a remote backend
+  // too; only a native rehost needs the execution host's own Hmux.
   const report = await collectAgentRuntimeCommand({
     args: ["get", agentId], resolveBackend: async () => backend, requestBackend,
   });
@@ -165,6 +163,11 @@ export async function collectManagedRehostPreview({
     return failure({ code: "rehost_native_source_unavailable",
       message: `This observation does not provide a native source. ${agentRuntimeSourceUnavailableReason(observation)}` },
     { agentId, observation });
+  }
+  if (backend.profile.transport.kind !== "local") {
+    return failure({ code: "rehost_preview_local_only",
+      message: "This Agent's native source runs on its backend's host, where Hmux starts and observes the " +
+        `restart. Run dure runs resume ${agentId} on that host. Nothing was started.` }, { agentId, observation });
   }
   const sourceSessionId = binding.sessionId;
   const sourceWorkspaceId = source.runtimeWorkspaceId;

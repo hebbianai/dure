@@ -2855,7 +2855,8 @@ async function reportAgentStop(name, opts, receipt, httpOk) {
     await import("./lib/agent-stop-command.mjs");
   const report = stopsRunRecord(receipt, opts)
     ? agentStopReport(await collectRunRecordStop({ selector: name, appReceipt: receipt,
-      resolveBackend: () => backendProfileQueryContext({}) }), true)
+      resolveBackend: () => backendProfileQueryContext(
+        opts.backend === undefined ? {} : { backendSpecified: true, backend: opts.backend }) }), true)
     : agentStopReport(receipt, httpOk);
   const output = opts.json ? JSON.stringify(report) : formatAgentStopReport(report, name);
   (opts.json || report.ok ? process.stdout : process.stderr).write(`${output}\n`);

@@ -44,10 +44,10 @@ live Session after the app lost its panes. Resume previews exact local recovery;
 --confirm-restart to execute and publish it. A confirmed stopped source waiting
 for a deferred target uses backend wake; an existing native source uses native
 rehost; a closed, stopped Agent restarts through the app's backend transition.
-All preserve the conversation without an open app. Remote resume is not
-supported here. An Agent stopped with dure stop is removed and cannot restart in
-place; resume names its conversation for resume --conversation, which continues
-it in a new Agent.
+All preserve the conversation without an open app. On an SSH backend, wake
+and restart run from here; a native rehost runs on the backend's host. An Agent
+stopped with dure stop is removed and cannot restart in place; resume names its
+conversation for resume --conversation, which continues it in a new Agent.
 Resuming an Agent retains its original project and working folder, and refuses
 --project, --path and --cwd. Use runs move for an idle or stopped Claude or Codex
 conversation on the same backend. Move previews first and returns an exact Apply

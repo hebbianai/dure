@@ -236,7 +236,8 @@ returned `continuation.finish` (`dure hmux rehost finish ...`): it waits on that
 exact operation and publishes it once, never starts another, and is safe to
 repeat until it exits 0. Resuming an Agent whose source Hmux already holds a
 restart for continues that operation. Then use `open` to place the recovered
-Run. Remote resume requires execution on its host.
+Run. On an SSH backend, wake and restart run from the client; a native rehost
+runs on the backend's host.
 For headless input/output, use the Session/workspace pair from `show` with
 `read`, local `send`, and `send-keys`; an Agent name requires client registration. Direct Session
 input verifies the current Host generation without requiring an app registry.
@@ -254,12 +255,13 @@ receipts; do not reset sessions or resend an uncertain message automatically.
 To stop and clean up an Agent, use `dure stop <agent-name-or-id> --yes --json`.
 The selected running Dure app routes the stop to the Agent's owning backend,
 then removes its registration and panes while preserving its workspace and
-conversation history. On a host without the app, the stop goes through the Run
-record by Agent ID, operation ID or Run name. `dure hmux stop --name ... --yes --json`
-uses the same path.
+conversation history. On a host without the app, or for a Run the app has not
+opened, the stop goes through the Run record by Agent ID, operation ID or Run
+name. For a headless Run on a remote backend, add `--backend ID` to select that
+backend's Run record. `dure hmux stop --name ... --yes --json` uses the same path.
 Do not substitute `/exit`, Ctrl-C or PID killing for the lifecycle command.
 On uncertain results, retry the same Agent ID; success is `ok: true` and exit 0.
-See `dure stop --help`. This client-scoped command does not accept `--backend`.
+See `dure stop --help`.
 
 ## Read a pane and send to it
 

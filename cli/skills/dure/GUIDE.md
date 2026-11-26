@@ -87,12 +87,12 @@ resume <agent-id>` names its conversation for `dure runs resume --conversation`,
 which continues it in a new Agent. Use the exact Agent ID for retries or
 `project/name` when names repeat.
 The selected Dure app, chosen by `DURE_APP_CHANNEL`, routes each Agent it presents
-to its own backend. `--backend` is not accepted here.
-A Run the app has not opened, such as a schedule occurrence, or any Run on a host
-without the Dure app, is stopped through its Run record on `DURE_BACKEND_PROFILE`
-or the local backend; select it by Agent ID, operation ID or Run name from
-`dure runs list` or `dure schedule runs`. A saved stop that names an earlier
-runtime generation is planned again before it is applied.
+to its own backend. A Run the app has not opened, such as a schedule occurrence or
+a headless Run on a remote backend, or any Run on a host without the Dure app, is
+stopped through its Run record on the backend selected by `--backend ID`,
+`DURE_BACKEND_PROFILE` or the local backend; select it by Agent ID, operation ID
+or Run name from `dure runs list` or `dure schedule runs`. A saved stop that
+names an earlier runtime generation is planned again before it is applied.
 `dure hmux stop --name ... --yes --json` uses the same path, including for Agents
 created by `dure run`. Do not inject `/exit` or kill a PID to bypass `dispatch.stop`.
 Read `dure stop --help` for options. Exit 0 with `ok: true` confirms cleanup;
@@ -429,7 +429,8 @@ returned `continuation.finish` (`dure hmux rehost finish ...`): it waits on that
 exact operation and publishes it once, never starts another, and is safe to
 repeat until it exits 0. Resuming an Agent whose source Hmux already holds a
 restart for continues that operation. Then use `open` to place the recovered
-Run. Remote resume requires execution on its host.
+Run. On an SSH backend, wake and restart run from the client; a native rehost
+runs on the backend's host.
 For headless input/output, use the Session/workspace pair from `show` with
 `read`, local `send`, and `send-keys`; an Agent name requires client registration. Direct Session
 input verifies the current Host generation without requiring an app registry.
