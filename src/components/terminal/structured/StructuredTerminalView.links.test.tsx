@@ -173,6 +173,27 @@ function click(
 	});
 }
 
+function hover(
+	viewport: HTMLElement,
+	position: { clientX: number; clientY: number },
+	modifiers: { metaKey?: boolean; shiftKey?: boolean } = { metaKey: true },
+) {
+	fireEvent.pointerMove(viewport, { pointerId: 31, ...modifiers, ...position });
+}
+
+/** The underline boxes drawn under the marked link, in pixels. */
+function underlines() {
+	return [
+		...document.querySelectorAll<HTMLElement>(
+			'[data-testid="structured-terminal-link-underline"] > div',
+		),
+	].map((line) => ({
+		left: line.style.left,
+		top: line.style.top,
+		width: line.style.width,
+	}));
+}
+
 function pointerIntents() {
 	return sentRecords("inputIntent").filter(({ record }) =>
 		record.body.case === "inputIntent"
@@ -346,6 +367,102 @@ describe("structured terminal links", () => {
 		click(viewport, at(2), {});
 		await waitFor(() => expect(pointerIntents().length).toBeGreaterThan(0));
 		expect(links.openFileViewer).toHaveBeenCalledOnce();
+	});
+
+	it("underlines the link under the pointer and shows a hand only while Cmd is held", async () => {
+		const viewport = await bootWithText(["error: src/app.ts:12:3 bad"], {
+			runtimeWorkingDirectory: "/repo",
+		});
+
+		hover(viewport, at(10), {});
+		expect(underlines()).toEqual([]);
+		expect(viewport.dataset.terminalLinkHover).toBeUndefined();
+
+		// Pressing Cmd over a still pointer marks the whole link.
+		fireEvent.keyDown(window, { key: "Meta", metaKey: true });
+		expect(underlines()).toEqual([
+			{ left: "70px", top: "19px", width: "150px" },
+		]);
+		expect(viewport.dataset.terminalLinkHover).toBe("");
+
+		fireEvent.keyUp(window, { key: "Meta", metaKey: false });
+		expect(underlines()).toEqual([]);
+		expect(viewport.dataset.terminalLinkHover).toBeUndefined();
+
+		hover(viewport, at(10));
+		expect(underlines()).toHaveLength(1);
+		hover(viewport, at(24));
+		expect(underlines()).toEqual([]);
+		hover(viewport, at(10));
+		fireEvent.pointerLeave(viewport, { pointerId: 31 });
+		expect(underlines()).toEqual([]);
+		hover(viewport, at(10));
+		fireEvent.blur(window);
+		expect(underlines()).toEqual([]);
+	});
+
+	it("marks only links a click would open", async () => {
+		const viewport = await bootWithText(["src/app.ts:4 http://example.com/"], {
+			runtimeWorkingDirectory: "/repo",
+		});
+
+		publishTerminalExecutionLocation("session-a", {
+			kind: "ssh",
+			target: "build-box",
+		});
+		hover(viewport, at(2));
+		expect(underlines()).toEqual([]);
+		// A URL still opens with the OS from inside the hop.
+		hover(viewport, at(20));
+		expect(underlines()).toEqual([
+			{ left: "130px", top: "19px", width: "190px" },
+		]);
+		publishTerminalExecutionLocation("session-a", { kind: "local" });
+
+		// Without a Space, a file has nowhere to open.
+		dockviewRegistry.delete(DESKTOP);
+		hover(viewport, at(2));
+		expect(underlines()).toEqual([]);
+		dockviewRegistry.set(DESKTOP, {} as DockviewApi);
+		hover(viewport, at(3));
+		expect(underlines()).toEqual([
+			{ left: "0px", top: "19px", width: "120px" },
+		]);
+	});
+
+	it("follows new output under a still pointer", async () => {
+		const onRecords = installAttachMock();
+		const view = renderTerminalView({ runtimeWorkingDirectory: "/repo" });
+		await waitFor(() => expect(mocks.attach).toHaveBeenCalledOnce());
+		await deliverRecord(
+			onRecords[0],
+			viewportFrameRecord({ texts: ["src/app.ts:4"] }),
+		);
+		const viewport = terminalViewport(view.container);
+		vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(
+			new DOMRect(0, 0, 800, 20),
+		);
+
+		hover(viewport, at(4));
+		expect(underlines()).toEqual([
+			{ left: "0px", top: "19px", width: "120px" },
+		]);
+
+		await deliverRecord(
+			onRecords[0],
+			viewportFrameRecord({ texts: ["plain words"], projectionRevision: 2n }),
+		);
+		await waitFor(() => expect(underlines()).toEqual([]));
+
+		await deliverRecord(
+			onRecords[0],
+			viewportFrameRecord({ texts: ["go docs/a.md"], projectionRevision: 3n }),
+		);
+		await waitFor(() =>
+			expect(underlines()).toEqual([
+				{ left: "30px", top: "19px", width: "90px" },
+			]),
+		);
 	});
 
 	it("opens nothing for a drag, a plain word or a path inside a nested ssh hop", async () => {

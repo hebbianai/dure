@@ -1312,7 +1312,8 @@
     white-space: pre;
     text-decoration-skip-ink: none;
 }
-.structured-terminal-dom a[data-terminal-hyperlink] {
+.structured-terminal-dom a[data-terminal-hyperlink],
+.structured-terminal-dom[data-terminal-link-hover] {
     cursor: pointer;
 }
 /* Pane placement targets the pane container, not individual terminal runs.

@@ -30,6 +30,7 @@ import {
 import { encodeTerminalViewportScrollRowsIntent } from "@/lib/terminal/state/terminalViewportIntent";
 import { StructuredTerminalCompositionOverlay } from "./StructuredTerminalCompositionOverlay";
 import { StructuredTerminalFindBar, StructuredTerminalFindHighlights } from "./StructuredTerminalFindBar";
+import { StructuredTerminalLinkUnderline } from "./StructuredTerminalLinkUnderline";
 import { StructuredTerminalRecoveryStatus } from "./StructuredTerminalRecoveryStatus";
 import { useStructuredTerminalGeometryCommit } from "./useStructuredTerminalGeometryCommit";
 import { useStructuredTerminalPointerInput } from "./useStructuredTerminalPointerInput";
@@ -450,12 +451,25 @@ export function StructuredTerminalView({
 		onTextInputPainted: structuredTextInput.onPresentationPainted,
 		onInputLatencyPainted: structuredInputLatency.onPresentationPainted,
 	});
+	const linkActivation = useStructuredTerminalLinkActivation({
+		sessionId,
+		binding,
+		runtimeWorkingDirectory,
+		terminalSurfaceRef,
+		paintedPresentationRef,
+	});
 	const afterPresentationPainted = useCallback(
 		(...args: Parameters<typeof reportAfterPresentationPainted>) => {
 			horizontalViewport.painted(args[0]);
+			// New output under a still pointer can move or replace its link.
+			linkActivation.refresh();
 			reportAfterPresentationPainted(...args);
 		},
-		[horizontalViewport.painted, reportAfterPresentationPainted],
+		[
+			horizontalViewport.painted,
+			linkActivation.refresh,
+			reportAfterPresentationPainted,
+		],
 	);
 	const handleFirstPaint = useCallback(() => {
 		recordFirstTerminalPaint(viewportReplica.attachmentId);
@@ -587,13 +601,6 @@ export function StructuredTerminalView({
 		surfaceBox,
 	]);
 
-	const linkActivation = useStructuredTerminalLinkActivation({
-		sessionId,
-		binding,
-		runtimeWorkingDirectory,
-		terminalSurfaceRef,
-		paintedPresentationRef,
-	});
 	useStructuredTerminalViewportPaint({
 		sessionId,
 		terminalSurfaceRef,
@@ -807,6 +814,9 @@ export function StructuredTerminalView({
 						ref={terminalSurfaceRef}
 						data-testid="structured-terminal-viewport"
 						data-selectable
+						data-terminal-link-hover={
+							linkActivation.hovered ? "" : undefined
+						}
 						className="absolute inset-0 size-full"
 						{...structuredTerminalSurfacePointerHandlers({
 							frameInstalled: installedFrame !== null,
@@ -847,6 +857,11 @@ export function StructuredTerminalView({
 						}}
 					/>
 					<StructuredTerminalFindHighlights frame={presentedFindFrame} metrics={paintedPresentationRef.current?.paint.metrics ?? null} />
+					<StructuredTerminalLinkUnderline
+						spans={linkActivation.hovered}
+						metrics={paintedPresentationRef.current?.paint.metrics ?? null}
+						color={canvasTheme.foreground}
+					/>
 					{compositionText && (
 						<StructuredTerminalCompositionOverlay
 							text={compositionText}

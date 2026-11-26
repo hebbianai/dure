@@ -9,6 +9,7 @@ import type {
 } from "@/contracts/terminalStateProtocol";
 import { isMachineLocalUrl } from "@/lib/browser/browserAddress";
 import type { FileTarget } from "@/lib/files/fileTarget";
+import type { TerminalCellSpan } from "@/lib/terminal/geometry/terminalCellSpan";
 import type { DesktopPlatform } from "@/lib/workspace/desktop/desktopPlatform";
 
 /** `start` and `end` are UTF-16 offsets into the logical line, end exclusive. */
@@ -27,6 +28,13 @@ export type TerminalTextLink =
 			readonly start: number;
 			readonly end: number;
 	  };
+
+/** A link read from the viewport, with the cells it covers: one span for each
+ * row it wraps over. */
+export interface TerminalViewportLink {
+	readonly link: TerminalTextLink;
+	readonly spans: readonly TerminalCellSpan[];
+}
 
 /** Where an activated link goes. A file opens in the file viewer on the
  * pane's backend, and an address that names the machine an SSH-backed pane
@@ -105,7 +113,7 @@ export function terminalViewportLinkAt(
 	tables: TerminalTables,
 	rowIndex: number,
 	column: number,
-): TerminalTextLink | null {
+): TerminalViewportLink | null {
 	const row = rows[rowIndex];
 	if (!row || column < 0) return null;
 	let first = rowIndex;
@@ -114,6 +122,7 @@ export function terminalViewportLinkAt(
 	}
 	let text = "";
 	let clicked: number | undefined;
+	const cells: LineCell[] = [];
 	for (let index = first; index < rows.length; index += 1) {
 		const current = rows[index];
 		if (!current || current.logicalLineId !== row.logicalLineId) break;
@@ -131,11 +140,34 @@ export function terminalViewportLinkAt(
 				}
 				clicked = text.length;
 			}
+			cells.push({
+				offset: text.length,
+				row: index,
+				column: cellColumn,
+				width: grapheme.displayWidth,
+			});
 			text += grapheme.text || " ".repeat(grapheme.displayWidth);
 			cellColumn += grapheme.displayWidth;
 		}
 	}
-	return clicked === undefined ? null : terminalTextLinkAt(text, clicked);
+	const link = clicked === undefined ? null : terminalTextLinkAt(text, clicked);
+	return link ? { link, spans: coveredSpans(cells, link) } : null;
+}
+
+/** Whether the link modifier is held: Command on macOS, Ctrl on Windows and
+ * Linux, without Alt. Shift may be held with it. */
+export function isTerminalLinkModifier(
+	event: {
+		readonly metaKey: boolean;
+		readonly ctrlKey: boolean;
+		readonly altKey: boolean;
+	},
+	platform: DesktopPlatform,
+): boolean {
+	if (event.altKey) return false;
+	return platform === "macos"
+		? event.metaKey && !event.ctrlKey
+		: event.ctrlKey && !event.metaKey;
 }
 
 /** Cmd-click on macOS, Ctrl-click on Windows and Linux. Shift may be held to
@@ -149,10 +181,7 @@ export function isTerminalLinkGesture(
 	},
 	platform: DesktopPlatform,
 ): boolean {
-	if (event.button !== 0 || event.altKey) return false;
-	return platform === "macos"
-		? event.metaKey && !event.ctrlKey
-		: event.ctrlKey && !event.metaKey;
+	return event.button === 0 && isTerminalLinkModifier(event, platform);
 }
 
 /** The absolute path a link names on the pane's backend, or null when a
@@ -219,6 +248,36 @@ export function terminalLinkDestination(
 						? { line: link.line }
 						: { line: link.line, column: link.column },
 			};
+}
+
+/** One painted grapheme of a logical line: where its text starts in the line
+ * and the viewport cells it fills. */
+interface LineCell {
+	readonly offset: number;
+	readonly row: number;
+	readonly column: number;
+	readonly width: number;
+}
+
+function coveredSpans(
+	cells: readonly LineCell[],
+	link: TerminalTextLink,
+): TerminalCellSpan[] {
+	const spans: { row: number; startColumn: number; endColumn: number }[] = [];
+	for (const cell of cells) {
+		if (cell.offset < link.start || cell.offset >= link.end) continue;
+		const last = spans[spans.length - 1];
+		if (last?.row === cell.row) {
+			last.endColumn = cell.column + cell.width;
+		} else {
+			spans.push({
+				row: cell.row,
+				startColumn: cell.column,
+				endColumn: cell.column + cell.width,
+			});
+		}
+	}
+	return spans;
 }
 
 function pathLinkAt(text: string, index: number): TerminalTextLink | null {
