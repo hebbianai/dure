@@ -64,6 +64,6 @@ Claude 和 Codex 使用量控件显示提供商返回的限额和重置时间。
 
 优先使用近期用量仍有余量的账户；用量未知或过期不会阻止尝试已允许的账户。失败或结果不确定的尝试会保持可见，不会盲目重发。之后的人类输入优先。仍可手动切换账户，身份验证失败需要处理。
 
-使用 `dure recovery get codex --backend SERVER --json` 查看策略和已注册的账户，使用 `dure recovery status AGENT_ID --backend SERVER --json` 查看恢复结果，使用 `dure recovery waits --backend SERVER` 列出正在等待重置的代理。运行 `dure recovery help` 可了解指定版本的设置修改和可选用量观测。这些命令直接连接所选服务器。
+使用 `dure recovery get codex --backend SERVER --json` 查看策略和已注册的账户，使用 `dure recovery status AGENT_ID --backend SERVER --json` 查看恢复结果，使用 `dure recovery waits --backend SERVER` 列出正在等待重置的代理。`dure ls` 的 `CONTINUES` 列显示每个等待中的代理何时继续。运行 `dure recovery help` 可了解指定版本的设置修改和可选用量观测。这些命令直接连接所选服务器。
 
 默认提供商和权限选项在 **Settings → General**。按实际任务选择权限；[worktree 不是沙箱](/cn/current-limits#文件分离与权限)。

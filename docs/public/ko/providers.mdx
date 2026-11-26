@@ -64,6 +64,6 @@ Claude와 Codex 사용량 컨트롤은 제공자가 반환한 한도와 초기�
 
 최근 사용량에서 여유가 확인된 계정을 우선합니다. 사용량을 모르거나 오래된 값이어도 허용한 계정은 시도할 수 있습니다. 실패하거나 결과가 불확실한 시도는 표시되며 무조건 재전송하지 않습니다. 이후 사람이 보낸 요청이 우선하고 수동 계정 전환도 유지됩니다. 인증 실패는 직접 처리해야 합니다.
 
-`dure recovery get codex --backend SERVER --json`으로 설정과 등록된 계정을, `dure recovery status AGENT_ID --backend SERVER --json`으로 복구 결과를, `dure recovery waits --backend SERVER`로 초기화를 기다리는 에이전트를 확인할 수 있습니다. 버전을 지정한 설정 변경과 선택적인 사용량 전달 방법은 `dure recovery help`에서 확인하세요. 명령은 선택한 서버에 직접 연결합니다.
+`dure recovery get codex --backend SERVER --json`으로 설정과 등록된 계정을, `dure recovery status AGENT_ID --backend SERVER --json`으로 복구 결과를, `dure recovery waits --backend SERVER`로 초기화를 기다리는 에이전트를 확인할 수 있습니다. `dure ls`의 `CONTINUES` 열에는 기다리는 에이전트가 언제 이어서 진행하는지 표시됩니다. 버전을 지정한 설정 변경과 선택적인 사용량 전달 방법은 `dure recovery help`에서 확인하세요. 명령은 선택한 서버에 직접 연결합니다.
 
 기본 제공자와 권한 선택은 **Settings → General**에 있습니다. 실제 작업에 맞게 권한을 선택하세요. [worktree는 샌드박스가 아닙니다](/ko/current-limits#파일-분리와-권한).

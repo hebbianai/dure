@@ -1712,11 +1712,16 @@ async function emitSessionQuery(action, sessionId, opts) {
     formatSessionQuery,
     loadSessionClientProjection,
     sessionQueryExitCode,
+    withRecoveryWaits,
   } = await import("./lib/session-query.mjs");
   const { registry, backend } = await sessionQueryContext(
     opts,
     loadSessionClientProjection,
   );
+  // A Hmux listing of this machine reads the managed local backend's waits
+  // as its catalog records it, so listing still never starts a service.
+  const { recordedManagedLocalProfile } = await import("./lib/local-backend.mjs");
+  const localProfile = backend ? null : recordedManagedLocalProfile();
   const query = {
     action,
     hmuxCommand: hmuxCommand(),
@@ -1730,10 +1735,12 @@ async function emitSessionQuery(action, sessionId, opts) {
       opts.probeBudgetMs === undefined ? undefined : Number(opts.probeBudgetMs),
     backend,
   };
-  // --alive (only alive sessions) filters every page of the census.
-  const collect = action === "list" && opts.alive
-    ? collectAliveSessionQuery
-    : collectSessionQuery;
+  // --alive (only alive sessions) filters every page of the census; each
+  // backend's recovery waits are read once for its whole listing.
+  const collect = withRecoveryWaits(
+    action === "list" && opts.alive ? collectAliveSessionQuery : collectSessionQuery,
+    { localBackend: localProfile && { profile: localProfile, transportOptions: {} } },
+  );
   const allBackends = opts.allBackends
     ? await import("./lib/session-query-all-backends.mjs")
     : null;
@@ -1803,6 +1810,13 @@ wakes, the Host refused because unsent text stands at the agent's prompt, and
 since when. They wait until that text is sent or cleared in the terminal; Dure
 never sends it. HELD shows - and heldPrompts is null when none are held, and
 for Hosts that predate the fact.
+CONTINUES and recoveryWaits ([{agentId, attemptId, resumeAtMs}]) say when the
+backend's recovery continues the row's Agents by itself after the usage limit
+that stopped them resets (see dure recovery --help), read from the backend
+that owns the row; plain dure ls asks this machine's backend only when it
+already runs. CONTINUES shows - and recoveryWaits is [] when none of them
+waits; CONTINUES shows unknown and recoveryWaits is null when that backend
+cannot say.
 For durable Runs after restart, including headless Runs, use dure runs list.
 Use --cursor start for the first ordered page, then pagination.nextCursor until null.
 Pages are live observations ordered by workspace/session ID, not a frozen snapshot.
