@@ -1,12 +1,13 @@
 //! A schedule-started agent on the chat runtime sleeps after confirmed idle
 //! and reports its conversation state, like a terminal one (#566).
 use super::*;
+use crate::agent_conversation_outcome::{ConversationActivity, ConversationAttention};
 use dure_app::{
     AgentClientMessageIdV1, AgentInteractionRequestIdV1, AgentPendingRequestDraftV1,
     AgentPendingRequestKindV1, AgentPendingRequestV1, AgentTimelineActiveTurnV1,
     AgentTimelineFailureV1, AgentTimelineItemIdV1, AgentTurnFailureReasonV1, AgentTurnIdV1,
 };
-use schedule_runtime::conversation::{self, ConversationActivity};
+use schedule_runtime::conversation;
 use schedule_runtime::observation;
 
 const IDLE_AFTER: Duration = Duration::from_secs(30 * 60);
@@ -103,7 +104,7 @@ async fn conversation_state_names_work_questions_failures_and_idle() {
         ConversationActivity::from_page(&idle),
         ConversationActivity {
             working: false,
-            attention: "none",
+            attention: ConversationAttention::None,
             quiescent: true,
             last_activity_ms: chat.binding.updated_at_ms,
         }
@@ -126,7 +127,7 @@ async fn conversation_state_names_work_questions_failures_and_idle() {
     let activity = ConversationActivity::from_page(&asking);
     assert_eq!(
         (activity.attention, activity.quiescent),
-        ("input_required", false)
+        (ConversationAttention::InputRequired, false)
     );
     asking.pending_requests = vec![pending(
         AgentPendingRequestKindV1::Permission,
@@ -134,7 +135,7 @@ async fn conversation_state_names_work_questions_failures_and_idle() {
     )];
     assert_eq!(
         ConversationActivity::from_page(&asking).attention,
-        "approval_required"
+        ConversationAttention::ApprovalRequired
     );
 
     let mut failed = idle;
@@ -151,7 +152,7 @@ async fn conversation_state_names_work_questions_failures_and_idle() {
             activity.quiescent,
             activity.last_activity_ms
         ),
-        ("error", true, 50),
+        (ConversationAttention::Error, true, 50),
         "a failed turn is idle and still counts as the newest activity"
     );
 }

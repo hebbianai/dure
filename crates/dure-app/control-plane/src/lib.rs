@@ -2,6 +2,7 @@ mod agent_checkpoint_binding;
 pub mod agent_conversation;
 pub mod agent_conversation_api;
 mod agent_conversation_history;
+mod agent_conversation_outcome;
 #[cfg(unix)]
 mod agent_conversation_recover;
 #[cfg(unix)]
