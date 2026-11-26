@@ -408,12 +408,194 @@ fn live_opencode_opens_a_long_terminal_conversation_in_chat() {
     });
 }
 
+/// The PDF the fixture model asks OpenCode to read. OpenCode attaches the
+/// whole file, encoded, to the message, so the message and the event that
+/// updates its tool part are each larger than the session client reads of an
+/// answer of several messages. `scripts/qa/opencode-provider-conformance.mjs`
+/// asks for the same file.
+const LARGE_READ_BYTES: usize = 7_000_000;
+
+/// A Terminal Agent's OpenCode conversation in which the model read a large
+/// PDF moves into Chat, and the model reads it again during a Chat turn.
+#[test]
+#[ignore = "requires isolated OpenCode, fake LLM, and actual Hmux conformance fixture"]
+fn live_opencode_reads_a_large_file_in_the_terminal_and_in_chat() {
+    let root = PathBuf::from(std::env::var_os("DURE_QA_OPENCODE_RUNTIME_ROOT").unwrap())
+        .join("large-read");
+    tests::owner_directory(&root);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        use crate::opencode_session_client::SessionId;
+        let (store, service, manager) = fixture(
+            &root,
+            false,
+            ManagedProviderKind::OpenCode,
+            env_path("DURE_QA_OPENCODE_BIN"),
+        )
+        .await;
+        let workspace = root.join("workspace-0");
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        pdf.resize(LARGE_READ_BYTES, b'A');
+        std::fs::write(workspace.join("large-read.pdf"), pdf).unwrap();
+        let session = SessionId::parse("ses_dure_terminal_large_read").unwrap();
+        let (mut server, client) = terminal_server(&workspace).await;
+        client.create(&session).await.unwrap();
+        answer_terminal_prompt(
+            &client,
+            &session,
+            "msg_terminal_large_read",
+            "DURE_QA_LARGE_READ in the Terminal",
+        )
+        .await;
+        server.kill().await.unwrap();
+        let agent_id = AgentIdV1::new("agent-opencode-scale-0").unwrap();
+        let settings = ProviderTurnSettings::new(
+            ProviderPermissionModeV1::Default,
+            Some(AgentSpawnModelSelectionV1::parse("fixture/fixture-model").unwrap()),
+            Some(AgentSpawnEffortSelectionV1::parse("low").unwrap()),
+        );
+        store
+            .initialize_agent_runtime_selection(&AgentRuntimeSelectionV1 {
+                schema_version: 1,
+                agent_id: agent_id.clone(),
+                provider_id: ProviderIdV1::new("opencode").unwrap(),
+                interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
+                execution_profile: AgentExecutionProfileV1::ProviderDefault,
+                permission_mode: settings.permission_mode.clone(),
+                model: settings.model.clone(),
+                effort: settings.effort.clone(),
+                revision: 1,
+                selected_by_operation_id: None,
+                updated_at_ms: 4,
+            })
+            .await
+            .unwrap();
+        let reads = |page: &AgentTimelinePageV1| {
+            page.rows
+                .iter()
+                .filter(|row| {
+                    matches!(
+                        &row.item.body,
+                        AgentTimelineItemBodyV1::Tool {
+                            name,
+                            state: AgentTimelineToolStateV1::Completed,
+                            ..
+                        } if name == "read"
+                    )
+                })
+                .count()
+        };
+
+        let binding = manager
+            .open_runtime(open_request(
+                &agent_id,
+                Some(session.as_str().into()),
+                &settings,
+            ))
+            .await
+            .expect("the Terminal conversation opens in Chat");
+
+        assert_eq!(
+            conversation(&service, &binding).await,
+            ["DURE_QA_LARGE_READ in the Terminal"],
+            "no boundary row stands in for the message that read the file"
+        );
+        assert_eq!(reads(&page(&service, &binding).await), 1);
+        assert!(binding.history_complete);
+        let commands = bridge(&manager, &binding).await;
+        let intent = turn_intent(&binding, "large-read", "DURE_QA_LARGE_READ in Chat");
+        service
+            .start_turn(commands.as_ref(), &intent)
+            .await
+            .unwrap();
+        wait_completed(&service, &binding, &intent.turn_id).await;
+        assert!(
+            commands.is_connected(),
+            "the turn completes on the same live connection"
+        );
+        assert_eq!(reads(&page(&service, &binding).await), 2);
+        println!("Chat showed the Terminal's large read and completed its own on one connection");
+        manager.stop_binding(&binding, false).await.unwrap();
+    });
+}
+
 /// Records `count` large prompts in `session` through a separate OpenCode
 /// server, as a person's Terminal session of the same conversation would.
 async fn record_terminal_conversation(
     workspace: &Path,
     session: &crate::opencode_session_client::SessionId,
     count: usize,
+) {
+    let (mut server, client) = terminal_server(workspace).await;
+    client.create(session).await.unwrap();
+    // The fixture model answers only the newest prompt, which ends the
+    // Terminal's last turn; asking it about each prompt would send it the
+    // whole growing conversation every time.
+    for index in 0..count - 1 {
+        let message = format!("msg_terminal{index:04}");
+        let input = format!("Terminal prompt {index} {}", "T".repeat(400_000));
+        client
+            .record_without_reply(session, &message, &input)
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(20), async {
+            while client.message(session, &message).await.unwrap().is_none() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    let message = format!("msg_terminal{:04}", count - 1);
+    answer_terminal_prompt(
+        &client,
+        session,
+        &message,
+        &format!("Terminal prompt {}", count - 1),
+    )
+    .await;
+    server.kill().await.unwrap();
+}
+
+/// Sends `input` in `session` and waits until the fixture model answered
+/// it, as a person's Terminal session of the same conversation would.
+async fn answer_terminal_prompt(
+    client: &crate::opencode_session_client::OpenCodeSessionClient,
+    session: &crate::opencode_session_client::SessionId,
+    message: &str,
+    input: &str,
+) {
+    client
+        .prompt(session, message, input, None, None)
+        .await
+        .unwrap();
+    timeout(Duration::from_secs(60), async {
+        loop {
+            // A session the prompt just started may hold no message yet.
+            let newest = client.message_pages(session).next().await.unwrap();
+            let info = newest
+                .and_then(|mut page| page.messages.pop())
+                .map(|mut message| message["info"].take());
+            if info.is_some_and(|info| info["parentID"] == message && info["finish"] == "stop") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the fixture model answers the Terminal's newest prompt");
+}
+
+/// A separate OpenCode server on `workspace`, as a person's Terminal session
+/// runs one beside Chat's, and a client of it.
+async fn terminal_server(
+    workspace: &Path,
+) -> (
+    tokio::process::Child,
+    crate::opencode_session_client::OpenCodeSessionClient,
 ) {
     use crate::opencode_session_client::OpenCodeSessionClient;
     use tokio::io::AsyncBufReadExt;
@@ -439,48 +621,8 @@ async fn record_terminal_conversation(
     })
     .await
     .unwrap();
+    // The server keeps writing to its output, which stays open and read.
+    tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
     let client = OpenCodeSessionClient::new(port, password.into(), workspace).unwrap();
-    client.create(session).await.unwrap();
-    // The fixture model answers only the newest prompt, which ends the
-    // Terminal's last turn; asking it about each prompt would send it the
-    // whole growing conversation every time.
-    for index in 0..count - 1 {
-        let message = format!("msg_terminal{index:04}");
-        let input = format!("Terminal prompt {index} {}", "T".repeat(400_000));
-        client
-            .record_without_reply(session, &message, &input)
-            .await
-            .unwrap();
-        timeout(Duration::from_secs(20), async {
-            while client.message(session, &message).await.unwrap().is_none() {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        })
-        .await
-        .unwrap();
-    }
-    let message = format!("msg_terminal{:04}", count - 1);
-    client
-        .prompt(
-            session,
-            &message,
-            &format!("Terminal prompt {}", count - 1),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    timeout(Duration::from_secs(60), async {
-        loop {
-            let mut newest = client.message_pages(session).next().await.unwrap().unwrap();
-            let info = newest.messages.pop().unwrap()["info"].take();
-            if info["parentID"] == message.as_str() && info["finish"] == "stop" {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .expect("the fixture model answers the Terminal's newest prompt");
-    server.kill().await.unwrap();
+    (server, client)
 }
