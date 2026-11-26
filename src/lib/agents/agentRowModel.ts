@@ -38,6 +38,9 @@ export interface AgentRowFacts {
 	/** When the wait or result began; absent when unseen. */
 	readonly sinceMs?: number;
 	readonly projectName?: string;
+	/** The checkout's branch, from a surface where the project alone does
+	 * not say which checkout the agent works in (a Space's status card). */
+	readonly branch?: string;
 	readonly spaceName?: string;
 	/** Titles of the agents above this one, outermost first. */
 	readonly path?: readonly string[];
@@ -57,7 +60,7 @@ export interface AgentRowModel {
 	readonly dot: { readonly state?: AgentDisplayState; readonly unread: boolean };
 	readonly status?: AgentRowStatus;
 	readonly sinceMs?: number;
-	/** Where the agent is, in reading order: project, then Space. */
+	/** Where the agent is, in reading order: project, branch, then Space. */
 	readonly context: readonly string[];
 	readonly path?: readonly string[];
 	readonly managed?: AgentRowManagedSummary;
@@ -68,7 +71,7 @@ export interface AgentRowModel {
  * label, and every agent still gets a row. */
 export function agentRowModel(facts: AgentRowFacts): AgentRowModel {
 	const status = agentRowStatus(facts.needsPerson, facts.hasResult);
-	const context = [facts.projectName, facts.spaceName].filter(
+	const context = [facts.projectName, facts.branch, facts.spaceName].filter(
 		(value): value is string => Boolean(value),
 	);
 	const activity = agentRowActivity(facts, status);

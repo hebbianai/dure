@@ -7,6 +7,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/react";
 import type { ComponentProps, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,6 +27,7 @@ import type { StructuredAgentPaneSurface } from "@/lib/agents/chat/structuredAge
 import { DureAgentRuntimeSourceActiveError } from "@/lib/ipc/dureAgentRuntime";
 import { DureBackendRequestError } from "@/lib/ipc/dureBackend";
 import { setAgentSessionSourceOpen } from "@/lib/workspace/window/agentSessionWindowSource";
+import { workspacePerformance } from "@/lib/workspace/performance/workspacePerformance";
 import { useStore } from "@/store";
 import { agentFixture } from "@/test/agentFixtures";
 import type { Project } from "@/types";
@@ -152,6 +154,19 @@ vi.mock("@/components/agents/chat/StructuredAgentChatSurface", () => ({
 }));
 vi.mock("@/components/agents/AccountsDialog", () => ({
 	AccountsDialog: () => null,
+}));
+vi.mock("@/components/agents/AgentStatusCard", () => ({
+	AgentStatusCard: ({
+		view,
+		children,
+	}: {
+		view: string;
+		children?: ReactNode;
+	}) => (
+		<div data-testid="agent-status-card" data-view={view}>
+			{children}
+		</div>
+	),
 }));
 vi.mock("@/components/agents/AgentCredentialSwitcher", () => ({
 	AgentCredentialSwitcher: (props: Record<string, unknown>) => {
@@ -319,6 +334,51 @@ describe("StructuredAgentPanel mount", () => {
 			projectKind: "local",
 		});
 		expect(mocks.chatProps?.attachmentsEnabled).toBe(true);
+	});
+
+	it("shows the status card instead of the chat view while crowded and keeps owning the session", () => {
+		vi.mocked(workspacePerformance.beginPaneOpen).mockClear();
+		const onRuntimeInvalidated = vi.fn();
+		const props = {
+			agent,
+			profile,
+			panelProps,
+			launchSelection,
+			onRuntimeInvalidated,
+			switchCredential: vi.fn(),
+			switchToNativeTerminal: vi.fn(),
+		};
+		const view = render(<StructuredAgentPanel {...props} statusCard />);
+
+		expect(
+			screen.getByTestId("agent-status-card").getAttribute("data-view"),
+		).toBe("conversation");
+		expect(screen.queryByTestId("structured-chat")).toBeNull();
+		// The pane menu's history entry still has its control, inside the card.
+		expect(
+			within(screen.getByTestId("agent-status-card")).getByTestId(
+				"conversation-history",
+			),
+		).toBeTruthy();
+		// The pane stays the conversation's owner and its activity producer.
+		expect(mocks.chatHook).toHaveBeenCalledWith(
+			agent.id,
+			profile,
+			onRuntimeInvalidated,
+		);
+		expect(mocks.setAgentActivity).toHaveBeenCalledWith(agent.id, "waiting");
+		expect(workspacePerformance.beginPaneOpen).not.toHaveBeenCalled();
+
+		mocks.chatHook.mockClear();
+		view.rerender(<StructuredAgentPanel {...props} statusCard={false} />);
+		expect(screen.queryByTestId("agent-status-card")).toBeNull();
+		expect(screen.getByTestId("structured-chat")).toBeTruthy();
+		expect(mocks.chatHook).toHaveBeenCalledWith(
+			agent.id,
+			profile,
+			onRuntimeInvalidated,
+		);
+		expect(workspacePerformance.beginPaneOpen).toHaveBeenCalledOnce();
 	});
 
 	it("hands its conversation to the large window while staying the session's owner", () => {

@@ -14,6 +14,8 @@ import { useWorkspaceRuntimeDesktopId } from "@/components/workspace/WorkspaceRu
 import type { AgentConversationTarget } from "@/components/agents/AgentConversationControls";
 import type { AgentConversationHistoryActionLease } from "@/components/agents/AgentConversationHistoryControl";
 import { AgentExitedSessionSurface } from "@/components/agents/AgentExitedSessionSurface";
+import { AgentStatusCard } from "@/components/agents/AgentStatusCard";
+import { AgentConversationHistoryControl } from "@/components/agents/AgentConversationHistoryControl";
 import { useManagedAgentTerminalFallback } from "@/components/agents/useManagedAgentTerminalFallback";
 import {
   useRuntimeOwnedRequest,
@@ -82,6 +84,7 @@ export function NativeAgentPanel({
   historyActionLease,
   panelProps: props,
   launchSelection,
+  statusCard = false,
   switchCredential,
   switchToStructuredChat,
 }: {
@@ -90,6 +93,9 @@ export function NativeAgentPanel({
   historyActionLease: AgentConversationHistoryActionLease;
   panelProps: AgentPanelDockProps;
   launchSelection: AgentRuntimeLaunchSelectionView;
+  /** The pane is too small to read: its status card replaces the toolbar and
+   * the terminal, which releases the terminal's presentation. */
+  statusCard?: boolean;
   switchCredential: (
     agentId: string,
     targetCredentialId: string | null,
@@ -132,10 +138,12 @@ export function NativeAgentPanel({
     // 때까지 지연되므로(visible 게이트) 대기 시간이 openMs로 오염된다 — 스킵.
     if (!props.api.isVisible) return;
     if (paneDesktopId && getActiveSpaceId() !== paneDesktopId) return;
+    // A status card paints no terminal, so its wait is not an open time.
+    if (statusCard) return;
     workspacePerformance.beginPaneOpen(paneId, `agent:${paneProvider}`);
     // ready에 못 닿는 종료(스폰 실패·조기 닫힘·provider 전환)는 샘플을 버린다.
     return () => workspacePerformance.cancelPaneOpen(paneId);
-  }, [paneId, paneProvider, paneDesktopId, props.api, getActiveSpaceId]);
+  }, [paneId, paneProvider, paneDesktopId, props.api, getActiveSpaceId, statusCard]);
   useAgentPaneAttentionAck(agentId, props.api);
   const [ownedResuming, setResuming] =
     useRuntimeOwnedValue<boolean>(runtimeOwnerKey);
@@ -450,114 +458,142 @@ export function NativeAgentPanel({
     setActiveConvId(result.conversationId);
   };
 
+  const history = {
+    actionLease: historyActionLease,
+    activeConversationId: agent.conversationId ?? activeConvId,
+    activity,
+    conversations: convs,
+    mutationAllowed: conversationMutation.allowed,
+    mutationDisabledTitle: standaloneMutationMessage,
+    onError: reportConversationError,
+    onLoad: () => void loadConversations(),
+    onSwitchExisting: switchConversation,
+    paneDesktopId,
+    panelId: props.api.id,
+    projectKind: project?.kind,
+    resuming: runtimeTransitioning,
+  };
+  // The pane's own status and hidden controls. The pane menu's history and
+  // delegate entries open them, so they stay mounted in the toolbar or, while
+  // the pane is too small to read, in its status card.
+  const paneStatus = (
+    <>
+      <AgentPluginClaimStatus
+        agent={agent}
+        paneId={paneId}
+        onNavigate={() => props.api.setActive()}
+      />
+      {paneDesktopId && (
+        <DelegateTaskControl
+          agent={agent}
+          desktopId={paneDesktopId}
+          hiddenTrigger
+          panelId={paneId}
+        />
+      )}
+    </>
+  );
+
+  // The recovery cover's account choice opens the toolbar's account menu, so
+  // a card brings the toolbar back for as long as that menu is open. The
+  // pane's own controls live in whichever of the two is shown.
+  const toolbarShown = !statusCard || accountMenuOpen;
+
   return (
     <div className="flex h-full flex-col">
-      <NativeAgentToolbar
-        agent={agent}
-        binding={binding}
-        runtime={{
-          surface: "pane",
-          transitioning: runtimeTransitioning,
-          setTransitioning: setResuming,
-          conversationViewDisabled:
-            structuredAttachRecoveryVisible || staleManagedRecoveryVisible,
-          presentFork: (forkedAgent) =>
-            presentForkInAgentPanelDesktop(
-              { desktopId: paneDesktopId, panelId: paneId },
-              forkedAgent,
-            ),
-          account: {
-            switch: switchAccount,
-            applyPending: () => applyDeferredCredentialSwitchNow(agent.id),
-            cancelPending: async () => cancelDeferredCredentialSwitch(agent.id),
-            menu: { open: accountMenuOpen, onOpenChange: setAccountMenuOpen },
-            remote: {
-              hostName: remoteAgentHost?.name,
-              busy: accountBusy,
-              openLogin: (account) => void openRemoteLogin(account),
-              copyToHost: (account) => void copyAccountToHost(account),
+      {toolbarShown && (
+        <NativeAgentToolbar
+          agent={agent}
+          binding={binding}
+          runtime={{
+            surface: "pane",
+            transitioning: runtimeTransitioning,
+            setTransitioning: setResuming,
+            conversationViewDisabled:
+              structuredAttachRecoveryVisible || staleManagedRecoveryVisible,
+            presentFork: (forkedAgent) =>
+              presentForkInAgentPanelDesktop(
+                { desktopId: paneDesktopId, panelId: paneId },
+                forkedAgent,
+              ),
+            account: {
+              switch: switchAccount,
+              applyPending: () => applyDeferredCredentialSwitchNow(agent.id),
+              cancelPending: async () => cancelDeferredCredentialSwitch(agent.id),
+              menu: { open: accountMenuOpen, onOpenChange: setAccountMenuOpen },
+              remote: {
+                hostName: remoteAgentHost?.name,
+                busy: accountBusy,
+                openLogin: (account) => void openRemoteLogin(account),
+                copyToHost: (account) => void copyAccountToHost(account),
+              },
             },
-          },
-          view: viewPort,
-          projectMove: localAgentProjectMovePort(agent.id),
-          ...(launchControls ? { launchSelection: launchControls } : {}),
-          history: {
-            actionLease: historyActionLease,
-            activeConversationId: agent.conversationId ?? activeConvId,
-            activity,
-            conversations: convs,
-            mutationAllowed: conversationMutation.allowed,
-            mutationDisabledTitle: standaloneMutationMessage,
-            onError: reportConversationError,
-            onLoad: () => void loadConversations(),
-            onSwitchExisting: switchConversation,
-            paneDesktopId,
-            panelId: props.api.id,
-            projectKind: project?.kind,
-            resuming: runtimeTransitioning,
-          },
-          paneStatus: (
-            <>
-              <AgentPluginClaimStatus
-                agent={agent}
-                paneId={paneId}
-                onNavigate={() => props.api.setActive()}
-              />
-              {paneDesktopId && (
-                <DelegateTaskControl
-                  agent={agent}
-                  desktopId={paneDesktopId}
-                  hiddenTrigger
-                  panelId={paneId}
-                />
-              )}
-            </>
-          ),
-        }}
-      />
+            view: viewPort,
+            projectMove: localAgentProjectMovePort(agent.id),
+            ...(launchControls ? { launchSelection: launchControls } : {}),
+            history,
+            paneStatus,
+          }}
+        />
+      )}
 
       <div
         className="relative min-h-0 flex-1"
         onKeyDownCapture={terminalFallback.onTerminalKeyDown}
       >
-        <NativeAgentResponseView
-          agent={agent}
-          disabled={responseViewDisabled}
-          setView={viewPort.setView}
-        >
-          <TerminalView
-            sessionId={agent.sessionId}
-            providerHint={agent.provider}
-            attachRecovery={attachRecovery}
-            largeView={{
-              agentId: agent.id,
-              sourceWindowLabel: getCurrentWebviewWindow().label,
-            }}
-            kind={terminalKind}
-            binding={binding}
-            inputDisabled={runtimeTransitioning || activity === "exited"}
-            onFirstPaint={() => workspacePerformance.markPaneReady(paneId)}
-            runtimeWorkingDirectory={agent.worktreePath}
-            epoch={restartReq}
-            paneApi={props.api}
-            onHmuxSessionExit={terminalFallback.onHmuxSessionExit}
-            onAttachRecoveryPresentationChange={setStructuredAttachRecoveryVisible}
-            onSplit={(direction) =>
-              openSplitLauncherOn(
-                props.containerApi,
-                paneSplitTargetForPanel(props.api, props.params),
-                { referencePanel: props.api.id, direction },
-              )
-            }
-            {...paneViewCloseMenu({
-              panelId: props.api.id,
-              desktopId: paneDesktopId ?? undefined,
-              title: props.api.title,
-              params: props.params,
-              close: () => props.api.close(),
-            })}
-          />
-        </NativeAgentResponseView>
+        {statusCard ? (
+          <AgentStatusCard agent={agent} paneId={paneId} view="terminal">
+            {!toolbarShown && (
+              <>
+                {paneStatus}
+                <AgentConversationHistoryControl
+                  {...history}
+                  agent={agent}
+                  binding={binding}
+                />
+              </>
+            )}
+          </AgentStatusCard>
+        ) : (
+          <NativeAgentResponseView
+            agent={agent}
+            disabled={responseViewDisabled}
+            setView={viewPort.setView}
+          >
+            <TerminalView
+              sessionId={agent.sessionId}
+              providerHint={agent.provider}
+              attachRecovery={attachRecovery}
+              largeView={{
+                agentId: agent.id,
+                sourceWindowLabel: getCurrentWebviewWindow().label,
+              }}
+              kind={terminalKind}
+              binding={binding}
+              inputDisabled={runtimeTransitioning || activity === "exited"}
+              onFirstPaint={() => workspacePerformance.markPaneReady(paneId)}
+              runtimeWorkingDirectory={agent.worktreePath}
+              epoch={restartReq}
+              paneApi={props.api}
+              onHmuxSessionExit={terminalFallback.onHmuxSessionExit}
+              onAttachRecoveryPresentationChange={setStructuredAttachRecoveryVisible}
+              onSplit={(direction) =>
+                openSplitLauncherOn(
+                  props.containerApi,
+                  paneSplitTargetForPanel(props.api, props.params),
+                  { referencePanel: props.api.id, direction },
+                )
+              }
+              {...paneViewCloseMenu({
+                panelId: props.api.id,
+                desktopId: paneDesktopId ?? undefined,
+                title: props.api.title,
+                params: props.params,
+                close: () => props.api.close(),
+              })}
+            />
+          </NativeAgentResponseView>
+        )}
         {conversationFailure && (
           <Alert
             surface="dock"

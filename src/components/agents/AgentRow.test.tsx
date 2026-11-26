@@ -63,6 +63,25 @@ describe("AgentRow", () => {
 		expect(button.textContent).not.toContain(t("agents.row.approval", { tool: "Bash" }));
 	});
 
+	it("says the state in words on a card that nothing lists for attention", () => {
+		const working = agentRowModel({
+			agentId: "a",
+			title: "Plain",
+			state: "working",
+			projectName: "repo",
+		});
+		render(<AgentRow row={working} variant="card" />);
+		expect(screen.getByRole("button").textContent).toContain(
+			[activityLabel("working"), "repo"].join(" · "),
+		);
+		cleanup();
+		// A list or line row leaves the state to its dot.
+		render(<AgentRow row={working} variant="list" />);
+		expect(screen.getByRole("button").textContent).not.toContain(
+			activityLabel("working"),
+		);
+	});
+
 	it("adds nothing for facts it lacks", () => {
 		render(<AgentRow row={agentRowModel({ agentId: "a", title: "Plain" })} />);
 		expect(screen.getByRole("button").textContent).toBe("Plain");

@@ -7,6 +7,7 @@ import {
 	useState,
 } from "react";
 import { replaceManagedAgentPaneWithShell } from "@/lib/sessions/managed/managedAgentPaneToShell";
+import { managedLocalRuntimeLiveness } from "@/lib/terminal/hmuxManagedAttachConcurrency";
 import type { TerminalPaneBindingV1 } from "@/lib/terminal/terminalBinding";
 import { useStore } from "@/store";
 import type { AgentActivity, TerminalEnvironment } from "@/types";
@@ -105,6 +106,18 @@ export function useManagedAgentTerminalFallback({
 		setAuthoritativeExit(true);
 		if (agentId) useStore.getState().setAgentActivity(agentId, "exited");
 	}, [agentId]);
+	// The Host's census exit for this exact generation is the same fact as the
+	// exit a terminal attachment reports. Reading it here keeps the fallback a
+	// panel concern, so a pane with no terminal attached (a status card, a
+	// hidden tab) handles the exit too.
+	const hostExited = useStore(
+		(state) =>
+			managedLocalRuntimeLiveness(binding, state.hmuxSessionMetadata) ===
+			"exited",
+	);
+	useEffect(() => {
+		if (hostExited) onHmuxSessionExit();
+	}, [hostExited, onHmuxSessionExit]);
 
 	return {
 		authoritativeExit,

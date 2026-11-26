@@ -4,7 +4,10 @@ import { deriveNeedsPerson, type NeedsPersonFailure } from "@/lib/agents/needsPe
 import {
 	deriveNextUp,
 	type NextUpFacts,
+	nextUpAgentFacts,
 	nextUpEntries,
+	nextUpEntry,
+	nextUpRowPlacement,
 	nextUpTarget,
 } from "@/lib/agents/nextUp";
 
@@ -172,6 +175,49 @@ describe("deriveNextUp", () => {
 			needsYou: [],
 			results: [],
 		});
+	});
+});
+
+describe("nextUpEntry", () => {
+	it("is the entry the list holds, so one agent reads the same everywhere", () => {
+		const all = facts({
+			agentIds: ["approval", "finished", "idle", "exited"],
+			displayStates: {
+				approval: "blocked",
+				finished: "waiting",
+				idle: "waiting",
+				exited: "exited",
+			},
+			episodes: { finished: 1 },
+			episodeKinds: { finished: "done" },
+			episodeAt: { finished: 40 },
+			failures: { exited: exitCapsule({ code: "provider_exited_at_sign_in" }) },
+		});
+		const listed = nextUpEntries(deriveNextUp(all));
+		for (const agentId of all.agentIds) {
+			expect(nextUpEntry(agentId, nextUpAgentFacts(all, agentId))).toEqual(
+				listed.find((entry) => entry.agentId === agentId),
+			);
+		}
+	});
+
+	it("places an entry in the row vocabulary: needs-person or has-result", () => {
+		expect(
+			nextUpRowPlacement({
+				agentId: "a",
+				reason: "unexpected_exit",
+				state: "exited",
+				sinceMs: 10,
+				signIn: true,
+			}),
+		).toEqual({
+			state: "exited",
+			needsPerson: { reason: "unexpected_exit", signIn: true },
+			sinceMs: 10,
+		});
+		expect(
+			nextUpRowPlacement({ agentId: "a", reason: "result", state: "waiting" }),
+		).toEqual({ state: "waiting", hasResult: true });
 	});
 });
 

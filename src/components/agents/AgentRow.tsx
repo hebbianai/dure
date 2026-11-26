@@ -80,7 +80,13 @@ export function AgentRow({
 }) {
 	const now = useNowTick();
 	const meta = [
-		row.status ? agentRowStatusLabel(row.status) : undefined,
+		// Why the row is listed. A card stands in for a whole pane, so without
+		// a reason it still says what its dot shows, in words.
+		row.status
+			? agentRowStatusLabel(row.status)
+			: variant === "card" && row.dot.state
+				? activityLabel(row.dot.state)
+				: undefined,
 		row.sinceMs === undefined ? undefined : formatRelativeAge(row.sinceMs, now),
 		...row.context,
 	]

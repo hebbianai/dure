@@ -224,6 +224,8 @@ export const workspace: Record<string, string> = {
 	"workspace.health.notResponding": "Sem resposta",
 	"workspace.paneRename.description": "Isso se aplica somente a este painel. A sessão, a pasta de trabalho e o nome do agente não mudam.",
 	"workspace.agentWindow.unavailable": "Esta sessão não pode ser visualizada em uma janela grande",
+	"workspace.statusCard.enlargeForTerminal": "Aumente este painel para ver o terminal",
+	"workspace.statusCard.enlargeForConversation": "Aumente este painel para ver a conversa",
 	"workspace.desktopClose.terminatesSessions": "Encerra {n} sessões de terminal/SSH simples. As sessões de agentes registrados são mantidas.",
 	"workspace.desktopClose.terminateFailed": "Não foi possível encerrar algumas sessões, então a área de trabalho foi mantida.\n{error}",
 	"workspace.rehost.failed": "Falha ao reospedar: {error}",
