@@ -4,7 +4,8 @@
 //! timeline's failed turn, and recovery retries that turn on the next account.
 //! A native terminal Agent's failure is the turn its Hmux Host saw settle on a
 //! typed limit failure; recovery moves the same conversation to the next
-//! account in the terminal and sends it one fixed prompt to continue.
+//! account in the terminal, or with no account waits for the login's reported
+//! reset, and sends it one fixed prompt to continue.
 
 mod native_scan;
 
@@ -34,6 +35,11 @@ use crate::{
 /// another account. Fixed text, so it never carries provider output.
 const NATIVE_CONTINUATION: &str = "Your previous turn stopped at a usage limit. Dure moved this \
     conversation to another account; continue where you left off.";
+
+/// The one prompt a native Agent receives in the same terminal once the limit
+/// that stopped it has reset.
+const NATIVE_RESET_CONTINUATION: &str = "Your previous turn stopped at a usage limit, which has \
+    now reset; continue where you left off.";
 
 /// How long the resumed conversation has to become ready for its prompt
 /// after the account switch committed.
@@ -499,7 +505,7 @@ async fn stable_native(
 }
 
 /// The settled limit failure a native terminal Agent's Host shows now, when
-/// its provider has recovery enabled. Only the Host's typed failure counts;
+/// its provider has recovery on. Only the Host's typed failure counts;
 /// terminal output never does.
 async fn observe_native_failure(
     state: &ServiceState,
@@ -515,15 +521,15 @@ async fn observe_native_failure(
     else {
         return Ok(None);
     };
-    if !state
+    let Some(policy) = state
         .store
         .provider_recovery_policy(&selection.provider_id)
         .await
         .map_err(|_| "agent_recovery_store_failed")?
-        .is_some_and(|policy| policy.enabled)
-    {
+        .filter(|policy| policy.active_at(observed_at_ms))
+    else {
         return Ok(None);
-    }
+    };
     // A Host that cannot answer shows no failure; the next wake looks again.
     let Some((_, _, Ok(inspection))) = stable_native(state, agent_id).await? else {
         return Ok(None);
@@ -533,18 +539,40 @@ async fn observe_native_failure(
     else {
         return Ok(None);
     };
+    // Only a continuation after the reset needs the Host's completed turns
+    // and the login's reset, which the Host does not report but the login's
+    // recorded limit windows do; other observations keep their stored shape.
+    let (turn_completed_count, limit_resets_at_ms) = if policy.continue_after_reset {
+        (
+            inspection.turn_completed_count(),
+            state
+                .credential_profiles
+                .observe_limit_reset(
+                    &selection.provider_id,
+                    &selection.execution_profile,
+                    observed_at_ms,
+                )
+                .await,
+        )
+    } else {
+        (None, None)
+    };
     Ok(Some(AgentNativeTurnFailureV1 {
         terminal_epoch: inspection.terminal_epoch.clone(),
         attention_id: attention_id.to_owned(),
         reason,
         observed_at_ms,
+        turn_completed_count,
+        limit_resets_at_ms,
     }))
 }
 
-/// Sends the resumed conversation its one continuation prompt. The prompt is
-/// claimed before it is written: a refusal that proves nothing was written
-/// releases it for the next wake, and a prompt that may have been written is
-/// never written again.
+/// Sends the conversation its one continuation prompt: on the runtime the
+/// committed account switch selected once it is idle, or after the reset on
+/// the unchanged source while it still shows the recorded failure, which
+/// ended its turn. The prompt is claimed before it is written: a refusal that
+/// proves nothing was written releases it for the next wake, and a prompt
+/// that may have been written is never written again.
 async fn continue_native(
     state: &ServiceState,
     record: &AgentNativeRecoveryRecordV1,
@@ -568,47 +596,63 @@ async fn continue_native(
         }
         AgentNativeRecoveryContinuationV1::NotStarted => {}
     }
-    let Some(transition) = state
-        .store
-        .agent_runtime_transition(operation_id)
-        .await
-        .map_err(|_| "agent_recovery_store_failed")?
-        .filter(|transition| transition.state == AgentRuntimeTransitionStateV1::Committed)
-    else {
-        // The runtime journal still owns the switch; wake again later.
-        return Ok(AgentRecoveryHoldV1::Owned);
+    let after_reset = record.target.is_none() && record.resume_at_ms.is_some();
+    let committed_at_ms = if after_reset {
+        None
+    } else {
+        let Some(transition) = state
+            .store
+            .agent_runtime_transition(operation_id)
+            .await
+            .map_err(|_| "agent_recovery_store_failed")?
+            .filter(|transition| transition.state == AgentRuntimeTransitionStateV1::Committed)
+        else {
+            // The runtime journal still owns the switch; wake again later.
+            return Ok(AgentRecoveryHoldV1::Owned);
+        };
+        Some(transition.updated_at_ms)
     };
-    // A target Host that cannot answer yet is not ready; the selection still
-    // decides whether recovery owns the Agent.
-    let switched = stable_native(state, &record.agent_id).await?.and_then(
-        |(selection, authority, inspection)| Some((selection, authority, inspection.ok()?)),
-    );
-    let still_switched = match &switched {
-        Some((selection, _, _)) => {
+    // The switch's runtime is the next revision, selected by this attempt;
+    // a continuation after the reset stays on the source revision.
+    let owns = |selection: &AgentRuntimeSelectionV1| {
+        if after_reset {
+            selection.revision == record.source_selection_revision
+        } else {
             selection.selected_by_operation_id.as_ref() == Some(operation_id)
                 && Some(selection.revision) == record.source_selection_revision.checked_add(1)
-                && policy_allows(state, &attempt).await?
         }
+    };
+    // A Host that cannot answer yet is not ready; the selection still
+    // decides whether recovery owns the Agent.
+    let observed = stable_native(state, &record.agent_id).await?.and_then(
+        |(selection, authority, inspection)| Some((selection, authority, inspection.ok()?)),
+    );
+    let still_owned = match &observed {
+        Some((selection, _, _)) => owns(selection) && policy_allows(state, &attempt).await?,
         // The Host may still be starting; the selection decides ownership.
         None => match read_locked(state, &record.agent_id)
             .await
             .map_err(|_| "agent_recovery_store_failed")?
         {
-            AgentRuntimeObservedV1::Stable { selection, .. } => {
-                selection.selected_by_operation_id.as_ref() == Some(operation_id)
-            }
+            AgentRuntimeObservedV1::Stable { selection, .. } => owns(&selection),
             _ => false,
         },
     };
-    if !still_switched {
+    if !still_owned {
         return stop(state, &attempt, AgentRecoveryStopV1::Superseded).await;
     }
-    let ready = switched.and_then(|(selection, authority, inspection)| {
+    let ready = observed.and_then(|(selection, authority, inspection)| {
         let conversation = crate::agent_runtime_transition_apply::native_source_conversation(
             &authority,
             &inspection,
         )?;
-        inspection.is_agent_quiescent().then_some((
+        let takes_prompt = if after_reset {
+            inspection.attention_id() == Some(record.native_failure.attention_id.as_str())
+                && inspection.settled_turn_failure().is_some()
+        } else {
+            inspection.is_agent_quiescent()
+        };
+        takes_prompt.then_some((
             WorkflowSessionGenerationV1 {
                 session_id: authority.binding.session_id,
                 workspace_id: authority.runtime_workspace_id,
@@ -623,8 +667,11 @@ async fn continue_native(
         ))
     });
     let Some((session, provider_conversation_id)) = ready else {
+        // The source answered `may_start` in this pass, so after a reset the
+        // next wake decides again; a switched runtime has a bounded start.
         let now = now_ms().map_err(|_| "agent_recovery_clock_unavailable")?;
-        if now.saturating_sub(transition.updated_at_ms) > NATIVE_TARGET_READY_TIMEOUT_MS {
+        if committed_at_ms.is_some_and(|at| now.saturating_sub(at) > NATIVE_TARGET_READY_TIMEOUT_MS)
+        {
             return stop(
                 state,
                 &attempt,
@@ -657,7 +704,12 @@ async fn continue_native(
         intent: WorkflowPromptDeliveryIntentV1::ExistingConversation {
             provider_conversation_id,
         },
-        handoff: NATIVE_CONTINUATION.to_owned(),
+        handoff: if after_reset {
+            NATIVE_RESET_CONTINUATION
+        } else {
+            NATIVE_CONTINUATION
+        }
+        .to_owned(),
     };
     match state.workflow_prompt_deliverer.deliver(request).await {
         Ok(evidence) => {

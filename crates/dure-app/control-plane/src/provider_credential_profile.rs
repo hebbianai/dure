@@ -919,6 +919,25 @@ where
         pool
     }
 
+    /// When one login's limit resets, as its provider last reported the
+    /// fuller current window to this host. `None` when nothing current is
+    /// recorded for it.
+    pub(crate) async fn observe_limit_reset(
+        &self,
+        provider_id: &ProviderIdV1,
+        profile: &AgentExecutionProfileV1,
+        observed_at_ms: i64,
+    ) -> Option<i64> {
+        let registered = self
+            .store
+            .provider_credential_profiles(provider_id)
+            .await
+            .unwrap_or_default();
+        self.observe_login(provider_id, &registered, profile, observed_at_ms)
+            .await?
+            .limit_resets_at_ms
+    }
+
     /// The host's latest record of one login, with every ID registered for
     /// its profile directory. `None` when the profile cannot be resolved.
     async fn observe_login(

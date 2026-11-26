@@ -770,7 +770,35 @@ mod native {
             attention_id: attention.into(),
             reason,
             observed_at_ms: 200,
+            turn_completed_count: Some(3),
+            limit_resets_at_ms: None,
         }
+    }
+
+    /// A limit failure whose login's provider reported when it resets.
+    fn reset_failure(attention: &str, resets_at_ms: i64) -> AgentNativeTurnFailureV1 {
+        AgentNativeTurnFailureV1 {
+            limit_resets_at_ms: Some(resets_at_ms),
+            ..failure(AgentTurnFailureReasonV1::UsageLimit, attention)
+        }
+    }
+
+    /// Types the attempt's continuation, as the owner does once it is due.
+    async fn deliver(store: &SqliteDomainStore, attempt_id: &str) {
+        store
+            .claim_native_agent_recovery_continuation(attempt_id, "recovery:typed")
+            .await
+            .unwrap();
+        let evidence = WorkflowPromptDeliveryEvidenceV1::agent_prompt(
+            "terminal-epoch-1",
+            "record-1",
+            "41",
+            Some("7".into()),
+        );
+        store
+            .settle_native_agent_recovery_continuation(attempt_id, Some(&evidence))
+            .await
+            .unwrap();
     }
 
     fn authority() -> AgentCheckpointBindingAuthorityV1 {
@@ -1007,6 +1035,164 @@ mod native {
         assert_eq!(record.target, None);
         assert_eq!(record.stopped, Some(AgentRecoveryStopV1::Exhausted));
         assert_eq!(prepare_native(&store, &native).await, Some(record));
+        // A recorded reset waits only when continuing after a reset is on.
+        let record = prepare_native(&store, &reset_failure("attention-4", 10_000))
+            .await
+            .unwrap();
+        assert_eq!(record.resume_at_ms, None);
+        assert_eq!(record.stopped, Some(AgentRecoveryStopV1::Exhausted));
+        assert!(
+            serde_json::to_value(&record)
+                .unwrap()
+                .get("resumeAtMs")
+                .is_none(),
+            "a record that does not wait keeps its stored shape"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_native_limit_with_a_recorded_reset_waits_once_in_its_terminal() {
+        let root = TempDir::new().unwrap();
+        let path = root.path().join("native-reset.sqlite");
+        // Continuing after a reset alone recovers a single account and arms
+        // the Host scanner.
+        let store = native_store(
+            &path,
+            AgentInteractionProfileV1::NativeCli,
+            continue_policy(),
+        )
+        .await;
+        let candidate = |unfinished_attempt| {
+            vec![crate::NativeRecoveryCandidateV1 {
+                agent_id: agent(),
+                unfinished_attempt,
+            }]
+        };
+        assert_eq!(
+            store
+                .agent_native_recovery_candidates(None, 128)
+                .await
+                .unwrap(),
+            candidate(false)
+        );
+        let native = reset_failure("attention-3", 10_000);
+        let record = prepare_native(&store, &native).await.unwrap();
+        assert_eq!(record.target, None);
+        assert_eq!(record.stopped, None);
+        assert_eq!(record.native_failure, native);
+        let resume_at_ms = record.resume_at_ms.unwrap();
+        assert!((70_000..=190_000).contains(&resume_at_ms), "{resume_at_ms}");
+        // The wait is unfinished work: it survives a restart, and the
+        // scanner and the continuation loop keep waking it.
+        store.close().await;
+        let store = SqliteDomainStore::open(&path).await.unwrap();
+        assert_eq!(
+            prepare_native(&store, &native).await.as_ref(),
+            Some(&record)
+        );
+        assert_eq!(
+            store
+                .agent_native_recovery_candidates(None, 128)
+                .await
+                .unwrap(),
+            candidate(true)
+        );
+        assert!(
+            store
+                .agents_with_recovery()
+                .await
+                .unwrap()
+                .contains(&agent())
+        );
+        deliver(&store, &record.attempt_id).await;
+
+        // Still limited: the continued turn fails again before any turn
+        // completes, so recovery stops for a person instead of waiting
+        // a second time. An unknown count is no proof of a completed turn.
+        for (attention, turn_completed_count) in [("attention-4", Some(3)), ("attention-5", None)] {
+            let again = prepare_native(
+                &store,
+                &AgentNativeTurnFailureV1 {
+                    turn_completed_count,
+                    ..reset_failure(attention, 400_000)
+                },
+            )
+            .await
+            .unwrap();
+            assert_ne!(again.attempt_id, record.attempt_id);
+            assert_eq!(again.resume_at_ms, None, "{attention}");
+            assert_eq!(again.stopped, Some(AgentRecoveryStopV1::Exhausted));
+        }
+
+        // A turn that completed since ends the chain: the next limit waits.
+        let later = prepare_native(
+            &store,
+            &AgentNativeTurnFailureV1 {
+                turn_completed_count: Some(4),
+                ..reset_failure("attention-6", 400_000)
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(later.stopped, None);
+        assert!(later.resume_at_ms.is_some_and(|at| at > 400_000));
+    }
+
+    #[tokio::test]
+    async fn only_a_continued_wait_counts_and_only_a_plausible_reset_waits() {
+        let root = TempDir::new().unwrap();
+        let store = native_store(
+            &root.path().join("native-reset-rules.sqlite"),
+            AgentInteractionProfileV1::NativeCli,
+            continue_policy(),
+        )
+        .await;
+        // A wait a person took over never typed anything: it is no wait.
+        let first = prepare_native(&store, &reset_failure("attention-3", 10_000))
+            .await
+            .unwrap();
+        store
+            .stop_agent_recovery(&first.attempt_id, &AgentRecoveryStopV1::Superseded)
+            .await
+            .unwrap();
+        let next = prepare_native(&store, &reset_failure("attention-4", 20_000))
+            .await
+            .unwrap();
+        assert!(next.resume_at_ms.is_some_and(|at| at > 20_000));
+        store
+            .stop_agent_recovery(&next.attempt_id, &AgentRecoveryStopV1::Superseded)
+            .await
+            .unwrap();
+        // A reset before the failure, or more than eight days (past the
+        // longest provider window) after it, is not one the provider could
+        // have reported for it.
+        let past_the_longest_window = 200 + 8 * 24 * 60 * 60 * 1000 + 1;
+        for (attention, reset) in [
+            ("attention-5", 200),
+            ("attention-6", past_the_longest_window),
+        ] {
+            let record = prepare_native(&store, &reset_failure(attention, reset))
+                .await
+                .unwrap();
+            assert_eq!(record.resume_at_ms, None, "{attention}");
+            assert_eq!(record.stopped, Some(AgentRecoveryStopV1::Exhausted));
+        }
+
+        // An account to switch to wins over waiting.
+        let store = native_store(
+            &root.path().join("native-switch-first.sqlite"),
+            AgentInteractionProfileV1::NativeCli,
+            ProviderRecoveryPolicyPutV1 {
+                continue_after_reset: true,
+                ..policy()
+            },
+        )
+        .await;
+        let record = prepare_native(&store, &reset_failure("attention-3", 10_000))
+            .await
+            .unwrap();
+        assert!(record.target.is_some());
+        assert_eq!(record.resume_at_ms, None);
     }
 
     #[tokio::test]

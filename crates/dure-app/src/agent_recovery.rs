@@ -53,6 +53,16 @@ pub struct AgentNativeTurnFailureV1 {
     pub attention_id: String,
     pub reason: AgentTurnFailureReasonV1,
     pub observed_at_ms: i64,
+    /// How many turns the Host saw complete in this terminal before the
+    /// failure. Equal counts mean no turn completed between two failures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_completed_count: Option<u64>,
+    /// When the failed login's limit resets, as its provider last reported
+    /// the fuller current window to this host. Both are read only when
+    /// continuing after a reset is on, so other observations keep their
+    /// stored shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit_resets_at_ms: Option<i64>,
 }
 
 /// Where the one continuation prompt of a native recovery stands. It is
@@ -91,6 +101,11 @@ pub struct AgentNativeRecoveryRecordV1 {
     /// start. Selection skips them for the rest of the attempt.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unusable_targets: Vec<ProviderCredentialProfileV1>,
+    /// With no target, when the same terminal receives the continuation: the
+    /// reported reset plus a stable jitter. A terminal that fails again
+    /// before completing another turn never waits again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_at_ms: Option<i64>,
     /// Always present, so queries written before native recoveries (which
     /// select `$.continuation IS NULL`) never take a native row for theirs.
     pub continuation: AgentNativeRecoveryContinuationV1,
@@ -226,7 +241,7 @@ impl AgentRecoveryAttemptV1 {
     pub fn resume_at_ms(&self) -> Option<i64> {
         match self {
             Self::Conversation(record) => record.resume_at_ms,
-            Self::Native(_) => None,
+            Self::Native(record) => record.resume_at_ms,
         }
     }
 

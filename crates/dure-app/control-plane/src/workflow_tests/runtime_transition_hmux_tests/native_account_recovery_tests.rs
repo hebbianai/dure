@@ -1,5 +1,6 @@
 //! A native terminal Agent whose turn ends at a usage limit moves to the next
-//! account in the terminal and continues, with nothing typed by a person.
+//! account in the terminal and continues, with nothing typed by a person. With
+//! no account to move to, it continues in the same terminal after the reset.
 
 use super::*;
 use dure_app::{
@@ -91,7 +92,8 @@ async fn native_recovery(key: &str) -> NativeRecovery {
                 accounts: accounts.clone(),
                 continue_after_reset: false,
             },
-            now_ms().unwrap() - 1_000,
+            // An hour ago, so a test can stage a failure seen before now.
+            now_ms().unwrap() - 60 * 60 * 1000,
         )
         .await
         .unwrap();
@@ -143,6 +145,69 @@ async fn current_generation(
         host_instance_id: authority.host_instance_id,
         terminal_epoch: authority.terminal_epoch,
     }
+}
+
+/// Turns account switching off and continuing after a reset on, so a limit
+/// has no account to move to.
+async fn continue_after_reset_only(state: &ServiceState, key: &str) {
+    state
+        .store
+        .put_provider_recovery_policy(
+            &ProviderRecoveryPolicyPutV1 {
+                schema_version: 1,
+                provider_id: ProviderIdV1::new("codex").unwrap(),
+                expected_revision: 1,
+                idempotency_key: format!("{key}-continue"),
+                enabled: false,
+                accounts: Vec::new(),
+                continue_after_reset: true,
+            },
+            now_ms().unwrap(),
+        )
+        .await
+        .unwrap();
+}
+
+/// What the app's Codex usage check last recorded for account A: its
+/// five-hour window full until `resets_at_ms`, its weekly window not.
+fn record_full_window(state: &ServiceState, resets_at_ms: i64) {
+    let now_s = now_ms().unwrap() / 1000;
+    let snapshots = serde_json::json!({"schemaVersion": 1, "snapshots": [{
+        "credentialId": "account-a", "capturedAt": now_s - 5, "attemptedAt": now_s - 5,
+        "error": null, "rateLimits": [{"limitId": "codex",
+            "usedPercent": 100.0, "resetsAt": resets_at_ms / 1000,
+            "usedPercentWeekly": 40.0, "weeklyResetsAt": now_s + 3 * 24 * 60 * 60}]}]});
+    fs::write(
+        state
+            .descriptor
+            .database_path
+            .parent()
+            .unwrap()
+            .join("codex-usage-snapshots.json"),
+        serde_json::to_vec(&snapshots).unwrap(),
+    )
+    .unwrap();
+}
+
+/// What the source's Host shows now.
+async fn host(
+    state: &ServiceState,
+    source: &WorkflowSessionGenerationV1,
+) -> crate::hmux_session_inspection::HmuxSessionInspection {
+    crate::query_hmux_for_runtime_transition(
+        &state.hmux_identity,
+        &source.session_id,
+        &source.workspace_id,
+        &crate::HmuxStopFence {
+            runner_principal: source.runner_principal.clone(),
+            runner_instance: source.runner_instance.clone(),
+            channel_epoch: source.channel_epoch.clone(),
+            host_instance_id: source.host_instance_id.clone(),
+            terminal_epoch: source.terminal_epoch.clone(),
+        },
+    )
+    .await
+    .unwrap()
 }
 
 async fn recovery_rows(state: &ServiceState, agent_id: &AgentIdV1) -> usize {
@@ -371,6 +436,8 @@ async fn a_person_who_resumed_first_supersedes_the_attempt() {
         .to_owned(),
         reason: AgentTurnFailureReasonV1::UsageLimit,
         observed_at_ms: now_ms().unwrap(),
+        turn_completed_count: None,
+        limit_resets_at_ms: None,
     };
     let Some(AgentRecoveryAttemptV1::Native(prepared)) = state
         .store
@@ -407,6 +474,201 @@ async fn a_person_who_resumed_first_supersedes_the_attempt() {
     agent_runtime_close_apply::apply(
         &state,
         "close-native-resumed-fixture",
+        agent_runtime_close_apply::AgentRuntimeStopBodyV1 {
+            schema_version: 1,
+            agent_id,
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires isolated real Hmux binaries; run pnpm test:hmux-native-account-recovery"]
+async fn native_usage_limit_continues_after_the_reset_uses_real_hmux() {
+    a_limit_with_a_recorded_reset_waits_for_it_without_typing().await;
+    a_passed_reset_continues_in_the_same_terminal_once().await;
+}
+
+async fn a_limit_with_a_recorded_reset_waits_for_it_without_typing() {
+    let NativeRecovery {
+        hmux,
+        state,
+        agent_id,
+        source,
+        prompts,
+        ..
+    } = native_recovery("native-reset-wait").await;
+    continue_after_reset_only(&state, "native-reset-wait").await;
+    let reset_at_ms = (now_ms().unwrap() / 1000 + 60 * 60) * 1000;
+    record_full_window(&state, reset_at_ms);
+    let original = hmux.session(&source);
+    state_reporter::report_turn_failure(&hmux, &source, Some(AgentTurnFailure::UsageLimit));
+    let hold = agent_recovery::advance(&state, &agent_id).await.unwrap();
+    let agent_recovery::AgentRecoveryHoldV1::WaitsUntil(resume_at_ms) = hold else {
+        panic!("expected a wait for the recorded reset: {hold:?}");
+    };
+    assert!(
+        (reset_at_ms + 60_000..=reset_at_ms + 180_000).contains(&resume_at_ms),
+        "{resume_at_ms} vs {reset_at_ms}"
+    );
+    // Waiting types nothing and leaves the terminal and its account alone.
+    assert!(prompts.requests().is_empty());
+    assert_eq!(hmux.requests().len(), 1);
+    assert!(hmux.session(&source).same_generation(&original));
+    assert_eq!(recovery_rows(&state, &agent_id).await, 1);
+    assert_eq!(
+        agent_recovery::advance(&state, &agent_id).await,
+        Ok(agent_recovery::AgentRecoveryHoldV1::WaitsUntil(
+            resume_at_ms
+        ))
+    );
+    // A person who answers in the terminal takes over the wait.
+    state_reporter::report(
+        &hmux,
+        &source,
+        AgentRuntimeActivity::Working,
+        AgentRuntimeAttention::None,
+        false,
+    );
+    assert!(
+        !agent_recovery::advance(&state, &agent_id)
+            .await
+            .unwrap()
+            .owns()
+    );
+    assert_eq!(recovery_rows(&state, &agent_id).await, 0);
+    assert!(prompts.requests().is_empty());
+    agent_runtime_close_apply::apply(
+        &state,
+        "close-native-reset-wait-fixture",
+        agent_runtime_close_apply::AgentRuntimeStopBodyV1 {
+            schema_version: 1,
+            agent_id,
+        },
+    )
+    .await
+    .unwrap();
+}
+
+async fn a_passed_reset_continues_in_the_same_terminal_once() {
+    let NativeRecovery {
+        hmux,
+        state,
+        agent_id,
+        source,
+        prompts,
+        ..
+    } = native_recovery("native-reset-due").await;
+    continue_after_reset_only(&state, "native-reset-due").await;
+    let original = hmux.session(&source);
+    state_reporter::report_turn_failure(&hmux, &source, Some(AgentTurnFailure::UsageLimit));
+    let shown = host(&state, &source).await;
+    // An earlier wake recorded this failure with the reset its login's
+    // provider reported, which has passed since.
+    let now = now_ms().unwrap();
+    let failure = AgentNativeTurnFailureV1 {
+        terminal_epoch: source.terminal_epoch.clone(),
+        attention_id: shown.attention_id().unwrap().to_owned(),
+        reason: AgentTurnFailureReasonV1::UsageLimit,
+        observed_at_ms: now - 30 * 60 * 1000,
+        turn_completed_count: shown.turn_completed_count(),
+        limit_resets_at_ms: Some(now - 10 * 60 * 1000),
+    };
+    let Some(AgentRecoveryAttemptV1::Native(waiting)) = state
+        .store
+        .prepare_agent_recovery(&agent_id, failure.observed_at_ms, Some(&failure))
+        .await
+        .unwrap()
+    else {
+        panic!("the limit failure prepares a native attempt");
+    };
+    assert_eq!(waiting.target, None);
+    assert_eq!(waiting.stopped, None);
+    assert!(waiting.resume_at_ms.is_some_and(|at| at <= now));
+
+    // Due: the same terminal gets one prompt and keeps its account.
+    assert!(
+        agent_recovery::advance(&state, &agent_id)
+            .await
+            .unwrap()
+            .owns()
+    );
+    let attempt = native_attempt(&state, &waiting.attempt_id).await;
+    assert!(
+        matches!(
+            attempt.continuation,
+            AgentNativeRecoveryContinuationV1::Delivered { .. }
+        ),
+        "the continuation was not delivered: {attempt:?}"
+    );
+    let typed = prompts.requests();
+    assert_eq!(typed.len(), 1);
+    assert_eq!(typed[0].session, source);
+    assert_eq!(
+        typed[0].delivery_idempotency_key,
+        format!("recovery:{}", attempt.attempt_id)
+    );
+    assert_eq!(
+        typed[0].intent,
+        dure_app::WorkflowPromptDeliveryIntentV1::ExistingConversation {
+            provider_conversation_id: CONVERSATION.into(),
+        }
+    );
+    assert_eq!(
+        typed[0].handoff,
+        "Your previous turn stopped at a usage limit, which has now reset; continue where you \
+         left off."
+    );
+    assert_eq!(hmux.requests().len(), 1, "no account switch started");
+    assert!(hmux.session(&source).same_generation(&original));
+    assert_eq!(
+        inspect(&state, &agent_id).await["receipt"]["selectionRevision"],
+        1
+    );
+
+    // Still limited: the continued turn fails again before any turn
+    // completes. The owner reads the login's recorded reset and still stops
+    // for a person instead of waiting twice.
+    let reset_at_ms = (now / 1000 + 60 * 60) * 1000;
+    record_full_window(&state, reset_at_ms);
+    state_reporter::report(
+        &hmux,
+        &source,
+        AgentRuntimeActivity::Working,
+        AgentRuntimeAttention::None,
+        false,
+    );
+    state_reporter::report_turn_failure(&hmux, &source, Some(AgentTurnFailure::UsageLimit));
+    assert_eq!(
+        agent_recovery::advance(&state, &agent_id).await,
+        Err("agent_recovery_accounts_exhausted")
+    );
+    let shown = host(&state, &source).await;
+    assert_ne!(shown.attention_id(), Some(failure.attention_id.as_str()));
+    let Some(AgentRecoveryAttemptV1::Native(again)) = state
+        .store
+        .prepare_agent_recovery(
+            &agent_id,
+            now_ms().unwrap(),
+            Some(&AgentNativeTurnFailureV1 {
+                attention_id: shown.attention_id().unwrap().to_owned(),
+                ..failure
+            }),
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("the second failure keeps its attempt");
+    };
+    assert_ne!(again.attempt_id, waiting.attempt_id);
+    assert_eq!(again.stopped, Some(AgentRecoveryStopV1::Exhausted));
+    assert_eq!(again.resume_at_ms, None);
+    assert_eq!(again.native_failure.limit_resets_at_ms, Some(reset_at_ms));
+    assert_eq!(prompts.requests().len(), 1);
+    agent_runtime_close_apply::apply(
+        &state,
+        "close-native-reset-due-fixture",
         agent_runtime_close_apply::AgentRuntimeStopBodyV1 {
             schema_version: 1,
             agent_id,

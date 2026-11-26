@@ -107,9 +107,48 @@ async fn reported_reset_on(
     .fetch_optional(&mut *connection)
     .await
     .map_err(|error| map_sqlx("read_recovery_reported_reset", error))?;
-    Ok(reset.flatten().filter(|reset| {
-        *reset > failure.created_at_ms && *reset - failure.created_at_ms <= MAX_RESET_AHEAD_MS
-    }))
+    Ok(reset.flatten())
+}
+
+/// When a same-account continuation is due: a reset reported after the
+/// failure, within the longest provider window, plus a jitter that the
+/// attempt digest keeps stable across restarts. A reset already behind a
+/// late backend is due at once.
+fn resume_after(reset_ms: i64, failed_at_ms: i64, digest: &[u8]) -> Option<i64> {
+    if reset_ms <= failed_at_ms || reset_ms - failed_at_ms > MAX_RESET_AHEAD_MS {
+        return None;
+    }
+    let jitter = i64::from(u16::from_be_bytes([digest[0], digest[1]])) * RESET_JITTER_SPAN_MS
+        / i64::from(u16::MAX);
+    Some(reset_ms + RESET_JITTER_MIN_MS + jitter)
+}
+
+/// Whether a recovery already waited for a reset in this terminal and no
+/// turn completed since: the continued turn, or one sent after it, failed
+/// again. An unknown count on either side counts as no turn completed.
+async fn native_waited_on(
+    connection: &mut SqliteConnection,
+    agent_id: &AgentIdV1,
+    native: &AgentNativeTurnFailureV1,
+) -> Result<bool, DomainStoreErrorV1> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM agent_recoveries WHERE agent_id = ?1 \
+        AND json_extract(record_json, '$.nativeFailure.terminalEpoch') = ?2 \
+        AND json_type(record_json, '$.resumeAtMs') = 'integer' \
+        AND json_extract(record_json, '$.continuation.state') != 'not_started' \
+        AND (?3 IS NULL OR json_type(record_json, '$.nativeFailure.turnCompletedCount') IS NOT 'integer' \
+        OR json_extract(record_json, '$.nativeFailure.turnCompletedCount') = ?3))",
+    )
+    .bind(agent_id.as_str())
+    .bind(&native.terminal_epoch)
+    .bind(
+        native
+            .turn_completed_count
+            .and_then(|count| i64::try_from(count).ok()),
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|error| map_sqlx("read_native_recovery_wait", error))
 }
 
 /// Whether the failed turn was sent by a chain of recovery turns that
@@ -197,7 +236,8 @@ async fn prepare_native_on(
         &native.terminal_epoch,
         &native.attention_id,
     ))?;
-    let attempt_id = format!("recovery-{:x}", Sha256::digest(identity.as_bytes()));
+    let digest = Sha256::digest(identity.as_bytes());
+    let attempt_id = format!("recovery-{digest:x}");
     if let Some(record) = read_on(connection, &attempt_id).await? {
         return Ok(Some(record));
     }
@@ -214,10 +254,7 @@ async fn prepare_native_on(
     else {
         return Ok(None);
     };
-    if !policy.enabled
-        || policy
-            .activated_at_ms
-            .is_none_or(|at| native.observed_at_ms < at)
+    if !policy.active_at(native.observed_at_ms)
         || !crate::agent_runtime_close::is_open_on(connection, agent_id).await?
         || crate::agent_runtime_transition::active_transition_on(connection, agent_id)
             .await?
@@ -235,14 +272,30 @@ async fn prepare_native_on(
         native.observed_at_ms,
     )
     .await?;
-    let target = crate::provider_recovery_usage::select_on(
-        connection,
-        &policy.accounts,
-        &selection.execution_profile,
-        &[],
-        observed_at_ms,
-    )
-    .await?;
+    let target = if policy.enabled {
+        crate::provider_recovery_usage::select_on(
+            connection,
+            &policy.accounts,
+            &selection.execution_profile,
+            &[],
+            observed_at_ms,
+        )
+        .await?
+    } else {
+        None
+    };
+    // With no account to switch to, the same terminal continues once after
+    // the reset its login's provider reported, unless it already waited.
+    let resume_at_ms = match native.limit_resets_at_ms {
+        Some(reset)
+            if target.is_none()
+                && policy.continue_after_reset
+                && !native_waited_on(connection, agent_id, native).await? =>
+        {
+            resume_after(reset, native.observed_at_ms, &digest)
+        }
+        _ => None,
+    };
     let record = AgentRecoveryAttemptV1::Native(Box::new(AgentNativeRecoveryRecordV1 {
         schema_version: 1,
         attempt_id,
@@ -252,9 +305,11 @@ async fn prepare_native_on(
         source_selection_revision: selection.revision,
         native_failure: native.clone(),
         policy_revision: policy.revision,
-        stopped: target.is_none().then_some(AgentRecoveryStopV1::Exhausted),
+        stopped: (target.is_none() && resume_at_ms.is_none())
+            .then_some(AgentRecoveryStopV1::Exhausted),
         target,
         unusable_targets: Vec::new(),
+        resume_at_ms,
         continuation: AgentNativeRecoveryContinuationV1::NotStarted,
         created_at_ms: observed_at_ms,
     }));
@@ -365,11 +420,7 @@ async fn prepare_conversation_on(
     let resume_at_ms = if target.is_none() && policy.continue_after_reset {
         match reported_reset_on(connection, &source, &failure).await? {
             Some(reset) if !chain_waited_on(connection, &source, &failure).await? => {
-                let jitter = i64::from(u16::from_be_bytes([digest[0], digest[1]]))
-                    * RESET_JITTER_SPAN_MS
-                    / i64::from(u16::MAX);
-                // A reset already behind a late backend is due at once.
-                Some(reset + RESET_JITTER_MIN_MS + jitter)
+                resume_after(reset, failure.created_at_ms, &digest)
             }
             _ => None,
         }
@@ -908,9 +959,9 @@ pub struct NativeRecoveryCandidateV1 {
 
 impl SqliteDomainStore {
     /// Candidate enumeration for native account recovery, in pages: native
-    /// terminal Agents whose provider has an enabled recovery policy, and
-    /// Agents with an unfinished native attempt. Selection proves nothing
-    /// about a failure; the Host observation and the owner decide.
+    /// terminal Agents whose provider switches accounts or continues after a
+    /// reset, and Agents with an unfinished native attempt. Selection proves
+    /// nothing about a failure; the Host observation and the owner decide.
     pub async fn agent_native_recovery_candidates(
         &self,
         after: Option<&AgentIdV1>,
@@ -923,7 +974,8 @@ impl SqliteDomainStore {
              JOIN provider_recovery_policies AS policies \
              ON selections.provider_id = policies.provider_id \
              WHERE selections.interaction_profile = 'native_cli' \
-             AND json_extract(policies.record_json, '$.enabled') = 1 \
+             AND (json_extract(policies.record_json, '$.enabled') = 1 \
+             OR json_extract(policies.record_json, '$.continueAfterReset') = 1) \
              UNION ALL SELECT agent_id, 1 FROM agent_recoveries \
              WHERE json_extract(record_json, '$.nativeFailure') IS NOT NULL AND {UNFINISHED}) \
              WHERE ?1 IS NULL OR agent_id > ?1 GROUP BY agent_id ORDER BY agent_id LIMIT ?2"

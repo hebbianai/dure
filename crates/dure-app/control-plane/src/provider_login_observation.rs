@@ -27,6 +27,8 @@ pub(crate) struct ProviderLoginObservationV1 {
     /// that has reset since then, or a full one that purchased credits keep
     /// working, is unknown.
     pub(crate) usage: Option<(Option<f64>, i64)>,
+    /// When that fuller window resets, as the provider reported it.
+    pub(crate) limit_resets_at_ms: Option<i64>,
     /// The provider account this login signs in as, when the provider records
     /// it. Two logins with one account share its limits.
     pub(crate) account: Option<String>,
@@ -55,7 +57,7 @@ pub(crate) fn observe(
                 Some(directory) => directory.file_name().and_then(|name| name.to_str()),
                 None => Some("default"),
             };
-            let usage = key
+            let (usage, limit_resets_at_ms) = key
                 .and_then(|key| {
                     read_json(
                         &location
@@ -65,7 +67,13 @@ pub(crate) fn observe(
                         MAX_USAGE_CACHE_BYTES,
                     )
                 })
-                .and_then(|cache| claude_usage(&cache, observed_at_ms));
+                .and_then(|cache| claude_usage(&cache, observed_at_ms))
+                .map_or((None, None), |(used, captured_at_ms)| {
+                    (
+                        Some((used.map(|window| window.used), captured_at_ms)),
+                        used.and_then(|window| window.resets_at_ms),
+                    )
+                });
             // Without CLAUDE_CONFIG_DIR, Claude Code keeps it in the home root.
             let record = location
                 .profile_directory
@@ -73,6 +81,7 @@ pub(crate) fn observe(
                 .join(".claude.json");
             ProviderLoginObservationV1 {
                 usage,
+                limit_resets_at_ms,
                 account: read_json(&record, MAX_LOGIN_RECORD_BYTES)
                     .and_then(|record| text(record.pointer("/oauthAccount/accountUuid"))),
                 signed_in: None,
@@ -153,19 +162,36 @@ fn seconds_ms(value: Option<&Value>) -> Option<i64> {
         .and_then(|seconds| seconds.checked_mul(1000))
 }
 
-fn fuller(windows: impl IntoIterator<Item = Option<f64>>) -> Option<f64> {
-    windows.into_iter().flatten().reduce(f64::max)
+/// One current provider limit window: how full it is and when it resets.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LimitWindow {
+    used: f64,
+    resets_at_ms: Option<i64>,
+}
+
+/// The fullest reported window; of equally full ones, the one that resets
+/// last, since the limit holds until both have reset.
+fn fuller(windows: impl IntoIterator<Item = Option<LimitWindow>>) -> Option<LimitWindow> {
+    windows.into_iter().flatten().max_by(|a, b| {
+        a.used
+            .total_cmp(&b.used)
+            .then(a.resets_at_ms.cmp(&b.resets_at_ms))
+    })
 }
 
 /// `{captured_at, rate_limits: {five_hour, seven_day}}`, each window with
 /// `used_percentage` and `resets_at` in seconds.
-fn claude_usage(cache: &Value, observed_at_ms: i64) -> Option<(Option<f64>, i64)> {
+fn claude_usage(cache: &Value, observed_at_ms: i64) -> Option<(Option<LimitWindow>, i64)> {
     let captured_at_ms = seconds_ms(cache.get("captured_at")).filter(|at| *at <= observed_at_ms)?;
     let limits = cache.get("rate_limits")?;
     let window = |name: &str| {
         let window = limits.get(name)?;
-        seconds_ms(window.get("resets_at")).filter(|reset| *reset > observed_at_ms)?;
-        percent(window.get("used_percentage"))
+        let resets_at_ms =
+            seconds_ms(window.get("resets_at")).filter(|reset| *reset > observed_at_ms)?;
+        Some(LimitWindow {
+            used: percent(window.get("used_percentage"))?,
+            resets_at_ms: Some(resets_at_ms),
+        })
     };
     Some((
         fuller([window("five_hour"), window("seven_day")]),
@@ -213,11 +239,14 @@ fn codex_check(
             });
         let window = |used: &str, reset: &str| {
             let general = general?;
-            let current = match general.get(reset) {
-                None | Some(Value::Null) => true,
-                reset => seconds_ms(reset).is_some_and(|reset| reset > observed_at_ms),
+            let resets_at_ms = match general.get(reset) {
+                None | Some(Value::Null) => None,
+                reset => Some(seconds_ms(reset).filter(|reset| *reset > observed_at_ms)?),
             };
-            current.then(|| percent(general.get(used))).flatten()
+            Some(LimitWindow {
+                used: percent(general.get(used))?,
+                resets_at_ms,
+            })
         };
         let used = fuller([
             window("usedPercent", "resetsAt"),
@@ -233,7 +262,7 @@ fn codex_check(
                     .is_some_and(|balance| balance.is_finite() && balance > 0.0)
         });
         // Credits keep an account working past a full window.
-        let used = used.filter(|used| !(has_credits && *used >= 100.0));
+        let used = used.filter(|window| !(has_credits && window.used >= 100.0));
         (used, captured_at_ms)
     });
     let signed_out = newest("attemptedAt").is_some_and(|(attempted_at_ms, attempt)| {
@@ -241,7 +270,8 @@ fn codex_check(
             && snapshot.is_none_or(|(captured_at_ms, _)| attempted_at_ms >= captured_at_ms)
     });
     ProviderLoginObservationV1 {
-        usage,
+        usage: usage.map(|(used, captured_at_ms)| (used.map(|window| window.used), captured_at_ms)),
+        limit_resets_at_ms: usage.and_then(|(used, _)| used?.resets_at_ms),
         account: None,
         signed_in: signed_out.then_some(false),
     }
@@ -298,10 +328,12 @@ mod tests {
                 NOW_MS,
             )
         };
+        // The fuller window describes use and says when the limit resets.
         assert_eq!(
             observe_at(Some(&profile)),
             ProviderLoginObservationV1 {
                 usage: Some((Some(72.5), (NOW_S - 60) * 1000)),
+                limit_resets_at_ms: Some((NOW_S + 6000) * 1000),
                 account: Some("account-work".into()),
                 signed_in: None,
             }
@@ -311,6 +343,7 @@ mod tests {
             observe_at(None),
             ProviderLoginObservationV1 {
                 usage: Some((Some(10.0), (NOW_S - 60) * 1000)),
+                limit_resets_at_ms: Some((NOW_S + 6000) * 1000),
                 account: Some("account-work".into()),
                 signed_in: None,
             }
@@ -374,14 +407,14 @@ mod tests {
             observe_at(Some(&profile), &["acc-work", "acc-work-alias"]),
             ProviderLoginObservationV1 {
                 usage: Some((None, (NOW_S - 50) * 1000)),
+                limit_resets_at_ms: None,
                 account: Some("chatgpt-work".into()),
                 signed_in: None,
             }
         );
-        assert_eq!(
-            observe_at(Some(&profile), &["acc-work"]).usage,
-            Some((Some(40.0), (NOW_S - 100) * 1000))
-        );
+        let work = observe_at(Some(&profile), &["acc-work"]);
+        assert_eq!(work.usage, Some((Some(40.0), (NOW_S - 100) * 1000)));
+        assert_eq!(work.limit_resets_at_ms, Some((NOW_S + 600) * 1000));
         let signed_out = observe_at(None, &["acc-out"]);
         assert_eq!(signed_out.signed_in, Some(false));
         // Another failed check says nothing about the login.
@@ -390,10 +423,36 @@ mod tests {
             observe_at(None, &[]),
             ProviderLoginObservationV1 {
                 usage: Some((Some(11.0), (NOW_S - 30) * 1000)),
+                limit_resets_at_ms: Some((NOW_S + 600) * 1000),
                 account: Some("chatgpt-default".into()),
                 signed_in: None,
             }
         );
+    }
+
+    #[test]
+    fn equally_full_windows_reset_when_the_later_one_does() {
+        let window = |used, resets_at_ms| Some(LimitWindow { used, resets_at_ms });
+        assert_eq!(
+            fuller([
+                window(100.0, Some(NOW_MS + 600)),
+                window(100.0, Some(NOW_MS + 60))
+            ]),
+            window(100.0, Some(NOW_MS + 600))
+        );
+        assert_eq!(
+            fuller([
+                window(99.0, Some(NOW_MS + 600)),
+                window(100.0, Some(NOW_MS + 60))
+            ]),
+            window(100.0, Some(NOW_MS + 60))
+        );
+        // A window that reports no reset never hides one that does.
+        assert_eq!(
+            fuller([window(100.0, None), window(100.0, Some(NOW_MS + 60))]),
+            window(100.0, Some(NOW_MS + 60))
+        );
+        assert_eq!(fuller([None, None]), None);
     }
 
     #[test]
