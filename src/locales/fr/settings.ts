@@ -513,6 +513,8 @@ export const settings: Record<string, string> = {
 	"settings.notifications.event.terminalBell.desc": "Un terminal en arrière-plan a émis un caractère de cloche.",
 	"settings.notifications.event.agentMessage.title": "Messages des agents",
 	"settings.notifications.event.agentMessage.desc": "Un agent ou une commande vous envoie un message avec dure notify. Il s'affiche même si vous consultez le pane de cet agent.",
+	"settings.notifications.event.managedAgentDone.title": "Tours terminés des agents gérés par un autre agent",
+	"settings.notifications.event.managedAgentDone.desc": "Désactivé : seuls les agents qu'aucun autre agent ne gère vous avertissent à la fin d'un tour. Les approbations, questions et arrêts vous avertissent pour tous les agents.",
 	"notifications.agentMessage.personTitle": "Message d'une commande",
 	"settings.notifications.enable.desc": "Notifications système de base pour les événements en arrière-plan.",
 	"settings.nav.keyword.version": "Version",

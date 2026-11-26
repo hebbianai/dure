@@ -277,6 +277,8 @@ export const settings: Record<string, string> = {
 	"settings.notifications.event.terminalBell.desc": "백그라운드 terminal이 벨 문자를 내보냅니다.",
 	"settings.notifications.event.agentMessage.title": "에이전트가 보낸 메시지",
 	"settings.notifications.event.agentMessage.desc": "에이전트나 명령이 dure notify로 메시지를 보냅니다. 그 에이전트의 패널을 보고 있어도 표시됩니다.",
+	"settings.notifications.event.managedAgentDone.title": "다른 에이전트가 관리하는 에이전트의 턴 완료",
+	"settings.notifications.event.managedAgentDone.desc": "끄면 다른 에이전트가 관리하지 않는 에이전트만 턴을 마쳤을 때 알립니다. 승인, 질문, 종료는 모든 에이전트에 대해 알립니다.",
 	"notifications.agentMessage.personTitle": "명령에서 보낸 메시지",
 	"settings.notifications.enable.desc": "백그라운드 이벤트에 대한 기본 시스템 알림입니다.",
 	"settings.nav.keyword.version": "버전",

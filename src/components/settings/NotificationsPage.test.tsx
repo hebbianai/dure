@@ -76,6 +76,18 @@ describe("NotificationsPage", () => {
 		expect(useStore.getState().notifyPrefs.agentMessage).toBe(true);
 	});
 
+	it("brings back finished-turn notifications for agents another agent manages", () => {
+		render(<NotificationsPage />);
+		expect(useStore.getState().notifyPrefs.managedAgentDone).toBe(false);
+		fireEvent.click(
+			screen.getByText("다른 에이전트가 관리하는 에이전트의 턴 완료"),
+		);
+		expect(useStore.getState().notifyPrefs).toMatchObject({
+			managedAgentDone: true,
+			agentDone: true,
+		});
+	});
+
 	it("페이지를 감싸던 720px 카드를 더 이상 그리지 않는다", () => {
 		const { container } = render(<NotificationsPage />);
 		expect(container.querySelector(".max-w-\\[720px\\]")).toBeNull();

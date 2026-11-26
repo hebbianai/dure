@@ -6,6 +6,10 @@ export interface NotifyPrefs {
   enabled: boolean;
   /** 에이전트가 응답을 마치고 입력을 기다릴 때 */
   agentDone: boolean;
+  /** Also for an agent another agent manages. Off by default: its manager
+   *  follows its work, so only agents with no known manager tell the person
+   *  that a turn finished. Approval, input and exit notify at any depth. */
+  managedAgentDone: boolean;
   /** 에이전트가 명령 실행이나 권한 승인을 기다릴 때 */
   approvalRequired: boolean;
   /** 에이전트 세션 프로세스가 종료됐을 때 */
@@ -47,6 +51,7 @@ export function notificationSoundForDispatch(
 export const DEFAULT_NOTIFY_PREFS: NotifyPrefs = {
   enabled: true,
   agentDone: true,
+  managedAgentDone: false,
   approvalRequired: true,
   agentExited: true,
   agentMessage: true,

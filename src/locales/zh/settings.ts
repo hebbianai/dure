@@ -513,6 +513,8 @@ export const settings: Record<string, string> = {
 	"settings.notifications.event.terminalBell.desc": "后台终端发出了响铃字符。",
 	"settings.notifications.event.agentMessage.title": "来自代理的消息",
 	"settings.notifications.event.agentMessage.desc": "代理或命令通过 dure notify 向你发送消息。即使你正在查看该代理的窗格，也会显示。",
+	"settings.notifications.event.managedAgentDone.title": "由其他代理管理的代理完成回合",
+	"settings.notifications.event.managedAgentDone.desc": "关闭时，只有不受其他代理管理的代理会在完成回合时通知你。审批、提问和退出对所有代理都会通知。",
 	"notifications.agentMessage.personTitle": "来自命令的消息",
 	"settings.notifications.enable.desc": "针对后台事件的基础系统通知。",
 	"settings.nav.keyword.version": "版本",

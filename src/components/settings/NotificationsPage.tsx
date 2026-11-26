@@ -235,6 +235,12 @@ export function NotificationsPage() {
 						checked={np.agentDone}
 						onCheckedChange={(v) => set({ agentDone: v })}
 					/>
+					<SwitchRow
+						title={t("settings.notifications.event.managedAgentDone.title")}
+						desc={t("settings.notifications.event.managedAgentDone.desc")}
+						checked={np.managedAgentDone}
+						onCheckedChange={(v) => set({ managedAgentDone: v })}
+					/>
 					{/* 시안에 없지만 지우지 않는다 — 이 둘은 agentAttentionNotifier가
 					    실제로 읽는 게이트라, 스위치만 빼면 알림은 계속 오는데 끄는
 					    길이 사라진다(둘 다 기본값 true). */}

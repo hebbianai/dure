@@ -405,6 +405,66 @@ describe("dispatch-spawned agents suppress only their own done notification", ()
   });
 });
 
+describe("an agent another agent manages", () => {
+  // A Chat coordinator, the worker it started, and the worker's own worker:
+  // Run parents are the relation owner's facts (agentRelations.ts).
+  const lead = { id: "lead", name: "Lead", projectId: "project-a" };
+  const worker = { id: "worker", name: "Worker", projectId: "project-a", runParent: { agentId: "lead" } };
+  const subWorker = { id: "sub", name: "Sub", projectId: "project-a", runParent: { agentId: "worker" } };
+
+  beforeEach(() => {
+    mocks.storeState.agents = [lead, worker, subWorker];
+  });
+
+  it("does not tell the person, on the desktop or the phone, that its turn finished", async () => {
+    for (const agentId of ["worker", "sub"]) {
+      expect(await notifyAgentEvent(agentId, "done", "Turn finished", { eventId: `turn-${agentId}` }))
+        .toMatchObject({
+          desktop: { status: "not_sent", reason: "managed_agent" },
+          phone: { status: "not_sent", reason: "managed_agent" },
+        });
+    }
+    expect(mocks.systemNotify).not.toHaveBeenCalled();
+    expect(mocks.pushAgentNotification).not.toHaveBeenCalled();
+  });
+
+  it("still tells the person when only a person can go on, at any depth, and the manager's own turns", async () => {
+    mocks.notifyPrefs.mockReturnValue({
+      enabled: true,
+      agentDone: true,
+      approvalRequired: true,
+      agentExited: true,
+      agentMessage: true,
+      suppressWhenVisible: false,
+    });
+    for (const kind of ["approval", "input", "exited", "message"] as const) {
+      expect((await notifyAgentEvent("sub", kind, "Body", { eventId: `sub-${kind}` })).desktop)
+        .toEqual({ status: "shown" });
+    }
+    expect((await notifyAgentEvent("lead", "done", "Turn finished", { eventId: "turn-lead" })))
+      .toMatchObject({ desktop: { status: "shown" }, phone: { status: "queued" } });
+    expect(mocks.pushAgentNotification.mock.calls.map(([event]) => event.kind))
+      .toEqual(["approval", "input", "done"]);
+  });
+
+  it("notifies as before when the manager it names is not one of this computer's agents", async () => {
+    mocks.storeState.agents = [{ ...worker, runParent: { agentId: "elsewhere" } }];
+    expect(await notifyAgentEvent("worker", "done", "Turn finished", { eventId: "turn-worker" }))
+      .toMatchObject({ desktop: { status: "shown" }, phone: { status: "queued" } });
+  });
+
+  it("notifies as before once the person turns finished turns of managed agents back on", async () => {
+    mocks.notifyPrefs.mockReturnValue({
+      enabled: true,
+      agentDone: true,
+      managedAgentDone: true,
+      suppressWhenVisible: false,
+    });
+    expect(await notifyAgentEvent("sub", "done", "Turn finished", { eventId: "turn-sub" }))
+      .toMatchObject({ desktop: { status: "shown" }, phone: { status: "queued" } });
+  });
+});
+
 describe("an agent the person muted", () => {
   const mutedAgent = {
     id: "agent-a",
