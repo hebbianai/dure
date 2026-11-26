@@ -2969,6 +2969,12 @@ fn runtime_query_identity_for_binding(
     })
 }
 
+/// Whether `candidate` is the binding that replacing `failed` (a stopped
+/// source or a failed target) published for `target_runtime`. Like
+/// [`AgentInteractionBindingV1::same_history_authority`], it leaves out
+/// `history_complete`: the store derives it from the timeline's rows and the
+/// target's history seeding settles it, so a replacement applied again after
+/// that seeding still finds its own target.
 fn is_exact_replacement_target(
     candidate: &AgentInteractionBindingV1,
     failed: &AgentInteractionBindingV1,
@@ -2989,7 +2995,6 @@ fn is_exact_replacement_target(
         )
         && &candidate.runtime == target_runtime
         && candidate.timeline_epoch == failed.timeline_epoch
-        && candidate.history_complete == failed.history_complete
         && candidate.created_at_ms == failed.created_at_ms
         && candidate.updated_at_ms >= failed.updated_at_ms
 }

@@ -116,6 +116,11 @@ pub(super) fn is_native_transition_target(
         && candidate.updated_at_ms >= requested_at_ms
 }
 
+/// Whether `candidate` is the binding this structured transition published
+/// for its target. Like [`AgentInteractionBindingV1::same_history_authority`],
+/// it leaves out `history_complete`: the store derives it from the timeline's
+/// rows and the target's attach settles it, so a transition applied again
+/// after that attach still finds its own target.
 pub(super) fn is_structured_transition_target(
     candidate: &AgentInteractionBindingV1,
     source: &AgentInteractionBindingV1,
@@ -138,11 +143,13 @@ pub(super) fn is_structured_transition_target(
             published_revision,
             candidate.binding_revision,
         )
-        && candidate.history_complete == source.history_complete
         && candidate.created_at_ms == source.created_at_ms
         && candidate.updated_at_ms >= requested_at_ms
 }
 
+/// Whether `candidate` is the successor published for the `failed` target.
+/// It leaves out `history_complete` for the reason
+/// [`is_structured_transition_target`] does.
 pub(super) fn is_exact_failed_target_successor(
     candidate: &AgentInteractionBindingV1,
     failed: &AgentInteractionBindingV1,
@@ -161,7 +168,6 @@ pub(super) fn is_exact_failed_target_successor(
             .binding_revision
             .checked_add(1)
             .is_some_and(|revision| candidate.binding_revision == revision)
-        && candidate.history_complete == failed.history_complete
         && candidate.created_at_ms == failed.created_at_ms
         && candidate.updated_at_ms >= failed.updated_at_ms
 }
@@ -237,6 +243,50 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn failed_target_successor_stays_exact_after_its_attach_settles_the_history() {
+        let failed = AgentInteractionBindingV1 {
+            schema_version: 1,
+            interaction_session_id: AgentInteractionSessionIdV1::new("interaction-pi").unwrap(),
+            agent_id: AgentIdV1::new("agent-pi").unwrap(),
+            provider_id: ProviderIdV1::new("pi").unwrap(),
+            execution_profile: AgentExecutionProfileV1::ProviderDefault,
+            provider_conversation_ref: Some("conversation-pi".into()),
+            runtime: AgentProviderRuntimeFenceV1 {
+                runtime_generation: "runtime-pi-failed".into(),
+                provider_epoch: "server-pi-failed".into(),
+            },
+            timeline_epoch: AgentTimelineEpochV1::new("timeline-pi").unwrap(),
+            binding_revision: 2,
+            history_complete: false,
+            created_at_ms: 10,
+            updated_at_ms: 20,
+        };
+        let target = failed_binding_recovery_runtime(&failed);
+        let mut successor = failed.clone();
+        successor.runtime = target.clone();
+        successor.binding_revision = 3;
+        successor.updated_at_ms = 30;
+        // The successor's attach settled whether the timeline holds the whole
+        // conversation: the store's fact, not the successor's identity.
+        successor.history_complete = true;
+        successor.updated_at_ms = 31;
+
+        assert!(is_exact_failed_target_successor(
+            &successor,
+            &failed,
+            &target,
+            &failed.execution_profile,
+        ));
+        successor.binding_revision = 4;
+        assert!(!is_exact_failed_target_successor(
+            &successor,
+            &failed,
+            &target,
+            &failed.execution_profile,
+        ));
+    }
 
     #[test]
     fn selection_only_replacement_admits_the_new_launch_selection() {
