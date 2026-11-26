@@ -125,7 +125,8 @@ async function agentRun(selector, { backend, listRuns, deadlineMs }) {
     throw Object.assign(new Error(listed.error.message ?? "The backend's Run records are unavailable."),
       { code: listed.error.code });
   }
-  const selected = selectRunRecord(listed.page, selector, (agentId) => ["wait", agentId]);
+  const selected = await selectRunRecord({ page: listed.page, selector, backend,
+    requestBackend: performBackendProfileRequest, retry: (agentId) => ["wait", agentId] });
   if (selected.error) invalid(selected.error.message + " " + selected.error.candidates.map((run) => run.agentId).join(", "));
   return selected.run;
 }
