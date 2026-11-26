@@ -2,6 +2,7 @@ import { type RefObject, useCallback, useEffect, useRef } from "react";
 import { useWorkspaceRuntimeDesktopId } from "@/components/workspace/WorkspaceRuntimeContext";
 import { openFileViewer } from "@/lib/files/fileViewerPane";
 import { homeDir } from "@/lib/ipc";
+import { resolveSshHostDureBackendRouteAuthority } from "@/lib/ipc/dureBackendProfiles";
 import { openExternalPath, openExternalUrl } from "@/lib/platform/externalOpen";
 import {
 	isTerminalLinkGesture,
@@ -9,10 +10,11 @@ import {
 	terminalLinkDestination,
 	terminalViewportLinkAt,
 } from "@/lib/terminal/interaction/terminalLinks";
-import { getTerminalExecutionLocation } from "@/lib/terminal/terminalExecutionLocationStore";
 import type { HmuxPaneBindingV1 } from "@/lib/terminal/terminalBinding";
-import { getDockview } from "@/lib/workspace/dock/dockRegistry";
+import { getTerminalExecutionLocation } from "@/lib/terminal/terminalExecutionLocationStore";
 import { detectDesktopPlatform } from "@/lib/workspace/desktop/desktopPlatform";
+import { getDockview } from "@/lib/workspace/dock/dockRegistry";
+import { openBrowserPanelOn } from "@/lib/workspace/dock/openBrowserPanel";
 import { useStore } from "@/store";
 import type { PaintedPresentation } from "./terminalCanvasPresentation";
 
@@ -84,6 +86,23 @@ export function useStructuredTerminalLinkActivation(
 				case "external_path":
 					await openExternalPath(destination.path);
 					return;
+				case "host_browser": {
+					// The Browser runs on the backend that serves the pane's Host,
+					// where the server listens. Without one, or without a Space to
+					// place it in, the address goes to the operating system.
+					const route = await resolveSshHostDureBackendRouteAuthority(
+						destination.hostId,
+						useStore.getState().sshHosts,
+					).catch(() => undefined);
+					const desktop = desktopIdRef.current;
+					const api = desktop ? getDockview(desktop) : undefined;
+					if (!route || !api) {
+						await openExternalUrl(destination.url);
+						return;
+					}
+					openBrowserPanelOn(api, destination.url, route.profileId);
+					return;
+				}
 				case "file": {
 					// The file opens beside the terminal, in this window's Space.
 					const desktop = desktopIdRef.current;

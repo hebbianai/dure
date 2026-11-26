@@ -26,6 +26,16 @@ const links = vi.hoisted(() => ({
 	openFileViewer: vi.fn(),
 	openExternalUrl: vi.fn(async () => {}),
 	openExternalPath: vi.fn(async () => {}),
+	openBrowserPanelOn: vi.fn(),
+	resolveHostRoute: vi.fn(
+		async (
+			hostId: string,
+			hosts: readonly { id: string }[],
+		): Promise<{ profileId: string } | undefined> =>
+			hosts.some((host) => host.id === hostId)
+				? { profileId: `profile-${hostId}` }
+				: undefined,
+	),
 }));
 
 vi.mock("@/lib/workspace/desktop/desktopPlatform", () => ({
@@ -35,6 +45,14 @@ vi.mock("@/lib/workspace/desktop/desktopPlatform", () => ({
 
 vi.mock("@/lib/files/fileViewerPane", () => ({
 	openFileViewer: links.openFileViewer,
+}));
+
+vi.mock("@/lib/workspace/dock/openBrowserPanel", () => ({
+	openBrowserPanelOn: links.openBrowserPanelOn,
+}));
+
+vi.mock("@/lib/ipc/dureBackendProfiles", () => ({
+	resolveSshHostDureBackendRouteAuthority: links.resolveHostRoute,
 }));
 
 vi.mock("@/lib/platform/externalOpen", () => ({
@@ -245,6 +263,72 @@ describe("structured terminal links", () => {
 			"http://localhost:5173/",
 		);
 		expect(links.openFileViewer).not.toHaveBeenCalled();
+	});
+
+	it("opens localhost printed in an SSH-backed pane in the Browser on that Host's backend", async () => {
+		const dock = {} as DockviewApi;
+		dockviewRegistry.set(DESKTOP, dock);
+		const viewport = await bootWithText(
+			["Local: http://localhost:5173/ docs https://example.com/"],
+			{
+				sessionId: "standalone_source",
+				binding: remoteHmuxStandaloneBinding(
+					"standalone_source",
+					"workspace_source",
+					"host-rts",
+					"bridge_nonce",
+				),
+			},
+		);
+
+		click(viewport, at(12));
+		await waitFor(() =>
+			expect(links.openBrowserPanelOn).toHaveBeenCalledWith(
+				dock,
+				"http://localhost:5173/",
+				"profile-host-rts",
+			),
+		);
+		expect(links.resolveHostRoute).toHaveBeenCalledWith(
+			"host-rts",
+			useStore.getState().sshHosts,
+		);
+
+		// Shift, and an address on another machine, still go to the OS.
+		click(viewport, at(12), { metaKey: true, shiftKey: true });
+		click(viewport, at(40));
+		await waitFor(() => expect(links.openExternalUrl).toHaveBeenCalledTimes(2));
+		expect(links.openExternalUrl).toHaveBeenNthCalledWith(
+			1,
+			"http://localhost:5173/",
+		);
+		expect(links.openExternalUrl).toHaveBeenNthCalledWith(
+			2,
+			"https://example.com/",
+		);
+		expect(links.openBrowserPanelOn).toHaveBeenCalledOnce();
+	});
+
+	it("sends localhost to the OS when no backend serves the pane's Host", async () => {
+		links.resolveHostRoute.mockResolvedValueOnce(undefined);
+		const viewport = await bootWithText(["http://127.0.0.1:8080/"], {
+			sessionId: "standalone_source",
+			binding: remoteHmuxStandaloneBinding(
+				"standalone_source",
+				"workspace_source",
+				"host-rts",
+				"bridge_nonce",
+			),
+		});
+
+		click(viewport, at(4));
+
+		await waitFor(() =>
+			expect(links.openExternalUrl).toHaveBeenCalledWith(
+				"http://127.0.0.1:8080/",
+			),
+		);
+		expect(links.openBrowserPanelOn).not.toHaveBeenCalled();
 	});
 
 	it("claims a link click from an app that reports the mouse, and leaves plain clicks to it", async () => {
