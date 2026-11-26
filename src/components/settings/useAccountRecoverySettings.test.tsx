@@ -123,11 +123,20 @@ it("edits the viewed server's allowed account order without selecting or copying
 it("saves continuing after a reset on its own, without allowing any account", async () => {
 	const authority = snapshot("team").routeAuthority;
 	render(<AccountRecoverySettings authority={authority} />);
-	// Offered only where the provider's runtime reports its reset.
-	await screen.findByRole("switch", { name: "Automatic account recovery · Beta" });
-	expect(
-		screen.queryByRole("switch", { name: "Continue when the limit resets" }),
-	).toBeNull();
+	// Codex's runtime reports its reset too, so its policy offers the switch.
+	const reset = await screen.findByRole("switch", {
+		name: "Continue when the limit resets",
+	});
+	await waitFor(() => expect(reset.hasAttribute("data-disabled")).toBe(false));
+	fireEvent.click(reset);
+	fireEvent.click(screen.getByRole("button", { name: "Save" }));
+	await waitFor(() => expect(mocks.put).toHaveBeenCalledOnce());
+	expect(mocks.put.mock.calls[0][0]).toMatchObject({
+		providerId: "codex",
+		enabled: false,
+		accounts: [],
+		continueAfterReset: true,
+	});
 	cleanup();
 	const view = renderHook(useAccountRecoverySettings);
 	await waitFor(() => expect(view.result.current.ready).toBe(true));
@@ -135,7 +144,7 @@ it("saves continuing after a reset on its own, without allowing any account", as
 	await waitFor(() => expect(view.result.current.ready).toBe(true));
 	act(() => view.result.current.setContinueAfterReset(true));
 	await act(async () => view.result.current.save());
-	expect(mocks.put.mock.calls[0][0]).toMatchObject({
+	expect(mocks.put.mock.calls[1][0]).toMatchObject({
 		providerId: "claude",
 		enabled: false,
 		accounts: [],

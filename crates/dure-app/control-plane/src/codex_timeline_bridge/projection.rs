@@ -439,6 +439,26 @@ pub(super) fn turn_failure_reason(turn: &Value) -> Option<AgentTurnFailureReason
     )
 }
 
+/// When the limit an App Server rate-limit snapshot (`RateLimitSnapshot`)
+/// reports full resets, in milliseconds: the latest reset of its full
+/// windows, since the limit holds until each has reset. Codex sends the
+/// snapshot of the limit that refused a request just before the turn fails.
+pub(super) fn full_limit_reset_ms(snapshot: &Value) -> Option<i64> {
+    ["primary", "secondary"]
+        .into_iter()
+        .filter_map(|window| snapshot.get(window))
+        .filter(|window| {
+            window
+                .get("usedPercent")
+                .and_then(Value::as_f64)
+                .is_some_and(|used| used >= 100.0)
+        })
+        .filter_map(|window| window.get("resetsAt").and_then(Value::as_i64))
+        .filter(|seconds| *seconds > 0)
+        .filter_map(|seconds| seconds.checked_mul(1_000))
+        .max()
+}
+
 pub(super) fn text_delta_method(kind: &AgentTimelineTextKindV1) -> &'static str {
     match kind {
         AgentTimelineTextKindV1::Assistant => "item/agentMessage/delta",
@@ -747,6 +767,46 @@ mod turn_failure_reason_tests {
             Some(AgentTurnFailureReasonV1::ProviderError)
         );
         assert_eq!(codex_error_reason(&json!({ "message": "boom" })), None);
+    }
+
+    #[test]
+    fn a_snapshot_names_the_latest_reset_of_its_full_windows() {
+        let window =
+            |used: Value, resets_at: Value| json!({ "usedPercent": used, "resetsAt": resets_at });
+        let snapshot = |primary: Value, secondary: Value| json!({ "limitId": "codex", "primary": primary, "secondary": secondary });
+        for (limits, expected) in [
+            // The five-hour window refused; the weekly one still has room.
+            (
+                snapshot(
+                    window(json!(100), json!(1_800)),
+                    window(json!(40), json!(9_000)),
+                ),
+                Some(1_800_000),
+            ),
+            // Both full: the limit holds until the later one resets.
+            (
+                snapshot(
+                    window(json!(100), json!(1_800)),
+                    window(json!(100.0), json!(9_000)),
+                ),
+                Some(9_000_000),
+            ),
+            (
+                snapshot(
+                    window(json!(99), json!(1_800)),
+                    window(json!(40), json!(9_000)),
+                ),
+                None,
+            ),
+            (snapshot(window(json!(100), Value::Null), Value::Null), None),
+            (snapshot(window(json!(100), json!(0)), Value::Null), None),
+            (
+                json!({ "limitId": "codex", "primary": null, "secondary": null }),
+                None,
+            ),
+        ] {
+            assert_eq!(full_limit_reset_ms(&limits), expected, "{limits}");
+        }
     }
 
     #[test]

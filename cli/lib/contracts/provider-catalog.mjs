@@ -67,6 +67,9 @@ export const PROVIDERS = {
     basic: true,
     workflowDelegate: true,
     structuredChat: true,
+    // App Server reports the refusing limit's windows before the turn fails,
+    // and the Chat runtime keeps that reset for backend recovery.
+    limitResetContinuation: true,
     modelFlag: "--model",
     headlessFlag: "exec",
     configFile: "~/.codex/config.toml",

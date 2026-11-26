@@ -14,8 +14,9 @@ use dure_app::{
     AgentTimelineItemDraftV1, AgentTimelineLifecycleStateV1, AgentTimelineLiveTextV1,
     AgentTimelineMessageRoleV1, AgentTimelineMutationV1, AgentTimelineReadDirectionV1,
     AgentTimelineReadRequestV1, AgentTimelineReadV1, AgentTimelineRowV1, AgentTimelineStore,
-    AgentTimelineTextFragmentV1, AgentTimelineTextKindV1, AgentTimelineToolStateV1, AgentTurnIdV1,
-    MAX_AGENT_TIMELINE_EVENT_MUTATIONS_V1, MAX_AGENT_TIMELINE_PAGE_ITEMS_V1,
+    AgentTimelineTextFragmentV1, AgentTimelineTextKindV1, AgentTimelineToolStateV1,
+    AgentTurnFailureReasonV1, AgentTurnIdV1, MAX_AGENT_TIMELINE_EVENT_MUTATIONS_V1,
+    MAX_AGENT_TIMELINE_PAGE_ITEMS_V1,
 };
 use serde_json::{Map, Value, json};
 use tokio::sync::{Mutex, oneshot, watch};
@@ -45,6 +46,9 @@ struct ActiveTurn {
     turn_id: AgentTurnIdV1,
     client_message_id: AgentClientMessageIdV1,
     provider_turn_id: Option<String>,
+    /// When the limit the App Server reported full during this turn resets,
+    /// kept for the turn's failure (`full_limit_reset_ms`).
+    limit_resets_at_ms: Option<i64>,
 }
 
 struct PendingAnswerFlight {
@@ -209,6 +213,7 @@ where
             turn_id,
             client_message_id,
             provider_turn_id: Some(provider_turn_id),
+            limit_resets_at_ms: None,
         });
         Ok(())
     }
@@ -1443,6 +1448,7 @@ mod tests {
             turn_id: AgentTurnIdV1::new("chat-turn-1").unwrap(),
             client_message_id: AgentClientMessageIdV1::new("chat-message-1").unwrap(),
             provider_turn_id: Some("provider-turn-1".into()),
+            limit_resets_at_ms: None,
         });
         for (method, turn) in [
             (
@@ -1503,6 +1509,103 @@ mod tests {
         assert_eq!(
             gap_page(&home, gap),
             ["Prompt 2", "Answer 2", "Prompt 3", "Answer 3"]
+        );
+        drop(bridge);
+        drop(incoming);
+        server.abort();
+    }
+
+    /// Codex reports the refusing limit's windows just before the turn fails,
+    /// without a thread. The failed turn keeps the full window's reset as the
+    /// evidence backend recovery waits for, before its failure row; the next
+    /// turn starts without that reading.
+    #[tokio::test]
+    async fn a_limited_turn_keeps_the_reset_of_the_window_reported_full() {
+        let (temporary, service, binding) = conversation_fixture().await;
+        let socket_path = temporary.path().join("app.sock");
+        let (server, _requests) = paged_thread_server(&socket_path, THREAD_PAGES);
+        let (bridge, incoming) = paged_bridge(&socket_path, &binding, &service, None).await;
+        let notify = |method: &'static str, params: Value| JsonRpcSocketIncomingV1 {
+            method: method.into(),
+            id: None,
+            params,
+        };
+        let limits = |used: u32, resets_at: i64| {
+            json!({ "rateLimits": {
+                "limitId": "codex", "limitName": null,
+                "primary": { "usedPercent": used, "windowDurationMins": 300,
+                    "resetsAt": resets_at },
+                "secondary": { "usedPercent": 40, "windowDurationMins": 10080,
+                    "resetsAt": 1_900_000_000 },
+                "credits": null, "planType": "plus",
+            }})
+        };
+        let failed = |turn: &str| {
+            json!({ "threadId": "thread-history", "turn": {
+                "id": turn, "status": "failed", "items": [],
+                "error": { "message": "You've hit your usage limit.",
+                    "codexErrorInfo": "usageLimitExceeded" },
+            }})
+        };
+        for (number, reports) in [
+            (
+                1,
+                vec![limits(100, 1_800_000_000), limits(30, 1_700_000_000)],
+            ),
+            (2, vec![]),
+        ] {
+            *bridge.active_turn.lock().await = Some(ActiveTurn {
+                turn_id: AgentTurnIdV1::new(format!("chat-turn-{number}")).unwrap(),
+                client_message_id: AgentClientMessageIdV1::new(format!("chat-message-{number}"))
+                    .unwrap(),
+                provider_turn_id: Some(format!("provider-turn-{number}")),
+                limit_resets_at_ms: None,
+            });
+            for report in reports {
+                bridge
+                    .handle_incoming(notify("account/rateLimits/updated", report))
+                    .await
+                    .unwrap();
+            }
+            bridge
+                .handle_incoming(notify(
+                    "turn/completed",
+                    failed(&format!("provider-turn-{number}")),
+                ))
+                .await
+                .unwrap();
+            // Live rows are named by the millisecond they were observed in.
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+
+        let rows = timeline_rows(&service, &binding)
+            .await
+            .into_iter()
+            .map(|row| {
+                (
+                    row.item.client_message_id.map(|id| id.as_str().to_owned()),
+                    row.item.body,
+                )
+            })
+            .collect::<Vec<_>>();
+        let failure = AgentTimelineItemBodyV1::Lifecycle {
+            state: AgentTimelineLifecycleStateV1::TurnFailed,
+            detail: Some("usage_limit".into()),
+        };
+        assert_eq!(
+            rows,
+            [
+                (
+                    Some("chat-message-1".into()),
+                    AgentTimelineItemBodyV1::ProviderEvidence {
+                        namespace: "provider.codex".into(),
+                        kind: dure_app::AGENT_USAGE_LIMIT_RESET_EVIDENCE_KIND_V1.into(),
+                        value: json!({ "resetsAtMs": 1_800_000_000_000_i64 }),
+                    },
+                ),
+                (Some("chat-message-1".into()), failure.clone()),
+                (Some("chat-message-2".into()), failure),
+            ]
         );
         drop(bridge);
         drop(incoming);
@@ -1732,6 +1835,7 @@ mod tests {
             turn_id: AgentTurnIdV1::new("turn-1").unwrap(),
             client_message_id: AgentClientMessageIdV1::new("message-1").unwrap(),
             provider_turn_id: Some("provider-turn-1".into()),
+            limit_resets_at_ms: None,
         };
         let root = json!({ "threadId": "thread-1", "turnId": "provider-turn-1" });
         let child = json!({ "threadId": "child-thread", "turnId": "child-turn" });
