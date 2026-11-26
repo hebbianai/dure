@@ -231,27 +231,69 @@ async fn malformed_runtime_status_cannot_authorize_idle_replacement() {
     }
 }
 
-/// What OpenCode's `read` tool keeps of an image or PDF it read: the whole
-/// file, encoded, in the tool part's attachments.
-fn attached(mut value: Value, bytes: usize) -> Value {
+/// What OpenCode's `read` tool keeps of the images or PDFs it read: each
+/// whole file, encoded, in the tool part's attachments, one per size in
+/// `files`.
+fn attached(mut value: Value, files: &[usize]) -> Value {
     let part = &mut value["parts"][0];
     part["type"] = json!("tool");
     part["tool"] = json!("read");
     part["callID"] = json!("call_read");
-    part["state"] = json!({"status": "completed", "output": "PDF read successfully", "attachments": [{"type": "file", "mime": "application/pdf", "url": format!("data:application/pdf;base64,{}", "A".repeat(bytes))}]});
+    let attachments = files
+        .iter()
+        .map(|bytes| json!({"type": "file", "mime": "application/pdf", "url": format!("data:application/pdf;base64,{}", "A".repeat(*bytes))}))
+        .collect::<Vec<_>>();
+    part["state"] = json!({"status": "completed", "output": "PDF read successfully", "attachments": attachments});
+    value
+}
+
+/// Files whose attachments the client keeps whole, which together are
+/// larger than it keeps of an answer of several messages.
+fn files_over_an_answer() -> Vec<usize> {
+    vec![MAX_STRING_BYTES - 64; MAX_RESPONSE_BYTES / MAX_STRING_BYTES + 1]
+}
+
+/// `value` with the URL of its first attachment cut as the client cuts a
+/// string: to the URL's first [`MAX_STRING_BYTES`].
+fn cut_attachment(mut value: Value, attachment: &str) -> Value {
+    let url = value.pointer_mut(attachment).unwrap();
+    *url = Value::String(url.as_str().unwrap()[..MAX_STRING_BYTES].to_owned());
     value
 }
 
 #[tokio::test]
 async fn a_message_larger_than_an_answer_of_several_is_read_whole_as_one_record() {
     let session = SessionId::parse("ses_exact").unwrap();
-    let large = attached(message("msg_large", "ses_exact"), MAX_RESPONSE_BYTES);
+    let large = attached(message("msg_large", "ses_exact"), &files_over_an_answer());
+    assert!(large.to_string().len() > MAX_RESPONSE_BYTES);
     let (client, server) = fixture(vec![(200, String::new(), large.clone())]).await;
 
     let read = client.message(&session, "msg_large").await;
     // The values are too large to print.
     assert_eq!(read.as_ref().err(), None);
     assert!(read.unwrap() == Some(large));
+
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_message_that_attached_a_file_over_the_record_bound_is_read_with_the_file_cut() {
+    let session = SessionId::parse("ses_exact").unwrap();
+    let large = attached(message("msg_large", "ses_exact"), &[MAX_RECORD_BYTES]);
+    let (client, server) = fixture(vec![(200, String::new(), large.clone())]).await;
+
+    // Before, the message was over the bound of one record, so it could not
+    // be read: Chat disconnected, and a reattach while it was the newest
+    // failed.
+    let read = client.message(&session, "msg_large").await;
+
+    assert_eq!(read.as_ref().err(), None);
+    let read = read.unwrap().unwrap();
+    assert_eq!(
+        read.pointer("/parts/0/state/output"),
+        Some(&json!("PDF read successfully"))
+    );
+    assert!(read == cut_attachment(large, "/parts/0/state/attachments/0/url"));
 
     server.await.unwrap();
 }
@@ -284,10 +326,15 @@ async fn event_stream(body: String) -> OpenCodeEvents {
     client.events().await.unwrap()
 }
 
+/// The update of the tool part that read the files `files`, which carries
+/// them.
+fn read_update(files: &[usize]) -> Value {
+    json!({"type": "message.part.updated", "properties": {"part": attached(message("msg_large", "ses_exact"), files)["parts"][0].clone()}})
+}
+
 #[tokio::test]
 async fn an_event_larger_than_an_answer_of_several_is_read_whole_as_one_record() {
-    // The update of a tool part that read a large file carries the file.
-    let large = json!({"type": "message.part.updated", "properties": {"part": attached(message("msg_large", "ses_exact"), MAX_RESPONSE_BYTES)["parts"][0].clone()}});
+    let large = read_update(&files_over_an_answer());
     let next = json!({"type": "session.idle", "properties": {"sessionID": "ses_exact"}});
     let mut events = event_stream(format!("data: {large}\n\ndata: {next}\r\n\r\n")).await;
 
@@ -295,6 +342,21 @@ async fn an_event_larger_than_an_answer_of_several_is_read_whole_as_one_record()
     // The event is too large to print.
     assert_eq!(event.as_ref().err(), None);
     assert!(event.unwrap() == large);
+    assert_eq!(events.next().await, Ok(next));
+}
+
+#[tokio::test]
+async fn an_event_that_carries_a_file_over_the_record_bound_is_read_with_the_file_cut() {
+    let large = read_update(&[MAX_RECORD_BYTES]);
+    let next = json!({"type": "session.idle", "properties": {"sessionID": "ses_exact"}});
+    let mut events = event_stream(format!("data: {large}\n\ndata: {next}\n\n")).await;
+
+    // Before, the event was over the bound of one record, which ended the
+    // event stream, so Chat disconnected in the middle of the turn.
+    let event = events.next().await;
+
+    assert_eq!(event.as_ref().err(), None);
+    assert!(event.unwrap() == cut_attachment(large, "/properties/part/state/attachments/0/url"));
     assert_eq!(events.next().await, Ok(next));
 }
 
@@ -310,4 +372,60 @@ fn a_frame_ends_at_its_first_blank_line_wherever_its_search_resumes() {
         }
         assert_eq!(frame_end(&frames[..end - 1], end - 1), None);
     }
+}
+
+/// What the client keeps of `json` when it arrives in chunks, split at each
+/// offset in `splits`.
+fn kept(json: &[u8], splits: impl IntoIterator<Item = usize>) -> Vec<u8> {
+    let mut json_kept = KeptJson::default();
+    let mut kept = Vec::new();
+    let mut start = 0;
+    for end in splits.into_iter().chain([json.len()]) {
+        json_kept.keep(&json[start..end], &mut kept);
+        start = end;
+    }
+    kept
+}
+
+#[test]
+fn a_long_string_is_cut_after_a_whole_character_wherever_its_chunks_end() {
+    // Characters of each length, raw and escaped, and an escaped surrogate
+    // pair, which the string is never cut inside of.
+    let tail = r#"é😀\"\\\n\u00e9\ud83d\ude00x"#.repeat(4);
+    for before in MAX_STRING_BYTES - 32..=MAX_STRING_BYTES {
+        let string = format!("{}{tail}", "x".repeat(before));
+        let json = format!(r#"{{"long":"{string}","short":"kept"}}"#);
+        let source: Value = serde_json::from_str(&json).unwrap();
+        // In one chunk, and split at each byte around the cut.
+        let near = MAX_STRING_BYTES - 32;
+        for splits in [Vec::new(), (near..near + 96).collect()] {
+            let kept = kept(json.as_bytes(), splits);
+
+            let value: Value = serde_json::from_slice(&kept).unwrap();
+            assert_eq!(value["short"], "kept");
+            let long = value["long"].as_str().unwrap();
+            assert!(source["long"].as_str().unwrap().starts_with(long));
+            // The string's JSON is kept up to the bound, and then to the end
+            // of the character that crosses it.
+            let kept_json = kept.len() - (json.len() - string.len());
+            assert!(
+                (MAX_STRING_BYTES..=MAX_STRING_BYTES + 11).contains(&kept_json),
+                "{before}: {kept_json}"
+            );
+        }
+    }
+}
+
+#[test]
+fn strings_within_the_bound_and_everything_between_strings_are_kept_whole() {
+    let string = format!("{}é", "x".repeat(MAX_STRING_BYTES - 2));
+    assert_eq!(string.len(), MAX_STRING_BYTES);
+    // A line end ends a string, so a line that is not JSON, such as an event
+    // stream's comment, cannot hold the strings after it.
+    let events = format!(
+        "data: {{\"text\":\"{string}\",\"n\":[1,2.5,true,null]}}\n\n: a \"comment\n\ndata: {{\"quote\":\"\\\"\"}}\n\n"
+    );
+
+    assert_eq!(kept(events.as_bytes(), []), events.as_bytes());
+    assert_eq!(kept(events.as_bytes(), 1..events.len()), events.as_bytes());
 }

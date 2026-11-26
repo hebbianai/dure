@@ -442,10 +442,10 @@ fn live_opencode_opens_a_long_terminal_conversation_in_chat() {
 
 /// The PDF the fixture model asks OpenCode to read. OpenCode attaches the
 /// whole file, encoded, to the message, so the message and the event that
-/// updates its tool part are each larger than the session client reads of an
-/// answer of several messages. `scripts/qa/opencode-provider-conformance.mjs`
-/// asks for the same file.
-const LARGE_READ_BYTES: usize = 7_000_000;
+/// updates its tool part are each over the bound of one record, unless the
+/// session client cuts the encoded file.
+/// `scripts/qa/opencode-provider-conformance.mjs` asks for the same file.
+const LARGE_READ_BYTES: usize = 52_000_000;
 
 /// A Terminal Agent's OpenCode conversation in which the model read a large
 /// PDF moves into Chat, and the model reads it again during a Chat turn.
