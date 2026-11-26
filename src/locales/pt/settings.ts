@@ -4,6 +4,8 @@ export const settings: Record<string, string> = {
 	"settings.recovery.orderHint": "Contas com menor uso observado têm preferência. Esta ordem desempata e ordena contas com uso desconhecido. A recuperação automática para quando nenhuma conta permitida está disponível.",
 	"settings.recovery.title": "Recuperação automática de contas · Beta",
 	"settings.recovery.description": "Quando uma conversa atinge o limite de uso, o servidor muda para uma conta permitida e continua a mesma solicitação, mesmo com o Dure fechado.",
+	"settings.recovery.continueAfterReset": "Continuar quando o limite for redefinido",
+	"settings.recovery.continueAfterResetDescription": "Quando nenhuma conta permitida está disponível e o provedor informou quando seu limite é redefinido, o servidor continua a mesma solicitação uma vez, alguns minutos após a redefinição, mesmo com o Dure fechado. Se o limite ainda valer, a conversa espera por você.",
 	"settings.recovery.server": "Servidor",
 	"settings.recovery.provider": "Provedor",
 	"settings.recovery.accounts": "Permitir estas contas para recuperação automática neste servidor.",

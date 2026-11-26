@@ -2021,13 +2021,22 @@ test("a controller without a mid-turn channel refuses steering as unsupported", 
 });
 
 test("a failed turn forwards the driver's classified reason and drops anything else", async () => {
-	for (const [thrown, expected] of [
-		[Object.assign(new Error("provider_turn_failed"), { reason: "usage_limit" }), "usage_limit"],
-		[Object.assign(new Error("provider_turn_failed"), { reason: "provider secret text" }), null],
-		[new Error("provider_turn_failed"), null],
-	]) {
+	const failure = (fields) => Object.assign(new Error("provider_turn_failed"), fields);
+	for (const [index, [thrown, expected, reset]] of [
+		[failure({ reason: "usage_limit" }), "usage_limit", {}],
+		// A limit failure keeps the reset its provider reported; nothing else does.
+		[
+			failure({ reason: "usage_limit", resetsAtMs: 1_800_000_000_000 }),
+			"usage_limit",
+			{ resetsAtMs: 1_800_000_000_000 },
+		],
+		[failure({ reason: "rate_limit", resetsAtMs: "soon" }), "rate_limit", {}],
+		[failure({ reason: "provider_error", resetsAtMs: 1_800_000_000_000 }), "provider_error", {}],
+		[failure({ reason: "provider secret text" }), null, {}],
+		[new Error("provider_turn_failed"), null, {}],
+	].entries()) {
 		const host = createSharedClaudeSdkHost({
-			hostGeneration: `host-failed-reason-${expected ?? "none"}`,
+			hostGeneration: `host-failed-reason-${index}`,
 			createQuery: async ({ terminal }) => ({
 				...passiveInteractionControls(),
 				async startTurn() {
@@ -2041,7 +2050,7 @@ test("a failed turn forwards the driver's classified reason and drops anything e
 				},
 			}),
 		});
-		const client = attach(host, `client-failed-reason-${expected ?? "none"}`);
+		const client = attach(host, `client-failed-reason-${index}`);
 		const prepared = binding(7);
 		await client.bind(prepared);
 		client.startTurn(prepared.identity, {
@@ -2055,6 +2064,7 @@ test("a failed turn forwards the driver's classified reason and drops anything e
 		assert.deepEqual(failed.payload, {
 			clientMessageId: "message-failed-reason-1",
 			reason: expected,
+			...reset,
 		});
 		client.detach();
 	}

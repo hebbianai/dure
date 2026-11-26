@@ -70,6 +70,11 @@ export function setLang(l: Lang) {
   current = l;
 }
 
+/** The language `t()` renders in, for locale-aware formatting beside it. */
+export function currentLang(): Lang {
+  return current;
+}
+
 export function t(key: string, vars?: Record<string, string | number>): string {
   let s: string;
   if (SEMANTIC_ID.test(key)) {

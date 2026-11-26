@@ -164,6 +164,7 @@ export const agents: Record<string, string> = {
 	"agents.chat.recovery.signIn": "Entrar novamente…",
 	"agents.chat.recovery.handedOff": "Mudou para {to} depois que {from} atingiu o limite de uso.",
 	"agents.chat.recovery.handedOffTo": "Mudou para {to} após um limite de uso.",
+	"agents.chat.recovery.continuesAt": "Continua às {time}, depois que o limite for redefinido.",
 	"agents.chat.recovery.resend": "Reenviar a última mensagem",
 	"agents.chat.lifecycle.turn_interrupted": "Turno interrompido por reinício da sessão",
 	"agents.chat.lifecycle.turn_started": "Turno iniciado",

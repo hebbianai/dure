@@ -84,12 +84,20 @@ export function createAccountRecoveryClient(
 				idempotencyKey: string;
 				enabled: boolean;
 				accounts: RecoveryAccount[];
+				continueAfterReset?: boolean;
 			},
 			routeAuthority: DureBackendRouteAuthorityV1,
 		): Promise<RecoveryPolicy> {
+			const { continueAfterReset, ...policyBody } = body;
 			const response = await request(
 				"provider_recovery.put",
-				{ schemaVersion: 1, ...body },
+				{
+					schemaVersion: 1,
+					...policyBody,
+					// Sent only when on: a backend that predates the switch then
+					// keeps accepting the policy, and turning it off is omission.
+					...(continueAfterReset ? { continueAfterReset } : {}),
+				},
 				{ kind: "exact", authority: routeAuthority },
 			);
 			const policy = parseRecoveryPolicy(response.result.policy);

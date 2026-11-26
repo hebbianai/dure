@@ -305,6 +305,7 @@ function scriptedQuery(
 	observations,
 	{
 		assistantMessages = true,
+		beforeResult = [],
 		delta = "hello from Claude",
 		initializationAfterInput = false,
 		result,
@@ -413,6 +414,7 @@ function scriptedQuery(
 						trailingText,
 					});
 				}
+				for (const before of beforeResult) output.push(before);
 				output.push({
 					...successResult(message.uuid, result ?? trailingText ?? delta),
 					...(resultPatch ?? {}),
@@ -2023,6 +2025,49 @@ test("a usage-limit result crosses the boundary as a bounded reason, never as te
 	assert.equal(result.payload.failureReason, "usage_limit");
 	assert.equal(JSON.stringify(observed.events).includes("resets 3pm"), false);
 	await controller.close();
+});
+
+test("a usage-limit failure carries the reset its provider reported, and only that number", async () => {
+	const rateLimit = (rate_limit_info) => ({
+		rate_limit_info,
+		session_id: SESSION_ID,
+		type: "rate_limit_event",
+		uuid: "bbbbbbbb-0000-4111-8222-333333333333",
+	});
+	const soon = Math.floor(Date.now() / 1000) + 3600;
+	for (const [beforeResult, result, expected] of [
+		[[rateLimit({ resetsAt: soon, status: "rejected" })], "You've hit your limit", soon * 1000],
+		// A later allowed reading means the rejection no longer applies.
+		[
+			[
+				rateLimit({ resetsAt: soon, status: "rejected" }),
+				rateLimit({ resetsAt: soon, status: "allowed" }),
+			],
+			"You've hit your limit",
+			undefined,
+		],
+		[[], `Claude AI usage limit reached|${soon}`, soon * 1000],
+		[[], "You've hit your limit · resets 3pm", undefined],
+		[[rateLimit({ resetsAt: soon + 30 * 86_400, status: "rejected" })], "You've hit your limit", undefined],
+	]) {
+		const prepared = binding(3, null);
+		const observed = observations(prepared);
+		const controller = await createController(
+			prepared,
+			observed,
+			scriptedQuery(observed, {
+				assistantMessages: false,
+				beforeResult,
+				resultPatch: { is_error: true, result },
+			}),
+			{ usageLimitErrorPrefixes: SDK_USAGE_LIMIT_PREFIXES },
+		);
+		await assert.rejects(
+			controller.startTurn({ clientMessageId: "limit-reset-turn-1", input: "go" }),
+			(error) => error.reason === "usage_limit" && error.resetsAtMs === expected,
+		);
+		await controller.close();
+	}
 });
 
 test("an API auth status classifies as authentication_failed and other errors stay provider_error", async () => {

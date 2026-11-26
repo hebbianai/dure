@@ -89,6 +89,7 @@ async fn native_recovery(key: &str) -> NativeRecovery {
                 idempotency_key: format!("{key}-policy"),
                 enabled: true,
                 accounts: accounts.clone(),
+                continue_after_reset: false,
             },
             now_ms().unwrap() - 1_000,
         )
@@ -174,12 +175,22 @@ async fn limit_failure_moves_the_conversation_and_continues_it_once() {
     let original = hmux.session(&source);
     // An untyped error is a person's to read; recovery leaves it alone.
     state_reporter::report_turn_failure(&hmux, &source, None);
-    assert!(!agent_recovery::advance(&state, &agent_id).await.unwrap());
+    assert!(
+        !agent_recovery::advance(&state, &agent_id)
+            .await
+            .unwrap()
+            .owns()
+    );
     assert!(hmux.session(&source).same_generation(&original));
     assert_eq!(hmux.requests().len(), 1);
 
     state_reporter::report_turn_failure(&hmux, &source, Some(AgentTurnFailure::RateLimit));
-    assert!(agent_recovery::advance(&state, &agent_id).await.unwrap());
+    assert!(
+        agent_recovery::advance(&state, &agent_id)
+            .await
+            .unwrap()
+            .owns()
+    );
     let projection = inspect(&state, &agent_id).await;
     assert_eq!(
         projection["receipt"]["selectionRevision"], 2,
@@ -244,7 +255,12 @@ async fn limit_failure_moves_the_conversation_and_continues_it_once() {
     // The resumed conversation is not ready yet: nothing is typed into it.
     let target = current_generation(&state, &agent_id).await;
     assert_ne!(target.terminal_epoch, source.terminal_epoch);
-    assert!(agent_recovery::advance(&state, &agent_id).await.unwrap());
+    assert!(
+        agent_recovery::advance(&state, &agent_id)
+            .await
+            .unwrap()
+            .owns()
+    );
     assert_eq!(recovery_rows(&state, &agent_id).await, 1);
     assert!(prompts.requests().is_empty());
 
@@ -257,7 +273,12 @@ async fn limit_failure_moves_the_conversation_and_continues_it_once() {
         false,
         Some(CONVERSATION),
     );
-    assert!(agent_recovery::advance(&state, &agent_id).await.unwrap());
+    assert!(
+        agent_recovery::advance(&state, &agent_id)
+            .await
+            .unwrap()
+            .owns()
+    );
     let attempt = native_attempt(&state, &switched.attempt_id).await;
     let AgentNativeRecoveryContinuationV1::Delivered { evidence } = &attempt.continuation else {
         panic!("the continuation was not delivered: {attempt:?}");
@@ -290,7 +311,12 @@ async fn limit_failure_moves_the_conversation_and_continues_it_once() {
 
     // Later wakes never type it again.
     let delivered = attempt.clone();
-    assert!(!agent_recovery::advance(&state, &agent_id).await.unwrap());
+    assert!(
+        !agent_recovery::advance(&state, &agent_id)
+            .await
+            .unwrap()
+            .owns()
+    );
     assert_eq!(
         native_attempt(&state, &delivered.attempt_id).await,
         delivered
@@ -362,7 +388,12 @@ async fn a_person_who_resumed_first_supersedes_the_attempt() {
         AgentRuntimeAttention::None,
         false,
     );
-    assert!(!agent_recovery::advance(&state, &agent_id).await.unwrap());
+    assert!(
+        !agent_recovery::advance(&state, &agent_id)
+            .await
+            .unwrap()
+            .owns()
+    );
     assert_eq!(
         native_attempt(&state, &prepared.attempt_id).await.stopped,
         Some(AgentRecoveryStopV1::Superseded)

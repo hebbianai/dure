@@ -22,6 +22,7 @@ const presentation: StructuredAgentPanePresentationV1 = {
 		switchAccountTarget: "Work",
 		signIn: true,
 		handedOff: { fromName: "Personal", toName: "Work", resend: true },
+		continuesAtMs: 1_800_000_000_000,
 	},
 };
 
@@ -44,6 +45,10 @@ describe("structured Agent pane presentation", () => {
 			{ ...presentation, accountFailure: "x".repeat(4_097) },
 			{ ...presentation, recoveryAccountId: "" },
 			{ ...presentation, recovery: { ...presentation.recovery, signIn: 1 } },
+			{
+				...presentation,
+				recovery: { ...presentation.recovery, continuesAtMs: -1 },
+			},
 			{
 				...presentation,
 				recovery: {

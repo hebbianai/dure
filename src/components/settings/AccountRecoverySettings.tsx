@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
 import { Switch } from "@/components/ui/switch";
 import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
+import { supportsLimitResetContinuation } from "@/lib/agents/providers";
 import { t } from "@/lib/i18n";
 import { PROVIDERS, type Provider } from "@/types";
 import { ArrowDown, ArrowUp } from "lucide-react";
@@ -68,6 +69,19 @@ function RecoverySettings({
 					aria-label={t("settings.recovery.title")}
 				/>
 			</SettingRow>
+			{supportsLimitResetContinuation(state.provider) && (
+				<SettingRow
+					title={t("settings.recovery.continueAfterReset")}
+					desc={t("settings.recovery.continueAfterResetDescription")}
+				>
+					<Switch
+						checked={state.continueAfterReset}
+						disabled={busy || !state.ready}
+						onCheckedChange={state.setContinueAfterReset}
+						aria-label={t("settings.recovery.continueAfterReset")}
+					/>
+				</SettingRow>
+			)}
 			<div className="flex flex-wrap items-end gap-3">
 				{!authority && (
 					<BackendServerSelect
