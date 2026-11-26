@@ -39,6 +39,8 @@ vi.mock("@/lib/agents/providerConversationDiscovery", () => ({
 }));
 
 import { OVERFLOW_REVEAL_DELAY_MS } from "@/components/ui/overflow-reveal-text";
+import { agentContinuesText } from "@/components/agents/AgentRow";
+import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
 import {
   OpenSpaceRow,
   UnopenedAgentRow,
@@ -648,6 +650,52 @@ describe("UnopenedAgentRow diff badge", () => {
     sessionId: "session-1",
     sessionKind: "pty",
   };
+
+  it("leads the info line with when its backend continues the agent", () => {
+    const atMs = Date.now() + 60 * 60_000;
+    useAgentAttention.getState().setRecoveryWaits({ [agent.id]: atMs });
+    try {
+      const { container, rerender } = render(
+        <UnopenedAgentRow
+          remote={false}
+          agent={agent}
+          displayState="error"
+          unread={false}
+          projectName="repo"
+          detail="agent/diff"
+          onOpen={vi.fn()}
+          onViewDiff={vi.fn()}
+          onFork={vi.fn()}
+          onHide={vi.fn()}
+          onKill={vi.fn()}
+        />,
+      );
+      const button = () =>
+        container.querySelector(`[data-agent-id="${agent.id}"] > button`);
+      expect(button()?.textContent).toContain(
+        `${agentContinuesText(atMs)} · agent/diff`,
+      );
+      // A person answered before the reset: the agent works again.
+      rerender(
+        <UnopenedAgentRow
+          remote={false}
+          agent={agent}
+          displayState="working"
+          unread={false}
+          projectName="repo"
+          detail="agent/diff"
+          onOpen={vi.fn()}
+          onViewDiff={vi.fn()}
+          onFork={vi.fn()}
+          onHide={vi.fn()}
+          onKill={vi.fn()}
+        />,
+      );
+      expect(button()?.textContent).not.toContain(agentContinuesText(atMs));
+    } finally {
+      useAgentAttention.getState().setRecoveryWaits({});
+    }
+  });
 
   it("uses the shared background-free Pi glyph in unopened rows", () => {
     const piAgent: Agent = {

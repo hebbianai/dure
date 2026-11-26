@@ -1161,6 +1161,46 @@ async fn a_limited_turn_waits_for_its_reported_reset_without_sending() {
     .await;
     assert_eq!(read["result"]["recovery"]["resumeAtMs"], resume_at_ms);
     assert!(read["result"]["recovery"]["stopped"].is_null());
+    let attempt_id = read["result"]["recovery"]["attemptId"].clone();
+    let wait = json!({ "agentId": agent_id, "attemptId": attempt_id, "resumeAtMs": resume_at_ms });
+    assert_eq!(read["result"]["wait"], wait);
+    // Every client lists the same waits without knowing which Agents to ask.
+    let waits = request_over_test_connection(
+        Arc::clone(&state),
+        "agent_recovery.waits",
+        "account_recovery.waits.v1",
+        json!({ "schemaVersion": 1 }),
+    )
+    .await;
+    assert_eq!(
+        waits["result"],
+        json!({ "schemaVersion": 1, "waits": [wait] })
+    );
+    // A stopped wait leaves the list, and its Agent's read omits it.
+    state
+        .store
+        .stop_agent_recovery(
+            attempt_id.as_str().unwrap(),
+            &AgentRecoveryStopV1::Superseded,
+        )
+        .await
+        .unwrap();
+    let waits = request_over_test_connection(
+        Arc::clone(&state),
+        "agent_recovery.waits",
+        "account_recovery.waits.v1",
+        json!({ "schemaVersion": 1 }),
+    )
+    .await;
+    assert_eq!(waits["result"]["waits"], json!([]));
+    let read = request_over_test_connection(
+        Arc::clone(&state),
+        "agent_recovery.read",
+        "account_recovery.v1",
+        json!({ "schemaVersion": 1, "agentId": agent_id }),
+    )
+    .await;
+    assert!(read["result"].get("wait").is_none(), "{read}");
 }
 
 #[tokio::test]

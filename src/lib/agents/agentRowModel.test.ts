@@ -65,6 +65,34 @@ describe("agentRowModel", () => {
 		expect(row.dot).toEqual({ state: "waiting", unread: true });
 		expect(row.sinceMs).toBe(7);
 	});
+
+	it("says when an agent continues by itself, while nothing else lists it", () => {
+		// A failed turn its backend continues after the limit resets keeps
+		// its error dot and says when.
+		const waiting = agentRowModel({
+			agentId: "a",
+			title: "t",
+			state: "error",
+			continuesAtMs: 9_000,
+		});
+		expect(waiting.continuesAtMs).toBe(9_000);
+		expect(waiting.status).toBeUndefined();
+		expect(waiting.dot).toEqual({ state: "error", unread: false });
+		// A person answered before the reset: the agent works again.
+		expect(
+			agentRowModel({ agentId: "a", title: "t", state: "working", continuesAtMs: 9_000 }),
+		).not.toHaveProperty("continuesAtMs");
+		// A question the person must answer is still the row's reason.
+		const asked = agentRowModel({
+			agentId: "a",
+			title: "t",
+			state: "input",
+			needsPerson: { reason: "input" },
+			continuesAtMs: 9_000,
+		});
+		expect(asked.status).toBe("input");
+		expect(asked).not.toHaveProperty("continuesAtMs");
+	});
 });
 
 describe("agentRowStatus", () => {

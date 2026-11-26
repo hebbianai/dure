@@ -18,6 +18,7 @@ export const agents: Record<string, string> = {
 	"agents.nextUp.needsYou": "À traiter",
 	"agents.nextUp.results": "Ont un résultat",
 	"agents.row.result": "A un résultat",
+	"agents.row.continuesAt": "Reprend à {time}",
 	"agents.row.unexpectedExit": "S’est arrêté de façon inattendue",
 	"agents.row.signInExit": "Reconnectez-vous",
 	"agents.row.asked": "Demandé : {prompt}",

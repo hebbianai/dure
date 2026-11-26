@@ -18,6 +18,7 @@ export const agents: Record<string, string> = {
 	"agents.nextUp.needsYou": "주의 필요",
 	"agents.nextUp.results": "결과 있음",
 	"agents.row.result": "결과 있음",
+	"agents.row.continuesAt": "{time}에 이어서 진행",
 	"agents.row.unexpectedExit": "예기치 않게 종료됨",
 	"agents.row.signInExit": "다시 로그인하세요",
 	"agents.row.asked": "요청: {prompt}",

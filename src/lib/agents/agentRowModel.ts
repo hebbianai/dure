@@ -52,6 +52,9 @@ export interface AgentRowFacts {
 	readonly programNotice?: { readonly app?: string; readonly message?: string };
 	/** The last prompt the agent was given. */
 	readonly prompt?: string;
+	/** When its backend's recovery continues it by itself after its usage
+	 * limit resets. */
+	readonly continuesAtMs?: number;
 }
 
 export interface AgentRowModel {
@@ -65,6 +68,8 @@ export interface AgentRowModel {
 	readonly path?: readonly string[];
 	readonly managed?: AgentRowManagedSummary;
 	readonly activity?: AgentRowActivity;
+	/** When the agent continues by itself, on a row with no other status. */
+	readonly continuesAtMs?: number;
 }
 
 /** Facts that are missing stay missing: no placeholder, no "top level"
@@ -75,6 +80,11 @@ export function agentRowModel(facts: AgentRowFacts): AgentRowModel {
 		(value): value is string => Boolean(value),
 	);
 	const activity = agentRowActivity(facts, status);
+	const continuesAtMs = agentContinuesAtMs(
+		facts.continuesAtMs,
+		facts.state,
+		status !== undefined,
+	);
 	return {
 		agentId: facts.agentId,
 		title: facts.title,
@@ -86,7 +96,19 @@ export function agentRowModel(facts: AgentRowFacts): AgentRowModel {
 		...(facts.path && facts.path.length > 0 ? { path: facts.path } : {}),
 		...(facts.managed && facts.managed.count > 0 ? { managed: facts.managed } : {}),
 		...(activity ? { activity } : {}),
+		...(continuesAtMs === undefined ? {} : { continuesAtMs }),
 	};
+}
+
+/** When a row says its agent continues by itself after its usage limit
+ * resets: its backend's wait, unless the row already says why it is listed
+ * or the agent is working again (a person answered before the reset). */
+export function agentContinuesAtMs(
+	continuesAtMs: number | undefined,
+	state: AgentDisplayState | undefined,
+	listed: boolean,
+): number | undefined {
+	return listed || state === "working" ? undefined : continuesAtMs;
 }
 
 export function agentRowStatus(

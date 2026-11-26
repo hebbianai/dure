@@ -18,6 +18,7 @@ export const agentsEnglishTranslations: Record<string, string> = {
 	"agents.nextUp.needsYou": "Needs you",
 	"agents.nextUp.results": "Has a result",
 	"agents.row.result": "Has a result",
+	"agents.row.continuesAt": "Continues at {time}",
 	"agents.row.unexpectedExit": "Exited unexpectedly",
 	"agents.row.signInExit": "Sign in again",
 	"agents.row.asked": "Asked: {prompt}",

@@ -32,7 +32,10 @@ export type SpaceRowView = Pick<
 	Partial<
 		Pick<
 			SpaceRow,
-			"programStatusKind" | "programStatusApp" | "programStatusMessage"
+			| "programStatusKind"
+			| "programStatusApp"
+			| "programStatusMessage"
+			| "continuesAtMs"
 		>
 	>;
 

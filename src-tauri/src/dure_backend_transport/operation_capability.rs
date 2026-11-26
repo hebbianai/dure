@@ -48,6 +48,7 @@ pub(super) fn operation_capability(operation: &str) -> Option<&'static str> {
         | "provider_recovery.put"
         | "provider_recovery.observe_usage"
         | "agent_recovery.read" => Some("account_recovery.v1"),
+        "agent_recovery.waits" => Some("account_recovery.waits.v1"),
         "browser.resource" => Some("browser.resource.v1"),
         "slack.connector" => Some("slack.connector.v1"),
         "agent_conversation.answer_pending" => Some("agent_conversation.answer_pending"),

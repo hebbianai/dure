@@ -767,6 +767,30 @@ impl AgentRecoveryStore for SqliteDomainStore {
         })
     }
 
+    fn agent_recovery_waits(&self) -> DomainStoreFuture<'_, Vec<dure_app::AgentRecoveryWaitV1>> {
+        Box::pin(async move {
+            let rows = sqlx::query_as::<_, (String, String, i64)>(AssertSqlSafe(format!(
+                "SELECT agent_id, attempt_id, json_extract(record_json, '$.resumeAtMs') \
+                FROM agent_recoveries WHERE {UNFINISHED} \
+                AND json_type(record_json, '$.resumeAtMs') = 'integer' \
+                ORDER BY agent_id, attempt_id"
+            )))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| map_sqlx("read_agent_recovery_waits", error))?;
+            rows.into_iter()
+                .map(|(agent_id, attempt_id, resume_at_ms)| {
+                    Ok(dure_app::AgentRecoveryWaitV1 {
+                        agent_id: AgentIdV1::new(agent_id)
+                            .map_err(|error| corrupt_identifier("recovery agent", error))?,
+                        attempt_id,
+                        resume_at_ms,
+                    })
+                })
+                .collect()
+        })
+    }
+
     fn agents_with_recovery(&self) -> DomainStoreFuture<'_, Vec<AgentIdV1>> {
         Box::pin(async move {
             let rows = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!("SELECT DISTINCT sessions.agent_id FROM agent_interaction_sessions AS sessions \

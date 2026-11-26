@@ -175,3 +175,35 @@ export function parseRecoveryObservation(
 		createdAtMs: observation.createdAtMs,
 	};
 }
+
+/** An Agent the backend continues on its own once its usage limit resets. */
+export interface RecoveryWait {
+	agentId: string;
+	attemptId: string;
+	/** When the same account continues it (Unix ms). */
+	resumeAtMs: number;
+}
+
+/** A backend's `agent_recovery.waits` list, or `undefined` when any entry
+ * does not have exactly the wait shape. */
+export function parseRecoveryWaits(value: unknown): RecoveryWait[] | undefined {
+	if (!Array.isArray(value)) return;
+	const waits: RecoveryWait[] = [];
+	for (const entry of value) {
+		const wait = asRecord(entry);
+		if (
+			!wait ||
+			!hasOnlyKeys(wait, ["agentId", "attemptId", "resumeAtMs"]) ||
+			!isDureDomainIdV1(wait.agentId) ||
+			!isDureDomainIdV1(wait.attemptId) ||
+			!nonNegativeInteger(wait.resumeAtMs)
+		)
+			return;
+		waits.push({
+			agentId: wait.agentId,
+			attemptId: wait.attemptId,
+			resumeAtMs: wait.resumeAtMs,
+		});
+	}
+	return waits;
+}

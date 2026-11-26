@@ -7,6 +7,7 @@ import {
 	useAgentAttention,
 } from "@/lib/agents/agentAttentionStore";
 import { agentNotificationsMuted } from "@/lib/agents/agentNotificationMute";
+import { agentContinuesAtMs } from "@/lib/agents/agentRowModel";
 import { presentedAgentDisplayState } from "@/lib/agents/agentStateModel";
 import { needsPersonReason } from "@/lib/agents/needsPerson";
 import {
@@ -195,7 +196,7 @@ export function useSpaces() {
 		),
 	);
 	// The watcher owns display state and unread episodes; only project its facts.
-	const { displayStates, episodes, acks } = useAgentAttention(
+	const { displayStates, episodes, acks, recoveryWaits } = useAgentAttention(
 		useMemo(() => createSpacesAttentionSelector(agentIds), [agentIds]),
 	);
 	const needsPerson = useNeedsPerson();
@@ -419,6 +420,15 @@ export function useSpaces() {
 				programStatusKind: programNotice?.kind,
 				programStatusApp: programNotice?.app,
 				programStatusMessage: programNotice?.message,
+				/** When the Agent's backend continues it by itself after its
+				 *  usage limit resets, by the rule every Agent row follows. */
+				continuesAtMs: agent
+					? agentContinuesAtMs(
+							recoveryWaits[agent.id],
+							displayState,
+							needsPerson.has(agent.id),
+						)
+					: undefined,
 				unread: agent ? isAgentUnread(episodes, acks, agent.id) : false,
 				/** The lead Agent this worker nests under, and its start order
 				 *  among that lead's workers. */
@@ -456,6 +466,7 @@ export function useSpaces() {
 		needsPerson,
 		episodes,
 		acks,
+		recoveryWaits,
 		hostBuildByMetadataKey,
 		sessionNameByMetadataKey,
 	]);

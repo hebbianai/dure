@@ -133,6 +133,27 @@ describe("needsPersonOf", () => {
 		).toEqual({ reason: "unexpected_exit" });
 	});
 
+	it("needs no one for an error its backend continues after the limit resets", () => {
+		expect(
+			needsPersonOf({ displayState: "error", continuesAtMs: 9_000 }),
+		).toBeUndefined();
+		// Waiting out the limit answers no question and grants no approval.
+		expect(
+			needsPersonOf({ displayState: "blocked", continuesAtMs: 9_000 }),
+		).toEqual({ reason: "approval" });
+		expect(
+			needsPersonOf({ displayState: "input", continuesAtMs: 9_000 }),
+		).toEqual({ reason: "input" });
+		// A provider that exited is not continued in its terminal.
+		expect(
+			needsPersonOf({
+				displayState: "error",
+				failure: failure(),
+				continuesAtMs: 9_000,
+			})?.reason,
+		).toBe("unexpected_exit");
+	});
+
 	it("flags nothing for an exited agent with no capsule (a stop someone asked for)", () => {
 		expect(needsPersonOf({ displayState: "exited" })).toBeUndefined();
 		expect(needsPersonOf({})).toBeUndefined();
@@ -173,6 +194,16 @@ describe("deriveNeedsPerson", () => {
 			["c", { reason: "unexpected_exit", sinceMs: 1_700_000_000_000 }],
 		]);
 	});
+
+	it("leaves out an agent whose failed turn continues after its limit resets", () => {
+		const map = deriveNeedsPerson([{ id: "a" }, { id: "b" }], {
+			displayStates: { a: "error", b: "error" },
+			waitingSince: {},
+			failures: {},
+			recoveryWaits: { a: 9_000 },
+		});
+		expect([...map]).toEqual([["b", { reason: "error" }]]);
+	});
 });
 
 describe("the window's needs-person map", () => {
@@ -199,6 +230,17 @@ describe("the window's needs-person map", () => {
 				["other", { reason: "input" }],
 			]),
 		);
+	});
+
+	it("drops an error while its backend waits to continue it, and restores it after", () => {
+		seed({});
+		useAgentAttention.setState({ displayStates: { managed: "error", other: "input" } });
+		expect(readNeedsPerson().get("managed")).toEqual({ reason: "error" });
+		useAgentAttention.getState().setRecoveryWaits({ managed: 9_000 });
+		expect([...readNeedsPerson().keys()]).toEqual(["other"]);
+		// Recovery stopped, so the error is the person's again.
+		useAgentAttention.getState().setRecoveryWaits({});
+		expect(readNeedsPerson().get("managed")).toEqual({ reason: "error" });
 	});
 
 	it("keeps its references while terminal output moves the session metadata", () => {

@@ -18,6 +18,7 @@ export const agents: Record<string, string> = {
 	"agents.nextUp.needsYou": "要対応",
 	"agents.nextUp.results": "結果あり",
 	"agents.row.result": "結果あり",
+	"agents.row.continuesAt": "{time} に続行",
 	"agents.row.unexpectedExit": "予期せず終了しました",
 	"agents.row.signInExit": "もう一度サインイン",
 	"agents.row.asked": "依頼: {prompt}",

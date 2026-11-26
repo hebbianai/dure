@@ -1,9 +1,11 @@
 import {
 	parseRecoveryPolicy,
 	parseRecoveryProfile,
+	parseRecoveryWaits,
 	type RecoveryAccount,
 	type RecoveryPolicy,
 	type RecoveryProfile,
+	type RecoveryWait,
 } from "@/lib/agents/accountRecoveryContract";
 import { t } from "@/lib/i18n";
 import {
@@ -108,6 +110,16 @@ export function createAccountRecoveryClient(
 			)
 				invalid();
 			return policy;
+		},
+		/** Every Agent this backend continues on its own once its usage limit
+		 * resets. A backend without the list fails with its capability. */
+		async waits(): Promise<RecoveryWait[]> {
+			const response = await request(
+				"agent_recovery.waits",
+				{ schemaVersion: 1 },
+				{ kind: "complete_selected_snapshot" },
+			);
+			return parseRecoveryWaits(response.result.waits) ?? invalid();
 		},
 	};
 }

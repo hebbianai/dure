@@ -68,6 +68,7 @@ let mapCache: {
 	displayStates?: Readonly<Record<string, AgentDisplayState>>;
 	waitingSince?: Readonly<Record<string, number>>;
 	failures?: AgentExitFailures;
+	recoveryWaits?: Readonly<Record<string, number>>;
 	value: NeedsPersonMap;
 } = { value: new Map() };
 
@@ -78,18 +79,25 @@ function needsPersonFor(
 	displayStates: Readonly<Record<string, AgentDisplayState>>,
 	waitingSince: Readonly<Record<string, number>>,
 	failures: AgentExitFailures,
+	recoveryWaits: Readonly<Record<string, number>>,
 ): NeedsPersonMap {
 	if (
 		mapCache.agents === agents &&
 		mapCache.displayStates === displayStates &&
 		mapCache.waitingSince === waitingSince &&
-		mapCache.failures === failures
+		mapCache.failures === failures &&
+		mapCache.recoveryWaits === recoveryWaits
 	) {
 		return mapCache.value;
 	}
-	const next = deriveNeedsPerson(agents, { displayStates, waitingSince, failures });
+	const next = deriveNeedsPerson(agents, {
+		displayStates,
+		waitingSince,
+		failures,
+		recoveryWaits,
+	});
 	const value = sameNeedsPersonMap(mapCache.value, next) ? mapCache.value : next;
-	mapCache = { agents, displayStates, waitingSince, failures, value };
+	mapCache = { agents, displayStates, waitingSince, failures, recoveryWaits, value };
 	return value;
 }
 
@@ -102,6 +110,7 @@ export function readNeedsPerson(): NeedsPersonMap {
 		attention.displayStates,
 		attention.waitingSince,
 		selectAgentExitFailures(state),
+		attention.recoveryWaits,
 	);
 }
 

@@ -10,6 +10,7 @@ import {
 	useAgentManagedSummary,
 	useAgentRelations,
 } from "@/components/agents/useAgentRelations";
+import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
 import type { AgentRowFacts } from "@/lib/agents/agentRowModel";
 import { pendingApproval } from "@/lib/agents/approvalRequest";
 import {
@@ -58,6 +59,7 @@ export function useAgentRowFacts(
 	const sessionId = agent?.sessionId ?? "";
 	const runtime = useStore((state) => state.sessionAgentRuntimeState[sessionId]);
 	const promptActivity = useStore((state) => state.sessionActivity[sessionId]);
+	const continuesAtMs = useAgentAttention((state) => state.recoveryWaits[agentId]);
 	const projectName = useStore(
 		(state) =>
 			state.projects.find((project) => project.id === agent?.projectId)?.name,
@@ -125,5 +127,6 @@ export function useAgentRowFacts(
 				}
 			: {}),
 		...(prompt ? { prompt } : {}),
+		...(continuesAtMs === undefined ? {} : { continuesAtMs }),
 	};
 }

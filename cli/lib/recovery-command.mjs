@@ -18,6 +18,7 @@ export const RECOVERY_HELP = `dure recovery — automatic account recovery on th
                             --expected-revision N [--continue-after-reset true|false]
                             [--idempotency-key KEY] [--backend ID]
   dure recovery status AGENT_ID [--backend ID]
+  dure recovery waits [--backend ID]
   dure recovery observe --observations JSON [--backend ID]
 
 get lists each registered login once with its account IDs, its policy name,
@@ -47,7 +48,11 @@ the backend continues the same request once, a few minutes after the reset.
 A Chat agent uses the reset its failed turn reported (Claude); a terminal agent
 uses the reset its login's usage meter last recorded and gets one prompt to
 continue in the same terminal. If the limit still applies, recovery stops.
-status then shows resumeAtMs for a Chat agent.
+status then shows wait {agentId, attemptId, resumeAtMs} for a Chat or terminal
+agent while it waits, and a Chat agent's recovery.resumeAtMs. waits lists every
+agent on the backend that waits for a reset this way, with the same fields;
+the app shows "Continues at ..." on these agents' rows and leaves them out of
+Needs you. A person's input before then takes over and ends the wait.
 Joining a workspace does not register or offer personal accounts. Unknown usage
 is eligible; optional observations contain {profile, usedPercent, observedAtMs}.
 Before switching, the backend also reads the usage the app last observed on
@@ -69,10 +74,11 @@ export function parseRecoveryCommand(args) {
   const [action, ...rest] = args;
   if (!action || ["help", "--help", "-h"].includes(action))
     return { action: "help" };
-  if (!["get", "put", "status", "observe"].includes(action))
+  if (!["get", "put", "status", "waits", "observe"].includes(action))
     throw new Error(RECOVERY_HELP);
-  const target = action === "observe" ? undefined : rest.shift();
-  if (action !== "observe" && (!target || target.startsWith("--")))
+  const backendWide = action === "observe" || action === "waits";
+  const target = backendWide ? undefined : rest.shift();
+  if (!backendWide && (!target || target.startsWith("--")))
     throw new Error(RECOVERY_HELP);
   const options = {};
   let json = false;
@@ -115,6 +121,8 @@ export function parseRecoveryCommand(args) {
     const observations = JSON.parse(options["--observations"] ?? "null");
     if (!Array.isArray(observations)) throw new Error(RECOVERY_HELP);
     body = { schemaVersion: 1, observations };
+  } else if (action === "waits") {
+    body = { schemaVersion: 1 };
   } else {
     body = { schemaVersion: 1,
       ...(action === "get" ? { providerId: target } : { agentId: target }) };
@@ -122,9 +130,11 @@ export function parseRecoveryCommand(args) {
   return {
     action, backend: options["--backend"], body, json,
     operation: action === "status" ? "agent_recovery.read"
+      : action === "waits" ? "agent_recovery.waits"
       : `provider_recovery.${action === "observe" ? "observe_usage" : action}`,
-    requiredCapabilities: ["account_recovery.v1",
-      ...(body.continueAfterReset ? ["account_recovery.continue_after_reset.v1"] : [])],
+    requiredCapabilities: action === "waits" ? ["account_recovery.waits.v1"]
+      : ["account_recovery.v1",
+        ...(body.continueAfterReset ? ["account_recovery.continue_after_reset.v1"] : [])],
   };
 }
 

@@ -37,6 +37,12 @@ interface AgentAttentionStore {
   displayStates: Record<string, AgentDisplayState>;
   /** sessionId → 완료 알림 armed (사용자/위임 입력이 있었던 사이클) */
   armedCompletions: Record<string, true>;
+  /** agentId → when the backend continues it on its own after its usage
+   *  limit resets (Unix ms), as its backend's recovery last reported. */
+  recoveryWaits: Record<string, number>;
+  /** Recovery wait runtime only — the merged waits of every backend. Equal
+   *  content keeps the previous record, so readers keyed on it hold. */
+  setRecoveryWaits: (waits: Record<string, number>) => void;
   /** watcher 전용 — 해석 결과를 한 번의 set으로 반영한다. */
   applyAttentionResolution: (update: {
     displayStates: Record<string, AgentDisplayState>;
@@ -48,6 +54,17 @@ interface AgentAttentionStore {
   /** 사용자 키 입력·위임 입력이 세션에 들어감 — 완료 알림 1회를 arm */
   armCompletion: (sessionId: string) => void;
   prune: (aliveSessionIds: ReadonlySet<string>, aliveAgentIds: ReadonlySet<string>) => void;
+}
+
+function sameRecord(
+  left: Readonly<Record<string, number>>,
+  right: Readonly<Record<string, number>>,
+): boolean {
+  const keys = Object.keys(left);
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every((key) => left[key] === right[key])
+  );
 }
 
 function filterKeys<T>(record: Record<string, T>, alive: ReadonlySet<string>) {
@@ -67,6 +84,9 @@ export const useAgentAttention = create<AgentAttentionStore>()((set) => ({
   waitingSince: {},
   displayStates: {},
   armedCompletions: {},
+  recoveryWaits: {},
+  setRecoveryWaits: (waits) =>
+    set((s) => (sameRecord(s.recoveryWaits, waits) ? s : { recoveryWaits: waits })),
   applyAttentionResolution: ({ displayStates, bumps, consumedArms, waitingSince }) =>
     set((s) => {
       const next: Partial<AgentAttentionStore> = { displayStates };
@@ -120,6 +140,7 @@ export const useAgentAttention = create<AgentAttentionStore>()((set) => ({
         episodeAt: filterKeys(s.episodeAt, aliveAgentIds),
         waitingSince: filterKeys(s.waitingSince, aliveAgentIds),
         displayStates: filterKeys(s.displayStates, aliveAgentIds),
+        recoveryWaits: filterKeys(s.recoveryWaits, aliveAgentIds),
       };
       const unchanged = (Object.keys(next) as (keyof typeof next)[]).every(
         (key) => Object.keys(next[key]).length === Object.keys(s[key]).length,
