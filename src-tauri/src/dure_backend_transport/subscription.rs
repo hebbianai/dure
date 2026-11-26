@@ -337,6 +337,21 @@ fn send_terminal_error(
     }));
 }
 
+/// One subscription request: what it watches and the body that opens it.
+struct SubscriptionRequest {
+    kind: SubscriptionKind,
+    body: Value,
+}
+
+impl SubscriptionRequest {
+    fn new(operation: &str, body: Value) -> Result<Self, DureBackendTransportError> {
+        Ok(Self {
+            kind: SubscriptionKind::of(operation, &body)?,
+            body,
+        })
+    }
+}
+
 struct SubscriptionAuthority {
     selected: SelectedProfile,
     request: Vec<u8>,
@@ -627,8 +642,7 @@ async fn open_subscription(
     route: &DureBackendRouteV1,
     subscription_id: &str,
     owner: impl Into<SubscriptionOwner>,
-    operation: &str,
-    body: Value,
+    request: SubscriptionRequest,
     channel: impl SubscriptionSink,
 ) -> Result<DureBackendTransportResult, DureBackendTransportError> {
     if !super::valid_token(subscription_id, 160) {
@@ -637,7 +651,7 @@ async fn open_subscription(
             "the backend subscription request is invalid",
         ));
     }
-    let kind = SubscriptionKind::of(operation, &body)?;
+    let SubscriptionRequest { kind, body } = request;
     let request_id = request_id()?;
     let mut authority =
         resolve_subscription_authority(root, &state.config, route, &request_id, &kind, &body)?;
@@ -767,8 +781,7 @@ pub(super) async fn open_native_subscription(
         route,
         &subscription_id,
         SubscriptionOwner::Native,
-        SUBSCRIBE_OPERATION,
-        body,
+        SubscriptionRequest::new(SUBSCRIBE_OPERATION, body)?,
         sender,
     )
     .await?;
@@ -798,8 +811,7 @@ pub(crate) async fn dure_backend_subscribe(
         &route,
         &subscription_id,
         window.label(),
-        operation.as_deref().unwrap_or(SUBSCRIBE_OPERATION),
-        body,
+        SubscriptionRequest::new(operation.as_deref().unwrap_or(SUBSCRIBE_OPERATION), body)?,
         channel,
     )
     .await
@@ -1302,11 +1314,14 @@ mod tests {
             &route,
             "subscription-quiet",
             "window-quiet",
-            SUBSCRIBE_OPERATION,
-            json!({
-                "schemaVersion": 1,
-                "interactionSessionId": "interaction-1"
-            }),
+            SubscriptionRequest::new(
+                SUBSCRIBE_OPERATION,
+                json!({
+                    "schemaVersion": 1,
+                    "interactionSessionId": "interaction-1"
+                }),
+            )
+            .unwrap(),
             Channel::new(|_| Ok(())),
         )
         .await
@@ -1465,11 +1480,14 @@ mod tests {
             &route,
             "subscription-1",
             "window-1",
-            SUBSCRIBE_OPERATION,
-            json!({
-                "schemaVersion": 1,
-                "interactionSessionId": "interaction-1"
-            }),
+            SubscriptionRequest::new(
+                SUBSCRIBE_OPERATION,
+                json!({
+                    "schemaVersion": 1,
+                    "interactionSessionId": "interaction-1"
+                }),
+            )
+            .unwrap(),
             Channel::new(move |body| {
                 if let InvokeResponseBody::Json(source) = body {
                     let _ = event_sender.send(serde_json::from_str::<Value>(&source)?);
@@ -1571,11 +1589,14 @@ mod tests {
             &route,
             "subscription-1",
             "window-1",
-            SUBSCRIBE_OPERATION,
-            json!({
-                "schemaVersion": 1,
-                "interactionSessionId": "interaction-1"
-            }),
+            SubscriptionRequest::new(
+                SUBSCRIBE_OPERATION,
+                json!({
+                    "schemaVersion": 1,
+                    "interactionSessionId": "interaction-1"
+                }),
+            )
+            .unwrap(),
             Channel::new(move |body| {
                 if let InvokeResponseBody::Json(source) = body {
                     let _ = event_sender.send(serde_json::from_str::<Value>(&source)?);
@@ -1682,11 +1703,14 @@ mod tests {
             &route,
             "subscription-1",
             "window-1",
-            SUBSCRIBE_OPERATION,
-            json!({
-                "schemaVersion": 1,
-                "interactionSessionId": "interaction-1"
-            }),
+            SubscriptionRequest::new(
+                SUBSCRIBE_OPERATION,
+                json!({
+                    "schemaVersion": 1,
+                    "interactionSessionId": "interaction-1"
+                }),
+            )
+            .unwrap(),
             Channel::new(move |body| {
                 if let InvokeResponseBody::Json(source) = body {
                     let _ = event_sender.send(serde_json::from_str::<Value>(&source)?);
@@ -1829,11 +1853,14 @@ done
             &route,
             "subscription-1",
             "window-1",
-            SUBSCRIBE_OPERATION,
-            json!({
-                "schemaVersion": 1,
-                "interactionSessionId": "interaction-1"
-            }),
+            SubscriptionRequest::new(
+                SUBSCRIBE_OPERATION,
+                json!({
+                    "schemaVersion": 1,
+                    "interactionSessionId": "interaction-1"
+                }),
+            )
+            .unwrap(),
             Channel::new(|_| Ok(())),
         )
         .await
