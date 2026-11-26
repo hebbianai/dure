@@ -1,0 +1,166 @@
+{
+  "about": "Push grant v1 test vectors (#660), written by make-push-grant-vectors.mjs with a throwaway P-256 key that was never stored. See that file for what each field means.",
+  "context": "dure-push-grant-v1\u0000",
+  "hub": "SHA256:8kRGAQt7VSAaotCplgPItGGaAGOVTRNLtjvqxYZvwTs",
+  "token": "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4",
+  "environment": "production",
+  "preference": "all",
+  "now": 1795686400,
+  "maxLifetimeSecs": 1296000,
+  "vectors": [
+    {
+      "name": "valid",
+      "why": "Canonical claims for this computer, signed by the key.",
+      "key": "BMV1AByxD1QDzhQkzgrRosoD6QQ1FH_fADLlf6x_qiTUkq1YWSSlie5yxUqePE5p0_QoeRmFvRgwtyGkx2i0PvA",
+      "keyId": "k.2162c968acd9491c",
+      "claims": "eyJ2ZXJzaW9uIjoxLCJ0b2tlbiI6ImExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDQiLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJodWIiOiJTSEEyNTY6OGtSR0FRdDdWU0Fhb3RDcGxnUEl0R0dhQUdPVlRSTkx0anZxeFladndUcyIsInByZWZlcmVuY2UiOiJhbGwiLCJlcG9jaCI6MSwiaXNzdWVkQXQiOjE3OTU2MDAwMDAsImV4cGlyZXNBdCI6MTc5NjgwOTYwMH0",
+      "signature": "MEYCIQDyAcvAwjadHTPDfpxBuEodSTe9iAktCjwsj4kQmueCWwIhAJ0bBnM5jMSLk-qCGHfPusQz0IxXOjoJBNmukGERRaVF",
+      "parse": "known",
+      "signatureValid": true,
+      "verdict": "accept"
+    },
+    {
+      "name": "valid_with_nonce",
+      "why": "The grant that answers a challenge carries its nonce as the last field.",
+      "key": "BMV1AByxD1QDzhQkzgrRosoD6QQ1FH_fADLlf6x_qiTUkq1YWSSlie5yxUqePE5p0_QoeRmFvRgwtyGkx2i0PvA",
+      "keyId": "k.2162c968acd9491c",
+      "claims": "eyJ2ZXJzaW9uIjoxLCJ0b2tlbiI6ImExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDQiLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJodWIiOiJTSEEyNTY6OGtSR0FRdDdWU0Fhb3RDcGxnUEl0R0dhQUdPVlRSTkx0anZxeFladndUcyIsInByZWZlcmVuY2UiOiJhbGwiLCJlcG9jaCI6MSwiaXNzdWVkQXQiOjE3OTU2MDAwMDAsImV4cGlyZXNBdCI6MTc5NjgwOTYwMCwibm9uY2UiOiIwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZiJ9",
+      "signature": "MEYCIQCQx6dR-u-gorbkh4a3Y1pK2YEDMuikT9eTW2zHI_b-JAIhAL_sL6zYzq0zYdR8pREQgd19_-ZsjPmyv_vErTTpEPp9",
+      "parse": "known",
+      "signatureValid": true,
+      "verdict": "accept"
+    },
+    {
+      "name": "tampered_claims",
+      "why": "Canonical claims with a raised epoch, under the old signature.",
+      "key": "BMV1AByxD1QDzhQkzgrRosoD6QQ1FH_fADLlf6x_qiTUkq1YWSSlie5yxUqePE5p0_QoeRmFvRgwtyGkx2i0PvA",
+      "keyId": "k.2162c968acd9491c",
+      "claims": "eyJ2ZXJzaW9uIjoxLCJ0b2tlbiI6ImExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDQiLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJodWIiOiJTSEEyNTY6OGtSR0FRdDdWU0Fhb3RDcGxnUEl0R0dhQUdPVlRSTkx0anZxeFladndUcyIsInByZWZlcmVuY2UiOiJhbGwiLCJlcG9jaCI6MiwiaXNzdWVkQXQiOjE3OTU2MDAwMDAsImV4cGlyZXNBdCI6MTc5NjgwOTYwMH0",
+      "signature": "MEYCIQDyAcvAwjadHTPDfpxBuEodSTe9iAktCjwsj4kQmueCWwIhAJ0bBnM5jMSLk-qCGHfPusQz0IxXOjoJBNmukGERRaVF",
+      "parse": "known",
+      "signatureValid": false,
+      "verdict": "reject"
+    },
+    {
+      "name": "tampered_signature",
+      "why": "The valid claims under a signature with one bit changed.",
+      "key": "BMV1AByxD1QDzhQkzgrRosoD6QQ1FH_fADLlf6x_qiTUkq1YWSSlie5yxUqePE5p0_QoeRmFvRgwtyGkx2i0PvA",
+      "keyId": "k.2162c968acd9491c",
+      "claims": "eyJ2ZXJzaW9uIjoxLCJ0b2tlbiI6ImExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDQiLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJodWIiOiJTSEEyNTY6OGtSR0FRdDdWU0Fhb3RDcGxnUEl0R0dhQUdPVlRSTkx0anZxeFladndUcyIsInByZWZlcmVuY2UiOiJhbGwiLCJlcG9jaCI6MSwiaXNzdWVkQXQiOjE3OTU2MDAwMDAsImV4cGlyZXNBdCI6MTc5NjgwOTYwMH0",
+      "signature": "MEYCIQDyAcvAwjadHTPDfpxBuEodSTe9iAktCjwsj4kQmueCWwIhAJ0bBnM5jMSLk-qCGHfPusQz0IxXOjoJBNmukGERRaVE",
+      "parse": "known",
+      "signatureValid": false,
+      "verdict": "reject"
+    },
+    {
+      "name": "duplicate_key",
+      "why": "Two epochs. serde refuses a duplicate field; JSON.parse keeps the last one.",
+      "key": "BMV1AByxD1QDzhQkzgrRosoD6QQ1FH_fADLlf6x_qiTUkq1YWSSlie5yxUqePE5p0_QoeRmFvRgwtyGkx2i0PvA",
+      "keyId": "k.2162c968acd9491c",
+      "claims": "eyJ2ZXJzaW9uIjoxLCJ0b2tlbiI6ImExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDQiLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJodWIiOiJTSEEyNTY6OGtSR0FRdDdWU0Fhb3RDcGxnUEl0R0dhQUdPVlRSTkx0anZxeFladndUcyIsInByZWZlcmVuY2UiOiJhbGwiLCJlcG9jaCI6OSwiZXBvY2giOjEsImlzc3VlZEF0IjoxNzk1NjAwMDAwLCJleHBpcmVzQXQiOjE3OTY4MDk2MDB9",
+      "signature": "MEUCIHYuFaFsQ8PfQrfETZQb6HPS6Arla7P9ufF5LbE8KhHgAiEA6KQwsDe6DQ8-jLT4bcaLpLOYU0knFLUeFNVtUT0lbBQ",
+      "parse": "refused",
+      "signatureValid": true,
+      "verdict": "reject"
+    },
+    {
+      "name": "whitespace",
+      "why": "A space after a comma: the same meaning, other bytes.",
+      "key": "BMV1AByxD1QDzhQkzgrRosoD6QQ1FH_fADLlf6x_qiTUkq1YWSSlie5yxUqePE5p0_QoeRmFvRgwtyGkx2i0PvA",
+      "keyId": "k.2162c968acd9491c",
+      "claims": "eyJ2ZXJzaW9uIjoxLCAidG9rZW4iOiJhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0IiwiZW52aXJvbm1lbnQiOiJwcm9kdWN0aW9uIiwiaHViIjoiU0hBMjU2OjhrUkdBUXQ3VlNBYW90Q3BsZ1BJdEdHYUFHT1ZUUk5MdGp2cXhZWnZ3VHMiLCJwcmVmZXJlbmNlIjoiYWxsIiwiZXBvY2giOjEsImlzc3VlZEF0IjoxNzk1NjAwMDAwLCJleHBpcmVzQXQiOjE3OTY4MDk2MDB9",
+      "signature": "MEUCIQCwYghI6DzkRTUyDbklt-UbejR9HXhuOk3X_gWOfIQrWQIgZW34oD0mCZIjJJMlvqezmmDaHJn2HGJMcc1U0RNom4w",
+      "parse": "refused",
+      "signatureValid": true,
+      "verdict": "reject"
+    },
+    {
+      "name": "reordered",
+      "why": "The token before the version: the same meaning, other bytes.",
+      "key": "BMV1AByxD1QDzhQkzgrRosoD6QQ1FH_fADLlf6x_qiTUkq1YWSSlie5yxUqePE5p0_QoeRmFvRgwtyGkx2i0PvA",
+      "keyId": "k.2162c968acd9491c",
+      "claims": "eyJ0b2tlbiI6ImExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDQiLCJ2ZXJzaW9uIjoxLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJodWIiOiJTSEEyNTY6OGtSR0FRdDdWU0Fhb3RDcGxnUEl0R0dhQUdPVlRSTkx0anZxeFladndUcyIsInByZWZlcmVuY2UiOiJhbGwiLCJlcG9jaCI6MSwiaXNzdWVkQXQiOjE3OTU2MDAwMDAsImV4cGlyZXNBdCI6MTc5NjgwOTYwMH0",
+      "signature": "MEYCIQCAjmttk0w3Y5vmTT1IvBvQs25yxoKLfToLcccMAvSkXwIhAOUDCBZs2BS08qz-CYGdfwKvk9ZtBd6b4cdb-FptaVPO",
+      "parse": "refused",
+      "signatureValid": true,
+      "verdict": "reject"
+    },
+    {
+      "name": "float",
+      "why": "An epoch written as a float.",
+      "key": "BMV1AByxD1QDzhQkzgrRosoD6QQ1FH_fADLlf6x_qiTUkq1YWSSlie5yxUqePE5p0_QoeRmFvRgwtyGkx2i0PvA",
+      "keyId": "k.2162c968acd9491c",
+      "claims": "eyJ2ZXJzaW9uIjoxLCJ0b2tlbiI6ImExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDQiLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJodWIiOiJTSEEyNTY6OGtSR0FRdDdWU0Fhb3RDcGxnUEl0R0dhQUdPVlRSTkx0anZxeFladndUcyIsInByZWZlcmVuY2UiOiJhbGwiLCJlcG9jaCI6MS4wLCJpc3N1ZWRBdCI6MTc5NTYwMDAwMCwiZXhwaXJlc0F0IjoxNzk2ODA5NjAwfQ",
+      "signature": "MEQCIH91NuFUoYHm32M-PutR4_g62TSxR2PR6OudpUcST0HwAiBfrr3LmvbXqGzBGlpM38CLkh0vD8znfUN42_LaFL7EHw",
+      "parse": "refused",
+      "signatureValid": true,
+      "verdict": "reject"
+    },
+    {
+      "name": "unknown_field",
+      "why": "A field version 1 does not have.",
+      "key": "BMV1AByxD1QDzhQkzgrRosoD6QQ1FH_fADLlf6x_qiTUkq1YWSSlie5yxUqePE5p0_QoeRmFvRgwtyGkx2i0PvA",
+      "keyId": "k.2162c968acd9491c",
+      "claims": "eyJ2ZXJzaW9uIjoxLCJ0b2tlbiI6ImExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDQiLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJodWIiOiJTSEEyNTY6OGtSR0FRdDdWU0Fhb3RDcGxnUEl0R0dhQUdPVlRSTkx0anZxeFladndUcyIsInByZWZlcmVuY2UiOiJhbGwiLCJlcG9jaCI6MSwiaXNzdWVkQXQiOjE3OTU2MDAwMDAsImNvbXB1dGVyIjoib3RoZXIiLCJleHBpcmVzQXQiOjE3OTY4MDk2MDB9",
+      "signature": "MEYCIQCVpUgx_mRend8DIRBWG3NDkuR0GHOedi0ge-cqcpdSJAIhAId8iCWll1r8D5O5-tzho96Ep5gjGNqyN8RrUi-Wsdm4",
+      "parse": "refused",
+      "signatureValid": true,
+      "verdict": "reject"
+    },
+    {
+      "name": "uppercase_token",
+      "why": "The canonical token is lowercase hex.",
+      "key": "BMV1AByxD1QDzhQkzgrRosoD6QQ1FH_fADLlf6x_qiTUkq1YWSSlie5yxUqePE5p0_QoeRmFvRgwtyGkx2i0PvA",
+      "keyId": "k.2162c968acd9491c",
+      "claims": "eyJ2ZXJzaW9uIjoxLCJ0b2tlbiI6IkExQjJDM0Q0QTFCMkMzRDRBMUIyQzNENEExQjJDM0Q0QTFCMkMzRDRBMUIyQzNENEExQjJDM0Q0QTFCMkMzRDQiLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJodWIiOiJTSEEyNTY6OGtSR0FRdDdWU0Fhb3RDcGxnUEl0R0dhQUdPVlRSTkx0anZxeFladndUcyIsInByZWZlcmVuY2UiOiJhbGwiLCJlcG9jaCI6MSwiaXNzdWVkQXQiOjE3OTU2MDAwMDAsImV4cGlyZXNBdCI6MTc5NjgwOTYwMH0",
+      "signature": "MEUCIQCSnr0PBBJkeLLZwwfBZPvGysmnauJLXBfzoPaoIFzCAQIgUu0H7LqafJQ_W8SoEwN_iD73BSFlHk3CzGwHdph3UVU",
+      "parse": "refused",
+      "signatureValid": true,
+      "verdict": "reject"
+    },
+    {
+      "name": "hub_not_a_fingerprint",
+      "why": "The hub must be a whole certificate fingerprint.",
+      "key": "BMV1AByxD1QDzhQkzgrRosoD6QQ1FH_fADLlf6x_qiTUkq1YWSSlie5yxUqePE5p0_QoeRmFvRgwtyGkx2i0PvA",
+      "keyId": "k.2162c968acd9491c",
+      "claims": "eyJ2ZXJzaW9uIjoxLCJ0b2tlbiI6ImExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDQiLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJodWIiOiJTSEEyNTY6c2hvcnQiLCJwcmVmZXJlbmNlIjoiYWxsIiwiZXBvY2giOjEsImlzc3VlZEF0IjoxNzk1NjAwMDAwLCJleHBpcmVzQXQiOjE3OTY4MDk2MDB9",
+      "signature": "MEYCIQDbe8kd5f8yqpWeXi_oWov1ttcEeY_61FGj1vrFGlSCsgIhAO73xIyifSZGF9tlvYTSoHC_3OdeO1VghHhMTElZPzgj",
+      "parse": "refused",
+      "signatureValid": true,
+      "verdict": "reject"
+    },
+    {
+      "name": "unknown_version",
+      "why": "A later claims version: the desktop passes it through, a version 1 service refuses it.",
+      "key": "BMV1AByxD1QDzhQkzgrRosoD6QQ1FH_fADLlf6x_qiTUkq1YWSSlie5yxUqePE5p0_QoeRmFvRgwtyGkx2i0PvA",
+      "keyId": "k.2162c968acd9491c",
+      "claims": "eyJ2ZXJzaW9uIjoyLCJ0b2tlbiI6ImExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDQiLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJodWIiOiJTSEEyNTY6OGtSR0FRdDdWU0Fhb3RDcGxnUEl0R0dhQUdPVlRSTkx0anZxeFladndUcyIsInByZWZlcmVuY2UiOiJhbGwiLCJlcG9jaCI6MSwiaXNzdWVkQXQiOjE3OTU2MDAwMDAsImV4cGlyZXNBdCI6MTc5NjgwOTYwMH0",
+      "signature": "MEQCIHvGV5QZY8CsZ5CV2gStA60muoGMp4O7vxkb92keYXG5AiBCSsnWCH5PC1OdQv4QPxvwT-PKuYawwxP6BKupv-4Jog",
+      "parse": "unknown",
+      "signatureValid": true,
+      "verdict": "reject"
+    },
+    {
+      "name": "point_not_on_curve",
+      "why": "The key's y coordinate with one bit changed is not on P-256.",
+      "key": "BMV1AByxD1QDzhQkzgrRosoD6QQ1FH_fADLlf6x_qiTUkq1YWSSlie5yxUqePE5p0_QoeRmFvRgwtyGkx2i0PvE",
+      "keyId": "k.bd0cc66a2d7f65c1",
+      "claims": "eyJ2ZXJzaW9uIjoxLCJ0b2tlbiI6ImExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDQiLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJodWIiOiJTSEEyNTY6OGtSR0FRdDdWU0Fhb3RDcGxnUEl0R0dhQUdPVlRSTkx0anZxeFladndUcyIsInByZWZlcmVuY2UiOiJhbGwiLCJlcG9jaCI6MSwiaXNzdWVkQXQiOjE3OTU2MDAwMDAsImV4cGlyZXNBdCI6MTc5NjgwOTYwMH0",
+      "signature": "MEYCIQDyAcvAwjadHTPDfpxBuEodSTe9iAktCjwsj4kQmueCWwIhAJ0bBnM5jMSLk-qCGHfPusQz0IxXOjoJBNmukGERRaVF",
+      "parse": "known",
+      "signatureValid": false,
+      "verdict": "reject"
+    },
+    {
+      "name": "lifetime_over_maximum",
+      "why": "A grant one second longer than 15 days.",
+      "key": "BMV1AByxD1QDzhQkzgrRosoD6QQ1FH_fADLlf6x_qiTUkq1YWSSlie5yxUqePE5p0_QoeRmFvRgwtyGkx2i0PvA",
+      "keyId": "k.2162c968acd9491c",
+      "claims": "eyJ2ZXJzaW9uIjoxLCJ0b2tlbiI6ImExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDRhMWIyYzNkNGExYjJjM2Q0YTFiMmMzZDQiLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJodWIiOiJTSEEyNTY6OGtSR0FRdDdWU0Fhb3RDcGxnUEl0R0dhQUdPVlRSTkx0anZxeFladndUcyIsInByZWZlcmVuY2UiOiJhbGwiLCJlcG9jaCI6MSwiaXNzdWVkQXQiOjE3OTU2MDAwMDAsImV4cGlyZXNBdCI6MTc5Njg5NjAwMX0",
+      "signature": "MEQCIGRKA8YT9WPVKWoKykCWt3Lsg3rlYU4-iF4ShV4xmaagAiBEP8rmiY5U3olvf9b7983DmCIP7iDTdonMgttgYdRXzg",
+      "parse": "known",
+      "signatureValid": true,
+      "verdict": "reject"
+    }
+  ]
+}

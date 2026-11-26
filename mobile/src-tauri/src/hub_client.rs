@@ -878,6 +878,7 @@ mod tests {
             chat_sessions: Vec::new(),
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
+            push_registration: None,
             sessions: Vec::new(),
             unreachable: vec![dure_hub_protocol::catalog::UnreachableBox {
                 box_id: "gate1".to_string(),

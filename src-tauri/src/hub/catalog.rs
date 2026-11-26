@@ -261,6 +261,7 @@ mod tests {
             chat_sessions: Vec::new(),
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
+            push_registration: None,
             sessions: vec![entry_from(&descriptor(), "this-laptop", "이 노트북")],
             unreachable: Vec::new(),
         };
@@ -307,6 +308,7 @@ mod tests {
             chat_sessions: Vec::new(),
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
+            push_registration: None,
             sessions: Vec::new(),
             unreachable: vec![UnreachableBox {
                 box_id: "gate1".into(),
@@ -327,6 +329,7 @@ mod tests {
             chat_sessions: Vec::new(),
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
+            push_registration: None,
             sessions: Vec::new(),
             unreachable: Vec::new(),
         };

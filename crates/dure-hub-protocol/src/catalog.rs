@@ -256,6 +256,13 @@ pub struct HubCatalog {
     /// catalog version stays.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub chat_sessions: Vec<crate::agent_chat::HubChatSession>,
+    /// The push registration this desktop reads (#660):
+    /// [`crate::push::PUSH_REGISTRATION_VERSION`] when it takes
+    /// [`crate::hello::HubRequest::UpdatePushSubscriptionV2`]. Absent from an
+    /// older desktop, so the phone keeps sending it V1; an older phone
+    /// ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push_registration: Option<u16>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -470,6 +477,33 @@ mod tests {
         assert!(!older.approval_answer);
     }
 
+    /// Like `chat_sessions`: a phone that predates the field reads a
+    /// catalog that carries it, and a desktop that predates it sends none,
+    /// which a newer phone reads as "send V1 here".
+    #[test]
+    fn the_push_registration_capability_is_optional_both_ways() {
+        #[derive(Deserialize)]
+        struct OlderPhoneCatalog {
+            hub_catalog_version: u16,
+            sessions: Vec<HubCatalogEntry>,
+        }
+
+        let mut served = catalog();
+        served.push_registration = Some(crate::push::PUSH_REGISTRATION_VERSION);
+        let encoded = encode(&served).unwrap();
+        assert_eq!(read(&mut encoded.as_slice()).unwrap(), served);
+        let older: OlderPhoneCatalog = serde_json::from_slice(&encoded[4..]).unwrap();
+        assert_eq!(
+            (older.hub_catalog_version, older.sessions.len()),
+            (HUB_CATALOG_VERSION, 1)
+        );
+
+        let without = serde_json::to_value(catalog()).unwrap();
+        assert!(without.get("push_registration").is_none());
+        let from_older_desktop: HubCatalog = serde_json::from_value(without).unwrap();
+        assert_eq!(from_older_desktop.push_registration, None);
+    }
+
     /// 구조체 리터럴인 것이 의도다: 매니페스트에 필드가 늘면 컴파일이 깨져
     /// 허용 목록을 다시 보게 된다.
     fn entry() -> HubCatalogEntry {
@@ -502,6 +536,7 @@ mod tests {
             chat_sessions: Vec::new(),
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
+            push_registration: None,
             sessions: vec![entry()],
             unreachable: vec![UnreachableBox {
                 box_id: "box-2".to_string(),

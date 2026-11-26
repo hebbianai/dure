@@ -305,6 +305,7 @@ mod tests {
             sessions: entries,
             unreachable: Vec::new(),
             layout: None,
+            push_registration: None,
             chat_sessions: Vec::new(),
         };
         let ack = dure_hub_protocol::hello::HubHelloAck {

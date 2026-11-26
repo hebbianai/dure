@@ -32,6 +32,7 @@ fn catalog_fixture() -> HubCatalog {
     HubCatalog {
         hub_catalog_version: HUB_CATALOG_VERSION,
         layout: None,
+        push_registration: None,
         sessions: Vec::new(),
         chat_sessions: Vec::new(),
         unreachable: vec![UnreachableBox {

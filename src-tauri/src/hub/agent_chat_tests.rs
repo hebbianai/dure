@@ -985,6 +985,7 @@ fn a_paired_phone_watches_over_tls() {
                 chat_sessions: Vec::new(),
                 hub_catalog_version: HUB_CATALOG_VERSION,
                 layout: None,
+                push_registration: None,
                 sessions: Vec::new(),
                 unreachable: Vec::new(),
             }

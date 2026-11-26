@@ -3174,6 +3174,7 @@ mod tests {
             sessions: Vec::new(),
             unreachable: Vec::new(),
             layout: None,
+            push_registration: None,
             chat_sessions: vec![dure_hub_protocol::agent_chat::HubChatSession {
                 agent_id: "agent-1".into(),
                 provider_id: "claude".into(),
