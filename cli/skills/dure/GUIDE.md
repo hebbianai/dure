@@ -82,14 +82,17 @@ dure stop <agent-id> --yes --json
 
 This stops the selected Agent through its owning runtime, then removes its
 registration and panes. Workspaces, worktrees and conversation history are
-preserved. Use the exact Agent ID for retries or `project/name` when names repeat.
+preserved, but the Agent cannot be restarted in place afterwards: `dure runs
+resume <agent-id>` names its conversation for `dure runs resume --conversation`,
+which continues it in a new Agent. Use the exact Agent ID for retries or
+`project/name` when names repeat.
 The selected Dure app, chosen by `DURE_APP_CHANNEL`, routes each Agent it presents
-to its own backend. `--backend` is not accepted here.
-A Run the app has not opened, such as a schedule occurrence, or any Run on a host
-without the Dure app, is stopped through its Run record on `DURE_BACKEND_PROFILE`
-or the local backend; select it by Agent ID, operation ID or Run name from
-`dure runs list` or `dure schedule runs`. A saved stop that names an earlier
-runtime generation is planned again before it is applied.
+to its own backend. A Run the app has not opened, such as a schedule occurrence or
+a headless Run on a remote backend, or any Run on a host without the Dure app, is
+stopped through its Run record on the backend selected by `--backend ID`,
+`DURE_BACKEND_PROFILE` or the local backend; select it by Agent ID, operation ID
+or Run name from `dure runs list` or `dure schedule runs`. A saved stop that
+names an earlier runtime generation is planned again before it is applied.
 `dure hmux stop --name ... --yes --json` uses the same path, including for Agents
 created by `dure run`. Do not inject `/exit` or kill a PID to bypass `dispatch.stop`.
 Read `dure stop --help` for options. Exit 0 with `ok: true` confirms cleanup;
@@ -156,21 +159,28 @@ child with `state` (`turn_completed`, `attention_required`, `exited`,
 Exit 0 met, 1 met but a settled child needs action, 2 unknown (no linked
 children, or the rest can't be observed), 124 deadline. An idle child that has
 finished a turn counts as settled, so after you send a child more work, wait on
-that child with `dure wait <child>` instead. Chat-runtime children are
+that child with `dure wait AGENT_ID` instead; it follows a child on either
+runtime and, without the app, finds it by its Run record. A chat-runtime child
+is read through its committed conversation: a finished turn is named by
+`turnCompletedSequence`, its position in the conversation, where a terminal
+child reports `turnCompletedCount`. A backend without
+`agent_spawn.conversation_observation.v1` reports chat-runtime children
 `unobservable`; read them with `dure transcript AGENT_ID`. Links grant nothing:
 stopping a parent does not stop its children yet.
 
-The parent also hears from its terminal children without waiting. Each time a
-child finishes a turn and is idle, needs input or approval, stops on an error,
-exits or is stopped, the backend opens one inbox Message on the parent's Session
-and wakes it, as `dure send --track` does (`agent_spawn.child_result_delivery.v1`).
-Its title says what happened (`fix-12 finished a turn`, `fix-12 needs approval`,
-`fix-12 exited`). A finished turn or exit carries the child's final response and
-any GitHub pull request links in it; every Message names the child's Agent and Run.
-Read it with the installed dure-orchestration tools. Each outcome is sent once,
-also across a backend restart. Only a parent whose managed Session is still
-running and enrolled in the inbox receives Messages; a parent that restarted into
-a new Session, and chat-runtime children, are not covered yet.
+The parent also hears from its children without waiting, on the terminal or the
+chat runtime. Each time a child finishes a turn and is idle, needs input or
+approval, stops on an error, exits or is stopped, the backend opens one inbox
+Message on the parent's Session and wakes it, as `dure send --track` does
+(`agent_spawn.child_result_delivery.v1`). Its title says what happened (`fix-12
+finished a turn`, `fix-12 needs approval`, `fix-12 exited`). A finished turn or
+exit carries the child's final response and any GitHub pull request links in it;
+every Message names the child's Agent and Run and how to read it (`dure read` for
+a terminal child, `dure transcript AGENT_ID` for a chat child). Read it with the
+installed dure-orchestration tools. Each outcome is sent once, also across a
+backend restart. Only a parent whose managed Session is still running and
+enrolled in the inbox receives Messages; a parent that restarted into a new
+Session, or runs on the chat runtime itself, is not covered yet.
 
 `--project` and `--path` are mutually exclusive. Both select an existing backend
 registration. `--path` selects the deepest registered project containing that
@@ -219,8 +229,8 @@ the best available split; this does not create another Space or rearrange the
 existing layout. Explicit split directions and drop positions are respected.
 Outside a provable pane, the Run remains headless. A headless Run uses the
 provider's chat runtime when the host has one and has no Session; read it with
-`dure transcript <agent-id>` and inspect it with `dure runs show <agent-id>`,
-not `dure read`. A local Run the connected app adopts stays a terminal
+`dure transcript <agent-id>`, inspect it with `dure runs show <agent-id>` and
+wait for its next finished turn with `dure wait <agent-id>`, not `dure read`. A local Run the connected app adopts stays a terminal
 session. If that exact Session
 is visible in multiple Spaces, specify `--space`; Dure will not guess. A pane
 failure never replays or stops a successful Run: `dure run` exits 3 with
@@ -349,7 +359,8 @@ current existing runtime without launching another provider. `resume` preserves
 the conversation: a confirmed stopped source with a waiting deferred target uses
 backend wake; an existing native source uses the local recovery broker. Both work
 without an open app and publish the new binding. A retained Run record alone does
-not prove reboot recovery is possible.
+not prove reboot recovery is possible. A `retry_required` or `failed` launch whose
+Agent never got a runtime does not make its name ambiguous.
 
 When no Agent the backend holds can resume a conversation, for example after
 the Agent was removed, start a new one from its provider conversation ID:
@@ -418,7 +429,8 @@ returned `continuation.finish` (`dure hmux rehost finish ...`): it waits on that
 exact operation and publishes it once, never starts another, and is safe to
 repeat until it exits 0. Resuming an Agent whose source Hmux already holds a
 restart for continues that operation. Then use `open` to place the recovered
-Run. Remote resume requires execution on its host.
+Run. On an SSH backend, wake and restart run from the client; a native rehost
+runs on the backend's host.
 For headless input/output, use the Session/workspace pair from `show` with
 `read`, local `send`, and `send-keys`; an Agent name requires client registration. Direct Session
 input verifies the current Host generation without requiring an app registry.
@@ -812,12 +824,14 @@ exact-session operation) and require resolving the current session again.
 as its current Session, so it cannot report yet: a restart that has not
 published its binding (`dure runs resume <agent>` shows it and how to finish
 it), or a provider started outside a Dure Agent. Resending the same lookup
-cannot help. `session_dispatch_unassigned` on a lookup or send to another
-Session means that Session is live but has not opened its durable inbox: a
-Session opens its own inbox when its provider resolves its orchestration
-context, at session start or at its first orchestration tool call. Running
-`dure orchestration tool orchestration_context_get_current` in that Session
-opens it; no other Session can.
+cannot help. `orchestration_interaction_profile_unsupported` (terminal) means
+the agent runs on its Chat runtime, which has no orchestration inbox: report the
+result in the conversation instead of restarting or creating another Run.
+`session_dispatch_unassigned` on a message to another Session (for
+example `dure send --track`) means that Session is live but has not opened its
+durable inbox for its current generation; its agent opens one when it resolves
+its own orchestration context. Reach it without `--track` meanwhile; resending
+the same message cannot help.
 
 ## Delegated workflows are not orchestration Dispatches
 

@@ -53,7 +53,14 @@ export type UsageLimitHandoffView =
 			readonly decision?: UsageLimitHandoffDecision;
 	  }
 	| { readonly kind: "deciding" }
-	| { readonly kind: "decided"; readonly decision: UsageLimitHandoffDecision };
+	| { readonly kind: "decided"; readonly decision: UsageLimitHandoffDecision }
+	/** The backend continues the failed turn on the same account at `atMs`,
+	 * after the limit resets; the person can still act first. */
+	| {
+			readonly kind: "continues";
+			readonly atMs: number;
+			readonly decision?: UsageLimitHandoffDecision;
+	  };
 
 /** Manual account suggestions and the backend's observed automatic outcome.
  * Mounting a conversation never changes its account or sends retained input. */
@@ -214,6 +221,16 @@ export function useUsageLimitHandoff({
 					? { kind: "decided", decision }
 					: { kind: "deciding" };
 	if (recovery && !episode && recovery.stopped?.kind !== "superseded") {
+		if (
+			recovery.resumeAtMs !== undefined &&
+			!recovery.stopped &&
+			recovery.turnState === null
+		) {
+			return {
+				view: { kind: "continues", atMs: recovery.resumeAtMs, decision },
+				requestHandoff,
+			};
+		}
 		if (recovery.stopped || recovery.turnState === "failed") {
 			return {
 				view: {

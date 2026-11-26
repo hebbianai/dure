@@ -9,10 +9,20 @@ use dure_app::{AgentSpawnEffortSelectionV1, AgentSpawnModelSelectionV1};
 use reqwest::{Client, Method, Response, StatusCode};
 use serde_json::{Value, json};
 
+/// What the client reads of one answer, unless it is one provider record.
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
-const PAGE_SIZE: usize = 100;
-const MAX_HISTORY_MESSAGES: usize = 10_000;
-const MAX_HISTORY_BYTES: usize = 64 * 1024 * 1024;
+/// What the client reads of one provider record: one message, alone or as a
+/// page of one, or one event. Codex and Pi connections hold one record within
+/// the same bound. A record cannot be read in smaller parts, and OpenCode
+/// keeps what a message carries whole: its `read` tool attaches an image or
+/// PDF to the message in full, encoded, whatever its size.
+const MAX_RECORD_BYTES: usize = 64 * 1024 * 1024;
+/// Message page sizes, largest first. A page whose answer is over its bound
+/// is read again at the next smaller size, down to one message.
+const PAGE_SIZES: [usize; 3] = [100, 10, 1];
+/// What a page that skips one message too large to read counts toward a
+/// history window: more than any answer of several messages.
+const UNREADABLE_MESSAGE_BYTES: usize = MAX_RESPONSE_BYTES + 1;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SessionId(String);
@@ -116,11 +126,25 @@ impl OpenCodeSessionClient {
     }
 
     async fn json(&self, method: Method, path: &str, body: Option<Value>) -> Result<Value, Error> {
+        self.json_within(method, path, body, MAX_RESPONSE_BYTES)
+            .await
+    }
+
+    async fn json_within(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        bound: usize,
+    ) -> Result<Value, Error> {
         let mut request = self.request(method, path).timeout(Duration::from_secs(30));
         if let Some(body) = body {
             request = request.json(&body);
         }
-        read_json(request.send().await.map_err(|_| Error::Unavailable)?).await
+        let response = request.send().await.map_err(|_| Error::Unavailable)?;
+        read_json_sized(response, bound)
+            .await
+            .map(|(value, _)| value)
     }
 
     pub(crate) async fn health(&self) -> Result<String, Error> {
@@ -216,6 +240,26 @@ impl OpenCodeSessionClient {
         Ok(())
     }
 
+    /// Records a user message that asks for no reply, as another client of
+    /// the same conversation may have recorded it.
+    #[cfg(test)]
+    pub(crate) async fn record_without_reply(
+        &self,
+        id: &SessionId,
+        message_id: &str,
+        input: &str,
+    ) -> Result<(), Error> {
+        let mut body = prompt_body(message_id, input, None, None)?;
+        body["noReply"] = json!(true);
+        self.json(
+            Method::POST,
+            &format!("/session/{}/prompt_async", id.as_str()),
+            Some(body),
+        )
+        .await?;
+        Ok(())
+    }
+
     pub(crate) async fn message(
         &self,
         id: &SessionId,
@@ -225,10 +269,11 @@ impl OpenCodeSessionClient {
             return Err(Error::Identity);
         }
         match self
-            .json(
+            .json_within(
                 Method::GET,
                 &format!("/session/{}/message/{message_id}", id.as_str()),
                 None,
+                MAX_RECORD_BYTES,
             )
             .await
         {
@@ -244,69 +289,78 @@ impl OpenCodeSessionClient {
         }
     }
 
-    /// Pagination uses only opaque cursors on the same exact session endpoint.
-    /// A full newer provider snapshot is the source for reconnect convergence.
-    pub(crate) async fn messages(&self, id: &SessionId) -> Result<Vec<Value>, Error> {
-        let mut pages = Vec::new();
-        let mut before = None;
-        let mut cursors = BTreeSet::new();
-        let mut message_ids = BTreeSet::new();
-        let mut total_bytes = 0_usize;
-        loop {
-            let mut query = vec![("limit", PAGE_SIZE.to_string())];
-            if let Some(cursor) = before.take() {
-                query.push(("before", cursor));
-            }
-            let response = self
-                .request(Method::GET, &format!("/session/{}/message", id.as_str()))
-                .query(&query)
-                .timeout(Duration::from_secs(30))
-                .send()
-                .await
-                .map_err(|_| Error::Unavailable)?;
-            let next = response
-                .headers()
-                .get("x-next-cursor")
-                .map(|header| {
-                    header
-                        .to_str()
-                        .map(str::to_owned)
-                        .map_err(|_| Error::Protocol)
-                })
-                .transpose()?;
-            let page = read_json(response)
-                .await?
-                .as_array()
-                .ok_or(Error::Protocol)?
-                .clone();
-            total_bytes = total_bytes.saturating_add(
-                serde_json::to_vec(&page)
-                    .map_err(|_| Error::Protocol)?
-                    .len(),
-            );
-            if total_bytes > MAX_HISTORY_BYTES {
-                return Err(Error::Limit);
-            }
-            if page.len() > PAGE_SIZE || (next.is_some() && page.is_empty()) {
-                return Err(Error::Protocol);
-            }
-            for message in &page {
-                let message_id = verify_message(message, id)?;
-                if !message_ids.insert(message_id.to_owned()) {
-                    return Err(Error::Identity);
-                }
-            }
-            if message_ids.len() > MAX_HISTORY_MESSAGES {
-                return Err(Error::Limit);
-            }
-            pages.push(page);
-            let Some(cursor) = next else { break };
-            if cursor.is_empty() || cursor.len() > 4096 || !cursors.insert(cursor.clone()) {
-                return Err(Error::Protocol);
-            }
-            before = Some(cursor);
+    /// The session's messages, newest page first, which a caller reads back as
+    /// far as it needs.
+    pub(crate) fn message_pages<'a>(&'a self, id: &'a SessionId) -> MessagePages<'a> {
+        MessagePages {
+            client: self,
+            session: id,
+            before: None,
+            exhausted: false,
+            size: 0,
+            cursors: BTreeSet::new(),
+            message_ids: BTreeSet::new(),
         }
-        Ok(pages.into_iter().rev().flatten().collect())
+    }
+
+    /// The session's whole history, oldest first.
+    #[cfg(test)]
+    pub(crate) async fn messages(&self, id: &SessionId) -> Result<Vec<Value>, Error> {
+        let mut pages = self.message_pages(id);
+        let mut newest_first = Vec::new();
+        while let Some(page) = pages.next().await? {
+            newest_first.push(page.messages);
+        }
+        Ok(newest_first.into_iter().rev().flatten().collect())
+    }
+
+    /// One page of at most `limit` messages before the opaque cursor, oldest
+    /// first, or `None` when its answer is over [`page_bound`]; and the
+    /// cursor of the page before it.
+    async fn message_page(
+        &self,
+        id: &SessionId,
+        before: Option<&str>,
+        limit: usize,
+    ) -> Result<(Option<MessagePage>, Option<String>), Error> {
+        let mut query = vec![("limit", limit.to_string())];
+        if let Some(cursor) = before {
+            query.push(("before", cursor.to_owned()));
+        }
+        let response = self
+            .request(Method::GET, &format!("/session/{}/message", id.as_str()))
+            .query(&query)
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        let next = response
+            .headers()
+            .get("x-next-cursor")
+            .map(|header| {
+                header
+                    .to_str()
+                    .map(str::to_owned)
+                    .map_err(|_| Error::Protocol)
+            })
+            .transpose()?;
+        let (value, bytes) = match read_json_sized(response, page_bound(limit)).await {
+            Ok(answer) => answer,
+            Err(Error::Limit) => return Ok((None, next)),
+            Err(error) => return Err(error),
+        };
+        let Value::Array(messages) = value else {
+            return Err(Error::Protocol);
+        };
+        if messages.len() > limit || (next.is_some() && messages.is_empty()) {
+            return Err(Error::Protocol);
+        }
+        let page = MessagePage {
+            messages,
+            bytes,
+            unreadable: false,
+        };
+        Ok((Some(page), next))
     }
 
     pub(crate) async fn is_busy(&self, id: &SessionId) -> Result<bool, Error> {
@@ -344,6 +398,7 @@ impl OpenCodeSessionClient {
         Ok(OpenCodeEvents {
             response,
             buffer: Vec::new(),
+            searched: 0,
         })
     }
 
@@ -410,28 +465,103 @@ impl PendingKind {
     }
 }
 
+/// One page of a session's messages, oldest first.
+pub(crate) struct MessagePage {
+    pub(crate) messages: Vec<Value>,
+    /// The size in bytes of the provider's answer for this page.
+    pub(crate) bytes: usize,
+    /// The page is one message too large to read, which it skips: it holds
+    /// no messages.
+    pub(crate) unreadable: bool,
+}
+
+/// A session's messages, read back from the newest through opaque cursors on
+/// the same exact session endpoint. Each message belongs to the session and
+/// appears once across pages.
+pub(crate) struct MessagePages<'a> {
+    client: &'a OpenCodeSessionClient,
+    session: &'a SessionId,
+    before: Option<String>,
+    exhausted: bool,
+    /// The index in [`PAGE_SIZES`] the next page is first asked for at.
+    size: usize,
+    cursors: BTreeSet<String>,
+    message_ids: BTreeSet<String>,
+}
+
+impl MessagePages<'_> {
+    /// The page before the last one read, or `None` past the session's start.
+    /// A message alone over the record bound is skipped unread, as an
+    /// [`MessagePage::unreadable`] page.
+    pub(crate) async fn next(&mut self) -> Result<Option<MessagePage>, Error> {
+        if self.exhausted {
+            return Ok(None);
+        }
+        let (page, next) = loop {
+            let (page, next) = self
+                .client
+                .message_page(self.session, self.before.as_deref(), PAGE_SIZES[self.size])
+                .await?;
+            match page {
+                Some(page) => break (page, next),
+                None if self.size + 1 < PAGE_SIZES.len() => self.size += 1,
+                None => {
+                    let page = MessagePage {
+                        messages: Vec::new(),
+                        bytes: UNREADABLE_MESSAGE_BYTES,
+                        unreadable: true,
+                    };
+                    break (page, next);
+                }
+            }
+        };
+        // The next page starts at the largest size whose answer the average
+        // message of this one fits, so pages of large messages are not first
+        // asked for at a size they cannot be read at.
+        if let Some(average) = page.bytes.checked_div(page.messages.len()) {
+            self.size = PAGE_SIZES
+                .iter()
+                .position(|size| average.saturating_mul(*size) <= page_bound(*size))
+                .unwrap_or(PAGE_SIZES.len() - 1);
+        }
+        for message in &page.messages {
+            let message_id = verify_message(message, self.session)?;
+            if !self.message_ids.insert(message_id.to_owned()) {
+                return Err(Error::Identity);
+            }
+        }
+        match next {
+            Some(cursor) => {
+                if cursor.is_empty() || cursor.len() > 4096 || !self.cursors.insert(cursor.clone())
+                {
+                    return Err(Error::Protocol);
+                }
+                self.before = Some(cursor);
+            }
+            None => self.exhausted = true,
+        }
+        Ok(Some(page))
+    }
+
+    /// Whether older messages precede the last page read.
+    pub(crate) fn has_older(&self) -> bool {
+        !self.exhausted
+    }
+}
+
 pub(crate) struct OpenCodeEvents {
     response: Response,
     buffer: Vec<u8>,
+    /// How much of `buffer` is known to hold no whole frame, so a frame as
+    /// large as one record arriving in many chunks is searched once.
+    searched: usize,
 }
 
 impl OpenCodeEvents {
     pub(crate) async fn next(&mut self) -> Result<Value, Error> {
         loop {
-            let boundary = self
-                .buffer
-                .windows(2)
-                .position(|bytes| bytes == b"\n\n")
-                .map(|end| end + 2)
-                .into_iter()
-                .chain(
-                    self.buffer
-                        .windows(4)
-                        .position(|bytes| bytes == b"\r\n\r\n")
-                        .map(|end| end + 4),
-                )
-                .min();
-            if let Some(end) = boundary {
+            if let Some(end) = frame_end(&self.buffer, self.searched) {
+                self.searched = 0;
                 let frame = self.buffer.drain(..end).collect::<Vec<_>>();
                 let frame = std::str::from_utf8(&frame).map_err(|_| Error::Protocol)?;
                 let data = frame
@@ -444,17 +574,35 @@ impl OpenCodeEvents {
                 }
                 continue;
             }
+            self.searched = self.buffer.len();
             let chunk = tokio::time::timeout(Duration::from_secs(45), self.response.chunk())
                 .await
                 .map_err(|_| Error::Unavailable)?
                 .map_err(|_| Error::Unavailable)?
                 .ok_or(Error::Unavailable)?;
-            if self.buffer.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+            if self.buffer.len().saturating_add(chunk.len()) > MAX_RECORD_BYTES {
                 return Err(Error::Limit);
             }
             self.buffer.extend_from_slice(&chunk);
         }
     }
+}
+
+/// Where the first frame in `buffer` ends, after its blank line, when the
+/// bytes before `searched` hold none. A blank line can start up to three
+/// bytes before them.
+fn frame_end(buffer: &[u8], searched: usize) -> Option<usize> {
+    let start = searched.saturating_sub(3);
+    let rest = buffer.get(start..)?;
+    let lf = rest
+        .windows(2)
+        .position(|bytes| bytes == b"\n\n")
+        .map(|at| at + 2);
+    let crlf = rest
+        .windows(4)
+        .position(|bytes| bytes == b"\r\n\r\n")
+        .map(|at| at + 4);
+    lf.into_iter().chain(crlf).min().map(|end| start + end)
 }
 
 fn prompt_body(
@@ -525,22 +673,33 @@ fn verify_message<'a>(message: &'a Value, session: &SessionId) -> Result<&'a str
     Ok(id)
 }
 
-async fn read_json(mut response: Response) -> Result<Value, Error> {
+/// The bound of a page of `messages`: a page of one message is one record.
+fn page_bound(messages: usize) -> usize {
+    if messages == 1 {
+        MAX_RECORD_BYTES
+    } else {
+        MAX_RESPONSE_BYTES
+    }
+}
+
+/// The answer's JSON and its size, within `bound`.
+async fn read_json_sized(mut response: Response, bound: usize) -> Result<(Value, usize), Error> {
     let status = response.status();
     if !status.is_success() {
         return Err(Error::Rejected(status.as_u16()));
     }
     if status == StatusCode::NO_CONTENT {
-        return Ok(Value::Null);
+        return Ok((Value::Null, 0));
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| Error::Unavailable)? {
-        if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+        if bytes.len().saturating_add(chunk.len()) > bound {
             return Err(Error::Limit);
         }
         bytes.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)
+    let value = serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
+    Ok((value, bytes.len()))
 }
 
 #[cfg(test)]

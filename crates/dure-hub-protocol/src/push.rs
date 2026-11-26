@@ -1,6 +1,20 @@
 //! Push registration belongs to a paired device, not a terminal attachment.
 use serde::{Deserialize, Serialize};
 
+mod grant;
+mod registration;
+
+pub use grant::{
+    MAX_GRANT_CLAIMS_BYTES, MAX_GRANT_SIGNATURE_BYTES, PUSH_GRANT_CONTEXT,
+    PUSH_GRANT_LIFETIME_SECS, PUSH_GRANT_MAX_FUTURE_SKEW_SECS, PUSH_GRANT_MAX_LIFETIME_SECS,
+    PUSH_GRANT_VERSION, PUSH_KEY_BYTES, PushChallenge, PushGrant, PushGrantClaims,
+    PushGrantClaimsRead, PushGrantError, PushNonce, grant_signing_input, push_key_id,
+};
+pub use registration::{
+    MAX_RESULT_BYTES, PUSH_REGISTRATION_VERSION, PushRefusal, PushRegistration,
+    PushRegistrationResult, encode_registration_result, read_registration_result,
+};
+
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(try_from = "String", into = "String")]
 pub struct ApnsToken(String);

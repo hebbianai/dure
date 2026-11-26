@@ -37,7 +37,8 @@ pub(super) fn item(
         provider_message_id: provider_id
             .map(|id| AgentProviderMessageIdV1::new(format!("opencode-{id}")).map_err(store_error))
             .transpose()?,
-        body,
+        // One oversized part must not fail its whole message.
+        body: body.fitted(),
         created_at_ms,
     };
     item.validate().map_err(store_error)?;

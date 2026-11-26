@@ -11,13 +11,14 @@ import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
 // The backend keeps profile directory locators private, so names, sign-in and
 // usage are joined on this computer: each local profile directory carries the
 // generation marker the backend fences launches with. Usage comes from the
-// caches the app's account usage meter reads: Claude's statusLine collector
-// writes one per profile directory, and the Codex usage collector keys
-// snapshots by account ID.
+// caches the app's account usage meter reads: the app's account usage check
+// keys each provider's readings by account ID, and Claude's statusLine
+// collector writes one per profile directory, its fallback.
 const PROFILE_GENERATION_FILE = ".dure-profile-generation-v1";
 const MAX_PROFILE_GENERATION_BYTES = 192;
 const MAX_CLAUDE_USAGE_CACHE_BYTES = 64 * 1024;
-const MAX_CODEX_USAGE_CACHE_BYTES = 4 * 1024 * 1024;
+const MAX_USAGE_CHECK_CACHE_BYTES = 4 * 1024 * 1024;
+const USAGE_CHECK_CACHES = { claude: "claude-usage-snapshots.json", codex: "codex-usage-snapshots.json" };
 const USAGE_READERS = { claude: claudeUsageReader, codex: codexUsageReader };
 const SIGN_IN_READERS = { claude: claudeSignInReader };
 const CLAUDE_CREDENTIAL_FILE = ".credentials.json";
@@ -97,12 +98,15 @@ function usageWindow(usedPercent, resetsAtSeconds, nowMs) {
 }
 
 /** A window is null when the provider did not report it or it reset after
- * the capture. Credits, usage resets and the latest check exist only where the
- * provider's collector records them. */
-function usageSummary({ fiveHour = null, weekly = null, capturedAtSeconds, credits = null,
-  usageResetsAvailable = null, lastCheck = null }) {
-  if (!fiveHour && !weekly && !credits && usageResetsAvailable === null && !lastCheck) return null;
-  return { fiveHour, weekly,
+ * the capture. `modelWeekly` holds each model's own weekly window and
+ * `otherWindows` the windows Dure does not know, by the provider's name.
+ * Credits, usage resets and the latest check exist only where the provider's
+ * collector records them. */
+function usageSummary({ fiveHour = null, weekly = null, modelWeekly = [], otherWindows = [],
+  capturedAtSeconds, credits = null, usageResetsAvailable = null, lastCheck = null }) {
+  if (!fiveHour && !weekly && !modelWeekly.length && !otherWindows.length && !credits &&
+      usageResetsAvailable === null && !lastCheck) return null;
+  return { fiveHour, weekly, modelWeekly, otherWindows,
     observedAtMs: Number.isSafeInteger(capturedAtSeconds) ? capturedAtSeconds * 1000 : null,
     credits, usageResetsAvailable, lastCheck };
 }
@@ -115,17 +119,60 @@ function readJson(path, maxBytes) {
   }
 }
 
-/** Claude's statusLine collector cache, one file per profile directory under
- * the platform home (as the app reads it). Claude windows always carry a reset. */
-function claudeUsageReader({ homeDirectory, nowMs }) {
+/** The app's account usage check for one provider: every entry, kept
+ * whatever its credential, for `loginCheck` to pick a login's entries from. */
+function readUsageCheck(appRoot, providerId) {
+  const cache = readJson(join(appRoot, USAGE_CHECK_CACHES[providerId]), MAX_USAGE_CHECK_CACHE_BYTES);
+  return cache?.schemaVersion === 1 && Array.isArray(cache.snapshots)
+    ? cache.snapshots.filter((entry) => entry && typeof entry === "object") : [];
+}
+
+/** A login's newest successful reading among its account IDs, and its newest
+ * check, which may have failed since and keeps the last reading. */
+function loginCheck(snapshots, referenceIds) {
+  const login = snapshots.filter((entry) => referenceIds.includes(entry.credentialId));
+  const attempt = newestBy(login, "attemptedAt");
+  return { snapshot: newestBy(login, "capturedAt"),
+    lastCheck: attempt ? { checkedAtMs: attempt.attemptedAt * 1000,
+      error: typeof attempt.error === "string" && attempt.error ? attempt.error : null } : null };
+}
+
+const CLAUDE_MODEL_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,63}$/u;
+const CLAUDE_WINDOW_NAME = /^[a-z0-9_]{1,64}$/u;
+
+/** Claude's windows from the app's account usage check, and the statusLine
+ * collector's cache (one file per profile directory under the platform home)
+ * as the fallback. The newer of the two gives the 5-hour and weekly windows;
+ * each model's own weekly window comes only from the check. */
+function claudeUsageReader({ appRoot, homeDirectory, nowMs }) {
   const root = join(homeDirectory, ".dure", "usage", "claude-rate-limits");
-  return ({ profileName }) => {
-    if (!profileName) return null;
-    const limits = readJson(join(root, `${profileName}.json`), MAX_CLAUDE_USAGE_CACHE_BYTES);
-    const window = (value) => Number.isSafeInteger(value?.resets_at)
+  const snapshots = readUsageCheck(appRoot, "claude");
+  return ({ profileName, referenceIds }) => {
+    const { snapshot, lastCheck } = loginCheck(snapshots, referenceIds);
+    const windows = Array.isArray(snapshot?.windows)
+      ? snapshot.windows.filter((window) => window && typeof window === "object") : [];
+    const checked = (window) => usageWindow(window?.usedPercent, window?.resetsAt, nowMs);
+    const limits = profileName
+      ? readJson(join(root, `${profileName}.json`), MAX_CLAUDE_USAGE_CACHE_BYTES) : null;
+    const line = (value) => Number.isSafeInteger(value?.resets_at)
       ? usageWindow(value.used_percentage, value.resets_at, nowMs) : null;
-    return usageSummary({ fiveHour: window(limits?.rate_limits?.five_hour),
-      weekly: window(limits?.rate_limits?.seven_day), capturedAtSeconds: limits?.captured_at });
+    const fromLine = Number.isSafeInteger(limits?.captured_at) &&
+      !(Number.isSafeInteger(snapshot?.capturedAt) && snapshot.capturedAt >= limits.captured_at);
+    const general = (kind) => checked(windows.find((window) => window.kind === kind));
+    const scoped = (kind, valid, key) => windows
+      .filter((window) => window.kind === kind && typeof window[key] === "string" && valid.test(window[key]))
+      .flatMap((window) => {
+        const current = checked(window);
+        return current ? [{ [key === "id" ? "name" : key]: window[key], ...current }] : [];
+      });
+    return usageSummary({
+      fiveHour: fromLine ? line(limits.rate_limits?.five_hour) : general("fiveHour"),
+      weekly: fromLine ? line(limits.rate_limits?.seven_day) : general("weekly"),
+      modelWeekly: scoped("modelWeekly", CLAUDE_MODEL_NAME, "model"),
+      otherWindows: scoped("other", CLAUDE_WINDOW_NAME, "id"),
+      capturedAtSeconds: fromLine ? limits.captured_at : snapshot?.capturedAt,
+      lastCheck,
+    });
   };
 }
 
@@ -243,13 +290,9 @@ function codexCredits(credits) {
  * account IDs; the general "codex" limit is the account's budget. A failed
  * probe keeps the last successful reading and records its own attempt. */
 function codexUsageReader({ appRoot, nowMs }) {
-  const cache = readJson(join(appRoot, "codex-usage-snapshots.json"), MAX_CODEX_USAGE_CACHE_BYTES);
-  const snapshots = cache?.schemaVersion === 1 && Array.isArray(cache.snapshots)
-    ? cache.snapshots.filter((entry) => entry && typeof entry === "object") : [];
+  const snapshots = readUsageCheck(appRoot, "codex");
   return ({ referenceIds }) => {
-    const login = snapshots.filter((entry) => referenceIds.includes(entry.credentialId));
-    const snapshot = newestBy(login, "capturedAt");
-    const attempt = newestBy(login, "attemptedAt");
+    const { snapshot, lastCheck } = loginCheck(snapshots, referenceIds);
     const general = Array.isArray(snapshot?.rateLimits)
       ? snapshot.rateLimits.find((limit) => limit?.limitId === "codex") : undefined;
     const resets = snapshot?.rateLimitResetsAvailable;
@@ -259,8 +302,7 @@ function codexUsageReader({ appRoot, nowMs }) {
       capturedAtSeconds: snapshot?.capturedAt,
       credits: codexCredits(general?.credits),
       usageResetsAvailable: Number.isSafeInteger(resets) && resets >= 0 ? resets : null,
-      lastCheck: attempt ? { checkedAtMs: attempt.attemptedAt * 1000,
-        error: typeof attempt.error === "string" && attempt.error ? attempt.error : null } : null,
+      lastCheck,
     });
   };
 }
@@ -320,7 +362,14 @@ function duration(ms) {
   return hours % 24 ? `${Math.floor(hours / 24)}d ${hours % 24}h` : `${Math.floor(hours / 24)}d`;
 }
 
-const CHECK_FAILURES = { codex_usage_not_signed_in: "not signed in" };
+const CHECK_FAILURES = {
+  codex_usage_not_signed_in: "not signed in",
+  claude_usage_not_signed_in: "not signed in",
+  // Claude Code renews its own login the next time the account is used.
+  claude_usage_login_expired: "login expired",
+  claude_usage_login_rejected: "login refused",
+  claude_usage_rate_limited: "rate limited",
+};
 
 function formatCheckFailure({ checkedAtMs, error }, nowMs) {
   const reason = CHECK_FAILURES[error] ?? (/^[a-z0-9_]{1,80}$/u.test(error) ? error : "error");
@@ -336,7 +385,9 @@ function formatUsage(usage, nowMs) {
       : `resets in ${duration(value.resetsAtMs - nowMs)}`;
     return `${label} ${Math.round(value.usedPercent)}% (${reset})`;
   };
-  const windows = [["5h", usage.fiveHour], ["weekly", usage.weekly]]
+  const windows = [["5h", usage.fiveHour], ["weekly", usage.weekly],
+    ...(usage.modelWeekly ?? []).map((value) => [`weekly ${value.model}`, value]),
+    ...(usage.otherWindows ?? []).map((value) => [value.name, value])]
     .filter(([, value]) => value).map(([label, value]) => window(label, value));
   const { credits, usageResetsAvailable, lastCheck } = usage;
   return [...(windows.length ? windows : ["usage unknown"]),

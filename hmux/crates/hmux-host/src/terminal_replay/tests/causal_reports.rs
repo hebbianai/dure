@@ -590,3 +590,121 @@ fn late_state_failure_restores_causal_identity_and_watermark() {
     assert!(replay.provider_conversation_identity().is_none());
     assert_eq!(replay.report_causality, before);
 }
+
+/// A provider turn that fails ends without a completion (Claude's
+/// StopFailure). Once ordered reports own the epoch, a plain idle report
+/// cannot end the turn, so the failure carries its attention: that ends the
+/// working turn without counting a completion, and the next turn clears it.
+#[test]
+fn a_failed_causal_turn_ends_with_its_attention_not_a_plain_idle() {
+    let mut replay = replay_with_limits(TerminalReplayLimits::default());
+    let now = Instant::now();
+    let ended = |sequence, work: &str, attention| {
+        let mut report = causal(sequence, work, false);
+        report.activity = AgentRuntimeActivity::Waiting;
+        report.attention = attention;
+        report
+    };
+    replay
+        .apply_agent_state_report_at(causal(10, "first-turn", false), now)
+        .unwrap();
+    assert_eq!(
+        replay
+            .apply_agent_state_report_at(ended(11, "first-turn", AgentRuntimeAttention::None), now)
+            .unwrap(),
+        AgentStateReportFold::NoOp
+    );
+    assert_eq!(
+        replay.agent_runtime_state().unwrap().activity,
+        AgentRuntimeActivity::Working
+    );
+    for (sequence, work, next_work, attention) in [
+        (
+            12,
+            "first-turn",
+            "second-turn",
+            AgentRuntimeAttention::Error,
+        ),
+        (
+            14,
+            "second-turn",
+            "third-turn",
+            AgentRuntimeAttention::InputRequired,
+        ),
+    ] {
+        let state = applied(
+            replay
+                .apply_agent_state_report_at(ended(sequence, work, attention), now)
+                .unwrap(),
+        );
+        assert_eq!(state.activity, AgentRuntimeActivity::Waiting);
+        assert_eq!(state.attention, attention);
+        assert_eq!(state.turn_completed_count, 0);
+        replay
+            .apply_agent_state_report_at(causal(sequence + 1, next_work, false), now)
+            .unwrap();
+        let next = replay.agent_runtime_state().unwrap();
+        assert_eq!(next.activity, AgentRuntimeActivity::Working);
+        assert_eq!(next.attention, AgentRuntimeAttention::None);
+    }
+}
+
+#[test]
+fn a_failed_turn_admits_the_next_prompt_to_its_conversation_but_no_fresh_brief() {
+    let existing = existing_conversation_prompt_target();
+    let fresh = fresh_agent_prompt_target();
+    let now = Instant::now();
+    for (sequence, attention, admits_existing) in [
+        (10, AgentRuntimeAttention::Error, true),
+        (20, AgentRuntimeAttention::InputRequired, false),
+        (30, AgentRuntimeAttention::ApprovalRequired, false),
+    ] {
+        let (mut replay, _) = provider_ready_for_agent_prompt();
+        replay
+            .apply_agent_state_report_at(causal(sequence, "failed-turn", false), now)
+            .unwrap();
+        assert_eq!(
+            replay.agent_prompt_admission(&existing),
+            AgentPromptAdmission::Refused
+        );
+        let mut ended = causal(sequence + 1, "failed-turn", false);
+        ended.activity = AgentRuntimeActivity::Waiting;
+        ended.attention = attention;
+        let ended = applied(replay.apply_agent_state_report_at(ended, now).unwrap());
+
+        // An API error ended the turn at the provider's own prompt: a message
+        // to the conversation, such as an inbox wake, continues it. A question
+        // or an approval would take the prompt as its answer.
+        assert_eq!(
+            replay.agent_prompt_admission(&existing),
+            if admits_existing {
+                AgentPromptAdmission::Eligible
+            } else {
+                AgentPromptAdmission::Refused
+            },
+            "{attention:?}"
+        );
+        assert_eq!(
+            replay.prepare_agent_prompt(&existing),
+            admits_existing.then_some(ended.revision),
+            "{attention:?}"
+        );
+        assert_eq!(
+            replay.agent_prompt_admission(&fresh),
+            AgentPromptAdmission::Refused,
+            "{attention:?}"
+        );
+        assert_eq!(replay.has_open_provider_prompt(), !admits_existing);
+
+        // The turn that message starts clears the failure.
+        replay
+            .apply_agent_state_report_at(causal(sequence + 2, "next-turn", false), now)
+            .unwrap();
+        let next = replay.agent_runtime_state().unwrap();
+        assert_eq!(next.attention, AgentRuntimeAttention::None);
+        assert_eq!(
+            replay.agent_prompt_admission(&existing),
+            AgentPromptAdmission::Refused
+        );
+    }
+}

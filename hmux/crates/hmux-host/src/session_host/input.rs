@@ -1,6 +1,8 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use super::{ProviderEpoch, SessionHost, SessionHostError};
 use crate::local_protocol::{AgentRuntimeStateProjection, SessionFence};
-use crate::terminal_replay::ControllerDraftEdit;
+use crate::terminal_replay::{AgentPromptKey, ControllerDraftEdit};
 
 impl SessionHost {
     /// Consumes fresh-prompt authority after a controller-to-PTY operation may
@@ -41,20 +43,48 @@ impl SessionHost {
     /// Records one accepted edit of the person's unsubmitted line. Typed
     /// characters are counted and Backspaces count against them, so a draft
     /// that was typed and then erased again stops refusing draft-guarded
-    /// automation and inbox wakes without waiting for an Enter.
+    /// automation and inbox wakes without waiting for an Enter. Returns the
+    /// projection to publish when that releases held agent prompts.
     pub fn record_controller_draft_edit(
         &mut self,
         expected_fence: &SessionFence,
         edit: ControllerDraftEdit,
-    ) -> Result<(), SessionHostError> {
+    ) -> Result<Option<AgentRuntimeStateProjection>, SessionHostError> {
         let ProviderEpoch::Running { replay, .. } = &mut self.current else {
             return Err(SessionHostError::SessionExited);
         };
         expected_fence
             .ensure_matches(replay.fence())
             .map_err(|_| SessionHostError::FenceMismatch)?;
-        replay.record_controller_draft_edit(edit);
-        Ok(())
+        replay
+            .record_controller_draft_edit(edit)
+            .map_err(SessionHostError::from)
+    }
+
+    /// Records that the person's unsent input refused an agent prompt to the
+    /// running conversation, so the pane and session listings can say how
+    /// many prompts it holds and since when. Returns the projection to
+    /// publish when that count changed.
+    pub fn hold_agent_prompt(
+        &mut self,
+        expected_fence: &SessionFence,
+        prompt: AgentPromptKey,
+    ) -> Result<Option<AgentRuntimeStateProjection>, SessionHostError> {
+        let ProviderEpoch::Running { replay, .. } = &mut self.current else {
+            return Err(SessionHostError::SessionExited);
+        };
+        expected_fence
+            .ensure_matches(replay.fence())
+            .map_err(|_| SessionHostError::FenceMismatch)?;
+        let now_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
+        replay
+            .hold_agent_prompt(prompt, now_unix_ms)
+            .map_err(SessionHostError::from)
     }
 
     /// Reports whether accepted draft-capable controller input still awaits a

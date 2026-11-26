@@ -222,12 +222,9 @@ async fn orchestration_observation_stale_session_remains_fenced() {
     assert_context_observation(ObservationFault::StaleSession).await;
 }
 
-/// Hmux observes this Session generation as live, but no Agent binds it as
-/// its current Session: for example the new Session of a restart whose
-/// binding is not published yet. Resending the same enrollment cannot help.
-#[tokio::test]
-async fn enrolling_a_live_session_no_agent_binds_is_stale_not_retryable() {
-    let (_root, state, launcher, _) = fixture_with_delivery(Vec::new(), Vec::new()).await;
+/// The enrollment body for a Session that Hmux observes live and no Agent
+/// binds as its current Session.
+async fn live_unbound_session(state: &ServiceState) -> (Value, WorkflowSessionGenerationV1) {
     let mut body = existing_session_run_body();
     body["session"]["sessionId"] = json!("unbound-session");
     body["session"]["runnerInstance"] = json!("unbound-instance");
@@ -256,9 +253,19 @@ async fn enrolling_a_live_session_no_agent_binds_is_stale_not_retryable() {
         .unwrap(),
     )
     .unwrap();
-    verify_exact_orchestration_session(&state, &session)
+    verify_exact_orchestration_session(state, &session)
         .await
         .unwrap();
+    (body, session)
+}
+
+/// Hmux observes this Session generation as live, but no Agent binds it as
+/// its current Session: for example the new Session of a restart whose
+/// binding is not published yet. Resending the same enrollment cannot help.
+#[tokio::test]
+async fn enrolling_a_live_session_no_agent_binds_is_stale_not_retryable() {
+    let (_root, state, launcher, _) = fixture_with_delivery(Vec::new(), Vec::new()).await;
+    let (body, session) = live_unbound_session(&state).await;
 
     let unassigned = dispatch(
         &state,
@@ -312,58 +319,130 @@ async fn enrolling_a_live_session_no_agent_binds_is_stale_not_retryable() {
     );
 }
 
-/// `dure send --track` resolves the destination's context before it opens
-/// the Message. A live Session that never enrolled has no inbox yet: both
-/// steps name that reason instead of a bare generation conflict, refuse
-/// terminally, and enroll nothing on the destination's behalf (f-XHEFD).
+/// A Chat runtime that hosts exactly one Hmux Session generation.
+struct HostingChatRuntime {
+    session: WorkflowSessionGenerationV1,
+}
+
+impl structured_provider_runtime::StructuredProviderRuntime for HostingChatRuntime {
+    fn open(
+        &self,
+        _request: structured_provider_runtime::StructuredProviderOpenRequestV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'_, AgentInteractionBindingV1>
+    {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn attach_existing<'a>(
+        &'a self,
+        _selection: &'a AgentRuntimeSelectionV1,
+        _binding: &'a AgentInteractionBindingV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'a, AgentInteractionBindingV1>
+    {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn open_replacement<'a>(
+        &'a self,
+        _request: structured_provider_runtime::StructuredProviderOpenRequestV1,
+        _transition: &'a dure_app::AgentRuntimeTransitionRecordV1,
+        _provider_state_environment: hmux_client::ProviderStateEnvironment,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'a, AgentInteractionBindingV1>
+    {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn stop_replacement_source<'a>(
+        &'a self,
+        _transition: &'a dure_app::AgentRuntimeTransitionRecordV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'a, ()> {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn retire_replacement_source<'a>(
+        &'a self,
+        _transition: &'a dure_app::AgentRuntimeTransitionRecordV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<
+        'a,
+        dure_app::AgentRuntimeReplacementAuthorityV1,
+    > {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn stop_current<'a>(
+        &'a self,
+        _binding: &'a AgentInteractionBindingV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'a, ()> {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn hosts_session<'a>(
+        &'a self,
+        session: &'a WorkflowSessionGenerationV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'a, bool> {
+        Box::pin(async move { Ok(*session == self.session) })
+    }
+}
+
+/// A Chat (structured) runtime runs its provider inside an Hmux Session that no
+/// Agent binds as a terminal Session, so its orchestration tools cannot
+/// enroll. The refusal names the Chat runtime and is terminal: resending, a
+/// restart or another Run cannot give a Chat runtime an orchestration inbox.
 #[tokio::test]
-async fn exact_session_send_names_a_live_session_that_has_no_inbox() {
-    let (_root, state, launcher, prompt_deliverer) =
-        fixture_with_delivery(Vec::new(), Vec::new()).await;
-    let session_value = existing_session_run_body()["session"].clone();
-    let session = serde_json::from_value(session_value.clone()).unwrap();
-    verify_exact_orchestration_session(&state, &session)
-        .await
-        .unwrap();
-    for (request_id, method, body) in [
-        (
-            "unenrolled-context",
-            "dispatch.context.get.exact-session",
-            json!({ "schemaVersion": 1, "session": session_value }),
-        ),
-        (
-            "unenrolled-message",
-            "interaction.message.open.exact-session",
-            json!({
-                "schemaVersion": 1,
-                "session": session_value,
-                "expectedEndpointRef": "endpoint-unresolved",
-                "idempotencyKey": "message-to-unenrolled-session",
-                "interactionId": "message-to-unenrolled-session",
-                "title": "Review the bounded change",
-                "descriptionMarkdown": "Report through the durable inbox.",
-                "openedAtMs": 1_100
-            }),
-        ),
-    ] {
+async fn enrolling_a_chat_runtime_session_is_refused_as_terminal() {
+    let (_root, mut state, launcher, _) = fixture_with_delivery(Vec::new(), Vec::new()).await;
+    let (body, session) = live_unbound_session(&state).await;
+    let hosting = |hosted: WorkflowSessionGenerationV1| {
+        let mut runtimes =
+            structured_provider_runtime::StructuredProviderRuntimeRegistry::default();
+        runtimes
+            .register(
+                hosted.provider_id.clone(),
+                Arc::new(HostingChatRuntime { session: hosted }),
+            )
+            .unwrap();
+        Arc::new(runtimes)
+    };
+
+    // A Chat runtime that hosts another generation leaves this Session's
+    // missing-binding refusal unchanged.
+    let mut elsewhere = session.clone();
+    elsewhere.runner_instance = "elsewhere-instance".into();
+    state.structured_runtimes = hosting(elsewhere);
+    let error = dispatch(
+        &state,
+        &orchestration_backend_request(&state, "chat-enroll-elsewhere", "run.create", body.clone()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        error.details.as_ref().unwrap()["reasonCode"],
+        "session_agent_binding_missing"
+    );
+
+    state.structured_runtimes = hosting(session.clone());
+    for attempt in 0..2 {
         let error = dispatch(
             &state,
-            &orchestration_backend_request(&state, request_id, method, body),
+            &orchestration_backend_request(
+                &state,
+                &format!("chat-enroll-{attempt}"),
+                "run.create",
+                body.clone(),
+            ),
         )
         .await
         .unwrap_err();
-        assert_eq!(error.code, "orchestration_generation_conflict", "{method}");
+        assert_eq!(error.code, "orchestration_interaction_profile_unsupported");
         assert_eq!(
             error.details.as_ref().unwrap()["reasonCode"],
-            "session_dispatch_unassigned",
-            "{method}"
+            "structured_protocol"
         );
-        assert_eq!(
-            error.disposition,
-            BackendFailureDispositionV1::Terminal,
-            "{method}"
-        );
+        assert_eq!(error.disposition, BackendFailureDispositionV1::Terminal);
+        let wire = backend_error_body(error);
+        assert_eq!(wire["details"]["disposition"], "terminal");
     }
+    assert!(launcher.requests().is_empty());
     assert!(
         state
             .store
@@ -373,6 +452,89 @@ async fn exact_session_send_names_a_live_session_that_has_no_inbox() {
             .target
             .is_none()
     );
+}
+
+/// Hmux observes this Session generation as live, but no Dispatch binds it, so
+/// it has no durable inbox yet. A sender's tracked message (`dure send
+/// --track`) has nowhere to go; every context path names that reason instead
+/// of a bare generation conflict, and only the Session's own lookup may enroll.
+#[tokio::test]
+async fn a_live_session_without_a_dispatch_names_its_missing_inbox() {
+    let (_root, state, launcher, prompt_deliverer) =
+        fixture_with_delivery(Vec::new(), Vec::new()).await;
+    let session: WorkflowSessionGenerationV1 =
+        serde_json::from_value(existing_session_run_body()["session"].clone()).unwrap();
+    verify_exact_orchestration_session(&state, &session)
+        .await
+        .unwrap();
+    let context = json!({"schemaVersion": 1, "session": session});
+    let message = json!({
+        "schemaVersion": 1,
+        "session": session,
+        "expectedEndpointRef": "endpoint-never-opened",
+        "idempotencyKey": "message-to-unassigned-session",
+        "interactionId": "message-to-unassigned-session",
+        "title": "[dure send · from lead]",
+        "descriptionMarkdown": "A tracked message.",
+        "openedAtMs": 1_100
+    });
+    for (label, method, body, disposition) in [
+        (
+            "unassigned-context",
+            "dispatch.context.get",
+            context.clone(),
+            BackendFailureDispositionV1::Unassigned,
+        ),
+        (
+            "unassigned-exact-context",
+            "dispatch.context.get.exact-session",
+            context,
+            BackendFailureDispositionV1::Terminal,
+        ),
+        (
+            "unassigned-exact-message",
+            "interaction.message.open.exact-session",
+            message,
+            BackendFailureDispositionV1::Terminal,
+        ),
+    ] {
+        let error = dispatch(
+            &state,
+            &orchestration_backend_request(&state, label, method, body),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "orchestration_generation_conflict", "{method}");
+        assert_eq!(
+            error.details.as_ref().unwrap()["reasonCode"],
+            "session_dispatch_unassigned",
+            "{method}"
+        );
+        assert_eq!(error.disposition, disposition, "{method}");
+    }
+    let batch = invoke_orchestration(
+        &state,
+        "unassigned-batch",
+        "dispatch.context.get.batch",
+        json!({"schemaVersion": 1, "sessions": [session]}),
+    )
+    .await;
+    let error = &batch["receipt"]["results"][0]["error"];
+    assert_eq!(error["code"], "orchestration_generation_conflict");
+    assert_eq!(
+        error["details"]["reasonCode"],
+        "session_dispatch_unassigned"
+    );
+    assert_eq!(error["details"]["disposition"], "unassigned");
     assert!(launcher.requests().is_empty());
     assert!(prompt_deliverer.requests().is_empty());
+    assert!(
+        state
+            .store
+            .inspect_orchestration_dispatch_session(&session)
+            .await
+            .unwrap()
+            .target
+            .is_none()
+    );
 }

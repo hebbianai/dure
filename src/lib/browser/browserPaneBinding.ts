@@ -8,7 +8,10 @@ import {
 	parseDureBackendRouteAuthority,
 	sameDureBackendRouteAuthority,
 } from "@/lib/ipc/dureBackendRoute";
-import { isDureDomainIdV1 } from "@/lib/ipc/dureProtocolIdentity";
+import {
+	isDureBackendProfileIdV1,
+	isDureDomainIdV1,
+} from "@/lib/ipc/dureProtocolIdentity";
 import { asRecord } from "@/lib/payloadGuards";
 
 /** Mounted content declares its purpose; saved-layout ingress handles legacy IDs. */
@@ -72,18 +75,26 @@ export function sameBrowserPaneCreation(
 }
 
 /** Parse persisted presentation state once. A pending mutation retains its
- * exact route and operation; malformed state cannot become a fresh create. */
+ * exact route and operation; malformed state cannot become a fresh create.
+ * `profileId` is the backend a view was opened for, which it connects to
+ * until it has a route of its own; without one it follows the selected
+ * backend. */
 export function readBrowserPaneBinding(params: {
 	browserBinding?: unknown;
 	browserCreation?: unknown;
+	backendProfileId?: unknown;
 }): {
 	binding?: BrowserPaneBinding;
 	creation?: BrowserPaneCreation;
+	profileId?: string;
 	error?: unknown;
 } {
 	try {
 		let binding: BrowserPaneBinding | undefined;
 		let creation: BrowserPaneCreation | undefined;
+		const profileId = params.backendProfileId;
+		if (profileId !== undefined && !isDureBackendProfileIdV1(profileId))
+			throw new Error("browser_saved_profile_invalid");
 		if (params.browserBinding != null) {
 			const raw = asRecord(params.browserBinding);
 			const authority = parseDureBackendRouteAuthority(raw?.authority);
@@ -126,8 +137,25 @@ export function readBrowserPaneBinding(params: {
 				operationId: raw.operationId,
 			};
 		}
-		return { binding, creation };
+		return {
+			binding,
+			creation,
+			...(profileId === undefined ? {} : { profileId }),
+		};
 	} catch (error) {
 		return { error };
 	}
+}
+
+/** The backend profile a Browser view runs on: its pending or saved route,
+ * else the profile it was opened for. Undefined follows the selected backend. */
+export function browserPaneBackendProfileId(
+	params: Parameters<typeof readBrowserPaneBinding>[0],
+): string | undefined {
+	const saved = readBrowserPaneBinding(params);
+	return (
+		saved.creation?.authority.profileId ??
+		saved.binding?.authority.profileId ??
+		saved.profileId
+	);
 }

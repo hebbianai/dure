@@ -381,6 +381,8 @@ mod tests {
             turn_completed_count: turns.to_string(),
             program_status: None,
             background_work: false,
+            held_prompts: None,
+            turn_failure: None,
         }
     }
 

@@ -19,8 +19,7 @@ import {
 	useBasicFoldedRailTabs,
 	useEffectiveSidebarTab,
 } from "@/components/workspace/useInterfaceMode";
-import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
-import { countAttentionDisplayStates } from "@/lib/spaces/spacesStateFilter";
+import { useNeedsPerson } from "@/components/agents/useNeedsPerson";
 import {
 	pluginLocalizedText,
 	type DurePluginViewContainer,
@@ -137,10 +136,9 @@ export function ActivityRail({
 	const sidebarTab = useEffectiveSidebarTab();
 	const setSidebarTab = useWindowSidebarStore((state) => state.setTab);
 	const toggleSidebar = useWindowSidebarStore((state) => state.toggle);
-	const agentDisplayStates = useAgentAttention(
-		(state) => state.displayStates,
-	);
-	const spacesAttentionCount = countAttentionDisplayStates(agentDisplayStates);
+	// The same needs-person map as Next up, the Dock badge and the Spaces
+	// rollups, so the count never disagrees with the list it leads to.
+	const spacesAttentionCount = useNeedsPerson().size;
 	const language = useStore((state) => state.language);
 	const lang = resolveLang(language);
 	const updateNotices = useUpdateNoticeSnapshot();

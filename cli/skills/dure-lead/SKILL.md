@@ -189,8 +189,9 @@ Observe; do not steer by typing into terminals unless §5 says so.
 dure inspect SESSION_ID --workspace WORKSPACE_ID --json     # one worker, exact
 dure ls --json                        # everyone on this backend; page with --cursor start, then pagination.nextCursor
 dure ls --all-backends --json         # everyone on every configured backend; backends[] says which ones answered
-dure wait SESSION_ID --workspace WORKSPACE_ID --timeout 900 --json
+dure wait AGENT_ID --timeout 900 --json                    # one worker, terminal or chat
 dure read SESSION_ID --workspace WORKSPACE_ID -n 80         # the screen, when a state needs explaining
+dure transcript AGENT_ID                                    # the conversation of a chat worker
 gh pr list --repo OWNER/REPO --head agent/work-123 --state all \
   --json number,state,isDraft,mergedAt,url
 ```
@@ -201,24 +202,31 @@ The fields that matter, under `session.` in `inspect` and `sessions[].` in `ls`:
 | --- | --- |
 | `liveness.state` | `alive`, `exited` or `unknown`; unknown is a census problem, not an exit |
 | `runtime.agentRuntimeState.activity` | `working`, `waiting` (idle: finished, or asking) or `exited` |
-| `runtime.agentRuntimeState.attention` | `none`, or `input_required` / an approval attention: read the screen |
+| `runtime.agentRuntimeState.attention` | `none`, or `input_required` / an approval attention / `error` (its turn failed): read the screen |
 | `runtime.agentRuntimeState.turnCompletedCount` | rises once per finished turn; an autonomous worker usually needs one or two |
 | `runtime.agentRuntimeState.progress` | may say `progress_unconfirmed` after five quiet minutes of thinking: attention, not failure |
 | `idleSinceMs` | when a waiting worker went quiet (Unix ms); null while it works, needs input, or the Host cannot say |
+| `heldPrompts` | `{count, sinceMs}` while unsent text at the worker's prompt holds messages back, such as your inbox wakes: it is not idle and reads nothing until that text is sent or cleared (`HELD` in the table) |
 | `failure` | a Host-reported failure code, when there is one |
 | `cwd` | must be the worker's worktree |
 
 `dure wait` returns when the worker's next turn completes after the wait
 started: exit 0 means it paused or finished, 124 means your timeout passed and
 it is still working (wait again), 1 means the Host reported a failure or a
-required action (read the screen), 2 unknown. Pass `--after-turn` and
-`--terminal-epoch` from `inspect` (`session.runtime.agentRuntimeState.turnCompletedCount`,
-`session.runtime.generation.terminalEpoch`) to resume a wait exactly. A
+required action (read the screen), 2 unknown. A worker on the chat runtime has
+no `summary.sessionId`, so `inspect` and `read` do not apply to it; `dure wait
+AGENT_ID` follows it through its conversation the same way, and
+`dure transcript AGENT_ID` shows what it said. For a terminal worker, pass
+`--after-turn` and `--terminal-epoch` from `inspect`
+(`session.runtime.agentRuntimeState.turnCompletedCount`,
+`session.runtime.generation.terminalEpoch`) with
+`dure wait SESSION_ID --workspace WORKSPACE_ID` to resume a wait exactly. A
 timeout never stops the worker.
 
 Workers you start from your own terminal pane are linked to you. To sleep until
 the first of them needs you, run `dure wait --children any --timeout 900 --json`;
-`observation.children` names each worker with its state. A worker that has
+`observation.children` names each worker with its state, terminal and chat
+workers alike. A worker that has
 finished a turn stays settled, so once you have handled it, go back to the
 per-worker `dure wait` above for the ones still working. Each linked worker's
 finished turn, request for input or approval, exit or stop also reaches your
@@ -285,6 +293,10 @@ the tracking issue still shows that item as in progress.
   `needs:founder`, put the question in a comment, and continue with other
   items. Product decisions, scope changes and anything that spends money or
   touches users' data are never yours to decide.
+- **Worker's turn failed** (`attention: error`, such as the provider's API
+  being unreachable, a rate limit or a server error). The provider does not
+  retry that turn. Read the screen; once the cause has passed, send one
+  message telling it to continue. Report a failure that keeps returning.
 - **Everything parked on the trust prompt.** §3. Report and wait; do not work
   around it with another account or provider on your own.
 - **The CLI is not what this guide says.** `dure skills status` reports

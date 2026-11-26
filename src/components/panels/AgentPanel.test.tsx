@@ -165,6 +165,48 @@ describe("AgentPanel", () => {
 		).toBe("agent-1");
 	});
 
+	it.each([
+		["native", () => agentFixture({ id: "agent-1" }), () => mocks.nativeProps],
+		["structured", structuredAgent, () => mocks.structuredProps],
+	] as const)(
+		"tells the %s pane to show its status card when the pane is too small to read",
+		(_kind, agent, mountedProps) => {
+			mocks.agent = agent();
+			const size = Object.getOwnPropertyDescriptor(
+				HTMLElement.prototype,
+				"clientWidth",
+			);
+			const height = Object.getOwnPropertyDescriptor(
+				HTMLElement.prototype,
+				"clientHeight",
+			);
+			Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+				configurable: true,
+				get: () => 240,
+			});
+			Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+				configurable: true,
+				get: () => 600,
+			});
+			try {
+				render(<AgentPanel {...props()} />);
+				expect(mountedProps()?.statusCard).toBe(true);
+			} finally {
+				if (size) Object.defineProperty(HTMLElement.prototype, "clientWidth", size);
+				else Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+				if (height)
+					Object.defineProperty(HTMLElement.prototype, "clientHeight", height);
+				else Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+			}
+		},
+	);
+
+	it("keeps a pane with no laid-out size on its live view", () => {
+		mocks.agent = agentFixture({ id: "agent-1" });
+		render(<AgentPanel {...props()} />);
+		expect(mocks.nativeProps?.statusCard).toBe(false);
+	});
+
 	it("owns one history action lease across Native and Structured child replacement", async () => {
 		mocks.agent = agentFixture({ id: "agent-1" });
 		const rendered = render(<AgentPanel {...props()} />);

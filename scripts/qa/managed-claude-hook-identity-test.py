@@ -235,8 +235,49 @@ class ClaudeConversationIdentityTest(unittest.TestCase):
                 {"provider_id": "claude", "conversation_id": "fixture-conversation"},
             )
 
-    def test_other_turn_failures_keep_their_previous_reports(self):
-        for error in ("rate_limit", "server_error", "billing_error", None, 7):
+    def test_any_other_turn_failure_ends_the_turn_with_its_error(self):
+        # Claude Code 2.1.331 with the API unreachable prints "API Error:
+        # Can't reach the API server ... (ENOTFOUND)" and fires SessionStart,
+        # UserPromptSubmit, then StopFailure with `server_error` and no Stop.
+        # The prompt is idle; the session must not stay working.
+        for error in ("server_error", "rate_limit", "billing_error", "unknown", None, 7):
+            native = {
+                "hook_event_name": "StopFailure",
+                "session_id": "fixture-conversation",
+                "prompt_id": "fixture-parent-turn",
+                "last_assistant_message": "API Error: Can't reach the API server",
+            }
+            if error is not None:
+                native["error"] = error
+            for body in (native, json.loads(hook.slim_body(native))):
+                request = hook.claude_report(body, FENCE)
+                result = request["report"]
+                self.assertEqual(result["activity"], "waiting", repr(error))
+                self.assertEqual(result["attention"], "error", repr(error))
+                self.assertFalse(result["turn_completed"])
+                self.assertNotIn("working_ttl_ms", result)
+                self.assertNotIn("turn_completion_id", result)
+                self.assertNotIn("background_work", result)
+                self.assertEqual(result["causality"], {
+                    "sequence": str(hook.HOOK_SOURCE_SEQUENCE),
+                    "work_id": "fixture-parent-turn",
+                })
+
+    def test_a_limit_failure_names_its_reason(self):
+        # Claude Code ends a turn refused at a limit with StopFailure and the
+        # error class `rate_limit` (a capacity 429 included) or
+        # `billing_error`, and no Stop. The class rides beside the error so a
+        # limited account can hand the conversation to another one; any
+        # other failure is a plain provider error.
+        expected = {
+            "rate_limit": "rate_limit",
+            "billing_error": "usage_limit",
+            "server_error": "provider_error",
+            "unknown": "provider_error",
+            None: "provider_error",
+            7: "provider_error",
+        }
+        for error, failure in expected.items():
             native = {
                 "hook_event_name": "StopFailure",
                 "session_id": "fixture-conversation",
@@ -244,7 +285,43 @@ class ClaudeConversationIdentityTest(unittest.TestCase):
             }
             if error is not None:
                 native["error"] = error
-            self.assertIsNone(report(native), repr(error))
+            for body in (native, json.loads(hook.slim_body(native))):
+                request = hook.claude_report(body, FENCE)
+                self.assertEqual(request["schemaVersion"], 2, repr(error))
+                self.assertEqual(request["report"]["attention"], "error", repr(error))
+                self.assertEqual(request["report"]["turn_failure"], failure, repr(error))
+
+        sign_in = hook.claude_report({
+            "hook_event_name": "StopFailure",
+            "session_id": "fixture-conversation",
+            "prompt_id": "fixture-parent-turn",
+            "error": "authentication_failed",
+        }, FENCE)["report"]
+        self.assertEqual(sign_in["attention"], "input_required")
+        self.assertNotIn("turn_failure", sign_in)
+        self.assertIsNone(report({
+            "hook_event_name": "StopFailure",
+            "session_id": "fixture-conversation",
+            "prompt_id": "fixture-parent-turn",
+            "agent_id": "fixture-subagent",
+            "error": "rate_limit",
+        }))
+        # Nothing else carries a failure.
+        stop = report({
+            "hook_event_name": "Stop", "session_id": "fixture-conversation",
+            "prompt_id": "fixture-parent-turn", "background_tasks": [], "session_crons": [],
+        })
+        self.assertNotIn("turn_failure", stop)
+
+    def test_a_subagent_failure_leaves_the_parent_turn_alone(self):
+        for error in ("server_error", "authentication_failed"):
+            self.assertIsNone(report({
+                "hook_event_name": "StopFailure",
+                "session_id": "fixture-conversation",
+                "prompt_id": "fixture-parent-turn",
+                "agent_id": "fixture-subagent",
+                "error": error,
+            }), error)
 
     def test_missing_work_identity_cannot_establish_quiescence(self):
         for prompt_id in (None, "", "invalid id", "short", 7):

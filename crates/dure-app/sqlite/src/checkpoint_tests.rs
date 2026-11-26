@@ -635,8 +635,34 @@ async fn provider_conversation_converges_only_for_the_exact_current_authority() 
             .agent_checkpoint_binding_authority(&expected.binding.agent_id)
             .await
             .unwrap(),
-        Some(converged),
-        "a present conversation must never be replaced"
+        Some(converged.clone()),
+        "an authority that no longer names the recorded conversation cannot advance it"
+    );
+    assert!(matches!(
+        store
+            .converge_agent_checkpoint_provider_conversation(&converged, "conversation-codex")
+            .await,
+        Err(DomainStoreErrorV1::InvalidRecord { .. })
+    ));
+
+    // The Host follows Claude's `/clear` within the same generation; the
+    // binding follows it from the conversation it recorded.
+    let mut continued = converged.clone();
+    continued.binding.provider_conversation_id = Some("conversation-continued".into());
+    assert_eq!(
+        store
+            .converge_agent_checkpoint_provider_conversation(&converged, "conversation-continued")
+            .await
+            .unwrap(),
+        continued
+    );
+    assert_eq!(
+        store
+            .agent_checkpoint_binding_authority(&expected.binding.agent_id)
+            .await
+            .unwrap(),
+        Some(continued),
+        "a continuation must preserve the credential and exact backend fence"
     );
 }
 

@@ -1798,6 +1798,11 @@ IDLE and idleSinceMs say how long, and since when (Unix ms), the Host has seen a
 agent waiting at a quiet prompt; runtime.semanticIdleMs is the raw age. IDLE shows
 - and idleSinceMs is null while the agent works or needs input or approval, and
 when the Host cannot say.
+HELD and heldPrompts ({count, sinceMs}) say how many messages, such as inbox
+wakes, the Host refused because unsent text stands at the agent's prompt, and
+since when. They wait until that text is sent or cleared in the terminal; Dure
+never sends it. HELD shows - and heldPrompts is null when none are held, and
+for Hosts that predate the fact.
 For durable Runs after restart, including headless Runs, use dure runs list.
 Use --cursor start for the first ordered page, then pagination.nextCursor until null.
 Pages are live observations ordered by workspace/session ID, not a frozen snapshot.
@@ -2850,7 +2855,8 @@ async function reportAgentStop(name, opts, receipt, httpOk) {
     await import("./lib/agent-stop-command.mjs");
   const report = stopsRunRecord(receipt, opts)
     ? agentStopReport(await collectRunRecordStop({ selector: name, appReceipt: receipt,
-      resolveBackend: () => backendProfileQueryContext({}) }), true)
+      resolveBackend: () => backendProfileQueryContext(
+        opts.backend === undefined ? {} : { backendSpecified: true, backend: opts.backend }) }), true)
     : agentStopReport(receipt, httpOk);
   const output = opts.json ? JSON.stringify(report) : formatAgentStopReport(report, name);
   (opts.json || report.ok ? process.stdout : process.stderr).write(`${output}\n`);

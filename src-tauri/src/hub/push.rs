@@ -477,103 +477,168 @@ mod tests {
         assert!(registry.load().unwrap()[0].push.is_some());
     }
 
-    #[test]
-    fn paired_tls_off_removes_consent_even_without_a_push_service() {
-        use crate::hub::{
-            catalog::{HubCatalog, HUB_CATALOG_VERSION},
-            server::{CatalogSource, HubServer, HubServices},
-        };
-        use dure_hub_protocol::{frame, hello, push::PushSubscriptionResult};
-        use std::{net::TcpStream, sync::Arc};
+    /// A running hub with one paired phone that has alerts on, reached over
+    /// TLS as any device token.
+    struct PairedHub {
+        server: crate::hub::server::HubServer,
+        registry: std::sync::Arc<super::super::devices::DeviceRegistry>,
+        phone: String,
+        port: u16,
+        config: std::sync::Arc<rustls::ClientConfig>,
+        _root: tempfile::TempDir,
+    }
 
-        struct Catalog;
-        impl CatalogSource for Catalog {
-            fn catalog(&self) -> HubCatalog {
-                HubCatalog {
-                    chat_sessions: Vec::new(),
-                    hub_catalog_version: HUB_CATALOG_VERSION,
-                    layout: None,
-                    sessions: vec![],
-                    unreachable: vec![],
+    impl PairedHub {
+        fn start() -> Self {
+            use crate::hub::{
+                catalog::{HubCatalog, HUB_CATALOG_VERSION},
+                server::{CatalogSource, HubServer, HubServices},
+            };
+            use std::sync::Arc;
+
+            struct Catalog;
+            impl CatalogSource for Catalog {
+                fn catalog(&self) -> HubCatalog {
+                    HubCatalog {
+                        chat_sessions: Vec::new(),
+                        hub_catalog_version: HUB_CATALOG_VERSION,
+                        layout: None,
+                        push_registration: None,
+                        sessions: vec![],
+                        unreachable: vec![],
+                    }
                 }
             }
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            let root = tempfile::tempdir().unwrap();
+            let certificate = identity::load_or_create_certificate(root.path()).unwrap();
+            let registry = Arc::new(super::super::devices::DeviceRegistry::new(root.path()));
+            let phone = registry.register("Phone".into()).unwrap().token;
+            registry
+                .set_push(&phone, Some(subscription("aaaa")))
+                .unwrap();
+            let server = HubServer::default();
+            let port = server
+                .start_with_gateway(
+                    "127.0.0.1",
+                    0,
+                    &certificate,
+                    registry.clone(),
+                    HubServices::catalog_only(Arc::new(Catalog)),
+                )
+                .unwrap()
+                .port
+                .unwrap();
+            let mut roots = rustls::RootCertStore::empty();
+            roots
+                .add(rustls::pki_types::CertificateDer::from(certificate.der))
+                .unwrap();
+            let config = Arc::new(
+                rustls::ClientConfig::builder()
+                    .with_root_certificates(roots)
+                    .with_no_client_auth(),
+            );
+            Self {
+                server,
+                registry,
+                phone,
+                port,
+                config,
+                _root: root,
+            }
         }
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let root = tempfile::tempdir().unwrap();
-        let certificate = identity::load_or_create_certificate(root.path()).unwrap();
-        let registry = Arc::new(super::super::devices::DeviceRegistry::new(root.path()));
-        let phone = registry.register("Phone".into()).unwrap();
-        registry
-            .set_push(&phone.token, Some(subscription("aaaa")))
-            .unwrap();
-        let server = HubServer::default();
-        let port = server
-            .start_with_gateway(
-                "127.0.0.1",
-                0,
-                &certificate,
-                registry.clone(),
-                HubServices::catalog_only(Arc::new(Catalog)),
-            )
-            .unwrap()
-            .port
-            .unwrap();
-        let mut roots = rustls::RootCertStore::empty();
-        roots
-            .add(rustls::pki_types::CertificateDer::from(certificate.der))
-            .unwrap();
-        let config = Arc::new(
-            rustls::ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth(),
-        );
-        let connect = || {
-            let socket = TcpStream::connect(("127.0.0.1", port)).unwrap();
+
+        /// Connects and greets the hub with `request` as `token`.
+        fn ask(
+            &self,
+            token: &str,
+            request: dure_hub_protocol::hello::HubRequest,
+        ) -> rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream> {
+            let socket = std::net::TcpStream::connect(("127.0.0.1", self.port)).unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
             socket
                 .set_write_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
-            rustls::StreamOwned::new(
+            let mut tls = rustls::StreamOwned::new(
                 rustls::ClientConnection::new(
-                    config.clone(),
+                    self.config.clone(),
                     "hebbian-hub.local".try_into().unwrap(),
                 )
                 .unwrap(),
                 socket,
-            )
-        };
-        // An unpaired peer cannot remove or replace another device's consent.
-        let mut unpaired = connect();
-        unpaired
-            .write_all(
-                &hello::encode_hello_for(
-                    "unregistered-token",
-                    hello::HubRequest::UpdatePushSubscriptionV1 { subscription: None },
-                )
-                .unwrap(),
-            )
-            .unwrap();
-        unpaired.flush().unwrap();
-        assert!(hello::read_ack(&mut unpaired).is_err());
-        assert!(registry.load().unwrap()[0].push.is_some());
+            );
+            tls.write_all(&dure_hub_protocol::hello::encode_hello_for(token, request).unwrap())
+                .unwrap();
+            tls.flush().unwrap();
+            tls
+        }
 
-        let mut paired = connect();
-        paired
-            .write_all(
-                &hello::encode_hello_for(
-                    &phone.token,
-                    hello::HubRequest::UpdatePushSubscriptionV1 { subscription: None },
-                )
-                .unwrap(),
-            )
-            .unwrap();
-        paired.flush().unwrap();
+        fn stored(&self) -> Option<PushSubscription> {
+            self.registry.load().unwrap()[0].push.clone()
+        }
+    }
+
+    impl Drop for PairedHub {
+        fn drop(&mut self) {
+            self.server.stop();
+        }
+    }
+
+    #[test]
+    fn paired_tls_off_removes_consent_even_without_a_push_service() {
+        use dure_hub_protocol::{
+            frame, hello,
+            push::{PushSubscriptionResult, MAX_RESULT_BYTES},
+        };
+
+        let hub = PairedHub::start();
+        // An unpaired peer cannot remove or replace another device's consent.
+        let mut unpaired = hub.ask(
+            "unregistered-token",
+            hello::HubRequest::UpdatePushSubscriptionV1 { subscription: None },
+        );
+        assert!(hello::read_ack(&mut unpaired).is_err());
+        assert!(hub.stored().is_some());
+
+        let mut paired = hub.ask(
+            &hub.phone,
+            hello::HubRequest::UpdatePushSubscriptionV1 { subscription: None },
+        );
         hello::read_ack(&mut paired).unwrap();
-        let result: PushSubscriptionResult = frame::read(&mut paired, 4096).unwrap();
+        let result: PushSubscriptionResult = frame::read(&mut paired, MAX_RESULT_BYTES).unwrap();
         assert_eq!(result, PushSubscriptionResult::Saved);
-        assert!(registry.load().unwrap()[0].push.is_none());
-        server.stop();
+        assert!(hub.stored().is_none());
+    }
+
+    /// This desktop does not advertise `push_registration` yet (#660), so a
+    /// V2 registration gets what a desktop that predates it gives: the ack,
+    /// then nothing. Consent stays as it was, and the request is never read
+    /// as a catalog request.
+    #[test]
+    fn a_v2_registration_is_acknowledged_then_closed_without_touching_consent() {
+        use dure_hub_protocol::{
+            hello,
+            push::{PushGrant, PushRegistration},
+        };
+        use std::io::Read as _;
+
+        let hub = PairedHub::start();
+        let registration = PushRegistration {
+            subscription: subscription("bbbb"),
+            grant: PushGrant::new(vec![0x04; 65], b"{}".to_vec(), vec![1; 72]).unwrap(),
+        };
+        for registration in [Some(registration), None] {
+            let mut paired = hub.ask(
+                &hub.phone,
+                hello::HubRequest::UpdatePushSubscriptionV2 { registration },
+            );
+            hello::read_ack(&mut paired).unwrap();
+            let mut rest = Vec::new();
+            let _ = paired.read_to_end(&mut rest);
+            assert!(rest.is_empty(), "{} bytes followed the ack", rest.len());
+            assert_eq!(hub.stored(), Some(subscription("aaaa")));
+        }
     }
 }

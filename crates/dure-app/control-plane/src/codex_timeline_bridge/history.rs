@@ -1,14 +1,57 @@
 use super::*;
 
+use dure_app::{
+    PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1, PROVIDER_TRANSCRIPT_WINDOW_HISTORY_BOUNDARY_V1,
+};
+
+use crate::codex_app_server_protocol::{thread_turns_page_params, thread_turns_paged};
+
+/// The turn data a resumed thread's history window holds before it stops
+/// paging back: the bound one `thread/resume` reply had while it carried the
+/// whole thread. A thread that opened in Chat then opens with the same
+/// history, and a longer one with its newest history instead of not at all.
+pub(crate) const MAX_HISTORY_WINDOW_BYTES: usize = 64 * 1024 * 1024;
+
+/// The turns a resumed thread's history seeds, oldest first.
+pub(crate) struct CodexHistoryWindow {
+    turns: Vec<Value>,
+    /// Older turns precede the window that the timeline does not hold.
+    omits_older: bool,
+}
+
+impl CodexHistoryWindow {
+    pub(crate) fn newest_turn(&self) -> Option<&Value> {
+        self.turns.last()
+    }
+}
+
 impl<S> CodexTimelineBridge<S>
 where
     S: AgentTimelineStore + 'static,
 {
+    /// Seeds the timeline from a `thread/resume` reply (or the driver's
+    /// refresh of one) and returns the turns it seeded.
     pub(crate) async fn reconcile_history(
         &self,
-        thread: &Value,
-    ) -> Result<(), AgentProviderCommandErrorV1> {
+        response: Value,
+    ) -> Result<CodexHistoryWindow, AgentProviderCommandErrorV1> {
+        self.reconcile_history_within(response, MAX_HISTORY_WINDOW_BYTES)
+            .await
+    }
+
+    pub(super) async fn reconcile_history_within(
+        &self,
+        mut response: Value,
+        max_window_bytes: usize,
+    ) -> Result<CodexHistoryWindow, AgentProviderCommandErrorV1> {
         let mut projection = self.read_timeline_projection().await?;
+        let paged = thread_turns_paged(&response);
+        // The reply's own turns move into the window rather than being copied.
+        let whole_thread = match response.pointer_mut("/thread/turns").map(Value::take) {
+            Some(Value::Array(turns)) => turns,
+            _ => Vec::new(),
+        };
+        let thread = response.get("thread").unwrap_or(&Value::Null);
         if let Some(title) = thread.get("name").and_then(Value::as_str).map(str::trim)
             && projection.adopt_conversation_title(title)
         {
@@ -18,19 +61,24 @@ where
             self.commit("thread/history/title", thread, vec![mutation])
                 .await?;
         }
-        for turn in thread
-            .get("turns")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
+        let window = if paged {
+            self.paged_history_window(&projection, max_window_bytes)
+                .await?
+        } else {
+            CodexHistoryWindow {
+                turns: whole_thread,
+                omits_older: false,
+            }
+        };
+        if window.omits_older
+            && let Some(oldest) = window.turns.first()
         {
+            let start = self.transcript_start(oldest).await?;
+            self.commit_history_boundary(oldest, start).await?;
+        }
+        for turn in &window.turns {
             let provider_turn_id = field_string(turn, "id")?;
-            let client_message_id = turn_client_message_id(turn)?;
-            let turn_id = projection
-                .turn_by_client_message
-                .get(client_message_id.as_str())
-                .cloned()
-                .unwrap_or(codex_turn_id(provider_turn_id)?);
+            let (client_message_id, turn_id) = projection.history_turn_identity(turn)?;
             let started_at_ms = provider_timestamp_ms(turn, "startedAt")?.unwrap_or(now_ms()?);
             let terminal_state = terminal_turn_state(turn);
             let completed_at_ms =
@@ -152,7 +200,123 @@ where
             }
         }
         *self.timeline_projection.lock().await = projection;
-        Ok(())
+        self.commit(
+            "thread/history/settled",
+            &json!({ "threadId": self.thread_id }),
+            vec![AgentTimelineMutationV1::SettleHistory {
+                settled_at_ms: now_ms()?,
+            }],
+        )
+        .await?;
+        Ok(window)
+    }
+
+    /// The newest turns of a thread whose reply left them to pages, paged
+    /// back from its newest turn until the thread's start, a turn the
+    /// timeline already holds, or `max_window_bytes` of turn data. Whole pages
+    /// are kept, so one page past the bound is the most a window holds beyond
+    /// it.
+    async fn paged_history_window(
+        &self,
+        projection: &CodexTimelineProjection,
+        max_window_bytes: usize,
+    ) -> Result<CodexHistoryWindow, AgentProviderCommandErrorV1> {
+        let mut newest_first = Vec::new();
+        let mut window_bytes = 0_usize;
+        let mut cursor = None::<String>;
+        let mut reached_held_history = false;
+        loop {
+            let mut page = self
+                .client
+                .request(
+                    "thread/turns/list",
+                    thread_turns_page_params(&self.thread_id, cursor.as_deref()),
+                )
+                .await
+                .map_err(provider_client_error)?;
+            let Some(Value::Array(turns)) = page.get_mut("data").map(Value::take) else {
+                return Err(AgentProviderCommandErrorV1::new(
+                    "event_invalid",
+                    "missing turns page",
+                ));
+            };
+            for turn in &turns {
+                reached_held_history |= projection.holds_turn(turn)?;
+                window_bytes = window_bytes.saturating_add(encoded_len(turn));
+            }
+            newest_first.extend(turns);
+            cursor = page
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            if cursor.is_none() || reached_held_history || window_bytes >= max_window_bytes {
+                break;
+            }
+        }
+        newest_first.reverse();
+        Ok(CodexHistoryWindow {
+            turns: newest_first,
+            omits_older: cursor.is_some() && !reached_held_history,
+        })
+    }
+
+    /// Where `turn` starts in the thread's rollout, which the backend pages
+    /// the history before it from. `None` when this backend cannot find it.
+    async fn transcript_start(
+        &self,
+        turn: &Value,
+    ) -> Result<Option<i64>, AgentProviderCommandErrorV1> {
+        let Some(home) = self.provider_home.clone() else {
+            return Ok(None);
+        };
+        let thread_id = self.thread_id.clone();
+        let turn_id = field_string(turn, "id")?.to_owned();
+        let start = tokio::task::spawn_blocking(move || {
+            crate::agent_conversation_history::codex_turn_start_cursor(&home, &thread_id, &turn_id)
+        })
+        .await
+        .ok()
+        .flatten();
+        Ok(start.and_then(|start| i64::try_from(start).ok()))
+    }
+
+    /// Marks where a window that left older turns out starts: the existing
+    /// boundary row, before the window's oldest turn. Placed at the turn's
+    /// `start` in the rollout, it is where the older history pages in;
+    /// unplaced, it says only that older turns precede the window, not how
+    /// many.
+    async fn commit_history_boundary(
+        &self,
+        oldest: &Value,
+        start: Option<i64>,
+    ) -> Result<(), AgentProviderCommandErrorV1> {
+        let provider_turn_id = field_string(oldest, "id")?;
+        let created_at_ms = provider_timestamp_ms(oldest, "startedAt")?.unwrap_or(now_ms()?);
+        let (reason, dropped_through_provider_sequence) = match start {
+            Some(start) => (PROVIDER_TRANSCRIPT_WINDOW_HISTORY_BOUNDARY_V1, start),
+            None => (PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1, 1),
+        };
+        let item = self.item_for_turn(
+            provider_turn_id,
+            "history-boundary",
+            AgentTimelineItemBodyV1::HistoryBoundary {
+                reason: reason.into(),
+                requested_after_provider_sequence: 0,
+                dropped_through_provider_sequence,
+            },
+            TimelineItemContext {
+                turn_id: None,
+                client_message_id: None,
+                provider_message_id: None,
+                created_at_ms,
+            },
+        )?;
+        self.commit(
+            "thread/history/boundary",
+            &json!({ "threadId": self.thread_id, "turnId": provider_turn_id }),
+            vec![AgentTimelineMutationV1::Append { item }],
+        )
+        .await
     }
 
     async fn commit_history_turn(

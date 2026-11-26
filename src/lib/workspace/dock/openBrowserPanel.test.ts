@@ -164,6 +164,69 @@ describe("workspace Browser pane identity", () => {
 		expect(api.activePanel?.id).toBe("browser:main");
 		expect(api.panels).toHaveLength(2);
 	});
+	it("keeps one view per backend profile beside the view that follows the selected backend", () => {
+		openBrowserPanelOn(api, "https://example.com/general");
+		const general = api.activePanel!;
+		const generalNavigation = navigation(general.id);
+
+		openBrowserPanelOn(api, "http://localhost:5173/", "ssh-rts");
+		const host = api.activePanel!;
+		expect(host).not.toBe(general);
+		expect(host.params).toEqual({
+			url: "http://localhost:5173/",
+			browserPurpose: "workspace",
+			backendProfileId: "ssh-rts",
+		});
+		const hostNavigation = navigation(host.id);
+
+		api.fromJSON(api.toJSON());
+		openBrowserPanelOn(api, "http://localhost:8000/", "ssh-rts");
+		expect(api.activePanel?.id).toBe(host.id);
+		expect(hostNavigation).toHaveBeenCalledOnce();
+		expect(hostNavigation.mock.calls[0][0].detail).toBe(
+			"http://localhost:8000/",
+		);
+
+		openBrowserPanelOn(api, "https://example.com/next");
+		expect(api.activePanel?.id).toBe(general.id);
+		expect(generalNavigation).toHaveBeenCalledOnce();
+		expect(hostNavigation).toHaveBeenCalledOnce();
+
+		openBrowserPanelOn(api, "http://localhost:5173/", "ssh-other");
+		expect(api.panels).toHaveLength(4);
+		expect(api.activePanel?.params?.backendProfileId).toBe("ssh-other");
+	});
+
+	it("reuses the selected-backend view for a profile once it runs there", () => {
+		const authority = {
+			schemaVersion: 1,
+			profileId: "ssh-rts",
+			revision: `sha256:${"a".repeat(64)}`,
+			backend: { id: "backend-rts", generation: "generation-rts" },
+			target: {
+				source: "ssh",
+				hostId: "ssh-rts",
+				remote: { host: "rts.example.com", port: 22, user: "rts" },
+			},
+		};
+		const general = api.addPanel({
+			id: "pane-general",
+			component: "browser",
+			params: {
+				browserPurpose: "workspace",
+				url: "about:blank",
+				browserBinding: { authority, workspaceId: "workspace-rts" },
+			},
+		});
+		const received = navigation(general.id);
+
+		openBrowserPanelOn(api, "http://localhost:5173/", "ssh-rts");
+
+		expect(api.activePanel).toBe(general);
+		expect(received).toHaveBeenCalledOnce();
+		expect(api.panels).toHaveLength(2);
+	});
+
 	it("does not reuse or change another Space's Browser view", () => {
 		const other = mounted();
 		other.addPanel({

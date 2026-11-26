@@ -72,14 +72,22 @@ export function agentRunParentKey(parent: AgentRunParentSessionV1): string {
 	return `${parent.workspaceId}\u0000${parent.sessionId}`;
 }
 
-/** Index the Agents once; resolve each worker's lead against it. A lead is
- * the one other Agent whose runtime binding is the parent Session. When no
- * Agent owns that Session any more (the lead was rehosted), the Agent
- * recorded at first projection stands in. An ambiguous or missing lead
- * resolves to none: the worker stays an ordinary row. */
-export function createAgentRunLeadResolver<A extends RunParentedAgent>(
+/** How a Run parent names a lead: `session` is the Agent bound to the parent
+ * Session now, `recorded` the Agent that owned it when this client first
+ * projected the Run. */
+export interface AgentRunLead<A> {
+	readonly lead: A;
+	readonly by: "session" | "recorded";
+}
+
+/** Index the Agents once; list each worker's leads against it, most direct
+ * first. A lead is the one other Agent whose runtime binding is the parent
+ * Session; the Agent recorded at first projection follows, so the link
+ * survives the lead being rehosted. A Session two other Agents claim names
+ * no lead at all: which of them started the worker is unknown. */
+export function createAgentRunLeadsResolver<A extends RunParentedAgent>(
 	agents: readonly A[],
-): (agent: Pick<RunParentedAgent, "id" | "runParent">) => A | undefined {
+): (agent: Pick<RunParentedAgent, "id" | "runParent">) => readonly AgentRunLead<A>[] {
 	const bySession = new Map<string, A[]>();
 	const byId = new Map<string, A>();
 	for (const agent of agents) {
@@ -92,18 +100,33 @@ export function createAgentRunLeadResolver<A extends RunParentedAgent>(
 	}
 	return (agent) => {
 		const parent = agent.runParent;
-		if (!parent) return undefined;
+		if (!parent) return [];
 		const owners = (bySession.get(agentRunParentKey(parent)) ?? []).filter(
 			(owner) => owner.id !== agent.id,
 		);
-		if (owners.length > 1) return undefined;
-		if (owners.length === 1) return owners[0];
+		if (owners.length > 1) return [];
+		const leads: AgentRunLead<A>[] = owners.map((lead) => ({
+			lead,
+			by: "session",
+		}));
 		const recorded =
 			parent.leadAgentId === undefined
 				? undefined
 				: byId.get(parent.leadAgentId);
-		return recorded && recorded.id !== agent.id ? recorded : undefined;
+		if (recorded && recorded.id !== agent.id && recorded !== owners[0]) {
+			leads.push({ lead: recorded, by: "recorded" });
+		}
+		return leads;
 	};
+}
+
+/** Each worker's most direct lead, or none: the worker stays an ordinary
+ * row. */
+export function createAgentRunLeadResolver<A extends RunParentedAgent>(
+	agents: readonly A[],
+): (agent: Pick<RunParentedAgent, "id" | "runParent">) => A | undefined {
+	const leadsOf = createAgentRunLeadsResolver(agents);
+	return (agent) => leadsOf(agent)[0]?.lead;
 }
 
 /** A presentation request's optional `parent`: absent stays absent, and

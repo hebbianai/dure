@@ -58,7 +58,7 @@ pub(crate) fn apply_pty_input(
                 .unwrap_or(AgentPromptAdmission::Refused))
         })?;
         if waited != crate::agent_prompt_admission::AgentPromptWaitOutcome::Ready {
-            let host = lock(&state.host)?;
+            let mut host = lock(&state.host)?;
             let host_exiting = state.termination_requested.load(Ordering::Acquire)
                 || state.provider_exit_observed.load(Ordering::Acquire)
                 || matches!(
@@ -66,15 +66,19 @@ pub(crate) fn apply_pty_input(
                     Err(hmux_host::session_host::SessionHostError::SessionExited
                         | hmux_host::session_host::SessionHostError::FenceMismatch)
                 );
-            let reason = crate::agent_prompt_admission::agent_prompt_refusal(
-                &host,
+            let (reason, held) = admission.agent_prompt_refusal(
+                &mut host,
                 &state.fence,
-                target,
                 waited
                     .not_written_reason(host_exiting)
                     .expect("a non-ready wait must have a refusal reason"),
             );
             let controller_generation = host.controller_generation();
+            if let Some(runtime_state) = held {
+                let _publish_order = lock(&state.publish_order)?;
+                drop(host);
+                state.broadcast_ordered(FrameBody::AgentRuntimeState(runtime_state));
+            }
             return Ok(InputApplication {
                 controller_generation,
                 outcome: InputTransactionOutcome::NotWritten(reason),

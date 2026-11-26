@@ -22,6 +22,8 @@ export const MAX_AGENT_SPAWN_OUTPUT_BYTES = 256 * 1024;
 export const AGENT_SPAWN_PRESENTATION_PROJECT_CAPABILITY =
   "agent_spawn.presentation_project.v1";
 export const AGENT_SPAWN_PARENT_LINK_CAPABILITY = "agent_spawn.parent_link.v1";
+export const AGENT_SPAWN_CONVERSATION_OBSERVATION_CAPABILITY =
+  "agent_spawn.conversation_observation.v1";
 
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 const PROVIDER_CONVERSATION_REF = /^[A-Za-z0-9._:/-]{1,160}$/;
@@ -149,6 +151,73 @@ export function validSpawnParent(value) {
     typeof value.workspaceId === "string" &&
     TOKEN.test(value.workspaceId)
   );
+}
+
+const CONVERSATION_ATTENTION = new Set(["none", "approval_required", "input_required", "error"]);
+const DECIMAL = /^(0|[1-9][0-9]{0,18})$/;
+
+/** What the backend's conversation classifier says a chat agent is doing:
+ *  `observed` with its activity, `stopped`, or `unavailable` when the read
+ *  failed. */
+function validRunConversation(value) {
+  if (value?.state === "stopped") return onlyKeys(value, ["state"]);
+  if (value?.state === "unavailable") {
+    return onlyKeys(value, ["state", "errorCode"]) &&
+      typeof value.errorCode === "string" && TOKEN.test(value.errorCode);
+  }
+  return (
+    onlyKeys(value, ["state", "interactionSessionId", "timelineEpoch", "activity",
+      "attention", "quiescent", "turnCompletedSequence"]) &&
+    value.state === "observed" &&
+    typeof value.interactionSessionId === "string" && TOKEN.test(value.interactionSessionId) &&
+    typeof value.timelineEpoch === "string" && TOKEN.test(value.timelineEpoch) &&
+    ["working", "waiting"].includes(value.activity) &&
+    CONVERSATION_ATTENTION.has(value.attention) &&
+    typeof value.quiescent === "boolean" &&
+    (value.turnCompletedSequence === null ||
+      (typeof value.turnCompletedSequence === "string" && DECIMAL.test(value.turnCompletedSequence)))
+  );
+}
+
+export function backendObservesRunConversations(backend) {
+  return backend?.profile?.expected?.capabilities?.includes(
+    AGENT_SPAWN_CONVERSATION_OBSERVATION_CAPABILITY,
+  ) === true;
+}
+
+/**
+ * The chat conversation a Run's agent runs on now, as the backend reads it:
+ * null while the agent runs in a terminal, is between runtimes or has no
+ * managed runtime. Ask only a backend that advertises the observation; an
+ * older one refuses the field.
+ */
+export async function readRunConversation({
+  backend,
+  operationId,
+  deadlineMs,
+  requestBackend = performBackendProfileRequest,
+}) {
+  const response = await requestBackend(
+    backend.profile,
+    {
+      operation: "agent_spawn.status",
+      requiredCapabilities: ["agent_spawn.status", AGENT_SPAWN_CONVERSATION_OBSERVATION_CAPABILITY],
+      body: { schemaVersion: AGENT_SPAWN_QUERY_SCHEMA_VERSION, operationId, observeConversation: true },
+    },
+    {
+      ...backend.transportOptions,
+      ...(deadlineMs === undefined ? {} : { deadlineMs }),
+      maxResponseBytes: MAX_AGENT_SPAWN_OUTPUT_BYTES,
+    },
+  );
+  const conversation = response.result?.conversation ?? null;
+  if (response.result?.receipt?.operationId !== operationId ||
+      (conversation !== null && !validRunConversation(conversation))) {
+    throw Object.assign(new Error("The backend returned an invalid Run observation."), {
+      code: "runs_response_invalid",
+    });
+  }
+  return conversation;
 }
 
 export function validExecutionProfile(value, { allowMissing = false } = {}) {

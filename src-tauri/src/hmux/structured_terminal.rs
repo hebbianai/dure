@@ -1526,6 +1526,8 @@ mod tests {
             turn_completed_count: 3,
             program_status: None,
             background_work: false,
+            held_prompts: None,
+            turn_failure: None,
         }
     }
 

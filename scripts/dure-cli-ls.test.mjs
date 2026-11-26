@@ -203,6 +203,54 @@ describe("dure ls canonical session projection", () => {
     expect(state.backgroundWork).toBe(true);
   });
 
+  it("shows how many messages unsent input holds and for how long", () => {
+    const root = temporaryRoot();
+    const sinceMs = Date.now() - 12 * 60_000;
+    const held = (lifecycle) => ({
+      terminal_epoch: "terminal-1",
+      revision: "5",
+      observed_through_output_seq: "11",
+      lifecycle,
+      activity: "waiting",
+      attention: "none",
+      attention_id: null,
+      source: "provider_event",
+      turn_completed_count: "0",
+      held_prompts: { count: "3", since_unix_ms: String(sinceMs) },
+    });
+    const hmux = installHmuxStub(root, [
+      hmuxSession(1, { agentRuntimeState: held("running") }),
+    ], {
+      capabilities: ["bounded_session_catalog_query_v1", "exact_session_probe_runtime_state_v1"],
+    });
+
+    const table = runSessionCli(root, hmux, ["ls"]);
+    expect(table.status, `${table.stdout}\n${table.stderr}`).toBe(0);
+    const [header, row] = table.stdout.trim().split("\n");
+    const columns = header.split("\t");
+    expect(columns.indexOf("HELD")).toBe(columns.indexOf("IDLE") + 1);
+    expect(row.split("\t")[columns.indexOf("HELD")]).toMatch(/^3 for 1[23]m \d+s$/);
+    expect(row.split("\t")[columns.indexOf("IDLE")]).toBe("-");
+    const json = runSessionCli(root, hmux, ["ls", "--json"]);
+    const [session] = JSON.parse(json.stdout).sessions;
+    expect(session.heldPrompts).toEqual({ count: 3, sinceMs });
+    expect(session.fieldSources.heldPrompts).toBe("hmux_host");
+    expect(session.runtime.agentRuntimeState.heldPrompts).toEqual({ count: 3, sinceMs });
+
+    const malformedRoot = temporaryRoot();
+    const malformed = installHmuxStub(malformedRoot, [
+      hmuxSession(1, {
+        agentRuntimeState: { ...held("running"), held_prompts: { count: "0", since_unix_ms: "1" } },
+      }),
+    ], {
+      capabilities: ["bounded_session_catalog_query_v1", "exact_session_probe_runtime_state_v1"],
+    });
+    const none = JSON.parse(runSessionCli(malformedRoot, malformed, ["ls", "--json"]).stdout).sessions[0];
+    expect(none.runtime.agentRuntimeState.activity).toBe("waiting");
+    expect(none.heldPrompts).toBeNull();
+    expect(none.fieldSources.heldPrompts).toBe("unavailable");
+  });
+
   it("shows the attention the provider asked for instead of a waiting activity", () => {
     const root = temporaryRoot();
     const hmux = installHmuxStub(root, [

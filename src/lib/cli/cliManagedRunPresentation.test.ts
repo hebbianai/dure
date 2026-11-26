@@ -401,7 +401,7 @@ describe("managed Run Agent projection", () => {
 		});
 	});
 
-	it("refuses duplicate owners and name conflicts", () => {
+	it("refuses duplicate owners and keeps a Run that reuses another Agent's name", () => {
 		const projected = projectManagedRunPresentationAgent(
 			state(),
 			request,
@@ -431,14 +431,21 @@ describe("managed Run Agent projection", () => {
 				sessionId: "session-other",
 			},
 		};
-		expect(() =>
-			projectManagedRunPresentationAgent(
-				state([nameOwner]),
-				request,
-				project,
-				binding(),
-			),
-		).toThrow("name is already in use");
+		// The backend already started this Run; its identity is the Agent and
+		// Session, so a repeated name is a label and must not hide it.
+		const reused = projectManagedRunPresentationAgent(
+			state([nameOwner]),
+			request,
+			project,
+			binding(),
+		);
+		expect(reused.outcome).toBe("created");
+		expect(reused.agent).toMatchObject({
+			id: request.agentId,
+			name: nameOwner.name,
+			sessionId: request.sessionId,
+		});
+		expect(reused.patch.agents).toEqual([nameOwner, reused.agent]);
 	});
 
 	it("reopens a Run after the exact Host learns or continues its conversation", () => {

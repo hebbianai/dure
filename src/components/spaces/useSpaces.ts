@@ -1,11 +1,14 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
+import { useAgentRelations } from "@/components/agents/useAgentRelations";
+import { useNeedsPerson } from "@/components/agents/useNeedsPerson";
 import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
 import {
 	isAgentUnread,
 	useAgentAttention,
 } from "@/lib/agents/agentAttentionStore";
-import { createAgentRunLeadResolver } from "@/lib/agents/agentRunParent";
+import { agentNotificationsMuted } from "@/lib/agents/agentNotificationMute";
 import { presentedAgentDisplayState } from "@/lib/agents/agentStateModel";
+import { needsPersonReason } from "@/lib/agents/needsPerson";
 import {
 	conversationActivityAt,
 	conversationPresentationRevision,
@@ -33,7 +36,10 @@ import {
 	createSpacesRuntimeSelector,
 } from "@/lib/spaces/spacesRuntimeProjection";
 import { createSpacesSessionMetadataSelector } from "@/lib/spaces/spacesSessionMetadata";
-import { agentRowActivityAt } from "@/lib/spaces/unopenedAgentPresentation";
+import {
+	agentRowActivityAt,
+	agentRowPrompt,
+} from "@/lib/spaces/unopenedAgentPresentation";
 import {
 	getTerminalExecutionLocation,
 	getTerminalExecutionLocationRevision,
@@ -98,10 +104,8 @@ export function useSpaces() {
 		() => new Map(agents.map((agent, index) => [agent.id, index])),
 		[agents],
 	);
-	const resolveRunLead = useMemo(
-		() => createAgentRunLeadResolver(agents),
-		[agents],
-	);
+	// Spaces nest one level: a row's lead is its display manager.
+	const relations = useAgentRelations();
 	const desktopOrder = useMemo(
 		() => spaces.map((desktop) => desktop.id),
 		[spaces],
@@ -194,6 +198,7 @@ export function useSpaces() {
 	const { displayStates, episodes, acks } = useAgentAttention(
 		useMemo(() => createSpacesAttentionSelector(agentIds), [agentIds]),
 	);
+	const needsPerson = useNeedsPerson();
 
 	const rows = useMemo(() => {
 		// Sorted once per projects identity; shared with the unopened-agent
@@ -282,7 +287,7 @@ export function useSpaces() {
 				: undefined;
 			// Where a chosen title stands, the provider's moves to the info line.
 			const explicitAgentTitle = agent ? chosenAgentTitle(agent) : undefined;
-			const leadAgentId = agent ? resolveRunLead(agent)?.id : undefined;
+			const leadAgentId = agent ? relations.managerOf(agent.id) : undefined;
 			const title = agent
 				? resolveAgentPaneTitle({
 						agent,
@@ -309,8 +314,10 @@ export function useSpaces() {
 				nestedSsh: Boolean(nestedSsh),
 				relativePath,
 				activityText: agent
-					? activityEntry?.text ||
-						conversationPrompt(agent.id, managedConversationId(agent))
+					? agentRowPrompt(
+							activityEntry,
+							conversationPrompt(agent.id, managedConversationId(agent)),
+						)
 					: undefined,
 				// The provider-reported thread name when a chat session has observed
 				// one; otherwise the OSC 0/2 title the CLI set, which the Host
@@ -401,6 +408,12 @@ export function useSpaces() {
 				// B2 표시 상태 — 에이전트는 watcher 해석값, 터미널은 프로바이더가
 				// 붙었을 때만 legacy 활동값 그대로. (행의 상태 신호는 이것 하나다.)
 				displayState,
+				/** Why a person is needed: an Agent's entry in the needs-person
+				 *  map the rail badge and Next up read; a provider found in a
+				 *  plain shell, by the same rule over its display state. */
+				needsPerson: agent
+					? needsPerson.get(agent.id)?.reason
+					: needsPersonReason({ displayState }),
 				/** A program's own attributed report that it is waiting; presentation
 				 *  only, never part of displayState. Flat, as rows compare by field. */
 				programStatusKind: programNotice?.kind,
@@ -413,6 +426,9 @@ export function useSpaces() {
 				workerOrder:
 					leadAgentId && agent ? agentStartOrder.get(agent.id) : undefined,
 				...(space.hidden ? { hidden: true as const } : {}),
+				...(agent && agentNotificationsMuted(agent)
+					? { notificationsMuted: true as const }
+					: {}),
 			};
 		});
 	}, [
@@ -425,7 +441,7 @@ export function useSpaces() {
 		titleRevision,
 		agentById,
 		agentStartOrder,
-		resolveRunLead,
+		relations,
 		sessionCwd,
 		sessionTitle,
 		sessionAgentPin,
@@ -437,6 +453,7 @@ export function useSpaces() {
 		sessionAgentRuntimeState,
 		sessionAgentRuntimeObservers,
 		displayStates,
+		needsPerson,
 		episodes,
 		acks,
 		hostBuildByMetadataKey,

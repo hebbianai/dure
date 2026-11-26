@@ -17,6 +17,7 @@ const home = path.join(root, "home");
 fs.mkdirSync(home, { mode: 0o700 });
 const observations = [];
 let toolSequence = 0;
+let largeReads = 0;
 let releaseOfflineTurn;
 const offlineTurnReleased = new Promise((resolve) => { releaseOfflineTurn = resolve; });
 
@@ -34,7 +35,12 @@ const server = http.createServer(async (request, response) => {
   const user = JSON.stringify(users.at(-1)?.content ?? "");
   const afterTool = body.messages?.at(-1)?.role === "tool";
   const needsPermission = mainTurn && user.includes("DURE_QA_PERMISSION") && !afterTool;
-  observations.push({ model: body.model, effort: body.reasoning_effort, mainTurn, needsPermission });
+  // The newest prompt that asks for the large read (opencode_tests.rs
+  // LARGE_READ_BYTES), until OpenCode answers the read after it. OpenCode
+  // sends the file it read back in a message after the tool result.
+  const largeReadPrompt = body.messages?.findLastIndex((message) => message.role === "user" && JSON.stringify(message.content ?? "").includes("DURE_QA_LARGE_READ")) ?? -1;
+  const largeRead = mainTurn && largeReadPrompt !== -1 && !body.messages.slice(largeReadPrompt).some((message) => message.role === "tool");
+  observations.push({ model: body.model, effort: body.reasoning_effort, mainTurn, needsPermission, largeRead });
   // The fourth tool turn cannot ask for approval until the first control
   // plane is gone. This proves the process owns policy without a timing guess.
   if (needsPermission && toolSequence === 3) await offlineTurnReleased;
@@ -42,11 +48,15 @@ const server = http.createServer(async (request, response) => {
     role: "assistant", tool_calls: [{ index: 0, id: `fixture-tool-${++toolSequence}`, type: "function", function: {
       name: "bash", arguments: JSON.stringify({ command: "printf dure-opencode-fixture", description: "Read the isolated fixture marker" }),
     } }],
+  } : largeRead ? {
+    role: "assistant", tool_calls: [{ index: 0, id: `fixture-large-read-${++largeReads}`, type: "function", function: {
+      name: "read", arguments: JSON.stringify({ filePath: "large-read.pdf" }),
+    } }],
   } : { role: "assistant", content: "Dure OpenCode fixture answer." };
   response.writeHead(200, { "Content-Type": "text/event-stream" });
   for (const chunk of [
     { id: "fixture-answer", object: "chat.completion.chunk", created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: null }] },
-    { id: "fixture-answer", object: "chat.completion.chunk", created: 1, model: body.model, choices: [{ index: 0, delta: {}, finish_reason: needsPermission ? "tool_calls" : "stop" }], usage: { prompt_tokens: 10, completion_tokens: 6, total_tokens: 16 } },
+    { id: "fixture-answer", object: "chat.completion.chunk", created: 1, model: body.model, choices: [{ index: 0, delta: {}, finish_reason: needsPermission || largeRead ? "tool_calls" : "stop" }], usage: { prompt_tokens: 10, completion_tokens: 6, total_tokens: 16 } },
   ]) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
   response.end("data: [DONE]\n\n");
 });
@@ -69,12 +79,17 @@ try {
     DURE_QA_OPENCODE_BIN: opencode, DURE_QA_CONTROL_PLANE_BIN: controlPlane, DURE_QA_HMUX_RUNTIME: hmuxRuntime, DURE_QA_OPENCODE_RUNTIME_ROOT: root,
   };
   assert.equal((await run(opencode, ["--version"], { env })).trim(), "1.18.29", "qualify and update the pinned provider contract before changing this version");
-  process.stdout.write(await run(testBinary, ["--ignored", "--exact", "managed_structured_runtime::opencode_tests::live_opencode_keeps_the_exact_conversation_across_settings_and_reconnect", "--nocapture"], { env }));
+  for (const test of [
+    "live_opencode_keeps_the_exact_conversation_across_settings_and_reconnect",
+    "live_opencode_opens_a_long_terminal_conversation_in_chat",
+    "live_opencode_reads_a_large_file_in_the_terminal_and_in_chat",
+  ]) process.stdout.write(await run(testBinary, ["--ignored", "--exact", `managed_structured_runtime::opencode_tests::${test}`, "--nocapture"], { env }));
   const actual = observations.filter((entry) => entry.mainTurn);
   for (const [modelId, effort] of [["fixture-model", "low"], ["fixture-alternate", "low"], ["fixture-alternate", "high"]]) {
     assert(actual.some((entry) => entry.model === modelId && entry.effort === effort), `missing actual LLM request for ${modelId}/${effort}`);
   }
   assert.equal(actual.filter((entry) => entry.needsPermission).length, 4);
+  assert.equal(actual.filter((entry) => entry.largeRead).length, 2, "OpenCode reads the large PDF once in the Terminal and once in Chat");
   const evidence = process.env.DURE_QA_OPENCODE_EVIDENCE ?? `/tmp/dure-opencode-conformance-${process.pid}.json`;
   fs.writeFileSync(evidence, JSON.stringify({ version: "1.18.29", observations }, null, 2), { mode: 0o600 });
   console.log(`OpenCode 1.18.29 conformance passed; evidence: ${evidence}`);

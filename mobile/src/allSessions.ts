@@ -230,6 +230,24 @@ export function hubKnowing(
 }
 
 /**
+ * Whether the person muted this session's agent on a paired computer. The
+ * computer that lists the session owns the flag; no catalog row means not
+ * muted.
+ */
+export function notificationsMutedFor(
+  hubs: readonly HubSessions[],
+  sessionId: string,
+): boolean {
+  return hubs.some((hub) =>
+    hub.sessions.some(
+      (session) =>
+        session.session_id === sessionId &&
+        session.presentation?.notificationsMuted === true,
+    ),
+  );
+}
+
+/**
  * 두 목록과 배치표를 받아 화면이 그릴 묶음으로.
  *
  * # 같은 세션이 두 목록에 있으면 열 수 있는 경로가 이긴다

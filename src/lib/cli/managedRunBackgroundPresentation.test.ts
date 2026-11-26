@@ -100,6 +100,44 @@ describe("presentManagedRunInBackground", () => {
 		expect(getState().agentActivity["agent-1"]).toBe("connecting");
 	});
 
+	it("registers a second Run that reuses a live Agent's name in its own worktree", async () => {
+		// A lead dispatched the same brief twice: the backend started both Runs
+		// under one name, so the second must still reach dure ls and whoami.
+		const first: Agent = {
+			id: "agent-first",
+			name: run.agentName,
+			provider: "claude",
+			projectId: project.id,
+			worktreePath: "/tmp/p/.worktrees/fix-x",
+			branch: "agent/fix-x",
+			sessionId: "session-first",
+			sessionKind: "pty",
+			started: true,
+		};
+		const { getState, deps } = makeDeps([first]);
+
+		const agent = await presentManagedRunInBackground(
+			{
+				...run,
+				worktree: {
+					kind: "dedicated",
+					branch: "agent/fix-x-2",
+					directoryName: "fix-x-2",
+				},
+			},
+			{ projectPath: project.path },
+			deps as never,
+		);
+
+		expect(agent).toMatchObject({
+			id: run.agentId,
+			name: run.agentName,
+			sessionId: run.sessionId,
+			worktreePath: "/tmp/p/.worktrees/fix-x-2",
+		});
+		expect(getState().agents).toEqual([first, agent]);
+	});
+
 	it("projects the backend-selected credential into the Agent and native binding", async () => {
 		const { getState, deps } = makeDeps();
 		const credentialRun: DureNativeAgentRunResultV1 = {

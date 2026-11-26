@@ -8,7 +8,7 @@ function fixtureArguments(arguments_) {
 		arguments_.length !== 6 ||
 		arguments_[0] !== "--state-dir" ||
 		arguments_[2] !== "--mode" ||
-		!["echo", "wait"].includes(arguments_[3]) ||
+		!["echo", "exit", "wait"].includes(arguments_[3]) ||
 		arguments_[4] !== "--exit-code"
 	) {
 		throw new Error("fake_claude_relay_child_invalid_arguments");
@@ -41,6 +41,9 @@ writeMarker(stateDirectory, mode);
 
 if (mode === "wait") {
 	setInterval(() => {}, 300_000);
+} else if (mode === "exit") {
+	// Ends on its own with its input still open, as no host asked it to.
+	process.exit(exitCode);
 } else {
 	process.stderr.write(`stderr-start-${"x".repeat(3_000)}-stderr-end`);
 	process.stdin.on("data", (chunk) => {

@@ -1038,8 +1038,17 @@ function activityColumn(state) {
   return state.backgroundWork ? "waiting+background" : state.activity;
 }
 
+// Messages unsent input holds back, and for how long, measured against the
+// same observation as IDLE. An agent with held messages is not idle.
+function heldColumn(session) {
+  const held = session.heldPrompts;
+  return held
+    ? `${held.count} for ${formatDuration(session.liveness.observedAtMs - held.sinceMs)}`
+    : "-";
+}
+
 export const SESSION_TABLE_HEADER =
-  "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tACTIVITY\tIDLE\tAGENTS\tACCOUNT\tFAILURE\tPROGRESS";
+  "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tACTIVITY\tIDLE\tHELD\tAGENTS\tACCOUNT\tFAILURE\tPROGRESS";
 
 export function sessionTableRow(session) {
   return [
@@ -1052,6 +1061,7 @@ export function sessionTableRow(session) {
     activityColumn(session.runtime?.agentRuntimeState),
     // The age the Host measured, so the column does not grow while it is read.
     session.runtime?.semanticIdleMs ? formatDuration(Number(session.runtime.semanticIdleMs)) : "-",
+    heldColumn(session),
     session.clientProjection.agents
       .map((agent) => agent.displayName ?? agent.name ?? agent.id ?? "?")
       .join(",") || "-",

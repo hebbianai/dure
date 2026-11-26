@@ -58,6 +58,13 @@ pub struct HubEntry {
     pub relay_endpoint: Option<String>,
     #[serde(default)]
     pub server_id: Option<String>,
+    /// The push registration this computer's catalog last advertised
+    /// (`HubCatalog::push_registration`, #660). The push sync sends V2 only
+    /// to a computer that advertised it; None until a catalog that carries
+    /// it is read, and again if a later catalog stops carrying it. An older
+    /// build drops it on rewrite and the next catalog teaches it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push_registration: Option<u16>,
 }
 
 /// 토큰을 찍지 않는다. 그 값을 가진 쪽은 이 폰인 척할 수 있다.
@@ -72,6 +79,7 @@ impl std::fmt::Debug for HubEntry {
             .field("token", &"<가려짐>")
             .field("relay_endpoint", &self.relay_endpoint)
             .field("server_id", &self.server_id)
+            .field("push_registration", &self.push_registration)
             .finish()
     }
 }
@@ -178,6 +186,19 @@ pub fn upsert(document: &mut HubDocument, entry: HubEntry) -> Result<(), HubStor
     Ok(())
 }
 
+/// Records what the catalog of computer `id` advertised about push
+/// registration. `true` when the stored value changed, so the caller writes
+/// the file only then; an unknown id changes nothing.
+pub fn learn_push_registration(document: &mut HubDocument, id: &str, value: Option<u16>) -> bool {
+    match document.hubs.iter_mut().find(|row| row.id == id) {
+        Some(row) if row.push_registration != value => {
+            row.push_registration = value;
+            true
+        }
+        _ => false,
+    }
+}
+
 /// 지웠으면 `true`.
 pub fn remove(document: &mut HubDocument, id: &str) -> bool {
     let before = document.hubs.len();
@@ -198,7 +219,51 @@ mod tests {
             token: "token-1".to_string(),
             relay_endpoint: Some("relay.example:8787".to_string()),
             server_id: Some("server-1".to_string()),
+            push_registration: None,
         }
+    }
+
+    /// Learned from each catalog, written only when it changed, and readable
+    /// both ways: an older build reads a file that carries it, and a file
+    /// from before it reads as "not advertised".
+    #[test]
+    fn a_computers_push_registration_is_learned_and_read_both_ways() {
+        let mut document = HubDocument::default();
+        upsert(&mut document, entry("SHA256:a", "노트북")).unwrap();
+
+        assert!(learn_push_registration(&mut document, "SHA256:a", Some(2)));
+        assert!(!learn_push_registration(&mut document, "SHA256:a", Some(2)));
+        assert!(!learn_push_registration(&mut document, "SHA256:b", Some(2)));
+        assert_eq!(document.hubs[0].push_registration, Some(2));
+
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("hubs.json");
+        save(&path, &document).unwrap();
+        assert_eq!(load(&path).unwrap(), document);
+
+        #[derive(Deserialize)]
+        struct OlderEntry {
+            id: String,
+            token: String,
+        }
+        #[derive(Deserialize)]
+        struct OlderDocument {
+            hubs: Vec<OlderEntry>,
+        }
+        let older: OlderDocument = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            (older.hubs[0].id.as_str(), older.hubs[0].token.as_str()),
+            ("SHA256:a", "token-1")
+        );
+
+        // A computer that stops advertising it gets V1 again.
+        assert!(learn_push_registration(&mut document, "SHA256:a", None));
+        let written = serde_json::to_value(&document).unwrap();
+        assert!(written["hubs"][0].get("push_registration").is_none());
+        assert_eq!(
+            serde_json::from_value::<HubDocument>(written).unwrap().hubs[0].push_registration,
+            None
+        );
     }
 
     #[test]

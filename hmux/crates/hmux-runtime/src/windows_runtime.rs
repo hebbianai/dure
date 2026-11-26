@@ -217,6 +217,7 @@ fn managed_host_capabilities(process_observed_agent_prompt: bool) -> Vec<String>
         hmux_host::local_protocol::AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY,
         hmux_host::local_protocol::AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY,
         hmux_host::local_protocol::AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY,
+        hmux_host::local_protocol::AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY,
         AGENT_RUNTIME_STATE_CAPABILITY,
         AGENT_STATE_REPORT_CAPABILITY,
         AGENT_STATE_REPORT_COMPLETION_ID_CAPABILITY,
@@ -2002,24 +2003,18 @@ impl WindowsServerState {
             )
         });
         if let Some(reason) = agent_prompt_wait.and_then(|wait| {
-            wait.not_written_reason(
-                self.stopping.load(Ordering::Acquire) || exact_host_exiting,
-            )
-            .map(|reason| match admission.agent_prompt() {
-                Some((target, _)) => crate::agent_prompt_admission::agent_prompt_refusal(
-                    &host,
-                    &self.fence,
-                    target,
-                    reason,
-                ),
-                None => reason,
-            })
+            wait.not_written_reason(self.stopping.load(Ordering::Acquire) || exact_host_exiting)
         }) {
+            let (reason, held) = admission.agent_prompt_refusal(&mut host, &self.fence, reason);
             let receipt = windows_terminal::terminal_record(
                 &host,
                 &self.fence,
                 windows_terminal::input_not_written(record_id, reason, None),
             );
+            drop(host);
+            if let Some(runtime_state) = held {
+                self.broadcast_control(FrameBody::AgentRuntimeState(runtime_state));
+            }
             return Ok((receipt, false));
         }
 
@@ -2643,6 +2638,9 @@ fn serve_client(
     let agent_state_report_approval_request = selected_capabilities.iter().any(|v| {
         v == hmux_host::local_protocol::AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY
     });
+    let agent_state_report_turn_failure = selected_capabilities.iter().any(|v| {
+        v == hmux_host::local_protocol::AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY
+    });
     let termination = selected_capabilities
         .iter()
         .any(|capability| capability == STANDALONE_TERMINATION_CAPABILITY);
@@ -2949,6 +2947,7 @@ fn serve_client(
                             background_work: agent_state_report_background_work,
                             startup_gate: agent_state_report_startup_gate,
                             approval_request: agent_state_report_approval_request,
+                            turn_failure: agent_state_report_turn_failure,
                         },
                         report,
                     );

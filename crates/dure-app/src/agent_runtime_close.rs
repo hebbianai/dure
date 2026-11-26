@@ -99,6 +99,23 @@ pub enum AgentRuntimeCloseStateV1 {
     Stopped,
 }
 
+/// Which workflow owns a runtime close. A plain runtime stop leaves a stopped
+/// source that an explicit successor may restart in place. Agent removal,
+/// which a Dispatch stop also performs, keeps its close as a permanent fence:
+/// no Resume, Rehost or profile transition may replace it.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRuntimeCloseOwnerV1 {
+    RuntimeStop,
+    AgentRemoval,
+}
+
+impl AgentRuntimeCloseOwnerV1 {
+    pub fn admits_successor(self) -> bool {
+        self == Self::RuntimeStop
+    }
+}
+
 impl AgentRuntimeCloseStateV1 {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -290,6 +307,13 @@ pub trait AgentRuntimeCloseStore: Send + Sync {
         transition_operation_id: &'a OperationIdV1,
         close_operation_id: &'a OperationIdV1,
     ) -> DomainStoreFuture<'a, bool>;
+
+    /// Reads which workflow owns one exact close, the same fence successor
+    /// admission enforces.
+    fn agent_runtime_close_owner<'a>(
+        &'a self,
+        close_operation_id: &'a OperationIdV1,
+    ) -> DomainStoreFuture<'a, AgentRuntimeCloseOwnerV1>;
 }
 
 #[cfg(test)]

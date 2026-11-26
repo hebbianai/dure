@@ -42,7 +42,8 @@ apns.on("stream", (stream, headers) => {
 apns.listen(0, "127.0.0.1");
 await once(apns, "listening");
 const sender = createApnsSender({ key: privateKey.export({ type: "pkcs8", format: "pem" }), keyId: "TESTKEY123", teamId: "TESTTEAM12", openConnection: () => connect(`http://127.0.0.1:${apns.address().port}`) });
-const gateway = createPushServer({ sender, allowedHubs: new Set([fingerprint]) });
+// A v1 Hub on the transition allowlist, padded as operators wrote it.
+const gateway = createPushServer({ sender, allowedHubs: new Set([fingerprint]), audiences: ["https://push.invalid/"] });
 gateway.listen(0, "127.0.0.1");
 await once(gateway, "listening");
 const post = (route, body) => fetch(`http://127.0.0.1:${gateway.address().port}/v1/${route}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });

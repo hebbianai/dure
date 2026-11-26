@@ -211,7 +211,8 @@ current existing runtime without launching another provider. `resume` preserves
 the conversation: a confirmed stopped source with a waiting deferred target uses
 backend wake; an existing native source uses the local recovery broker. Both work
 without an open app and publish the new binding. A retained Run record alone does
-not prove reboot recovery is possible.
+not prove reboot recovery is possible. A `retry_required` or `failed` launch whose
+Agent never got a runtime does not make its name ambiguous.
 
 When no Agent the backend holds can resume a conversation, for example after
 the Agent was removed, start a new one from its provider conversation ID:
@@ -235,7 +236,8 @@ returned `continuation.finish` (`dure hmux rehost finish ...`): it waits on that
 exact operation and publishes it once, never starts another, and is safe to
 repeat until it exits 0. Resuming an Agent whose source Hmux already holds a
 restart for continues that operation. Then use `open` to place the recovered
-Run. Remote resume requires execution on its host.
+Run. On an SSH backend, wake and restart run from the client; a native rehost
+runs on the backend's host.
 For headless input/output, use the Session/workspace pair from `show` with
 `read`, local `send`, and `send-keys`; an Agent name requires client registration. Direct Session
 input verifies the current Host generation without requiring an app registry.
@@ -253,12 +255,13 @@ receipts; do not reset sessions or resend an uncertain message automatically.
 To stop and clean up an Agent, use `dure stop <agent-name-or-id> --yes --json`.
 The selected running Dure app routes the stop to the Agent's owning backend,
 then removes its registration and panes while preserving its workspace and
-conversation history. On a host without the app, the stop goes through the Run
-record by Agent ID, operation ID or Run name. `dure hmux stop --name ... --yes --json`
-uses the same path.
+conversation history. On a host without the app, or for a Run the app has not
+opened, the stop goes through the Run record by Agent ID, operation ID or Run
+name. For a headless Run on a remote backend, add `--backend ID` to select that
+backend's Run record. `dure hmux stop --name ... --yes --json` uses the same path.
 Do not substitute `/exit`, Ctrl-C or PID killing for the lifecycle command.
 On uncertain results, retry the same Agent ID; success is `ok: true` and exit 0.
-See `dure stop --help`. This client-scoped command does not accept `--backend`.
+See `dure stop --help`.
 
 ## Read a pane and send to it
 
@@ -372,12 +375,20 @@ Session and its orchestration context. The receipt contains `receiptPath`; keep 
 private local file, which holds the exact read capability but no message text.
 When the target's wake is held, the JSON adds `diagnostic` with the same note
 the text output prints; the message stays in the inbox, so do not resend.
+A refusal naming `session_dispatch_unassigned` means the target is live but has
+not opened its durable inbox yet; nothing was sent, so reach it without `--track`.
+A send the backend refused without storing the message fails with
+`message_submission_refused` and its refusal code, keeps no tracking file, and can
+be sent again once the cause is fixed. Only `message_submission_unknown` means the
+outcome could not be read: inspect it with `dure wait --message` and do not resend.
 
 `dure wait --message <receiptPath> --json` waits for an authenticated inbox read.
 Use `--until acknowledged` for cursor acknowledgement, or `--until turn_started`
 for a supported native Codex wake turn. A wake turn does not prove inbox read,
 comprehension, or task success. Use the existing exact `--task`, `--dispatch`, and
-`--generation` wait for task completion. Do not resend after a timeout.
+`--generation` wait for task completion. Do not resend after a timeout. A wait that
+fails with `wait_message_not_stored` means the backend never stored that message;
+send it again.
 
 `dure inspect <session> --workspace ID --json` and `dure ls --json` expose optional
 Host `agentRuntimeState.progress`: the last provider activity, tool/thinking phase,

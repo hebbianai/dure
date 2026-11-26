@@ -1,6 +1,9 @@
 mod agent_checkpoint_binding;
 pub mod agent_conversation;
+mod agent_conversation_activity;
 pub mod agent_conversation_api;
+mod agent_conversation_history;
+mod agent_conversation_outcome;
 #[cfg(unix)]
 mod agent_conversation_recover;
 #[cfg(unix)]
@@ -120,6 +123,7 @@ mod project_resolve;
 mod provider_commands;
 pub mod provider_credential_profile;
 mod provider_executable;
+mod provider_login_observation;
 #[cfg(unix)]
 mod provider_recovery_api;
 #[cfg(unix)]
@@ -2187,8 +2191,16 @@ async fn show_agent_spawn(
     state: &ServiceState,
     body: agent_spawn_api::AgentSpawnStatusBody,
 ) -> Result<Value, String> {
+    let observe_conversation = body.observe_conversation;
     let receipt = agent_spawn_api::status(&state.store, body).await?;
-    Ok(json!({ "schemaVersion": 1, "receipt": receipt }))
+    let mut shown = json!({ "schemaVersion": 1, "receipt": receipt });
+    // Only a client that asks gets the field, so older clients read the
+    // status exactly as before.
+    if observe_conversation && let Some(receipt) = &receipt {
+        shown["conversation"] =
+            json!(agent_conversation_outcome::observe_agent(state, &receipt.plan.agent_id).await);
+    }
+    Ok(shown)
 }
 
 async fn apply_agent_spawn(
@@ -3026,11 +3038,14 @@ async fn create_existing_session_run(
     }
     let session = neutral_worker_session(&body.session)?;
     verify_exact_orchestration_session(state, &body.session).await?;
-    let run_authority = state
+    let run_authority = match state
         .store
         .orchestration_run_authority_for_exact_session(&body.session)
         .await
-        .map_err(run_authority_error)?;
+    {
+        Ok(run_authority) => run_authority,
+        Err(error) => return Err(run_authority_error(state, &body.session, error).await),
+    };
     if run_authority.runtime_ref != body.runtime_ref {
         return Err("orchestration_generation_conflict".into());
     }
@@ -3061,32 +3076,39 @@ async fn create_existing_session_run(
         .map_err(orchestration_service_error)
 }
 
+/// Refusal for a Session whose Agent runs on a Chat runtime, which has no
+/// orchestration inbox.
+const ORCHESTRATION_INTERACTION_PROFILE_UNSUPPORTED: &str =
+    "orchestration_interaction_profile_unsupported";
+
 /// Hmux observed this Session generation as live, but no Agent binds it as
-/// its current Session: a restart or account switch has not published its
+/// its current Session. When a Chat runtime runs there, its provider reached
+/// the orchestration tools through that runtime's Session: orchestration
+/// enrolls only a native CLI Session, so the refusal is terminal and names the
+/// Chat runtime. Otherwise a restart or account switch has not published its
 /// binding yet, or the provider was started outside a Dure Agent. Resending
 /// the same enrollment cannot succeed until that binding changes.
-fn run_authority_error(error: DomainStoreErrorV1) -> BackendDispatchError {
+async fn run_authority_error(
+    state: &ServiceState,
+    session: &WorkflowSessionGenerationV1,
+    error: DomainStoreErrorV1,
+) -> BackendDispatchError {
     if !matches!(error, DomainStoreErrorV1::IdentityConflict { .. }) {
         return orchestration_store_error(error);
+    }
+    if state.structured_runtimes.hosts_session(session).await {
+        return BackendDispatchError {
+            code: ORCHESTRATION_INTERACTION_PROFILE_UNSUPPORTED.into(),
+            message: "orchestration reaches an agent that runs a native CLI; this agent runs on its Chat runtime".into(),
+            details: Some(json!({ "reasonCode": "structured_protocol" })),
+            disposition: BackendFailureDispositionV1::Terminal,
+        };
     }
     BackendDispatchError {
         code: "orchestration_generation_conflict".into(),
         message: "No Agent binds this live Session generation as its current Session. Resolve the Agent's current Session, or finish a restart whose binding is not published, before retrying.".into(),
         details: Some(json!({ "reasonCode": "session_agent_binding_missing" })),
         disposition: BackendFailureDispositionV1::StaleGeneration,
-    }
-}
-
-/// Hmux observed this Session generation as live, but no Dispatch names it:
-/// its provider has not resolved its own orchestration context, which enrolls
-/// the Session and opens its durable inbox. Only that Session can enroll
-/// itself, so no other caller's retry succeeds until it has.
-fn session_dispatch_unassigned() -> BackendDispatchError {
-    BackendDispatchError {
-        code: "orchestration_generation_conflict".into(),
-        message: "No Dispatch names this live Session generation: its provider has not resolved its orchestration context, which opens its durable inbox.".into(),
-        details: Some(json!({ "reasonCode": "session_dispatch_unassigned" })),
-        disposition: BackendFailureDispositionV1::Unassigned,
     }
 }
 
@@ -3313,15 +3335,7 @@ async fn exact_orchestration_context(
     session: &WorkflowSessionGenerationV1,
 ) -> Result<DispatchContextReceipt, BackendDispatchError> {
     verify_exact_orchestration_session(state, session).await?;
-    // Only the Session itself may enroll, so an exact caller never reads the
-    // refusal as unassigned.
-    let target = session_dispatch_target(state, session)
-        .await
-        .map_err(exact_context_error)?
-        .ok_or_else(|| {
-            session_dispatch_unassigned()
-                .with_disposition(BackendFailureDispositionV1::StaleGeneration)
-        })?;
+    let target = dispatch_context_target(state, session).await?;
     let task_id = TaskIdV1::new(target.task_id.as_str())
         .map_err(|_| BackendDispatchError::from("orchestration_context_invalid"))?;
     let dispatch_id = DispatchIdV1::new(target.dispatch_id.as_str())
@@ -3660,48 +3674,44 @@ fn exact_context_error(error: DomainStoreErrorV1) -> BackendDispatchError {
     orchestration_store_error(error).with_disposition(disposition)
 }
 
-/// The Session's own lookup: a live Session that no Dispatch names may enroll.
 async fn dispatch_context_target(
     state: &ServiceState,
     session: &WorkflowSessionGenerationV1,
 ) -> Result<InteractionTarget, BackendDispatchError> {
-    match session_dispatch_target(state, session)
-        .await
-        .map_err(dispatch_context_error)?
-    {
-        Some(target) => Ok(target),
-        None => {
-            verify_exact_orchestration_session(state, session).await?;
-            Err(session_dispatch_unassigned())
-        }
-    }
-}
-
-/// The Dispatch that names this exact Session generation, or `None` when no
-/// active or completed Dispatch names it: the Session has not enrolled. Any
-/// other refusal keeps its store error.
-async fn session_dispatch_target(
-    state: &ServiceState,
-    session: &WorkflowSessionGenerationV1,
-) -> Result<Option<InteractionTarget>, DomainStoreErrorV1> {
     let error = match state
         .store
         .orchestration_target_for_exact_session(session)
         .await
     {
-        Ok(target) => return Ok(Some(target)),
+        Ok(target) => return Ok(target),
         Err(error) => error,
     };
     if !matches!(&error, DomainStoreErrorV1::IdentityConflict { .. }) {
-        return Err(error);
+        return Err(dispatch_context_error(error));
     }
     let inspection = state
         .store
         .inspect_orchestration_dispatch_session(session)
-        .await?;
-    match inspection.target {
-        None => Ok(None),
-        Some(_) => Err(error),
+        .await
+        .map_err(dispatch_context_error)?;
+    if inspection.target.is_none() {
+        verify_exact_orchestration_session(state, session).await?;
+        return Err(session_dispatch_unassigned());
+    }
+    Err(orchestration_store_error(error)
+        .with_disposition(BackendFailureDispositionV1::StaleGeneration))
+}
+
+/// Hmux observed this Session generation as live, but no Dispatch binds it,
+/// so it has no durable inbox yet. Only the Session's own context lookup can
+/// enroll it; a message to it cannot be delivered until then. Exact-session
+/// methods report this as terminal.
+fn session_dispatch_unassigned() -> BackendDispatchError {
+    BackendDispatchError {
+        code: "orchestration_generation_conflict".into(),
+        message: "No Dispatch binds this live Session generation, so it has no durable inbox yet. The Session opens one when it resolves its own orchestration context.".into(),
+        details: Some(json!({ "reasonCode": "session_dispatch_unassigned" })),
+        disposition: BackendFailureDispositionV1::Unassigned,
     }
 }
 
@@ -3892,6 +3902,11 @@ async fn dispatch_authorized(
         }
         "agent_goal.get" | "agent_goal.put" => {
             boxed_operation(|| agent_goal::invoke(state, &request.operation, &request.body)).await
+        }
+        agent_conversation_history::OPERATION => {
+            boxed_operation(|| agent_conversation_history::read(state, &request.body))
+                .await
+                .map_err(agent_conversation_api_error)
         }
         "work_claim.put" | "work_claim.list" | "work_claim.release" => {
             boxed_operation(|| work_claim::invoke(state, &request.operation, &request.body)).await
@@ -4327,7 +4342,8 @@ fn agent_conversation_api_error(
         AgentConversationApiErrorV1::RequestInvalid
         | AgentConversationApiErrorV1::NotFound
         | AgentConversationApiErrorV1::SteerUnsupported
-        | AgentConversationApiErrorV1::ProviderFailed(_) => BackendFailureDispositionV1::Terminal,
+        | AgentConversationApiErrorV1::ProviderFailed(_)
+        | AgentConversationApiErrorV1::HistoryUnavailable => BackendFailureDispositionV1::Terminal,
         AgentConversationApiErrorV1::Conflict => BackendFailureDispositionV1::StaleGeneration,
         AgentConversationApiErrorV1::RuntimeUnavailable
         | AgentConversationApiErrorV1::StoreFailed => BackendFailureDispositionV1::RetrySame,
@@ -4606,6 +4622,9 @@ async fn handle_connection(state: Arc<ServiceState>, stream: UnixStream) -> io::
         };
         if request.operation == agent_conversation_api::SUBSCRIBE_OPERATION {
             return agent_conversation_api::handle_subscription(state, reader, request).await;
+        }
+        if request.operation == agent_conversation_activity::SUBSCRIBE_OPERATION {
+            return agent_conversation_activity::handle_subscription(state, reader, request).await;
         }
         let request_id = request.request_id.clone();
         let request_operation = request.operation.clone();

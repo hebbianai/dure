@@ -857,8 +857,11 @@ pub trait DomainStore: Send + Sync {
         agent_id: &'a AgentIdV1,
     ) -> DomainStoreFuture<'a, Option<AgentCheckpointBindingAuthorityV1>>;
 
-    /// Fills an unknown conversation only while the complete exact runtime
-    /// authority is still current; an established identity is immutable.
+    /// Records the conversation the exact native generation's Host reports,
+    /// only while the complete exact runtime authority is still current. It
+    /// fills an unknown conversation, or follows the Host to the successor it
+    /// verified in the same generation (Claude's `/clear` or an in-process
+    /// continuation), so later resumes continue what the process runs now.
     fn converge_agent_checkpoint_provider_conversation<'a>(
         &'a self,
         expected: &'a AgentCheckpointBindingAuthorityV1,

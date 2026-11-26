@@ -2250,6 +2250,8 @@ mod tests {
                 summary: "ls".into(),
                 choices: vec![AgentApprovalChoice::Approve, AgentApprovalChoice::Deny],
             })),
+            held_prompts: None,
+            turn_failure: None,
         };
         assert!(approval_offered(
             Some(&pending),

@@ -4,10 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use dure_app::{
-    AgentIdV1, AgentProviderConversationPlanV1, AgentRuntimeBindingAuthorityV1,
-    AgentRuntimeSelectionV1, DomainStore,
-};
+use dure_app::{AgentIdV1, AgentRuntimeBindingAuthorityV1, AgentRuntimeSelectionV1};
 use serde::Serialize;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
@@ -15,7 +12,7 @@ use super::{HibernateBodyV1, ObservedIdleV1, hibernate, idle_checkpoint, idle_po
 use crate::ServiceState;
 use crate::agent_runtime_projection::{AgentRuntimeObservedV1, read_locked};
 use crate::agent_runtime_transition_apply::{
-    inspect_native_source, runtime_operation_identity, store_error, validate_source_observation,
+    converge_native_provider_conversation, inspect_native_source, runtime_operation_identity,
 };
 
 const POLICY_ENV: &str = "DURE_SESSION_IDLE_AFTER_MS";
@@ -499,33 +496,17 @@ async fn capture(
     let AgentRuntimeBindingAuthorityV1::NativeCli { authority: native } = authority.as_mut() else {
         return Err("runtime_idle_source_unsupported".into());
     };
-    let conversation_id = native
-        .binding
-        .provider_conversation_id
-        .clone()
-        .or_else(|| {
-            inspection
-                .provider_conversation_identity
-                .as_ref()
-                .map(|identity| identity.conversation_id.clone())
-        })
-        .ok_or_else(|| "agent_runtime_provider_conversation_unavailable".to_owned())?;
-    let conversation = AgentProviderConversationPlanV1::from_option(Some(conversation_id.clone()))
-        .map_err(|_| "agent_runtime_provider_conversation_unavailable".to_owned())?;
-    validate_source_observation(&selection, &conversation, &inspection)
-        .map_err(|error| error.admission_error().code)?;
-    if native.binding.provider_conversation_id.is_none() {
-        if !state.is_mutation_authority() {
-            return Err("runtime_idle_authority_unavailable".into());
-        }
-        // Share binding.ensure's exact missing-to-known convergence. A pane
-        // need not be mounted to retain the identity learned by its Host.
-        *native = state
-            .store
-            .converge_agent_checkpoint_provider_conversation(native, &conversation_id)
+    // Share admission's convergence to the conversation the Host reports. A
+    // pane need not be mounted to retain the identity learned by its Host, and
+    // hibernation must wake the conversation the process runs now.
+    let (converged, conversation) =
+        converge_native_provider_conversation(state, &selection, native.clone(), &inspection)
             .await
-            .map_err(store_error)?;
+            .map_err(|error| error.code)?;
+    if conversation.as_option().is_none() {
+        return Err("agent_runtime_provider_conversation_unavailable".into());
     }
+    *native = converged;
     if !inspection.supports_semantic_quiescent_stop() {
         return Err("agent_runtime_semantic_idle_unavailable".into());
     }

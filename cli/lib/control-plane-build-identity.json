@@ -6,6 +6,7 @@
     "apiVersion": "dure.control-plane-identity/v1",
     "kind": "dure.control_plane.identity",
     "capabilities": [
+      "agent_conversation.activity.v1",
       "agent_conversation.answer_pending",
       "agent_conversation.cancel_queued_turn",
       "agent_conversation.continue_turn",
@@ -14,6 +15,7 @@
       "agent_conversation.inspect_input",
       "agent_conversation.interrupt_turn",
       "agent_conversation.read.v7",
+      "agent_conversation.read_provider_history",
       "agent_conversation.read_queue",
       "agent_conversation.recover",
       "agent_conversation.start_turn",
@@ -44,6 +46,7 @@
       "agent_runtime.wake",
       "agent_spawn.apply",
       "agent_spawn.child_result_delivery.v1",
+      "agent_spawn.conversation_observation.v1",
       "agent_spawn.list",
       "agent_spawn.parent_link.v1",
       "agent_spawn.presentation_project.v1",
@@ -106,7 +109,8 @@
       "workflow.delegate_once",
       "workflow.delegate_once.complete",
       "workflow.delegate_once.show",
-      "account_recovery.v1"
+      "account_recovery.v1",
+      "account_recovery.continue_after_reset.v1"
     ]
   }
 }

@@ -284,6 +284,16 @@ pub struct AgentRuntimeStateDescriptor {
     /// beside `approval_required`; a new request has a new `attention_id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_request: Option<Box<hmux_session_protocol::AgentApprovalRequest>>,
+    /// How many agent prompts, such as inbox messages, the person's unsent
+    /// input holds back, and since when. Present only while it holds any;
+    /// older Hosts never report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_prompts: Option<hmux_session_protocol::HeldAgentPromptsProjection>,
+    /// Why the provider's turn ended on an API error, when its adapter
+    /// reported it. Only beside `error`, for that error episode; older Hosts
+    /// never report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_failure: Option<hmux_session_protocol::AgentTurnFailure>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -831,6 +841,8 @@ pub fn project_agent_runtime_state(
         program_status: projection.program_status,
         background_work: projection.background_work,
         approval_request: projection.approval_request,
+        held_prompts: projection.held_prompts,
+        turn_failure: projection.turn_failure,
     })
 }
 
@@ -1457,6 +1469,8 @@ mod tests {
             turn_completed_count: 1,
             program_status: None,
             background_work: false,
+            held_prompts: None,
+            turn_failure: None,
         });
         let hello = serve(
             fixture.socket_path.clone(),
@@ -1511,6 +1525,8 @@ mod tests {
             turn_completed_count: 0,
             program_status: None,
             background_work: false,
+            held_prompts: None,
+            turn_failure: None,
         });
         let _hello = serve(
             fixture.socket_path.clone(),

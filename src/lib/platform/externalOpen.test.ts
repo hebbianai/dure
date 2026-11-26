@@ -1,15 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	isUserCancelledExternalOpen,
+	openExternalPath,
 	openExternalUrl,
 } from "@/lib/platform/externalOpen";
 
 const mocks = vi.hoisted(() => ({
 	openUrl: vi.fn<(url: string) => Promise<void>>(),
+	openPath: vi.fn<(path: string) => Promise<void>>(),
 	showErrorToast: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: mocks.openUrl }));
+vi.mock("@tauri-apps/plugin-opener", () => ({
+	openUrl: mocks.openUrl,
+	openPath: mocks.openPath,
+}));
 
 vi.mock("@/lib/toast", () => ({
 	showErrorToast: mocks.showErrorToast,
@@ -18,6 +23,7 @@ vi.mock("@/lib/toast", () => ({
 
 beforeEach(() => {
 	mocks.openUrl.mockReset();
+	mocks.openPath.mockReset();
 	mocks.showErrorToast.mockReset();
 });
 
@@ -59,6 +65,19 @@ describe("openExternalUrl", () => {
 
 		await openExternalUrl("https://example.com/cancel");
 
+		expect(mocks.showErrorToast).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("openExternalPath", () => {
+	it("opens the file with its default app and toasts a failure", async () => {
+		mocks.openPath.mockResolvedValueOnce(undefined);
+		await openExternalPath("/repo/report.pdf");
+		expect(mocks.openPath).toHaveBeenCalledWith("/repo/report.pdf");
+		expect(mocks.showErrorToast).not.toHaveBeenCalled();
+
+		mocks.openPath.mockRejectedValueOnce("No such file or directory (os error 2)");
+		await openExternalPath("/repo/gone.pdf");
 		expect(mocks.showErrorToast).toHaveBeenCalledTimes(1);
 	});
 });

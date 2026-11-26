@@ -12,7 +12,8 @@ import { ChatComposer } from "@/components/agents/chat/ChatComposer";
 import { AgentChatSessionController } from "@/lib/agents/chat/agentChatSessionController";
 import type { AgentChatSubmission } from "@/lib/agents/chat/agentChatSubmission";
 import { chatInputLatency } from "@/lib/agents/chat/chatInputLatency";
-import { t } from "@/lib/i18n";
+import { continuationTimeLabel } from "@/lib/agents/chat/turnFailureReason";
+import { currentLang, t } from "@/lib/i18n";
 import type { DureAgentConversationClient } from "@/lib/ipc/dureAgentConversation";
 import type { DureAgentRuntimeLaunchSelectionV1 } from "@/lib/ipc/dureAgentRuntime";
 import { getForegroundInteractionBudget } from "@/lib/scheduling/foregroundInteractionBudget";
@@ -374,6 +375,7 @@ describe("ChatComposer queueing", () => {
 				state: canceled ? "canceled" : "queued",
 			}),
 			readQueue: vi.fn(),
+			readProviderHistory: vi.fn(),
 			enqueueTurn: vi.fn(),
 			cancelQueuedTurn: vi.fn(async () => {
 				canceled = true;
@@ -493,6 +495,7 @@ describe("ChatComposer queueing", () => {
 		const client: DureAgentConversationClient = {
 			inspectInput: vi.fn(async () => null),
 			readQueue: vi.fn(),
+			readProviderHistory: vi.fn(),
 			enqueueTurn: vi.fn(),
 			cancelQueuedTurn: vi.fn(),
 			inspect: async () => ({ backend, routeAuthority, binding: page.binding }),
@@ -642,6 +645,7 @@ describe("ChatComposer uncertain send recovery", () => {
 		const client: DureAgentConversationClient = {
 			inspectInput: async () => null,
 			readQueue: vi.fn(),
+			readProviderHistory: vi.fn(),
 			enqueueTurn: vi.fn(),
 			cancelQueuedTurn: vi.fn(),
 			inspect: async () => ({
@@ -1196,6 +1200,36 @@ describe("ChatComposer turn failure recovery", () => {
 			screen.getByRole("button", { name: t("agents.chat.recovery.manageAccounts") }),
 		);
 		expect(recovery.manageAccounts).toHaveBeenCalledTimes(1);
+	});
+
+	it("says when the failed turn continues after its limit resets", () => {
+		const value = session("claude");
+		value.page = {
+			...value.page!,
+			rows: failedTurnRows("usage_limit"),
+			recovery: null,
+			latestFailure: {
+				itemId: "item-2",
+				createdAtMs: 2,
+				reason: "usage_limit",
+				userInput: null,
+			},
+		};
+		const continuesAtMs = new Date(2026, 10, 26, 3, 10).getTime();
+		render(
+			<ChatComposer
+				session={value}
+				disabled={false}
+				recovery={{ ...recoveryHandlers(false), continuesAtMs }}
+			/>,
+		);
+		expect(
+			screen.getByText(
+				`${t("agents.chat.turnFailure.usageLimit")} ${t("agents.chat.recovery.continuesAt", {
+					time: continuationTimeLabel(continuesAtMs, currentLang()),
+				})}`,
+			),
+		).toBeTruthy();
 	});
 
 	it("offers sign-in and switch for an authentication failure, and nothing for a generic one", () => {

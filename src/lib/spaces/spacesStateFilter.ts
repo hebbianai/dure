@@ -1,45 +1,32 @@
-// Attention-routing vocabulary for the Spaces navigator — the ONE authority
-// for "which display states need a human". The group-header rollups and the
-// rail badge read this set; a second inline set would let the surfaces
-// disagree about what counts as attention.
-import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
+// Attention-routing vocabulary for the Spaces navigator. Which agents need a
+// person is the needs-person authority's (src/lib/agents/needsPerson.ts):
+// each Spaces row carries the reason it found, and the group-header rollups
+// and the status-group counts only read that field, so they count the same
+// agents as the rail badge and Next up.
+import type { NeedsPersonReason } from "@/lib/agents/needsPerson";
 
-/** Display states that require human input (error · blocked · input). */
-export const ATTENTION_DISPLAY_STATES: ReadonlySet<string> = new Set([
-	"error",
-	"blocked",
-	"input",
-]);
-
-/** Rail-badge count: how many entries currently need a human. */
-export function countAttentionDisplayStates(
-	states: Record<string, AgentDisplayState | undefined>,
-): number {
-	let count = 0;
-	for (const state of Object.values(states)) {
-		if (state !== undefined && ATTENTION_DISPLAY_STATES.has(state)) count += 1;
-	}
-	return count;
+interface NeedsPersonRollupRow {
+	readonly needsPerson?: NeedsPersonReason;
 }
 
-interface ProgramStatusRollupRow {
-	readonly displayState?: string;
+/** Whether a row counts toward a heading's "needs attention" rollup. */
+export function countsTowardNeedsPersonRollup(row: NeedsPersonRollupRow): boolean {
+	return row.needsPerson !== undefined;
+}
+
+interface ProgramStatusRollupRow extends NeedsPersonRollupRow {
 	readonly programStatusKind?: string;
 }
 
-/** A program's own report that it is waiting, where Host attention has not
- *  already spoken for the row. The two stay separate counts: a report written
- *  by terminal output never adds to Host-owned attention, and one pane never
- *  counts twice on a heading. */
+/** A program's own report that it is waiting, where the needs-person
+ * authority has not already spoken for the row. The two stay separate
+ * counts: a report written by terminal output never adds to Host-owned
+ * attention, and one pane never counts twice on a heading. */
 export function countsTowardProgramStatusRollup(
 	row: ProgramStatusRollupRow,
 ): boolean {
 	return (
-		row.programStatusKind !== undefined &&
-		!(
-			row.displayState !== undefined &&
-			ATTENTION_DISPLAY_STATES.has(row.displayState)
-		)
+		row.programStatusKind !== undefined && !countsTowardNeedsPersonRollup(row)
 	);
 }
 

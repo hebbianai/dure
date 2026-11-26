@@ -143,10 +143,7 @@ async fn event_canary_does_not_enroll_an_unassigned_session() {
         error.details.as_ref().unwrap()["reasonCode"],
         "session_dispatch_unassigned"
     );
-    assert_eq!(
-        error.disposition,
-        BackendFailureDispositionV1::StaleGeneration
-    );
+    assert_eq!(error.disposition, BackendFailureDispositionV1::Unassigned);
     assert!(
         state
             .store

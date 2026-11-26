@@ -305,6 +305,7 @@ function scriptedQuery(
 	observations,
 	{
 		assistantMessages = true,
+		beforeResult = [],
 		delta = "hello from Claude",
 		initializationAfterInput = false,
 		result,
@@ -413,6 +414,7 @@ function scriptedQuery(
 						trailingText,
 					});
 				}
+				for (const before of beforeResult) output.push(before);
 				output.push({
 					...successResult(message.uuid, result ?? trailingText ?? delta),
 					...(resultPatch ?? {}),
@@ -1141,9 +1143,18 @@ test("one persistent SDK Query receives turns through immutable relay-backed opt
 	});
 	assert.deepEqual(
 		observed.events.map(({ kind }) => kind),
-		["provider_session_initialized", "assistant_delta", "assistant_message_completed", "provider_turn_result"],
+		[
+			"provider_session_initialized",
+			"provider_user_message",
+			"assistant_delta",
+			"assistant_message_completed",
+			"provider_turn_result",
+		],
 	);
-	assert.equal(observed.events[1].payload.text, "hello from Claude");
+	assert.equal(
+		observed.events.find(({ kind }) => kind === "assistant_delta").payload.text,
+		"hello from Claude",
+	);
 
 	await controller.close();
 	assert.deepEqual(observed.terminals, [{ code: 0, signal: null }]);
@@ -1166,6 +1177,7 @@ test("SDK prewarm admits a Query whose public init event follows its first input
 	assert.deepEqual(
 		observed.events.map(({ kind }) => kind),
 		[
+			"provider_user_message",
 			"provider_session_initialized",
 			"assistant_delta",
 			"assistant_message_completed",
@@ -1188,12 +1200,16 @@ test("a successful result supplies assistant text when partial messages are abse
 		observed.events.map(({ kind }) => kind),
 		[
 			"provider_session_initialized",
+			"provider_user_message",
 			"assistant_delta",
 			"assistant_message_completed",
 			"provider_turn_result",
 		],
 	);
-	assert.equal(observed.events[1].payload.text, "hello from Claude");
+	assert.equal(
+		observed.events.find(({ kind }) => kind === "assistant_delta").payload.text,
+		"hello from Claude",
+	);
 	await controller.close();
 });
 
@@ -1214,6 +1230,7 @@ test("a result-only final answer follows a tool preamble", async () => {
 		observed.events.map(({ kind }) => kind),
 		[
 			"provider_session_initialized",
+			"provider_user_message",
 			"assistant_delta",
 			"assistant_message_completed",
 			"tool_started",
@@ -1694,9 +1711,10 @@ test("provider failures reject only the active turn and redact raw provider erro
 	assert.equal(JSON.stringify(observed.events).includes(secret), false);
 	assert.deepEqual(observed.events.map(({ kind }) => kind), [
 		"provider_session_initialized",
+		"provider_user_message",
 		"provider_turn_result",
 	]);
-	assert.equal(observed.events[1].payload.isError, true);
+	assert.equal(observed.events.at(-1).payload.isError, true);
 	await controller.close();
 });
 
@@ -1960,6 +1978,24 @@ test("a mid-turn steer rides the same streaming input into the running turn", as
 			}),
 		/dure_claude_agent_sdk_turn_not_running/u,
 	);
+	// Each prompt the provider received is reported with the uuid it was sent
+	// with, which is the id the provider records it under. Refused steers are
+	// not.
+	assert.deepEqual(
+		observed.events
+			.filter(({ kind }) => kind === "provider_user_message")
+			.map(({ payload }) => payload),
+		[
+			{
+				clientMessageId: "12345678-1234-4234-8234-123456789abc",
+				providerMessageId: observed.inputs[0].uuid,
+			},
+			{
+				clientMessageId: "12345678-1234-4234-8234-123456789abd",
+				providerMessageId: observed.inputs[1].uuid,
+			},
+		],
+	);
 	await controller.close();
 });
 
@@ -1989,6 +2025,49 @@ test("a usage-limit result crosses the boundary as a bounded reason, never as te
 	assert.equal(result.payload.failureReason, "usage_limit");
 	assert.equal(JSON.stringify(observed.events).includes("resets 3pm"), false);
 	await controller.close();
+});
+
+test("a usage-limit failure carries the reset its provider reported, and only that number", async () => {
+	const rateLimit = (rate_limit_info) => ({
+		rate_limit_info,
+		session_id: SESSION_ID,
+		type: "rate_limit_event",
+		uuid: "bbbbbbbb-0000-4111-8222-333333333333",
+	});
+	const soon = Math.floor(Date.now() / 1000) + 3600;
+	for (const [beforeResult, result, expected] of [
+		[[rateLimit({ resetsAt: soon, status: "rejected" })], "You've hit your limit", soon * 1000],
+		// A later allowed reading means the rejection no longer applies.
+		[
+			[
+				rateLimit({ resetsAt: soon, status: "rejected" }),
+				rateLimit({ resetsAt: soon, status: "allowed" }),
+			],
+			"You've hit your limit",
+			undefined,
+		],
+		[[], `Claude AI usage limit reached|${soon}`, soon * 1000],
+		[[], "You've hit your limit · resets 3pm", undefined],
+		[[rateLimit({ resetsAt: soon + 30 * 86_400, status: "rejected" })], "You've hit your limit", undefined],
+	]) {
+		const prepared = binding(3, null);
+		const observed = observations(prepared);
+		const controller = await createController(
+			prepared,
+			observed,
+			scriptedQuery(observed, {
+				assistantMessages: false,
+				beforeResult,
+				resultPatch: { is_error: true, result },
+			}),
+			{ usageLimitErrorPrefixes: SDK_USAGE_LIMIT_PREFIXES },
+		);
+		await assert.rejects(
+			controller.startTurn({ clientMessageId: "limit-reset-turn-1", input: "go" }),
+			(error) => error.reason === "usage_limit" && error.resetsAtMs === expected,
+		);
+		await controller.close();
+	}
 });
 
 test("an API auth status classifies as authentication_failed and other errors stay provider_error", async () => {

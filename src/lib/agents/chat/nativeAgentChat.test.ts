@@ -213,20 +213,24 @@ describe("native conversation timeline", () => {
 		).toHaveLength(1);
 	});
 
-	it("marks a bounded provider history and leaves leading agent text outside a turn", () => {
+	it("marks history it cannot load and leaves leading agent text outside a turn", () => {
 		const page = nativeAgentChatPage({
 			source,
-			transcript: transcript(
-				[
-					{ role: "agent", text: "Earlier answer" },
-					{ role: "agent", text: "   " },
-					{ role: "user", text: "Next" },
-				],
-				{ historyComplete: false },
-			),
+			transcript: {
+				...transcript(
+					[
+						{ role: "agent", text: "Earlier answer" },
+						{ role: "agent", text: "   " },
+						{ role: "user", text: "Next" },
+					],
+					{ historyComplete: false },
+				),
+				olderCursor: 1_200,
+			},
 			terminalEpoch: "epoch-one",
 			working: false,
 		});
+		expect(page.hasMore).toBe(false);
 		expect(blocks(page)).toEqual([
 			{ row: "history_boundary" },
 			{ row: "message" },
@@ -237,6 +241,103 @@ describe("native conversation timeline", () => {
 				workedMs: 0,
 			},
 		]);
+	});
+
+	it("offers older history instead of the notice when the view can load it", () => {
+		const page = nativeAgentChatPage({
+			source,
+			transcript: {
+				...conversation,
+				historyComplete: false,
+				olderCursor: 1_200,
+			},
+			canLoadOlder: true,
+			terminalEpoch: "epoch-one",
+			working: false,
+		});
+		expect(page.hasMore).toBe(true);
+		expect(blocks(page)[0]).not.toEqual({ row: "history_boundary" });
+	});
+
+	it("claims nothing is missing once a read reaches the transcript's start", () => {
+		// A record left out in the middle is not history that loading could
+		// bring back; the notice is only for an unreachable start.
+		const page = nativeAgentChatPage({
+			source,
+			transcript: { ...conversation, historyComplete: false },
+			canLoadOlder: true,
+			terminalEpoch: "epoch-one",
+			working: false,
+		});
+		expect(page.hasMore).toBe(false);
+		expect(blocks(page).some((block) => "row" in block)).toBe(false);
+	});
+
+	it("joins older pages above the newest read where each stopped", () => {
+		const oldest = {
+			...transcript([
+				{ role: "user", text: "First question" },
+				{ role: "agent", text: "Looking." },
+			]),
+			tools: [call(2, "toolu_1", "Read", "running")],
+		};
+		const newest = {
+			...transcript(
+				[
+					{ role: "agent", text: "First answer" },
+					{ role: "user", text: "Second question" },
+					{ role: "agent", text: "Second answer" },
+				],
+				{ historyComplete: false },
+			),
+			olderCursor: 500,
+			// The call's result was recorded after the page break.
+			tools: [
+				call(0, "toolu_1", "Read", "completed"),
+				call(2, "toolu_2", "Bash", "completed"),
+			],
+		};
+		const page = nativeAgentChatPage({
+			source,
+			transcript: newest,
+			older: [oldest],
+			canLoadOlder: true,
+			terminalEpoch: "epoch-one",
+			working: false,
+		});
+		expect(page.hasMore).toBe(false);
+		expect(page.binding.historyComplete).toBe(true);
+		// The first turn spans the page break; every message and call shows once.
+		expect(turnSegments(page)).toEqual([
+			[
+				"user:First question",
+				"assistant:Looking.",
+				["Read:completed"],
+				"assistant:First answer",
+			],
+			["user:Second question", ["Bash:completed"], "assistant:Second answer"],
+		]);
+	});
+
+	it("joins more pages than one read may hold", () => {
+		const page = (index: number) =>
+			transcript(
+				Array.from({ length: 4_000 }, (_, entry) => ({
+					role: entry % 2 === 0 ? ("user" as const) : ("agent" as const),
+					text: `page ${index} entry ${entry}`,
+				})),
+			);
+		const joined = nativeAgentChatPage({
+			source,
+			transcript: page(3),
+			older: [page(0), page(1), page(2)],
+			canLoadOlder: true,
+			terminalEpoch: "epoch-one",
+			working: false,
+		});
+		expect(
+			joined.rows.filter((row) => row.item.body.type === "message"),
+		).toHaveLength(16_000);
 	});
 
 	it("refuses a transcript for another conversation or provider", () => {

@@ -25,9 +25,16 @@ import {
 import { restorePanePreservingLayout } from "@/lib/workspace/pane/paneVisibility";
 import { recordRecentFileOpen } from "@/lib/files/recentFileOpensStore";
 import { publishFileReopen } from "@/lib/files/fileReopenEvents";
+import {
+	type FileRevealPosition,
+	requestFileReveal,
+} from "@/lib/files/fileReveal";
 import { isMockupPath, mockupPaneTitle } from "@/lib/design/mockupSrcdoc";
 
-export type OpenFileOpts = FileTarget;
+/** The document to open and, optionally, the line its viewer should show. */
+export type OpenFileOpts = FileTarget & {
+	readonly reveal?: FileRevealPosition;
+};
 
 function recordFileOpen(target: FileTarget): void {
 	const { sessionId: _sessionId, ...file } = target;
@@ -100,9 +107,11 @@ export function restoreHiddenFilePaneOn(
 
 export function openFileViewerOn(
 	api: DockviewApi,
-	opts: OpenFileOpts,
+	{ reveal, ...opts }: OpenFileOpts,
 	position?: PanelPosition,
 ) {
+	// The viewer reads the request when it mounts, so it is in place first.
+	if (reveal) requestFileReveal(opts, reveal);
 	const key = fileDraftKey(opts);
 	const existing = api.panels.find((pane) => {
 		const ref = dockPanelReference(pane);

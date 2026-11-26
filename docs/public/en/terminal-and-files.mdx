@@ -27,6 +27,8 @@ Use the commands your repository actually defines; `npm test` is an example, not
 
 Use the project file explorer to open a file in the built-in editor. Keep it beside the agent or a [Diff review](/en/review-and-feedback). Check **Settings → General** for auto-save preferences, and coordinate edits when you and an agent touch the same file.
 
+You can also open a file straight from terminal output. Hold **⌘** (**Ctrl** on Windows and Linux) and click a path such as `src/app.ts:12:3`: it opens in the built-in editor at that line, from the machine the pane runs on, so a path in an SSH pane opens on that host. Relative paths resolve against the pane's working folder. **⌘**-click a web address to open it in your browser, or add **Shift** to open a local file with its default app. In an SSH pane, a `localhost`, `127.0.0.1` or `0.0.0.0` address names the host, so when a configured SSH backend serves that host it opens in a Browser pane running there instead; add **Shift** to open it in your browser on this computer. While you hold the key, the path or address under the pointer is underlined, so you can see what a click opens.
+
 ## Paste images or drop files
 
 Paste an image into an agent terminal or drop files from Finder. Dure prepares file paths for the terminal; in an SSH pane it uploads the files first and inserts their remote paths. The provider decides whether and how it can use those attachments.

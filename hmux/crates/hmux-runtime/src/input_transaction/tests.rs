@@ -809,6 +809,7 @@ fn every_non_ready_initial_prompt_refuses_before_the_writer() {
                 expected_observation: None,
                 background_work: false,
                 startup_gate: None,
+                turn_failure: None,
             },
         )
         .unwrap();
@@ -1150,6 +1151,7 @@ fn waiting_report(
         background_work: false,
         startup_gate: None,
         approval_request: None,
+        turn_failure: None,
     }
 }
 

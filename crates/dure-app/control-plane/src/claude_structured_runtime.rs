@@ -1851,12 +1851,9 @@ where
                     if existing.agent_id != request.agent_id
                         || existing.provider_id.as_str() != CLAUDE_PROVIDER_ID
                         || existing.execution_profile != request.execution_profile
-                        || request
-                            .provider_conversation_ref
-                            .as_ref()
-                            .is_some_and(|reference| {
-                                existing.provider_conversation_ref.as_ref() != Some(reference)
-                            })
+                        || !existing.continues_provider_conversation(
+                            request.provider_conversation_ref.as_deref(),
+                        )
                     {
                         return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict.into());
                     }
@@ -1974,6 +1971,9 @@ where
     /// Rotate one exact dormant Structured binding under a durable transition.
     /// The provider journal proves the old runtime is stopped; the transition
     /// operation deterministically names the only target that may replace it.
+    /// A target that resumes another conversation than the binding's, such as
+    /// the one a Terminal's `/clear` started, writes to its own timeline epoch
+    /// ([`AgentInteractionBindingV1::replacement_timeline_epoch`]).
     async fn replace_stopped_target(
         &self,
         context: &ClaudeRuntimeContext,
@@ -1982,12 +1982,7 @@ where
         operation_id: &OperationIdV1,
         target_context: &ClaudeRuntimeContext,
     ) -> Result<AgentInteractionBindingV1, ClaudeStructuredRuntimeErrorV1> {
-        if source.agent_id != request.agent_id
-            || source.provider_id.as_str() != CLAUDE_PROVIDER_ID
-            || request
-                .provider_conversation_ref
-                .as_ref()
-                .is_some_and(|expected| source.provider_conversation_ref.as_ref() != Some(expected))
+        if source.agent_id != request.agent_id || source.provider_id.as_str() != CLAUDE_PROVIDER_ID
         {
             return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict);
         }
@@ -2969,6 +2964,12 @@ fn runtime_query_identity_for_binding(
     })
 }
 
+/// Whether `candidate` is the binding that replacing `failed` (a stopped
+/// source or a failed target) published for `target_runtime`. Like
+/// [`AgentInteractionBindingV1::same_history_authority`], it leaves out
+/// `history_complete`: the store derives it from the timeline's rows and the
+/// target's history seeding settles it, so a replacement applied again after
+/// that seeding still finds its own target.
 fn is_exact_replacement_target(
     candidate: &AgentInteractionBindingV1,
     failed: &AgentInteractionBindingV1,
@@ -2988,8 +2989,12 @@ fn is_exact_replacement_target(
             candidate.binding_revision,
         )
         && &candidate.runtime == target_runtime
-        && candidate.timeline_epoch == failed.timeline_epoch
-        && candidate.history_complete == failed.history_complete
+        && failed
+            .replacement_timeline_epoch(
+                request.provider_conversation_ref.as_deref(),
+                target_runtime,
+            )
+            .is_ok_and(|epoch| candidate.timeline_epoch == epoch)
         && candidate.created_at_ms == failed.created_at_ms
         && candidate.updated_at_ms >= failed.updated_at_ms
 }

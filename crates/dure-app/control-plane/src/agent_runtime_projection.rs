@@ -1,5 +1,5 @@
 use dure_app::{
-    AgentIdV1, AgentInteractionProfileV1, AgentRuntimeBindingAuthorityV1,
+    AgentIdV1, AgentInteractionProfileV1, AgentRuntimeBindingAuthorityV1, AgentRuntimeCloseOwnerV1,
     AgentRuntimeCloseRecordV1, AgentRuntimeCloseStateV1, AgentRuntimeCloseStoppedTransitionV1,
     AgentRuntimeCloseStore, AgentRuntimeLaunchSelectionV1, AgentRuntimeSelectionV1,
     AgentRuntimeTransitionRecordV1, AgentRuntimeTransitionStore, AgentTimelineStore, DomainStore,
@@ -10,7 +10,10 @@ use crate::ServiceState;
 
 pub(super) enum AgentRuntimeObservedV1 {
     Unmanaged,
-    Closed(Box<AgentRuntimeCloseRecordV1>),
+    Closed {
+        close: Box<AgentRuntimeCloseRecordV1>,
+        owner: AgentRuntimeCloseOwnerV1,
+    },
     Transitioning {
         transition: Box<AgentRuntimeTransitionRecordV1>,
         source_close: Option<Box<AgentRuntimeCloseRecordV1>>,
@@ -80,8 +83,9 @@ impl From<&AgentRuntimeSelectionV1> for AgentRuntimeSourceSnapshotV1 {
 }
 
 impl AgentRuntimeObservedV1 {
-    /// Converts only a stable runtime or an exact terminal stop into the source
-    /// of a user-requested successor. Admission still owns destructive fences.
+    /// Converts only a stable runtime or an exact terminal runtime stop into the
+    /// source of a user-requested successor. A close owned by Agent removal is
+    /// a permanent fence. Admission still owns destructive fences.
     pub(super) fn into_explicit_successor_source(
         self,
     ) -> Result<AgentRuntimeSuccessorSourceV1, Self> {
@@ -94,7 +98,9 @@ impl AgentRuntimeObservedV1 {
                 authority: *authority,
                 boundary: AgentRuntimeSourceBoundaryV1::Active,
             }),
-            Self::Closed(close) if close.state == AgentRuntimeCloseStateV1::Stopped => {
+            Self::Closed { close, owner }
+                if close.state == AgentRuntimeCloseStateV1::Stopped && owner.admits_successor() =>
+            {
                 let close = *close;
                 Ok(AgentRuntimeSuccessorSourceV1 {
                     selection: close.intent.source,
@@ -138,14 +144,14 @@ pub(super) async fn read_locked(
                 .await
                 .map_err(|_| "agent_runtime_observation_store_failed".to_string())?
             {
-                return Ok(AgentRuntimeObservedV1::Closed(Box::new(close)));
+                return closed(state, close).await;
             }
             return Ok(AgentRuntimeObservedV1::Transitioning {
                 transition: Box::new(transition),
                 source_close: Some(Box::new(close)),
             });
         }
-        (Some(close), _) => return Ok(AgentRuntimeObservedV1::Closed(Box::new(close))),
+        (Some(close), _) => return closed(state, close).await,
         (None, Some(transition)) => {
             return Ok(AgentRuntimeObservedV1::Transitioning {
                 transition: Box::new(transition),
@@ -188,5 +194,20 @@ pub(super) async fn read_locked(
     Ok(AgentRuntimeObservedV1::Stable {
         selection: Box::new(selection),
         authority: Box::new(authority),
+    })
+}
+
+async fn closed(
+    state: &ServiceState,
+    close: AgentRuntimeCloseRecordV1,
+) -> Result<AgentRuntimeObservedV1, String> {
+    let owner = state
+        .store
+        .agent_runtime_close_owner(&close.intent.operation_id)
+        .await
+        .map_err(|_| "agent_runtime_observation_store_failed".to_string())?;
+    Ok(AgentRuntimeObservedV1::Closed {
+        close: Box::new(close),
+        owner,
     })
 }

@@ -8,6 +8,7 @@ use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::domain_store::{validate_domain_id, validate_token};
 use crate::{AgentIdV1, DomainIdErrorV1, DomainStoreErrorV1, DomainStoreFuture, ProviderIdV1};
@@ -20,6 +21,22 @@ pub const MAX_AGENT_TIMELINE_TEXT_BYTES_V1: usize = 256 * 1024;
 pub const MAX_AGENT_TIMELINE_JSON_BYTES_V1: usize = 128 * 1024;
 pub const MAX_AGENT_PENDING_REQUESTS_V1: usize = 32;
 pub const MAX_AGENT_HISTORY_ITEMS_V1: usize = 2_048;
+/// The history boundary reason that opens a provider history at the
+/// provider's compaction. The provider resumes from its summary, which stands
+/// in for the transcript records before the boundary, so the history it opens
+/// is complete; those records stay readable in the provider's transcript.
+pub const PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1: &str = "provider_conversation_compacted";
+/// The history boundary reason that opens the newest window of a longer
+/// provider history at its place in the provider's transcript:
+/// `droppedThroughProviderSequence` is the transcript offset where the window
+/// starts, which a transcript reader pages the older history before.
+pub const PROVIDER_TRANSCRIPT_WINDOW_HISTORY_BOUNDARY_V1: &str = "provider_transcript_window";
+/// The history boundary reason that opens the newest window of a longer
+/// provider history at no known place in the provider's transcript: older
+/// history precedes it, at least `droppedThroughProviderSequence` messages or
+/// turns of it. It also marks where a continued timeline skips provider
+/// history that falls between the rows it already held and the newest window.
+pub const PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1: &str = "provider_history_truncated";
 
 macro_rules! timeline_id {
     ($name:ident) => {
@@ -182,6 +199,51 @@ impl AgentInteractionBindingV1 {
         self.same_runtime_authority(other)
             && self.provider_conversation_ref == other.provider_conversation_ref
             && self.binding_revision == other.binding_revision
+    }
+
+    /// Whether a runtime that resumes `conversation` may continue this
+    /// binding's timeline. A binding continues one provider conversation; a
+    /// runtime without one (`None`) continues the binding's own.
+    #[must_use]
+    pub fn continues_provider_conversation(&self, conversation: Option<&str>) -> bool {
+        conversation.is_none_or(|conversation| {
+            self.provider_conversation_ref.as_deref() == Some(conversation)
+        })
+    }
+
+    /// The timeline epoch a replacement of this binding's runtime writes to
+    /// when its `target` runtime resumes `conversation`. A timeline holds one
+    /// provider conversation: a replacement that continues it keeps the epoch,
+    /// and one that resumes another conversation, as a Chat move after
+    /// Claude's `/clear` in the Terminal does, opens a new, empty epoch named
+    /// by its target runtime. That conversation's history then seeds the new
+    /// epoch as on a first move into Chat, and the earlier rows stay under
+    /// their own epoch.
+    pub fn replacement_timeline_epoch(
+        &self,
+        conversation: Option<&str>,
+        target: &AgentProviderRuntimeFenceV1,
+    ) -> Result<AgentTimelineEpochV1, DomainStoreErrorV1> {
+        let conversation = match conversation {
+            Some(conversation) if !self.continues_provider_conversation(Some(conversation)) => {
+                conversation
+            }
+            _ => return Ok(self.timeline_epoch.clone()),
+        };
+        let mut digest = Sha256::new();
+        for field in [
+            "agent-timeline-conversation-epoch/v1",
+            self.interaction_session_id.as_str(),
+            &target.runtime_generation,
+            &target.provider_epoch,
+            conversation,
+        ] {
+            digest.update(field.len().to_be_bytes());
+            digest.update(field.as_bytes());
+        }
+        let digest = format!("{:x}", digest.finalize());
+        AgentTimelineEpochV1::new(format!("timeline-{}", &digest[..32]))
+            .or_else(|_| invalid("timelineEpoch", "derived epoch is not a domain identifier"))
     }
 }
 
@@ -354,6 +416,17 @@ pub enum AgentTimelineItemBodyV1 {
 }
 
 impl AgentTimelineItemBodyV1 {
+    /// Whether this row marks provider history that the timeline leaves out
+    /// and the provider resumes from: any history boundary but a compaction's,
+    /// whose summary stands in for the records before it.
+    pub fn omits_provider_history(&self) -> bool {
+        matches!(
+            self,
+            Self::HistoryBoundary { reason, .. }
+                if reason != PROVIDER_COMPACTION_HISTORY_BOUNDARY_V1
+        )
+    }
+
     pub fn validate(&self) -> Result<(), DomainStoreErrorV1> {
         match self {
             Self::Lifecycle { detail, .. } => {
@@ -439,6 +512,81 @@ impl AgentTimelineItemBodyV1 {
             })?,
         )
     }
+
+    /// This body, or its largest smaller form within the timeline's bounds
+    /// when it is over them. A tool keeps its call and drops its input, then
+    /// its output, then both. A message or reasoning keeps the beginning of
+    /// its text, marked as clipped. Claude's history and live tool events
+    /// fit by the same rule. A body with no smaller form that fits, or one
+    /// that fails validation for another reason, comes back unchanged, so its
+    /// validation still names what is wrong.
+    pub fn fitted(self) -> Self {
+        if self.validate().is_ok() {
+            return self;
+        }
+        let fitted = self.smaller_forms().find(|body| body.validate().is_ok());
+        fitted.unwrap_or(self)
+    }
+
+    /// The smaller forms `fitted` tries, largest first.
+    fn smaller_forms(&self) -> Box<dyn Iterator<Item = Self> + '_> {
+        match self {
+            Self::Tool {
+                tool_call_id,
+                name,
+                state,
+                input,
+                output,
+            } => {
+                let tool = |input: Option<&Value>, output: Option<&Value>| Self::Tool {
+                    tool_call_id: tool_call_id.clone(),
+                    name: name.clone(),
+                    state: state.clone(),
+                    input: input.cloned(),
+                    output: output.cloned(),
+                };
+                Box::new(
+                    [
+                        (None, output.as_ref()),
+                        (input.as_ref(), None),
+                        (None, None),
+                    ]
+                    .into_iter()
+                    .map(move |(input, output)| tool(input, output)),
+                )
+            }
+            Self::Message { role, markdown } => {
+                Box::new(clipped_texts(markdown).map(|markdown| Self::Message {
+                    role: role.clone(),
+                    markdown,
+                }))
+            }
+            Self::Reasoning { text } => {
+                Box::new(clipped_texts(text).map(|text| Self::Reasoning { text }))
+            }
+            _ => Box::new(std::iter::empty()),
+        }
+    }
+}
+
+/// The shortest beginning of a text that a clipped body keeps.
+const MIN_CLIPPED_TEXT_BYTES: usize = 1024;
+
+/// Ever shorter beginnings of `text`, marked as clipped and never splitting a
+/// character: just under one item's bound first, then half as long each
+/// time. The shortest fits one item however its text encodes in JSON.
+fn clipped_texts(text: &str) -> impl Iterator<Item = String> + '_ {
+    std::iter::successors(
+        Some(MAX_AGENT_TIMELINE_JSON_BYTES_V1 - MIN_CLIPPED_TEXT_BYTES),
+        |bytes| Some(bytes / 2).filter(|bytes| *bytes >= MIN_CLIPPED_TEXT_BYTES),
+    )
+    .map(|bytes| {
+        let mut end = bytes.min(text.len());
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &text[..end])
+    })
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -570,6 +718,15 @@ pub enum AgentTimelineMutationV1 {
         reason: String,
         canceled_at_ms: i64,
     },
+    /// A runtime that reconciles its provider's history through its own
+    /// events has reconciled what it read when it attached. The store then
+    /// settles whether the timeline holds the whole history the provider
+    /// resumes from: it does unless a row marks provider history it leaves
+    /// out ([`AgentTimelineItemBodyV1::omits_provider_history`]). A history
+    /// seeded from one snapshot is settled by that snapshot instead.
+    SettleHistory {
+        settled_at_ms: i64,
+    },
 }
 
 impl AgentTimelineMutationV1 {
@@ -604,6 +761,7 @@ impl AgentTimelineMutationV1 {
                 validate_token("pendingCancelReason", reason)?;
                 timestamp("canceledAtMs", *canceled_at_ms)
             }
+            Self::SettleHistory { settled_at_ms } => timestamp("settledAtMs", *settled_at_ms),
         }
     }
 }
@@ -671,8 +829,12 @@ pub struct AgentTimelineCommitReceiptV1 {
 
 /// One provider-owned history snapshot for the exact current binding: the
 /// whole bounded history, or its newest window opened by a history boundary.
+/// A whole history that starts at the provider's compaction opens with its
+/// compaction boundary.
 /// The store is the sole durable sequencer: adapters collect the full bounded
 /// snapshot before presenting it here and never advance a live provider cursor.
+/// It seeds an empty timeline, or continues one that already holds part of
+/// the conversation (see [`AgentHistoryHydrationDispositionV1`]).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentHistorySnapshotV1 {
@@ -684,23 +846,43 @@ pub struct AgentHistorySnapshotV1 {
 
 impl AgentHistorySnapshotV1 {
     /// Whether this is the newest window of a longer history: its first item
-    /// is the boundary that marks where the shown history starts.
+    /// is the boundary that marks where the shown history starts. A
+    /// compaction boundary omits nothing the provider resumes from.
     pub fn omits_older_history(&self) -> bool {
-        matches!(
-            self.items.first().map(|item| &item.body),
-            Some(AgentTimelineItemBodyV1::HistoryBoundary { .. })
-        )
+        self.items
+            .first()
+            .is_some_and(|item| item.body.omits_provider_history())
     }
 
-    pub fn validate(&self) -> Result<(), DomainStoreErrorV1> {
-        validate_schema(self.schema_version)?;
-        self.binding.validate()?;
+    /// The history boundary that opens this snapshot, if any.
+    pub fn opening_boundary(&self) -> Option<&AgentTimelineItemDraftV1> {
+        self.items
+            .first()
+            .filter(|item| matches!(item.body, AgentTimelineItemBodyV1::HistoryBoundary { .. }))
+    }
+
+    /// The snapshot's own history, after any boundary that opens it.
+    pub fn history_items(&self) -> &[AgentTimelineItemDraftV1] {
+        let opened = usize::from(self.opening_boundary().is_some());
+        &self.items[opened..]
+    }
+
+    /// Whether this snapshot can seed an empty timeline: a seed completes an
+    /// incomplete history, so it never targets a complete one.
+    pub fn validate_seed(&self) -> Result<(), DomainStoreErrorV1> {
+        self.validate()?;
         if self.binding.history_complete {
             return invalid(
                 "binding.historyComplete",
                 "history snapshot must target an incomplete binding",
             );
         }
+        Ok(())
+    }
+
+    pub fn validate(&self) -> Result<(), DomainStoreErrorV1> {
+        validate_schema(self.schema_version)?;
+        self.binding.validate()?;
         if self.binding.provider_conversation_ref.is_none() {
             return invalid(
                 "binding.providerConversationRef",
@@ -739,11 +921,24 @@ pub struct AgentHistorySnapshotReceiptV1 {
     pub timeline_changed: bool,
 }
 
+/// What a structured runtime does with its provider's history when it
+/// attaches to a timeline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentHistoryHydrationDispositionV1 {
+    /// The timeline holds nothing the provider history could follow, and the
+    /// history is complete: there is nothing to read.
     Complete,
+    /// The timeline is empty: the provider history seeds it.
     Seedable,
+    /// The timeline has a known gap and no provider conversation to read
+    /// history from.
     KnownGap,
+    /// The timeline already holds part of the provider conversation. Another
+    /// runtime may have continued that conversation since, for example a
+    /// Terminal between two Chat sessions, so the provider history continues
+    /// the timeline after the newest provider message it holds. Older history
+    /// is never inserted ahead of what the timeline holds.
+    Continuable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1092,6 +1287,21 @@ pub trait AgentTimelineStore: Send + Sync {
         agent_id: &'a AgentIdV1,
     ) -> DomainStoreFuture<'a, Option<AgentInteractionBindingV1>>;
 
+    /// Up to `limit` conversation bindings, one per Agent that has a chat
+    /// conversation, ordered by interaction session after `after`.
+    fn agent_interactions<'a>(
+        &'a self,
+        after: Option<&'a AgentInteractionSessionIdV1>,
+        limit: usize,
+    ) -> DomainStoreFuture<'a, Vec<AgentInteractionBindingV1>>;
+
+    /// The newest `TurnCompleted` row of the conversation's current timeline,
+    /// however far back it is. `None` when no turn has completed in it.
+    fn latest_agent_turn_completed<'a>(
+        &'a self,
+        interaction_session_id: &'a AgentInteractionSessionIdV1,
+    ) -> DomainStoreFuture<'a, Option<AgentTimelineCursorV1>>;
+
     fn replace_agent_interaction_runtime<'a>(
         &'a self,
         replacement: &'a AgentRuntimeReplacementV1,
@@ -1119,6 +1329,15 @@ pub trait AgentTimelineStore: Send + Sync {
     ) -> DomainStoreFuture<'a, AgentHistoryHydrationAuthorityV1>;
 
     fn reconcile_agent_history<'a>(
+        &'a self,
+        snapshot: &'a AgentHistorySnapshotV1,
+    ) -> DomainStoreFuture<'a, AgentHistorySnapshotReceiptV1>;
+
+    /// Appends the part of `snapshot` that follows the newest provider message
+    /// the timeline already holds, for a [`AgentHistoryHydrationDispositionV1::Continuable`]
+    /// timeline. A snapshot that does not reach back to the held conversation
+    /// continues it only after a history boundary that marks the gap.
+    fn continue_agent_history<'a>(
         &'a self,
         snapshot: &'a AgentHistorySnapshotV1,
     ) -> DomainStoreFuture<'a, AgentHistorySnapshotReceiptV1>;
@@ -1255,6 +1474,63 @@ mod tests {
     }
 
     #[test]
+    fn a_replacement_onto_another_conversation_opens_its_own_timeline_epoch() {
+        let mut source = binding();
+        source.provider_conversation_ref = Some("conversation-before-clear".into());
+        let target = AgentProviderRuntimeFenceV1 {
+            runtime_generation: "runtime-2".into(),
+            provider_epoch: "epoch-2".into(),
+        };
+
+        for continuing in [None, Some("conversation-before-clear")] {
+            assert_eq!(
+                source
+                    .replacement_timeline_epoch(continuing, &target)
+                    .unwrap(),
+                source.timeline_epoch,
+                "a replacement that continues the conversation keeps its timeline",
+            );
+        }
+
+        let cleared = source
+            .replacement_timeline_epoch(Some("conversation-after-clear"), &target)
+            .unwrap();
+        assert_ne!(cleared, source.timeline_epoch);
+        assert_eq!(
+            source
+                .replacement_timeline_epoch(Some("conversation-after-clear"), &target)
+                .unwrap(),
+            cleared,
+            "a replayed replacement names the same epoch",
+        );
+        let other_target = AgentProviderRuntimeFenceV1 {
+            runtime_generation: "runtime-3".into(),
+            provider_epoch: "epoch-3".into(),
+        };
+        assert_ne!(
+            source
+                .replacement_timeline_epoch(Some("conversation-after-clear"), &other_target)
+                .unwrap(),
+            cleared,
+            "each replacement opens its own epoch",
+        );
+
+        // A binding whose runtime never learned its conversation holds no
+        // provider history to continue, so a resumed conversation opens one.
+        let unbound = binding();
+        assert_ne!(
+            unbound
+                .replacement_timeline_epoch(Some("conversation-after-clear"), &target)
+                .unwrap(),
+            unbound.timeline_epoch,
+        );
+        assert_eq!(
+            unbound.replacement_timeline_epoch(None, &target).unwrap(),
+            unbound.timeline_epoch,
+        );
+    }
+
+    #[test]
     fn read_pages_and_provider_payloads_are_bounded() {
         let session = AgentInteractionSessionIdV1::new("interaction-1").unwrap();
         assert!(
@@ -1277,6 +1553,72 @@ mod tests {
             .validate()
             .is_err()
         );
+    }
+
+    #[test]
+    fn an_oversized_body_fits_by_dropping_tool_payloads_and_clipping_text() {
+        let large = "x".repeat(MAX_AGENT_TIMELINE_JSON_BYTES_V1);
+        let half = "x".repeat(MAX_AGENT_TIMELINE_JSON_BYTES_V1 / 2);
+        let tool = |input: Option<&str>, output: Option<&str>| AgentTimelineItemBodyV1::Tool {
+            tool_call_id: "call-1".into(),
+            name: "write".into(),
+            state: AgentTimelineToolStateV1::Completed,
+            input: input.map(Value::from),
+            output: output.map(Value::from),
+        };
+        let fits = tool(Some("small"), Some("small"));
+        assert_eq!(fits.clone().fitted(), fits);
+        // A tool keeps its call and drops its input, then its output, then
+        // both, also when each fits alone but not together.
+        for (body, expected) in [
+            (tool(Some(&large), Some("small")), tool(None, Some("small"))),
+            (tool(Some("small"), Some(&large)), tool(Some("small"), None)),
+            (tool(Some(&large), Some(&large)), tool(None, None)),
+            (tool(Some(&half), Some(&half)), tool(None, Some(&half))),
+            (tool(Some(&large), None), tool(None, None)),
+        ] {
+            assert!(body.validate().is_err());
+            assert_eq!(body.fitted(), expected);
+        }
+        // Text keeps its beginning, marked as clipped, on a character
+        // boundary, however much its JSON encoding grows.
+        for text in [
+            "한".repeat(MAX_AGENT_TIMELINE_TEXT_BYTES_V1 / 3),
+            "\"".repeat(MAX_AGENT_TIMELINE_JSON_BYTES_V1 - 1024),
+            "\u{1}".repeat(MAX_AGENT_TIMELINE_JSON_BYTES_V1),
+        ] {
+            for body in [
+                AgentTimelineItemBodyV1::Message {
+                    role: AgentTimelineMessageRoleV1::User,
+                    markdown: text.clone(),
+                },
+                AgentTimelineItemBodyV1::Reasoning { text: text.clone() },
+            ] {
+                assert!(body.validate().is_err());
+                let fitted = body.fitted();
+                fitted.validate().unwrap();
+                let (AgentTimelineItemBodyV1::Message { markdown: kept, .. }
+                | AgentTimelineItemBodyV1::Reasoning { text: kept }) = &fitted
+                else {
+                    panic!("text body changed kind: {fitted:?}");
+                };
+                let kept = kept.strip_suffix('…').unwrap();
+                assert!(kept.len() >= 1024 && text.starts_with(kept));
+            }
+        }
+        // What clipping can't fix comes back unchanged, still invalid.
+        for body in [
+            AgentTimelineItemBodyV1::Message {
+                role: AgentTimelineMessageRoleV1::Assistant,
+                markdown: "\0".into(),
+            },
+            AgentTimelineItemBodyV1::Plan {
+                value: Value::from(large.clone()),
+            },
+        ] {
+            assert_eq!(body.clone().fitted(), body);
+            assert!(body.validate().is_err());
+        }
     }
 
     #[test]

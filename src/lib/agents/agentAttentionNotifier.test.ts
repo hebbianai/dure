@@ -404,3 +404,37 @@ describe("dispatch-spawned agents suppress only their own done notification", ()
     expect(mocks.systemNotify).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("an agent the person muted", () => {
+  const mutedAgent = {
+    id: "agent-a",
+    name: "Codex",
+    projectId: "project-a",
+    notificationsMuted: true,
+  };
+
+  it("sends no desktop notification and no phone push for any kind", () => {
+    mocks.storeState.agents = [mutedAgent];
+    for (const kind of ["approval", "done", "input", "exited"] as const) {
+      notifyAgentEvent("agent-a", kind, "Body", { eventId: `event-${kind}` });
+      notifyAgentEvent("agent-a", kind, "Body");
+    }
+    expect(mocks.systemNotify).not.toHaveBeenCalled();
+    expect(mocks.pushAgentNotification).not.toHaveBeenCalled();
+  });
+
+  it("notifies again once unmuted, and other agents stay audible", () => {
+    mocks.storeState.agents = [
+      mutedAgent,
+      { id: "agent-b", name: "Claude", projectId: "project-a" },
+    ];
+    notifyAgentEvent("agent-b", "approval", "Approval", { eventId: "event-b" });
+    expect(mocks.systemNotify).toHaveBeenCalledTimes(1);
+    expect(mocks.pushAgentNotification).toHaveBeenCalledTimes(1);
+
+    mocks.storeState.agents = [{ id: "agent-a", name: "Codex", projectId: "project-a" }];
+    notifyAgentEvent("agent-a", "approval", "Approval", { eventId: "event-a" });
+    expect(mocks.systemNotify).toHaveBeenCalledTimes(2);
+    expect(mocks.pushAgentNotification).toHaveBeenCalledTimes(2);
+  });
+});

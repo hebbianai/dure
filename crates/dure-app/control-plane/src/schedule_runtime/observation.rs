@@ -78,7 +78,7 @@ pub(crate) async fn agent_runtime(
         AgentRuntimeObservedV1::Transitioning { transition, .. } if transition.is_dormant() => {
             return Err("schedule_runtime_sleeping");
         }
-        AgentRuntimeObservedV1::Closed(close)
+        AgentRuntimeObservedV1::Closed { close, .. }
             if close.state == AgentRuntimeCloseStateV1::Stopped =>
         {
             return Err("schedule_runtime_stopped");
@@ -95,7 +95,8 @@ pub(crate) async fn agent_runtime(
                 "state": "unavailable",
                 "errorCode": "schedule_runtime_not_native",
                 "conversation":
-                    super::conversation::ConversationActivity::from_page(&page).observation(),
+                    crate::agent_conversation_outcome::ConversationActivity::from_page(&page)
+                        .observation(),
             }));
         }
     };

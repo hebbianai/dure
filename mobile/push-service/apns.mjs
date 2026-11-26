@@ -11,7 +11,10 @@ const BODY = {
   approval: "notifications.push.approvalBody",
   done: "notifications.push.doneBody",
   input: "notifications.push.inputBody",
+  message: "notifications.push.messageBody",
 };
+/** 400 reasons that mean the token can never be delivered in that environment. */
+const TOKEN_REFUSALS = ["BadDeviceToken", "DeviceTokenNotForTopic"];
 const ENDPOINTS = {
   sandbox: "https://api.sandbox.push.apple.com",
   production: "https://api.push.apple.com",
@@ -54,6 +57,66 @@ export function createApnsSender({ key, keyId, teamId, openConnection = connect,
     return session;
   };
 
+  // One alert to one device. `accepted`, `unregistered` (APNs will never
+  // deliver to this token: 410 Unregistered, or 400 BadDeviceToken or
+  // DeviceTokenNotForTopic) or `unavailable`.
+  const deliver = ({ environment, token: device, expiresIn, collapseId, body }) => new Promise((resolve) => {
+    let request;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      resolve(result);
+    };
+    // A total deadline also bounds a provider that keeps a stream active
+    // without finishing its response. An inactivity timeout cannot do that.
+    const deadline = setTimeout(() => {
+      finish({ status: "unavailable" });
+      request?.close();
+    }, 7000);
+    try {
+      request = connection(environment).request({
+        ":method": "POST",
+        ":path": `/3/device/${device}`,
+        authorization: `bearer ${token()}`,
+        "apns-topic": TOPIC,
+        "apns-push-type": "alert",
+        "apns-priority": "10",
+        "apns-expiration": String(Math.floor(now() / 1000) + expiresIn),
+        "apns-collapse-id": collapseId,
+        "content-type": "application/json",
+      });
+    } catch {
+      finish({ status: "unavailable" });
+      return;
+    }
+    let status;
+    let bytes = 0;
+    let response = "";
+    request.setEncoding("utf8");
+    request.on("response", (headers) => { status = headers[":status"]; });
+    request.on("data", (chunk) => {
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > 4096) {
+        finish({ status: "unavailable" });
+        request.close();
+      } else response += chunk;
+    });
+    request.on("error", () => finish({ status: "unavailable" }));
+    request.on("end", () => {
+      if (status === 200) finish({ status: "accepted" });
+      else {
+        let reason;
+        try { reason = JSON.parse(response).reason; } catch { /* Provider failure stays explicit. */ }
+        const gone = (status === 410 && reason === "Unregistered") || (status === 400 && TOKEN_REFUSALS.includes(reason));
+        finish({ status: gone ? "unregistered" : "unavailable" });
+      }
+    });
+    request.on("close", () => finish({ status: "unavailable" }));
+    request.end(body);
+  });
+
   return {
     send(message, sender) {
       const { subscription, event } = message;
@@ -62,11 +125,14 @@ export function createApnsSender({ key, keyId, teamId, openConnection = connect,
       // dure-hub-protocol): the agent a tap opens, what happened, the
       // computer that raised it — as the phone's paired entry names it,
       // unpadded — and, for an approval or a finished turn the phone can
-      // answer, that approval or process. Never what was asked or said: the
+      // answer, that approval or process; for an agent's message, the id the
+      // computer keeps its text under. Never what was asked or said: the
       // phone's notification service reads that from the computer itself
-      // (`mutable-content`) and keeps this text when it cannot.
+      // (`mutable-content`) and keeps this text when it cannot. A message
+      // has no category, so it offers no actions.
       const approval = event.approval && event.sessionId ? event.approval : undefined;
       const reply = event.reply && event.sessionId ? event.reply : undefined;
+      const notice = event.notice && event.sessionId ? event.notice : undefined;
       const category = approval ? APPROVAL_CATEGORY : reply ? REPLY_CATEGORY : undefined;
       const body = JSON.stringify({
         aps: {
@@ -81,62 +147,34 @@ export function createApnsSender({ key, keyId, teamId, openConnection = connect,
           hub: sender.replace(/=+$/, ""),
           ...(approval ? { approval } : {}),
           ...(reply ? { reply } : {}),
+          ...(notice ? { notice } : {}),
         } } : {}),
       });
-      return new Promise((resolve) => {
-        let request;
-        let settled = false;
-        const finish = (result) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(deadline);
-          resolve(result);
-        };
-        // A total deadline also bounds a provider that keeps a stream active
-        // without finishing its response. An inactivity timeout cannot do that.
-        const deadline = setTimeout(() => {
-          finish({ status: "unavailable" });
-          request?.close();
-        }, 7000);
-        try {
-          request = connection(subscription.environment).request({
-            ":method": "POST",
-            ":path": `/3/device/${subscription.token}`,
-            authorization: `bearer ${token()}`,
-            "apns-topic": TOPIC,
-            "apns-push-type": "alert",
-            "apns-priority": "10",
-            "apns-expiration": String(Math.floor(now() / 1000) + 300),
-            "apns-collapse-id": createHash("sha256").update(`${sender}\0${event.eventId}`).digest("hex"),
-            "content-type": "application/json",
-          });
-        } catch {
-          finish({ status: "unavailable" });
-          return;
-        }
-        let status;
-        let bytes = 0;
-        let response = "";
-        request.setEncoding("utf8");
-        request.on("response", (headers) => { status = headers[":status"]; });
-        request.on("data", (chunk) => {
-          bytes += Buffer.byteLength(chunk);
-          if (bytes > 4096) {
-            finish({ status: "unavailable" });
-            request.close();
-          } else response += chunk;
-        });
-        request.on("error", () => finish({ status: "unavailable" }));
-        request.on("end", () => {
-          if (status === 200) finish({ status: "accepted" });
-          else {
-            let reason;
-            try { reason = JSON.parse(response).reason; } catch { /* Provider failure stays explicit. */ }
-            finish({ status: status === 410 && reason === "Unregistered" ? "unregistered" : "unavailable" });
-          }
-        });
-        request.on("close", () => finish({ status: "unavailable" }));
-        request.end(body);
+      return deliver({
+        environment: subscription.environment,
+        token: subscription.token,
+        expiresIn: 300,
+        collapseId: createHash("sha256").update(`${sender}\0${event.eventId}`).digest("hex"),
+        body,
+      });
+    },
+    /**
+     * The proof-of-receipt alert (`PushChallenge` in dure-hub-protocol): the
+     * nonce the phone signs back and the id of the key that must sign it,
+     * under fixed setup text. The phone hides it while Dure is in front; a
+     * phone in the background shows the text once. No sound and no actions.
+     */
+    challenge(subscription, { nonce, key }, collapseId) {
+      const catalog = subscription.language === "ko" ? ko : en;
+      return deliver({
+        environment: subscription.environment,
+        token: subscription.token,
+        expiresIn: 600,
+        collapseId,
+        body: JSON.stringify({
+          aps: { alert: { title: "Dure", body: catalog["notifications.push.setupBody"] } },
+          dure: { challenge: nonce, key },
+        }),
       });
     },
     close() {

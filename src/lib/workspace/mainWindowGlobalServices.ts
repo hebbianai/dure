@@ -1,4 +1,5 @@
 import { installAgentAttentionNotifier } from "@/lib/agents/agentAttentionNotifier";
+import { installAppIconBadge } from "@/lib/agents/appIconBadge";
 import {
 	type AgentRuntimeProjectionReconciler,
 	installAgentRuntimeProjectionReconciliationRuntime,
@@ -33,6 +34,7 @@ import { useStore } from "@/store";
 
 interface MainWindowGlobalServices {
 	installAttentionNotifier(): () => void;
+	installAppIconBadge(): () => void;
 	installRuntimeProjectionReconciler(): AgentRuntimeProjectionReconciler;
 	installManagedAgentSemanticObserver(
 		refreshRuntimeProjection: ManagedAgentRuntimeProjectionRefresh,
@@ -48,6 +50,7 @@ interface MainWindowGlobalServices {
 
 const defaultServices: MainWindowGlobalServices = {
 	installAttentionNotifier: installAgentAttentionNotifier,
+	installAppIconBadge: () => installAppIconBadge(),
 	installRuntimeProjectionReconciler:
 		installAgentRuntimeProjectionReconciliationRuntime,
 	installManagedAgentSemanticObserver: (refreshRuntimeProjection) =>
@@ -100,6 +103,7 @@ export function startMainWindowGlobalServices(
 	};
 	try {
 		cleanups.push(services.installAttentionNotifier());
+		cleanups.push(services.installAppIconBadge());
 		const runtimeProjectionReconciler =
 			services.installRuntimeProjectionReconciler();
 		cleanups.push(() => runtimeProjectionReconciler.stop());

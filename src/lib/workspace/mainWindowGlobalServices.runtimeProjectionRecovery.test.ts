@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/agents/agentAttentionNotifier", () => ({
 	installAgentAttentionNotifier: () => () => undefined,
 }));
+vi.mock("@/lib/agents/appIconBadge", () => ({
+	installAppIconBadge: () => () => undefined,
+}));
 vi.mock("@/lib/agents/managedAgentSemanticObserverRuntime", () => ({
 	installManagedAgentSemanticObserverRuntime: () => () => undefined,
 }));

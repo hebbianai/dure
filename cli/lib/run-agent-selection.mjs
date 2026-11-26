@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
-import { agentDisplayName, matchingAgents } from "./client-registry.mjs";
+import { agentDisplayName, selectAgents } from "./client-registry.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
 import { rehostCommandLine } from "./managed-rehost-preview.mjs";
 
@@ -36,12 +36,39 @@ export async function listRunRecords({ backend, requestBackend, selector, cursor
   return { page, backend: response.backend };
 }
 
+/** The backend runtime observation of one Agent, or the error reading it. */
+async function inspectAgentRuntime({ backend, requestBackend }, agentId) {
+  const report = await collectAgentRuntimeCommand({ args: ["get", agentId],
+    resolveBackend: async () => backend, requestBackend });
+  return report.ok ? { observation: report.result } : { error: report.error };
+}
+
+/** Launches that stopped and do not continue on their own. Some stopped
+ * after their Agent got a runtime, so only the runtime projection can tell. */
+const STOPPED_LAUNCH_STATES = new Set(["retry_required", "failed"]);
+
+/** A same-named launch that stopped before the backend gave its Agent any
+ * runtime cannot be what the name selects, so it does not shadow a Run that
+ * launched. A runtime that cannot be read keeps its Run a candidate, and the
+ * stopped Runs stay candidates when no same-named Run launched. */
+async function launchedRunMatches(matches, runtime) {
+  const stopped = matches.filter((entry) => STOPPED_LAUNCH_STATES.has(entry.launchState))
+    .slice(0, MAX_INSPECTED_CANDIDATES);
+  if (stopped.length === 0) return matches;
+  const observed = await Promise.all(stopped.map((entry) => inspectAgentRuntime(runtime, entry.agentId)));
+  const unlaunched = new Set(stopped.filter((_entry, i) => observed[i].observation?.state === "unmanaged")
+    .map((entry) => entry.agentId));
+  const launched = matches.filter((entry) => !unlaunched.has(entry.agentId));
+  return launched.length ? launched : matches;
+}
+
 /** Exact IDs win over name collisions. A partial page cannot establish
  * uniqueness, so each candidate carries its exact `retry(agentId)` command.
  * Returns `{ run: undefined }` when no Run record matches. */
-export function selectRunRecord(page, selector, retry) {
+export async function selectRunRecord({ page, selector, retry, backend, requestBackend }) {
   const exact = page.runs.filter((entry) => entry.agentId === selector || entry.operationId === selector);
-  const matches = exact.length ? exact : page.runs;
+  const matches = exact.length ? exact : page.runs.length > 1 && page.nextCursor === null
+    ? await launchedRunMatches(page.runs, { backend, requestBackend }) : page.runs;
   if (matches.length > 1 || (matches.length === 1 && page.nextCursor !== null)) {
     return { error: { code: "run_selector_ambiguous",
       message: `${page.nextCursor === null ? matches.length : "More than " + matches.length} Runs match ${selector}. Retry with one exact Agent ID:`,
@@ -81,8 +108,7 @@ export function formatRunCandidates(candidates = []) {
  * proves that the selected backend owns a runtime for that Agent. */
 function clientAgentCandidates(registry, selector) {
   if (registry?.state !== "available") return [];
-  const byId = registry.agents.filter((agent) => agent.id === selector);
-  const matches = byId.length ? byId : matchingAgents(registry, selector);
+  const matches = selectAgents(registry, selector);
   const seen = new Set();
   return matches.filter((agent) => isDureDomainIdV1(agent.id) && !seen.has(agent.id) && seen.add(agent.id))
     .map((agent) => ({ agentId: agent.id, name: agentDisplayName(agent) ?? null,
@@ -137,11 +163,7 @@ export async function resolveAgentWithoutRun({ selector, action, opts, registry,
       : `No Run record matches ${selector}, and the app's name projection is unavailable to resolve it. ` +
         "Select an exact Agent ID." } };
   }
-  const inspect = async (agentId) => {
-    const report = await collectAgentRuntimeCommand({ args: ["get", agentId],
-      resolveBackend: async () => backend, requestBackend });
-    return report.ok ? { observation: report.result } : { error: report.error };
-  };
+  const inspect = (agentId) => inspectAgentRuntime({ backend, requestBackend }, agentId);
   let bySession = false;
   let sessionLookup = false;
   let direct;

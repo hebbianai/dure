@@ -65,6 +65,7 @@ export function normalizePersistedAgents(
 		const {
 			canonicalSpawn: rawCanonicalSpawn,
 			runParent: rawRunParent,
+			notificationsMuted: rawNotificationsMuted,
 			...persistedAgent
 		} = agent;
 		const canonicalSpawn = parseAgentCanonicalSpawnV1(rawCanonicalSpawn);
@@ -140,6 +141,10 @@ export function normalizePersistedAgents(
 			...(canonicalSpawn ? { canonicalSpawn } : {}),
 			...(runParent ? { runParent } : {}),
 			displayName: normalizeAgentDisplayName(agent.name, agent.displayName),
+			// Only an explicit true mutes; anything else reads as never muted.
+			...(rawNotificationsMuted === true
+				? { notificationsMuted: true as const }
+				: {}),
 			...(rawBinding !== undefined || projectedRuntimeBinding !== undefined
 				? { runtimeBinding: projectedRuntimeBinding }
 				: {}),

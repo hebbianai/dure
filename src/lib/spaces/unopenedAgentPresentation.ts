@@ -65,6 +65,16 @@ export function agentRowActivityAt(
 		: Math.max(promptAt, conversationAt);
 }
 
+/** The last prompt an agent was given, from the same two observations as its
+ * activity time: the hook or Chat timeline record, then the provider's
+ * conversation presentation. Never terminal output. */
+export function agentRowPrompt(
+	promptActivity?: RecentAgentActivity,
+	conversationPrompt?: string,
+): string | undefined {
+	return promptActivity?.text || conversationPrompt || undefined;
+}
+
 /** One presentation decision for every unopened-agent consumer. Explicit user
  * names retain authority; replaceable runtime observations then precede the
  * provider-owned history snapshot and stable directory fallback. */

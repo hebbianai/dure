@@ -97,6 +97,10 @@ export class AgentTranscriptError extends Error {
   readonly code: string;
 }
 
+export function nativeTranscriptProvider(
+  provider: unknown,
+): provider is NativeAgentTranscriptSource["provider"];
+
 export function nativeAgentTranscriptSource(
   agent: unknown,
   runtimeBinding?: unknown,

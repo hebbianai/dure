@@ -95,3 +95,20 @@ export function latestTurnFailure(
 		...(failure.userInput !== null ? { userInput: failure.userInput } : {}),
 	};
 }
+
+/** When a turn continues after its limit resets, as the person reads a
+ * clock: the time alone today, with the weekday on any other day. */
+export function continuationTimeLabel(
+	atMs: number,
+	language: string,
+	nowMs: number = Date.now(),
+): string {
+	const at = new Date(atMs);
+	const time = new Intl.DateTimeFormat(language, {
+		hour: "numeric",
+		minute: "2-digit",
+	}).format(at);
+	if (at.toDateString() === new Date(nowMs).toDateString()) return time;
+	const weekday = new Intl.DateTimeFormat(language, { weekday: "short" }).format(at);
+	return `${weekday} ${time}`;
+}

@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo } from "react";
+import { AgentTeamLine } from "@/components/agents/AgentTeamLine";
 import { NativeAgentBackgroundWork } from "@/components/agents/NativeAgentBackgroundWork";
 import { AgentPendingRequestCard } from "@/components/agents/chat/AgentPendingRequestCard";
 import { TranscriptContents } from "@/components/agents/chat/AgentChatTimelineRows";
@@ -8,6 +9,7 @@ import {
 	ChatComposerShell,
 } from "@/components/agents/chat/ChatComposerShell";
 import { useAgentChatDraft } from "@/components/agents/chat/useAgentChatDraft";
+import { useOlderProviderHistory } from "@/components/agents/chat/useOlderProviderHistory";
 import type { NativeAgentChatState } from "@/components/agents/useNativeAgentChatState";
 import { PanelStatus } from "@/components/common/PanelStatus";
 import { Button } from "@/components/ui/button";
@@ -41,8 +43,6 @@ import {
 import type { HmuxAgentRuntimeState } from "@/lib/ipc/hmuxContracts";
 import type { Agent } from "@/types";
 import type { NativeAgentTranscriptSource } from "../../../cli/lib/agent-transcript.mjs";
-
-const noOlderHistory = async () => {};
 
 /** The conversation view of a native terminal Agent: the provider transcript,
  * with the tool calls between its messages as collapsed bursts, rendered with
@@ -125,6 +125,18 @@ export function NativeAgentChatView({
 		};
 	}, [cursor, setSnapshot, setReadFailed]);
 
+	// Older history loads on request above the newest read, from where that
+	// read starts; a newer read that starts elsewhere starts the pages again.
+	const older = useOlderProviderHistory(
+		{ provider, conversationId },
+		snapshot?.transcript.olderCursor,
+		(before) =>
+			readProviderConversationTranscript(provider, conversationId, {
+				includeTools: true,
+				before,
+			}),
+	);
+	const olderPages = older.pages?.pages;
 	const livePending =
 		pending && !nativeAgentChatPendingSettled(pending, snapshot)
 			? pending
@@ -135,6 +147,8 @@ export function NativeAgentChatView({
 			return nativeAgentChatPage({
 				source: { kind: "local", agentId, provider, conversationId },
 				transcript: snapshot.transcript,
+				older: olderPages,
+				canLoadOlder: true,
 				terminalEpoch,
 				working,
 				pending: livePending,
@@ -147,6 +161,7 @@ export function NativeAgentChatView({
 		provider,
 		conversationId,
 		snapshot,
+		olderPages,
 		terminalEpoch,
 		working,
 		livePending,
@@ -251,8 +266,11 @@ export function NativeAgentChatView({
 			) : page ? (
 				<TranscriptContents
 					page={page}
-					loadingOlder={false}
-					onLoadOlder={noOlderHistory}
+					loadingOlder={older.loading}
+					olderHistoryError={
+						older.failed ? t("agents.chat.historyBoundary") : undefined
+					}
+					onLoadOlder={older.loadOlder}
 				/>
 			) : (
 				<PanelStatus role="alert">
@@ -268,6 +286,7 @@ export function NativeAgentChatView({
 					}
 				/>
 			) : null}
+			<AgentTeamLine agentId={agent.id} />
 			<ChatComposerShell
 				onSubmit={() => void submit()}
 				notices={

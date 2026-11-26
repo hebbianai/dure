@@ -76,6 +76,18 @@ export interface HmuxAgentRuntimeState {
 	 * beside `approval_required`; a new request has a new `attentionId`.
 	 * Older Hosts omit it. */
 	approvalRequest?: AgentApprovalRequest;
+	/** Agent prompts, such as inbox messages, that the person's unsent input
+	 * holds back. Only beside a running agent and while it holds any; older
+	 * Hosts omit it. */
+	heldPrompts?: HmuxHeldPrompts;
+}
+
+/** How many agent prompts the Host refused because unsent input stands at
+ * the prompt, each counted once however often it is retried, and when the
+ * first of them was refused (Unix ms). */
+export interface HmuxHeldPrompts {
+	count: number;
+	sinceUnixMs: number;
 }
 
 export interface HmuxProviderConversationIdentity

@@ -77,10 +77,12 @@ async fn put_on(
             reason: "recovery policy revision changed".into(),
         });
     }
-    let activated_at_ms = request.enabled.then(|| {
+    // Either switch activates recovery; turning one on while the other stays
+    // on keeps the original activation, so no older failure becomes eligible.
+    let activated_at_ms = (request.enabled || request.continue_after_reset).then(|| {
         current
             .as_ref()
-            .filter(|policy| policy.enabled)
+            .filter(|policy| policy.enabled || policy.continue_after_reset)
             .and_then(|policy| policy.activated_at_ms)
             .unwrap_or(observed_at_ms)
     });
@@ -96,6 +98,7 @@ async fn put_on(
         revision,
         enabled: request.enabled,
         accounts: request.accounts.clone(),
+        continue_after_reset: request.continue_after_reset,
         activated_at_ms,
         updated_at_ms: observed_at_ms,
     };

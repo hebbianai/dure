@@ -189,7 +189,9 @@ fn staging_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// Writes key material to `path` without ever leaving it readable.
+/// Writes key material to `path` without ever leaving it readable. The SSH
+/// keys here and the push key ([`crate::push_key`]) both go through it, so
+/// private key material has one way onto disk.
 ///
 /// # Why not `fs::write` and then `set_permissions`
 ///
@@ -217,14 +219,14 @@ fn staging_path(path: &Path) -> PathBuf {
 ///   symlink rather than its target. If something re-plants between the two,
 ///   `create_new` fails and the write is refused — the one outcome that is
 ///   never "the key was written somewhere else".
-fn write_private_file(path: &Path, contents: &[u8]) -> Result<(), IdentityStoreError> {
+pub(crate) fn write_private_file(path: &Path, contents: &[u8]) -> Result<(), IdentityStoreError> {
     let staging = staging_path(path);
     match fs::remove_file(&staging) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(source) => {
             return Err(IdentityStoreError::Io {
-                operation: "clear the staged SSH key",
+                operation: "clear the staged private key",
                 source,
             });
         }
@@ -236,18 +238,18 @@ fn write_private_file(path: &Path, contents: &[u8]) -> Result<(), IdentityStoreE
     let mut file = options
         .open(&staging)
         .map_err(|source| IdentityStoreError::Io {
-            operation: "create the SSH key file",
+            operation: "create the private key file",
             source,
         })?;
     file.write_all(contents)
         .map_err(|source| IdentityStoreError::Io {
-            operation: "write the SSH key",
+            operation: "write the private key",
             source,
         })?;
     drop(file);
 
     fs::rename(&staging, path).map_err(|source| IdentityStoreError::Io {
-        operation: "commit the SSH key",
+        operation: "commit the private key",
         source,
     })
 }

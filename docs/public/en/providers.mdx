@@ -60,6 +60,8 @@ Claude and Codex usage controls show available provider-reported limits and rese
 
 **Settings → General → Automatic account recovery · Beta** configures recovery on the selected server. Choose a provider, enable recovery, select the accounts that server may use, and save. The server can switch supported Chat conversations and continue their original request with every Dure window closed. Joining a shared workspace never offers your personal accounts automatically.
 
+**Continue when the limit resets** (Claude) covers the case with no account to switch to, including a single account. When the provider reported when its limit resets, the server continues the same request once, a few minutes after the reset, even with every Dure window closed. The failed turn in Chat shows when it continues. A terminal agent uses the reset its account's usage meter last recorded and receives one prompt to continue in the same terminal. If the limit still applies then, recovery stops and the conversation waits for you; it never waits twice.
+
 Fresh available usage is preferred; unknown or stale usage does not prevent trying an allowed account. A failed or uncertain attempt remains visible and is not blindly resent. Later human input takes priority. Manual account switching remains available, and authentication failures still need attention.
 
 Use `dure recovery get codex --backend SERVER --json` to inspect the policy and registered profile handles, or `dure recovery status AGENT_ID --backend SERVER --json` to read a recovery outcome. `dure recovery help` describes revision-based edits and optional usage observations. These commands connect directly to the selected backend.

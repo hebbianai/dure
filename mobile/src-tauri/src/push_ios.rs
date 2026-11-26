@@ -6,12 +6,18 @@
 //! Responses to remote alerts are the one notification-center callback this
 //! module owns. The notification plugin's delegate drops every push-triggered
 //! response, so [`install_response_delegate`] stands in front of it: a tap on
-//! a remote alert goes to [`PushActivations`], Allow once and Deny go to
+//! a remote alert goes to `push::open_from_alert`, Allow once and Deny go to
 //! `push::answer_from_alert`, a typed reply to `push::reply_from_alert`, and
 //! every other callback is forwarded to the plugin unchanged. The notice this
 //! module posts when such an answer or reply did not land is its own too,
 //! never the plugin's.
-use crate::push::{FailureNotice, PushActivation, PushActivations};
+//!
+//! One remote alert is caught before it shows: the push service's challenge
+//! for this phone's push key (#660). In the foreground it goes to
+//! [`PushChallenges`] for the sync to sign back, with no banner. Delivered in
+//! the background, it keeps the service's fixed setup text.
+use crate::push::FailureNotice;
+use crate::push_sync::PushChallenges;
 use block2::{DynBlock, RcBlock};
 use dure_hub_protocol::push::{ApnsEnvironment, ApnsToken, PUSH_ALERT_CONTEXT_KEY};
 use objc2::{
@@ -193,10 +199,20 @@ define_class!(
             notification: &UNNotification,
             completion: &DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
         ) {
-            if is_notice(&notification.request()) {
+            let request = notification.request();
+            if is_notice(&request) {
                 completion.call((UNNotificationPresentationOptions::Banner
                     | UNNotificationPresentationOptions::List
                     | UNNotificationPresentationOptions::Sound,));
+                return;
+            }
+            // This phone's own challenge is for the sync, not for the person.
+            if is_remote(&request)
+                && payload(&request.content()).is_some_and(|payload| {
+                    self.ivars().app.state::<PushChallenges>().capture(&payload)
+                })
+            {
+                completion.call((UNNotificationPresentationOptions::empty(),));
                 return;
             }
             match self.previous(
@@ -220,10 +236,7 @@ define_class!(
             completion: &DynBlock<dyn Fn()>,
         ) {
             let request = response.notification().request();
-            let remote = request
-                .trigger()
-                .is_some_and(|trigger| trigger.isKindOfClass(UNPushNotificationTrigger::class()));
-            if !remote && !is_notice(&request) {
+            if !is_remote(&request) && !is_notice(&request) {
                 match self.previous(sel!(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:)) {
                     Some(previous) => previous
                         .userNotificationCenter_didReceiveNotificationResponse_withCompletionHandler(
@@ -257,9 +270,7 @@ define_class!(
             }
             // SAFETY: a framework constant, valid for the process lifetime.
             if action.isEqualToString(unsafe { UNNotificationDefaultActionIdentifier }) {
-                if let Some(activation) = PushActivation::from_payload(&payload) {
-                    app.state::<PushActivations>().offer(activation);
-                }
+                crate::push::open_from_alert(app, &payload);
             }
             completion.call(());
         }
@@ -317,14 +328,23 @@ fn is_notice(request: &UNNotificationRequest) -> bool {
     request.identifier().to_string().starts_with(NOTICE_PREFIX)
 }
 
+/// Whether APNs delivered it, rather than this app posting it.
+fn is_remote(request: &UNNotificationRequest) -> bool {
+    request
+        .trigger()
+        .is_some_and(|trigger| trigger.isKindOfClass(UNPushNotificationTrigger::class()))
+}
+
 /// Tells the person an answer from an alert did not land. A tap opens the
-/// agent, as a tap on the alert would.
+/// agent, as a tap on the alert would: the notice names its computer too.
 fn post_notice(notice: &FailureNotice) {
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str("Dure"));
     content.setBody(&NSString::from_str(&notice.body));
     content.setSound(Some(&UNNotificationSound::defaultSound()));
-    let info = serde_json::json!({ PUSH_ALERT_CONTEXT_KEY: { "session": notice.session } });
+    let info = serde_json::json!({
+        PUSH_ALERT_CONTEXT_KEY: { "session": notice.session, "hub": notice.hub }
+    });
     if let Ok(bytes) = serde_json::to_vec(&info) {
         let data = NSData::with_bytes(&bytes);
         let object = NSJSONSerialization::JSONObjectWithData_options_error(

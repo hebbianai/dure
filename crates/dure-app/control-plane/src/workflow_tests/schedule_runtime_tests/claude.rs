@@ -135,6 +135,7 @@ async fn claude_schedule_run_uses_real_hmux() {
                 expected_observation: None,
                 background_work: false,
                 startup_gate: None,
+                turn_failure: None,
             },
             hmux_client::SessionFence {
                 workspace_id: session.workspace_id.clone(),

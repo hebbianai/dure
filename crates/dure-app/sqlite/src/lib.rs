@@ -70,6 +70,7 @@ mod workflow_effect_bindings;
 mod workflow_graph;
 mod workspace_catalog;
 
+pub use agent_recovery::NativeRecoveryCandidateV1;
 pub use session_checkout::SessionCheckoutAdmission;
 
 pub use orchestration::{
@@ -239,7 +240,7 @@ impl SqliteDomainStore {
         F: FnOnce(AgentSpawnPlanV1) -> Result<AgentSpawnPlanV1, DomainStoreErrorV1>,
     {
         agent_spawn::append_planned_resolving_provider_defaults(
-            &self.pool,
+            self,
             draft,
             event_id,
             recorded_at_ms,
@@ -447,7 +448,7 @@ impl AgentSpawnJournalStore for SqliteDomainStore {
         &'a self,
         event: &'a AgentSpawnJournalEventV1,
     ) -> DomainStoreFuture<'a, AgentSpawnJournalReceiptV1> {
-        Box::pin(agent_spawn::append_event(&self.pool, event))
+        Box::pin(agent_spawn::append_event(self, event))
     }
 
     fn agent_spawn_receipt<'a>(
@@ -558,6 +559,24 @@ impl AgentTimelineStore for SqliteDomainStore {
         Box::pin(agent_timeline::binding_for_agent(&self.pool, agent_id))
     }
 
+    fn agent_interactions<'a>(
+        &'a self,
+        after: Option<&'a dure_app::AgentInteractionSessionIdV1>,
+        limit: usize,
+    ) -> DomainStoreFuture<'a, Vec<dure_app::AgentInteractionBindingV1>> {
+        Box::pin(agent_timeline::bindings_after(&self.pool, after, limit))
+    }
+
+    fn latest_agent_turn_completed<'a>(
+        &'a self,
+        interaction_session_id: &'a dure_app::AgentInteractionSessionIdV1,
+    ) -> DomainStoreFuture<'a, Option<dure_app::AgentTimelineCursorV1>> {
+        Box::pin(agent_timeline::latest_turn_completed(
+            &self.pool,
+            interaction_session_id,
+        ))
+    }
+
     fn replace_agent_interaction_runtime<'a>(
         &'a self,
         replacement: &'a dure_app::AgentRuntimeReplacementV1,
@@ -606,6 +625,13 @@ impl AgentTimelineStore for SqliteDomainStore {
         snapshot: &'a dure_app::AgentHistorySnapshotV1,
     ) -> DomainStoreFuture<'a, dure_app::AgentHistorySnapshotReceiptV1> {
         Box::pin(agent_timeline::reconcile_history(&self.pool, snapshot))
+    }
+
+    fn continue_agent_history<'a>(
+        &'a self,
+        snapshot: &'a dure_app::AgentHistorySnapshotV1,
+    ) -> DomainStoreFuture<'a, dure_app::AgentHistorySnapshotReceiptV1> {
+        Box::pin(agent_timeline::continue_history(&self.pool, snapshot))
     }
 
     fn reconcile_agent_pending_snapshot<'a>(

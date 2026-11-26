@@ -13,23 +13,8 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { isLoopbackUrl } from "@/lib/browser/browserAddress";
 import { t } from "@/lib/i18n";
-
-function isLoopbackUrl(raw: string): boolean {
-	try {
-		const url = new URL(raw);
-		if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-		const host = url.hostname.toLowerCase();
-		return (
-			host === "localhost" ||
-			host === "127.0.0.1" ||
-			host === "::1" ||
-			host.endsWith(".localhost")
-		);
-	} catch {
-		return false;
-	}
-}
 
 export function DesignModeBrowserDialog({
 	open,

@@ -56,6 +56,7 @@ export function useProBrowserPane(
 		url: string;
 		browserBinding?: unknown;
 		browserCreation?: unknown;
+		backendProfileId?: unknown;
 	}>,
 ) {
 	const revealed = usePaneFirstReveal(props.api);
@@ -89,6 +90,8 @@ export function useProBrowserPane(
 	});
 	const savedBinding = useRef(restored.binding);
 	const creation = useRef(restored.creation);
+	// The backend this view was opened for, until it has a route of its own.
+	const openedProfileId = useRef(restored.profileId);
 	const view = useSyncExternalStore(
 		session?.subscribe ?? emptySubscribe,
 		session?.read ?? emptyRead,
@@ -204,7 +207,9 @@ export function useProBrowserPane(
 				try {
 					authority = savedRoute
 						? await assertDureBackendRouteAuthority(savedRoute)
-						: await resolveSelectedDureBackendRouteAuthority(undefined);
+						: await resolveSelectedDureBackendRouteAuthority(
+								openedProfileId.current,
+							);
 				} catch (caught) {
 					if (
 						pending ||
@@ -345,6 +350,7 @@ export function useProBrowserPane(
 		if (!incoming.error) {
 			savedBinding.current = incoming.binding;
 			creation.current = incoming.creation;
+			openedProfileId.current = incoming.profileId;
 		}
 		const binding = incoming.binding;
 		if (

@@ -668,6 +668,17 @@ fn validate_agent_runtime_state_projection(
     }) {
         return Err(inconsistent("agent_runtime_state.approval_request"));
     }
+    if projection.turn_failure.is_some()
+        && (projection.lifecycle != AgentRuntimeLifecycle::Running
+            || projection.attention != AgentRuntimeAttention::Error)
+    {
+        return Err(inconsistent("agent_runtime_state.turn_failure"));
+    }
+    if projection.held_prompts.is_some_and(|held| {
+        projection.lifecycle != AgentRuntimeLifecycle::Running || held.count == 0
+    }) {
+        return Err(inconsistent("agent_runtime_state.held_prompts"));
+    }
     Ok(())
 }
 
@@ -731,6 +742,15 @@ fn validate_agent_state_report(
             || !request.is_valid()
     }) {
         return Err(inconsistent("agent_state_report.approval_request"));
+    }
+    if frame.turn_failure.is_some()
+        && (frame.identity_only
+            || frame.turn_completed
+            || frame.background_work
+            || frame.activity != AgentRuntimeActivity::Waiting
+            || frame.attention != AgentRuntimeAttention::Error)
+    {
+        return Err(inconsistent("agent_state_report.turn_failure"));
     }
     if let Some(causality) = &frame.causality {
         if causality.sequence == 0 {
@@ -1856,9 +1876,23 @@ mod tests {
             turn_completed_count: 0,
             program_status: None,
             background_work: false,
+            held_prompts: None,
+            turn_failure: None,
         };
         let state = frame(FrameBody::AgentRuntimeState(valid.clone()));
         assert!(state.validate(&FrameLimits::default()).is_ok());
+        let held = AgentRuntimeStateProjection {
+            held_prompts: Some(crate::HeldAgentPromptsProjection {
+                count: 3,
+                since_unix_ms: 1_700_000_000_000,
+            }),
+            ..valid.clone()
+        };
+        assert!(
+            frame(FrameBody::AgentRuntimeState(held.clone()))
+                .validate(&FrameLimits::default())
+                .is_ok()
+        );
         let with_request = AgentRuntimeStateProjection {
             approval_request: Some(Box::new(crate::AgentApprovalRequest {
                 tool_name: "Bash".into(),
@@ -1883,6 +1917,25 @@ mod tests {
                     ..with_request
                 },
                 "agent_runtime_state.approval_request",
+            ),
+            (
+                AgentRuntimeStateProjection {
+                    lifecycle: AgentRuntimeLifecycle::Exited,
+                    attention: AgentRuntimeAttention::None,
+                    attention_id: None,
+                    ..held.clone()
+                },
+                "agent_runtime_state.held_prompts",
+            ),
+            (
+                AgentRuntimeStateProjection {
+                    held_prompts: Some(crate::HeldAgentPromptsProjection {
+                        count: 0,
+                        since_unix_ms: 1_700_000_000_000,
+                    }),
+                    ..valid.clone()
+                },
+                "agent_runtime_state.held_prompts",
             ),
             (
                 AgentRuntimeStateProjection {
@@ -1979,6 +2032,8 @@ mod tests {
                 turn_completed_count: 1,
                 program_status: None,
                 background_work: false,
+                held_prompts: None,
+                turn_failure: None,
             }),
             provider_conversation_identity: None,
             recovered_presentation: None,
@@ -2055,6 +2110,7 @@ mod tests {
                 previous_conversation_id: Some("previous".into()),
                 expected_fence: Some(fence("session")),
             }),
+            turn_failure: None,
         };
         let codec = FrameCodec::new(FrameLimits::default());
         let wire = frame(FrameBody::AgentStateReport(report.clone()));
@@ -2110,6 +2166,7 @@ mod tests {
             expected_observation: None,
             background_work: true,
             startup_gate: None,
+            turn_failure: None,
         };
         let codec = FrameCodec::new(FrameLimits::default());
         let wire = frame(FrameBody::AgentStateReport(report.clone()));
@@ -2153,6 +2210,8 @@ mod tests {
             turn_completed_count: 0,
             program_status: None,
             background_work: true,
+            held_prompts: None,
+            turn_failure: None,
         };
         assert!(
             frame(FrameBody::AgentRuntimeState(busy.clone()))
@@ -2208,6 +2267,7 @@ mod tests {
             expected_observation: None,
             background_work: false,
             startup_gate: Some(AgentStartupGate::Login),
+            turn_failure: None,
         };
         let wire = frame(FrameBody::AgentStateReport(valid.clone()));
         let encoded = codec.encode(&wire).unwrap();
@@ -2247,6 +2307,172 @@ mod tests {
     }
 
     #[test]
+    fn a_turn_failure_rides_only_beside_the_error_it_ended_with() {
+        use crate::{
+            AgentRuntimeActivity, AgentRuntimeAttention, AgentStateReport, AgentTurnFailure,
+        };
+
+        let codec = FrameCodec::new(FrameLimits::default());
+        let valid = AgentStateReport {
+            approval_request: None,
+            progress: None,
+            request_id: "report-1".into(),
+            identity_only: false,
+            activity: AgentRuntimeActivity::Waiting,
+            attention: AgentRuntimeAttention::Error,
+            turn_completed: false,
+            turn_completion_id: None,
+            causality: None,
+            working_ttl_ms: None,
+            conversation_identity: None,
+            expected_observation: None,
+            background_work: false,
+            startup_gate: None,
+            turn_failure: Some(AgentTurnFailure::RateLimit),
+        };
+        let wire = frame(FrameBody::AgentStateReport(valid.clone()));
+        let encoded = codec.encode(&wire).unwrap();
+        assert!(String::from_utf8_lossy(&encoded).contains(r#""turn_failure":"rate_limit""#));
+        assert_eq!(codec.decode(&encoded).unwrap(), wire);
+
+        // Without the field the report is byte-identical to the one older
+        // Hosts have always received.
+        let plain = AgentStateReport {
+            turn_failure: None,
+            ..valid.clone()
+        };
+        assert!(
+            serde_json::to_value(&plain)
+                .unwrap()
+                .get("turn_failure")
+                .is_none()
+        );
+
+        for invalid in [
+            AgentStateReport {
+                attention: AgentRuntimeAttention::None,
+                ..valid.clone()
+            },
+            AgentStateReport {
+                attention: AgentRuntimeAttention::InputRequired,
+                ..valid.clone()
+            },
+            AgentStateReport {
+                attention: AgentRuntimeAttention::ApprovalRequired,
+                ..valid.clone()
+            },
+            AgentStateReport {
+                activity: AgentRuntimeActivity::Working,
+                attention: AgentRuntimeAttention::None,
+                ..valid.clone()
+            },
+            AgentStateReport {
+                turn_completed: true,
+                ..valid.clone()
+            },
+            AgentStateReport {
+                background_work: true,
+                ..valid.clone()
+            },
+        ] {
+            let result =
+                frame(FrameBody::AgentStateReport(invalid)).validate(&FrameLimits::default());
+            assert!(
+                matches!(
+                    result,
+                    Err(FrameValidationError::Inconsistent { field })
+                        if field == "agent_state_report.turn_failure"
+                        || field == "agent_state_report.background_work"
+                ),
+                "unexpected validation result: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_projected_turn_failure_is_a_settled_failure_only_beside_its_error() {
+        use crate::AgentTurnFailure;
+
+        let failed = AgentRuntimeStateProjection {
+            approval_request: None,
+            progress: None,
+            terminal_epoch: "terminal-1".into(),
+            revision: 2,
+            observed_through_output_seq: 4,
+            lifecycle: AgentRuntimeLifecycle::Running,
+            activity: AgentRuntimeActivity::Waiting,
+            attention: AgentRuntimeAttention::Error,
+            attention_id: Some("attention-2".into()),
+            source: AgentRuntimeStateSource::ProviderEvent,
+            turn_completed_count: 0,
+            program_status: None,
+            background_work: false,
+            held_prompts: None,
+            turn_failure: Some(AgentTurnFailure::UsageLimit),
+        };
+        assert!(
+            frame(FrameBody::AgentRuntimeState(failed.clone()))
+                .validate(&FrameLimits::default())
+                .is_ok()
+        );
+        assert!(failed.is_settled_turn_failure());
+        assert!(!failed.is_semantically_quiescent());
+        assert_eq!(
+            serde_json::to_value(&failed).unwrap()["turn_failure"],
+            "usage_limit"
+        );
+        let untyped = AgentRuntimeStateProjection {
+            turn_failure: None,
+            ..failed.clone()
+        };
+        assert!(!untyped.is_settled_turn_failure());
+        assert!(
+            serde_json::to_value(&untyped)
+                .unwrap()
+                .get("turn_failure")
+                .is_none()
+        );
+        for source in [
+            AgentRuntimeStateSource::OrchestrationEvent,
+            AgentRuntimeStateSource::ControllerInput,
+            AgentRuntimeStateSource::ProcessLifecycle,
+        ] {
+            assert!(
+                !AgentRuntimeStateProjection {
+                    source,
+                    ..failed.clone()
+                }
+                .is_settled_turn_failure()
+            );
+        }
+        for projection in [
+            AgentRuntimeStateProjection {
+                attention: AgentRuntimeAttention::None,
+                attention_id: None,
+                ..failed.clone()
+            },
+            AgentRuntimeStateProjection {
+                attention: AgentRuntimeAttention::InputRequired,
+                ..failed.clone()
+            },
+            AgentRuntimeStateProjection {
+                lifecycle: AgentRuntimeLifecycle::Exited,
+                attention: AgentRuntimeAttention::None,
+                attention_id: None,
+                ..failed.clone()
+            },
+        ] {
+            assert!(!projection.is_settled_turn_failure());
+            assert_eq!(
+                frame(FrameBody::AgentRuntimeState(projection)).validate(&FrameLimits::default()),
+                Err(FrameValidationError::Inconsistent {
+                    field: "agent_runtime_state.turn_failure",
+                })
+            );
+        }
+    }
+
+    #[test]
     fn an_approval_request_rides_only_with_a_valid_pending_approval() {
         use crate::{
             AgentApprovalChoice, AgentApprovalRequest, AgentRuntimeActivity, AgentRuntimeAttention,
@@ -2278,6 +2504,7 @@ mod tests {
             expected_observation: None,
             background_work: false,
             startup_gate: None,
+            turn_failure: None,
         };
         let wire = frame(FrameBody::AgentStateReport(valid.clone()));
         let encoded = codec.encode(&wire).unwrap();
@@ -2349,6 +2576,7 @@ mod tests {
             expected_observation: None,
             background_work: false,
             startup_gate: None,
+            turn_failure: None,
         };
         for report in [
             valid.clone(),

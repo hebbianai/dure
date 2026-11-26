@@ -54,6 +54,8 @@ use tokio::sync::{Mutex, Notify, Semaphore};
 
 use super::*;
 
+mod agent_conversation_activity_tests;
+mod agent_conversation_history_tests;
 mod agent_conversation_recovery_tests;
 mod agent_goal_tests;
 mod agent_recovery_tests;
@@ -74,6 +76,7 @@ mod orchestration_interaction_open_tests;
 mod orchestration_observation_tests;
 mod prompt_recovery_tests;
 mod real_hmux;
+mod run_conversation_observation_tests;
 mod runtime_close_recovery_tests;
 mod runtime_close_retirement_tests;
 mod runtime_close_successor_tests;
@@ -82,6 +85,7 @@ mod runtime_native_rehost_tests;
 mod runtime_preflight_tests;
 mod runtime_recovery_tests;
 mod runtime_stop_disposition_tests;
+mod runtime_transition_conversation_tests;
 mod runtime_transition_deferred_tests;
 mod runtime_transition_fresh_tests;
 mod runtime_transition_hmux_tests;
@@ -3227,6 +3231,23 @@ async fn initialize_structured_source_with_conversation(
     provider_id: ProviderIdV1,
     provider_conversation_ref: Option<&str>,
 ) -> (AgentRuntimeSelectionV1, AgentInteractionBindingV1) {
+    initialize_structured_source_on_model(
+        state,
+        agent_id,
+        provider_id,
+        provider_conversation_ref,
+        None,
+    )
+    .await
+}
+
+async fn initialize_structured_source_on_model(
+    state: &ServiceState,
+    agent_id: AgentIdV1,
+    provider_id: ProviderIdV1,
+    provider_conversation_ref: Option<&str>,
+    model: Option<&str>,
+) -> (AgentRuntimeSelectionV1, AgentInteractionBindingV1) {
     let source = AgentRuntimeSelectionV1 {
         schema_version: 1,
         agent_id: agent_id.clone(),
@@ -3234,7 +3255,7 @@ async fn initialize_structured_source_with_conversation(
         interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
         execution_profile: AgentExecutionProfileV1::ProviderDefault,
         permission_mode: ProviderPermissionModeV1::Default,
-        model: None,
+        model: model.map(|model| dure_app::AgentSpawnModelSelectionV1::parse(model).unwrap()),
         effort: None,
         revision: 1,
         selected_by_operation_id: None,
@@ -7004,10 +7025,6 @@ async fn existing_exact_session_creates_one_durable_reporting_run_without_pty_de
     let wire_error = backend_error_body(unassigned);
     assert_eq!(wire_error["code"], "orchestration_generation_conflict");
     assert_eq!(wire_error["details"]["disposition"], "unassigned");
-    assert_eq!(
-        wire_error["details"]["reasonCode"],
-        "session_dispatch_unassigned"
-    );
 
     let fault_pool = sqlx::SqlitePool::connect_with(
         sqlx::sqlite::SqliteConnectOptions::new().filename(root.path().join("domain.sqlite")),

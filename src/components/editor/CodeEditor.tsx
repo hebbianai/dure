@@ -88,6 +88,13 @@ export interface CodeEditorProps {
    * 끝나고 첫 화면이 준비된 시점 — pane-open 지연 계측의 "ready" 신호로 쓴다.
    */
   onReady?: () => void;
+  /**
+   * A one-time request to put the cursor on a 1-based line (and column) and
+   * scroll it to the middle of the view. A new `id` asks again.
+   */
+  reveal?: { readonly id: number; readonly line: number; readonly column?: number };
+  /** Called with the request's `id` once it has been shown. */
+  onRevealed?: (id: number) => void;
 }
 
 export function CodeEditor({
@@ -102,6 +109,8 @@ export function CodeEditor({
   onCursor,
   extraExtensions,
   onReady,
+  reveal,
+  onRevealed,
 }: CodeEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -150,7 +159,9 @@ export function CodeEditor({
   const onSaveRef = useRef(onSave);
   const onCursorRef = useRef(onCursor);
   const onReadyRef = useRef(onReady);
+  const onRevealedRef = useRef(onRevealed);
   onReadyRef.current = onReady;
+  onRevealedRef.current = onRevealed;
   onChangeRef.current = onChange;
   onSaveRef.current = onSave;
   onCursorRef.current = onCursor;
@@ -323,6 +334,22 @@ export function CodeEditor({
       selection: { anchor: Math.min(view.state.selection.main.anchor, value.length) },
     });
   }, [value]);
+
+  // After the content effect above, so a reveal that arrives with new content
+  // lands in it. Lines and columns past the end clamp to the last one.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !reveal) return;
+    const { doc } = view.state;
+    const line = doc.line(Math.min(Math.max(1, reveal.line), doc.lines));
+    const anchor = line.from + Math.min(Math.max(1, reveal.column ?? 1), line.length + 1) - 1;
+    view.dispatch({
+      selection: { anchor },
+      effects: EditorView.scrollIntoView(anchor, { y: "center" }),
+    });
+    view.focus();
+    onRevealedRef.current?.(reveal.id);
+  }, [reveal]);
 
   return <div ref={hostRef} className="h-full w-full overflow-hidden [&_.cm-editor]:h-full" />;
 }

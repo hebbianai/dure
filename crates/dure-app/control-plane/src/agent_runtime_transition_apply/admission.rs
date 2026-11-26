@@ -91,6 +91,15 @@ pub(super) async fn load_or_admit_with_activation(
         Err(crate::agent_runtime_projection::AgentRuntimeObservedV1::Unmanaged) => {
             return Err("agent_runtime_selection_unavailable".into());
         }
+        // Agent removal, including a Dispatch stop, keeps its close as a
+        // permanent fence. Retrying cannot restart it in place.
+        Err(crate::agent_runtime_projection::AgentRuntimeObservedV1::Closed { owner, .. })
+            if !owner.admits_successor() =>
+        {
+            return Err(crate::BackendDispatchError::terminal(
+                "agent_runtime_source_removed",
+            ));
+        }
         Err(_) => return Err("agent_runtime_transition_conflict".into()),
     };
     let source_already_stopped = source_projection.boundary.is_stopped();
@@ -174,9 +183,11 @@ pub(super) async fn load_or_admit_with_activation(
             {
                 return Err("agent_runtime_provider_conversation_unavailable".into());
             }
+            // A turn that settled on a typed API failure (a usage limit) is a
+            // stop boundary too: nothing runs and the conversation resumes.
             if body.source_stop_policy.requires_idle()
                 && !inspection.is_exited_exact()
-                && !inspection.is_agent_quiescent()
+                && !inspection.is_stop_boundary()
             {
                 return Err(source_busy_refusal(
                     state,

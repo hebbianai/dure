@@ -7,6 +7,11 @@ import { useManagedAgentTerminalFallback } from "@/components/agents/useManagedA
 import { replaceManagedAgentPaneWithShell } from "@/lib/sessions/managed/managedAgentPaneToShell";
 import type { HmuxManagedPaneBindingV1 } from "@/lib/terminal/terminalBinding";
 import { useStore } from "@/store";
+import {
+	hmuxSessionMetadataFixture,
+	managedBindingFixture,
+	stopFenceFixture,
+} from "@/test/agentFixtures";
 
 vi.mock("@/lib/sessions/managed/managedAgentPaneToShell", () => ({
 	replaceManagedAgentPaneWithShell: vi.fn(),
@@ -24,7 +29,7 @@ const binding: HmuxManagedPaneBindingV1 = {
 afterEach(() => {
 	vi.restoreAllMocks();
 	vi.mocked(replaceManagedAgentPaneWithShell).mockReset();
-	useStore.setState({ agentActivity: {} });
+	useStore.setState({ agentActivity: {}, hmuxSessionMetadata: {} });
 });
 
 describe("useManagedAgentTerminalFallback", () => {
@@ -53,6 +58,51 @@ describe("useManagedAgentTerminalFallback", () => {
 		expect(useStore.getState().agentActivity["agent-uiux-dev"]).toBe("exited");
 		expect(rendered.result.current.authoritativeExit).toBe(true);
 		expect(onError).not.toHaveBeenCalled();
+	});
+
+	it("runs the exit fallback from the Host's census with no terminal attached", () => {
+		const fence = stopFenceFixture();
+		const fenced = managedBindingFixture({ stopFence: fence });
+		const exitedSummary = {
+			stopFence: fence,
+			terminalEpoch: fence.terminalEpoch,
+			lifecycle: "exited" as const,
+			health: "exited" as const,
+		};
+		const rendered = renderHook(
+			({ activity }) =>
+				useManagedAgentTerminalFallback({
+					agentId: "agent-card",
+					activity,
+					binding: fenced,
+					containerApi: {} as DockviewApi,
+					panelApi: { id: "agent:card", close: vi.fn() } as unknown as IDockviewPanel["api"],
+					cwd: "/repo",
+					onError: vi.fn(),
+				}),
+			{ initialProps: { activity: "working" as "working" | "exited" } },
+		);
+		// An exit of another generation of the same session says nothing.
+		act(() =>
+			useStore.setState({
+				hmuxSessionMetadata: hmuxSessionMetadataFixture({
+					...exitedSummary,
+					stopFence: { ...fence, terminalEpoch: "terminal-epoch-0" },
+					terminalEpoch: "terminal-epoch-0",
+				}),
+			}),
+		);
+		expect(rendered.result.current.authoritativeExit).toBe(false);
+		expect(useStore.getState().agentActivity["agent-card"]).toBeUndefined();
+
+		act(() =>
+			useStore.setState({
+				hmuxSessionMetadata: hmuxSessionMetadataFixture(exitedSummary),
+			}),
+		);
+		rendered.rerender({ activity: "exited" });
+		expect(useStore.getState().agentActivity["agent-card"]).toBe("exited");
+		expect(rendered.result.current.authoritativeExit).toBe(true);
 	});
 
 	it("records a legacy exit without replacing the pane", () => {

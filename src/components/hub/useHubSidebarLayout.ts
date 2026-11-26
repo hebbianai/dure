@@ -38,6 +38,7 @@
 
 import { normalizeDiffBadge } from "@/lib/scm/status/diffBadges";
 import { pendingApproval } from "@/lib/agents/approvalRequest";
+import { agentNotificationsMuted } from "@/lib/agents/agentNotificationMute";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
 import { useDiffBadges } from "@/lib/scm/status/diffBadgesStore";
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
@@ -156,6 +157,7 @@ export function useHubSidebarLayout(send: LayoutSink): void {
 					activityAt: agentRowActivityAt(sessionActivity[agent.sessionId], conversationActivityAt(agent.id, managedConversationId(agent))),
 					detail: sessionActivity[agent.sessionId]?.text || conversationPrompt(agent.id, managedConversationId(agent)),
 					approval: pendingApproval(runtimeStates[agent.sessionId]),
+					notificationsMuted: agentNotificationsMuted(agent),
 				}, diffBadges[agent.id] ? normalizeDiffBadge(diffBadges[agent.id]) : undefined,
 				sessionAccountSummary(agent, accounts)),
 			};

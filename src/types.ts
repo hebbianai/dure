@@ -233,6 +233,9 @@ export interface Agent {
   name: string;
   /** IDE-owned label only; never changes worktree, branch, or runtime identity. */
   displayName?: string;
+  /** The person muted this agent's notifications on the desktop and paired
+   * phones (`agentNotificationMute.ts`). Absent means not muted. */
+  notificationsMuted?: true;
   provider: Provider;
   projectId: string;
   /** cwd of the agent — its dedicated worktree, or the project root */

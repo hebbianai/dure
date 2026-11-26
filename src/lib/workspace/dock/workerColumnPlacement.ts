@@ -2,10 +2,8 @@
 // order. Only the new pane's position is chosen: existing panes keep their
 // place (design/SOUL.md: nothing rearranges silently).
 import type { DockviewApi } from "dockview-react";
-import {
-	createAgentRunLeadResolver,
-	type RunParentedAgent,
-} from "@/lib/agents/agentRunParent";
+import type { RunParentedAgent } from "@/lib/agents/agentRunParent";
+import { agentRelationsOf } from "@/lib/agents/relations/agentRelationFacts";
 import { findAgentPanel } from "@/lib/workspace/dock/dockPanelParameters";
 import { restoreMaximizedPane } from "@/lib/workspace/pane/paneMaximize";
 import type { PanelPosition } from "@/lib/workspace/pane/panePlacement";
@@ -47,26 +45,31 @@ function gridGroupOf(api: DockviewApi, agentId: string) {
 		: undefined;
 }
 
-/** Where a new pane for `worker` goes when its lead has a pane in this grid:
- * beside the lead, after the lead's latest-started worker that has a grid
- * pane here (store order is start order). Undefined when the Agent is not a
- * worker or its lead has no pane here, so the caller keeps its own placement;
- * a worker is never sent to an unrelated group. */
+/** Where a new pane for `worker` goes when its lead — its display manager —
+ * has a pane in this grid: beside the lead, after the lead's latest-started
+ * worker that has a grid pane here (store order is start order). Undefined
+ * when the Agent has no manager or its lead has no pane here, so the caller
+ * keeps its own placement; a worker is never sent to an unrelated group. */
 export function workerColumnPosition(
 	api: DockviewApi,
 	worker: RunParentedAgent,
 	agents: readonly RunParentedAgent[],
 	minimumHeight: number,
 ): PanelPosition | undefined {
-	if (!worker.runParent) return undefined;
-	const leadOf = createAgentRunLeadResolver(agents);
-	const lead = leadOf(worker);
-	const leadGroup = lead && gridGroupOf(api, lead.id);
-	if (!lead || !leadGroup) return undefined;
+	// A worker not registered yet starts after every Agent there is.
+	const relations = agentRelationsOf(
+		agents.some((agent) => agent.id === worker.id)
+			? agents
+			: [...agents, worker],
+	);
+	const leadId = relations.managerOf(worker.id);
+	if (leadId === undefined) return undefined;
+	const leadGroup = gridGroupOf(api, leadId);
+	if (!leadGroup) return undefined;
 	let lastWorkerGroup: ReturnType<typeof gridGroupOf>;
-	for (const agent of agents) {
-		if (agent.id === worker.id || leadOf(agent)?.id !== lead.id) continue;
-		const group = gridGroupOf(api, agent.id);
+	for (const agentId of relations.managedBy(leadId)) {
+		if (agentId === worker.id) continue;
+		const group = gridGroupOf(api, agentId);
 		if (group && group.id !== leadGroup.id) lastWorkerGroup = group;
 	}
 	// Measure the real layout, as autoSplitPosition does.

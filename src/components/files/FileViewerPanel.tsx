@@ -21,6 +21,7 @@ import { OpenExternallyButton } from "@/components/files/OpenExternallyButton";
 import { hasRenderedView, isHtmlFileName } from "@/lib/files/htmlPreview";
 import { fileMediaSource } from "@/lib/files/presentedMedia";
 import { useFileViewerPanelState } from "@/components/files/useFileViewerPanelState";
+import { completeFileReveal, useFileReveal } from "@/lib/files/fileReveal";
 import { PanelStatus } from "@/components/common/PanelStatus";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
@@ -42,10 +43,16 @@ export function FileViewerPanel(props: IDockviewPanelProps<FileViewerParams>) {
   const [sourceMode, setSourceMode] = useState(false);
   const [cursor, setCursor] = useState<{ line: number; col: number }>({ line: 1, col: 1 });
   const renderedView = file !== null && hasRenderedView(file);
+  const editable = canEditFile(file);
+  const reveal = useFileReveal(props.params);
   useEffect(() => setSourceMode(false), [document]);
   useEffect(() => {
     if (restoredDraft && renderedView) setSourceMode(true);
   }, [restoredDraft, renderedView]);
+  // A line names source text, so Markdown and HTML show their source for it.
+  useEffect(() => {
+    if (reveal && renderedView && editable) setSourceMode(true);
+  }, [reveal, renderedView, editable]);
   // pane-open 지연 계측: 마운트 → 파일 로드 + 에디터(lazy CodeMirror) 준비까지.
   const paneId = props.api.id;
   useEffect(() => {
@@ -58,7 +65,6 @@ export function FileViewerPanel(props: IDockviewPanelProps<FileViewerParams>) {
     if (file) applyAutomaticPaneTitle(props.api, dirty ? `● ${file.name}` : file.name);
   }, [file, dirty, props.api]);
 
-  const editable = canEditFile(file);
   const showEditor = editable && (!renderedView || sourceMode);
   const body = draft ?? file?.content ?? "";
   const kindLabel = file && (showEditor || isHtmlFileName(file.name)) ? languageLabel(file.name) : file?.kind;
@@ -168,6 +174,8 @@ export function FileViewerPanel(props: IDockviewPanelProps<FileViewerParams>) {
               onSave={() => void document.save()}
               onCursor={(line, col) => setCursor({ line, col })}
               onReady={handleEditorReady}
+              reveal={reveal}
+              onRevealed={(id) => completeFileReveal(props.params, id)}
             />
           </Suspense>
         ) : (

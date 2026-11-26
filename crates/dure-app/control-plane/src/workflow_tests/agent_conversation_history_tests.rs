@@ -1,0 +1,199 @@
+use super::*;
+
+const CONVERSATION: &str = "conversation-history";
+const CAPABILITY: &str = "agent_conversation.read_provider_history";
+
+fn claude_record(kind: &str, text: &str) -> String {
+    format!(
+        "{}\n",
+        json!({"type": kind, "message": {"role": kind, "content": text}})
+    )
+}
+
+/// A Claude Chat session under a selected account whose transcript holds two
+/// turns before the history its timeline was seeded with.
+async fn history_fixture() -> (
+    TempDir,
+    ServiceState,
+    AgentInteractionBindingV1,
+    std::path::PathBuf,
+) {
+    let (root, state, _, _) = fixture(Vec::new()).await;
+    let accounts = root.path().join("accounts");
+    fs::create_dir_all(&accounts).unwrap();
+    fs::set_permissions(&accounts, fs::Permissions::from_mode(0o700)).unwrap();
+    let profile_directory = accounts.join("claude-history-test");
+    fs::create_dir(&profile_directory).unwrap();
+    fs::set_permissions(&profile_directory, fs::Permissions::from_mode(0o700)).unwrap();
+    let profile = state
+        .credential_profiles
+        .register(
+            provider_credential_profile::RegisterProviderCredentialProfileBodyV1 {
+                schema_version: PROVIDER_CREDENTIAL_PROFILE_SCHEMA_VERSION_V1,
+                provider_id: "claude".into(),
+                reference_id: "history-test".into(),
+                profile_directory_name: "claude-history-test".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let agent_id = AgentIdV1::new("agent-claude-history").unwrap();
+    state
+        .store
+        .upsert_agent(&AgentRecordV1 {
+            agent_id: agent_id.clone(),
+            workspace_id: WorkspaceIdV1::new("workspace-1").unwrap(),
+            provider_id: ProviderIdV1::new("claude").unwrap(),
+            display_name: "Claude history".into(),
+            created_at_ms: 10,
+            updated_at_ms: 10,
+        })
+        .await
+        .unwrap();
+    let binding = AgentInteractionBindingV1 {
+        schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+        interaction_session_id: AgentInteractionSessionIdV1::new("interaction-claude-history")
+            .unwrap(),
+        agent_id,
+        provider_id: ProviderIdV1::new("claude").unwrap(),
+        execution_profile: AgentExecutionProfileV1::CredentialReference {
+            reference_id: "history-test".into(),
+            credential_generation: Some(profile.credential_generation.clone()),
+        },
+        provider_conversation_ref: Some(CONVERSATION.into()),
+        runtime: AgentProviderRuntimeFenceV1 {
+            runtime_generation: "runtime-claude-history".into(),
+            provider_epoch: "provider-claude-history".into(),
+        },
+        timeline_epoch: AgentTimelineEpochV1::new("timeline-claude-history").unwrap(),
+        binding_revision: 1,
+        history_complete: true,
+        created_at_ms: 10,
+        updated_at_ms: 10,
+    };
+    state
+        .store
+        .create_agent_interaction(&binding)
+        .await
+        .unwrap();
+    let project = profile_directory.join("projects").join("-workspace");
+    fs::create_dir_all(&project).unwrap();
+    let transcript = project.join(format!("{CONVERSATION}.jsonl"));
+    fs::write(
+        &transcript,
+        [
+            claude_record("user", "first prompt"),
+            claude_record("assistant", "first answer"),
+            claude_record("user", "second prompt"),
+            claude_record("assistant", "second answer"),
+        ]
+        .concat(),
+    )
+    .unwrap();
+    (root, state, binding, transcript)
+}
+
+fn history_request(state: &ServiceState, body: Value) -> BackendRequest {
+    BackendRequest {
+        schema_version: 1,
+        api_version: BACKEND_PROTOCOL_API.into(),
+        kind: BACKEND_REQUEST_KIND.into(),
+        request_id: "agent-conversation-history-1".into(),
+        operation: CAPABILITY.into(),
+        expected: ExpectedBackend {
+            scope_id: None,
+            backend_id: BACKEND_ID.into(),
+            generation: state.descriptor.generation.clone(),
+            protocol: ExpectedProtocol {
+                minimum: ProtocolVersion { major: 1, minor: 0 },
+                maximum: ProtocolVersion { major: 1, minor: 0 },
+            },
+            required_capabilities: vec![CAPABILITY.into()],
+        },
+        body,
+        connection: None,
+    }
+}
+
+fn history_body(binding: &AgentInteractionBindingV1, before: u64) -> Value {
+    json!({
+        "schemaVersion": 1,
+        "interactionSessionId": binding.interaction_session_id,
+        "providerConversationRef": binding.provider_conversation_ref,
+        "before": before,
+    })
+}
+
+/// The backend that owns a Chat session answers the history older than its
+/// seeded window from the session's own account, with the tool-aware shape
+/// the desktop's own transcript reads have.
+#[tokio::test]
+async fn chat_reads_the_history_before_its_seeded_window_from_its_own_account() {
+    let (_root, state, binding, _transcript) = history_fixture().await;
+    let window_start = (claude_record("user", "first prompt")
+        + &claude_record("assistant", "first answer"))
+        .len() as u64;
+
+    let response = dispatch(
+        &state,
+        &history_request(&state, history_body(&binding, window_start)),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response["schemaVersion"], 1);
+    let activity = &response["activity"];
+    assert_eq!(activity["provider"], "claude");
+    assert_eq!(activity["conversationId"], CONVERSATION);
+    assert_eq!(activity["historyComplete"], true);
+    assert_eq!(
+        activity["entries"],
+        json!([
+            { "role": "user", "text": "first prompt" },
+            { "role": "agent", "text": "first answer" },
+        ])
+    );
+    assert!(
+        activity.get("olderCursor").is_none(),
+        "the start is reached"
+    );
+}
+
+/// A read names the conversation it pages, and a cursor only means something
+/// in the transcript it came from: another conversation, an unknown session,
+/// a cursor past the transcript's end and an unknown schema are refused.
+#[tokio::test]
+async fn a_read_outside_the_sessions_own_conversation_is_refused() {
+    let (_root, state, binding, transcript) = history_fixture().await;
+    let length = fs::metadata(&transcript).unwrap().len();
+
+    let mut other = history_body(&binding, length);
+    other["providerConversationRef"] = json!("conversation-other");
+    let mut unknown = history_body(&binding, length);
+    unknown["interactionSessionId"] = json!("interaction-unknown");
+    let mut schema = history_body(&binding, length);
+    schema["schemaVersion"] = json!(2);
+    for (body, code) in [
+        (other, "agent_conversation_conflict"),
+        (unknown, "agent_conversation_not_found"),
+        (
+            history_body(&binding, length + 1),
+            "agent_conversation_history_unavailable",
+        ),
+        (schema, "agent_conversation_request_invalid"),
+    ] {
+        let error = dispatch(&state, &history_request(&state, body))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, code);
+    }
+
+    fs::remove_file(&transcript).unwrap();
+    let error = dispatch(
+        &state,
+        &history_request(&state, history_body(&binding, length)),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "agent_conversation_history_unavailable");
+}

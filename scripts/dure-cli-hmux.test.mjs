@@ -822,6 +822,31 @@ describe("Dure Hmux IDE CLI", () => {
     },
   );
 
+  it("stops a headless Run on the backend --backend selects when the app does not present it", async () => {
+    const appRequests = [];
+    const port = await startAppServer(withBody((incoming, response, body) => {
+      appRequests.push({ url: incoming.url, body: JSON.parse(body) });
+      respondJson(response, { ok: false, error: { code: "pane_not_found", message: "Hmux agent was not found" } }, 409);
+    }));
+    const root = scheduledRunBackendFixture(port);
+    // Another profile is the default, so only --backend reaches remote-a.
+    const profiles = JSON.parse(readFileSync(join(root.root, "backend-profiles.json"), "utf8"));
+    profiles.profiles = [{ ...profiles.profiles[0], default: false }, { ...profiles.profiles[0], id: "local-default",
+      default: true, transport: { kind: "local", endpoint: { kind: "unix_socket", path: join(root.root, "none.sock") } },
+      auth: { kind: "peer" }, trust: { kind: "local_peer" } }];
+    writeFileSync(join(root.root, "backend-profiles.json"), JSON.stringify(profiles), { mode: 0o600 });
+    const result = await runCli(["stop", "agent-scheduled-1", "--backend", "remote-a", "--yes", "--json"],
+      isolatedEnvironment({ HOME: root.root, DURE_HOME: root.root,
+        PATH: `${root.bin}:${process.env.PATH}`, DURE_FAKE_BACKEND_LOG: root.log }));
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, agent: { id: "agent-scheduled-1" },
+      dispatchStop: { status: "workspace_preserved", workspaceDisposition: "preserve" } });
+    expect(appRequests).toEqual([{ url: "/hmux/stop", body: { name: "agent-scheduled-1", confirm: true } }]);
+    expect(readFileSync(root.log, "utf8").trim().split("\n").map((line) => JSON.parse(line).operation))
+      .toEqual(["agent_spawn.list", "dispatch.stop.status", "dispatch.stop.preview", "dispatch.stop.apply"]);
+  });
+
   it("keeps the app's not-found answer when the backend has no Run record either", async () => {
     const port = await startAppServer(withBody((_incoming, response) => {
       respondJson(response, { ok: false, error: { code: "pane_not_found", message: "Hmux agent ghost was not found" } }, 409);
@@ -848,7 +873,8 @@ describe("Dure Hmux IDE CLI", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, dispatchStop: { status: "workspace_preserved" } });
   });
 
-  it.each([["--backend", "remote"], ["--all"], ["another-agent"], ["--name", "second"]].map((args) => [args]))(
+  it.each([["--all"], ["another-agent"], ["--name", "second"], ["--backend"], ["--backend", "a", "--backend", "b"]]
+    .map((args) => [args]))(
     "rejects unsupported or ambiguous stop arguments %j before sending a request", async (extra) => {
       let requested = false;
       const port = await startAppServer((_incoming, response) => { requested = true; respondJson(response, { ok: true }); });

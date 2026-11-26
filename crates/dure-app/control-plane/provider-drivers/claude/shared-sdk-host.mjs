@@ -28,6 +28,17 @@ function turnFailureReasonToken(error) {
 		? reason
 		: null;
 }
+
+/** The driver's reported limit reset, in Unix milliseconds, for the payload
+ * of a limit failure; empty otherwise so other failures keep their shape. */
+function turnFailureReset(error, reason) {
+	const resetsAtMs = error && typeof error === "object" ? error.resetsAtMs : undefined;
+	return (reason === "usage_limit" || reason === "rate_limit") &&
+		Number.isSafeInteger(resetsAtMs) &&
+		resetsAtMs > 0
+		? { resetsAtMs }
+		: {};
+}
 const MAX_HISTORY_ITEM_BYTES = 128 * 1024;
 const MAX_HISTORY_PAGE_ITEMS = 64;
 const MAX_HISTORY_PAGE_BYTES = 192 * 1024;
@@ -1333,9 +1344,11 @@ class SharedClaudeSdkHost {
 					record.activeClientMessageId = undefined;
 					// Only the driver's bounded classification crosses the
 					// boundary — never the provider's error text.
+					const reason = turnFailureReasonToken(error);
 					receipt.finalEventSequence = this.#append(record, "turn_failed", {
 						clientMessageId,
-						reason: turnFailureReasonToken(error),
+						reason,
+						...turnFailureReset(error, reason),
 					}).sequence;
 				}
 			})

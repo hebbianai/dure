@@ -2,11 +2,14 @@ use super::{
     DEFAULT_WORKING_TTL_MS, TerminalReplay, TerminalReplayError, WorkingDeadline,
     validate_agent_runtime_observation,
 };
+use std::collections::BTreeSet;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::time::{Duration, Instant};
 
 use crate::local_protocol::{
     AgentRuntimeActivity, AgentRuntimeAttention, AgentRuntimeLifecycle,
     AgentRuntimeStateProjection, AgentRuntimeStateSource, AgentStateReportObservationFence,
+    AgentTurnFailure, HeldAgentPromptsProjection,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -18,6 +21,10 @@ pub struct AgentRuntimeObservation {
     /// Working only because of background work after the provider's turn
     /// ended; its prompt accepts input.
     pub background_work: bool,
+    /// Why the provider's turn ended on an API error, beside `error`. An
+    /// observation without one continues the failure of the error episode
+    /// it continues.
+    pub turn_failure: Option<AgentTurnFailure>,
 }
 
 impl AgentRuntimeObservation {
@@ -34,6 +41,7 @@ impl AgentRuntimeObservation {
             attention,
             source,
             background_work: false,
+            turn_failure: None,
         }
     }
 
@@ -43,6 +51,7 @@ impl AgentRuntimeObservation {
     pub(super) fn of(current: &AgentRuntimeStateProjection) -> Self {
         Self {
             background_work: current.background_work,
+            turn_failure: current.turn_failure,
             ..Self::new(
                 current.lifecycle,
                 current.activity,
@@ -105,6 +114,9 @@ pub struct AgentStateReportObservation {
     /// What the provider asks the person to approve; see
     /// `AgentStateReport::approval_request`.
     pub approval_request: Option<crate::local_protocol::AgentApprovalRequest>,
+    /// Why the provider's turn ended on an API error; see
+    /// `AgentStateReport::turn_failure`.
+    pub turn_failure: Option<AgentTurnFailure>,
 }
 
 impl AgentStateReportObservation {
@@ -161,6 +173,58 @@ pub enum ControllerDraftEdit {
     /// draft changed in a way the Host cannot count, but an empty line
     /// stays empty.
     EditedUncounted,
+}
+
+/// One agent prompt across the attempts that send it again. A sender that
+/// retries a refused prompt, such as the Backend waking a worker for an inbox
+/// message, writes the same text each time, so the text identifies it.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct AgentPromptKey(u64);
+
+impl AgentPromptKey {
+    #[must_use]
+    pub fn of(text: &[u8]) -> Self {
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        Self(hasher.finish())
+    }
+}
+
+/// The most distinct prompts one stretch of unsent input counts. Past it the
+/// count stops growing, so a retry can never be counted as a new prompt.
+const MAX_HELD_AGENT_PROMPTS: usize = 1024;
+
+/// Agent prompts the person's unsent input refused, and when the first of
+/// them was refused. It lives exactly as long as that input: an erase back
+/// to an empty line or a submit releases them to their senders' retries.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct HeldAgentPrompts {
+    prompts: BTreeSet<AgentPromptKey>,
+    since_unix_ms: u64,
+}
+
+impl HeldAgentPrompts {
+    /// Returns whether the count changed.
+    fn hold(&mut self, prompt: AgentPromptKey, now_unix_ms: u64) -> bool {
+        if self.prompts.is_empty() {
+            self.since_unix_ms = now_unix_ms;
+        }
+        self.prompts.len() < MAX_HELD_AGENT_PROMPTS && self.prompts.insert(prompt)
+    }
+
+    /// Returns whether any prompt was held.
+    fn release(&mut self) -> bool {
+        let held = !self.prompts.is_empty();
+        self.prompts.clear();
+        held
+    }
+
+    fn projection(&self) -> Option<HeldAgentPromptsProjection> {
+        (!self.prompts.is_empty()).then_some(HeldAgentPromptsProjection {
+            count: self.prompts.len() as u64,
+            since_unix_ms: self.since_unix_ms,
+        })
+    }
 }
 
 /// The Host's estimate of the unsubmitted text in the provider's line
@@ -291,9 +355,10 @@ impl TerminalReplay {
     }
 
     /// Records draft-capable user input only after the PTY accepted it, when
-    /// the Host cannot count what that input put into the line.
+    /// the Host cannot count what that input put into the line. Such input
+    /// never empties the line, so no held prompt is released.
     pub fn record_controller_input(&mut self) {
-        self.record_controller_draft_edit(ControllerDraftEdit::InsertedUncounted);
+        self.apply_controller_draft_edit(ControllerDraftEdit::InsertedUncounted);
     }
 
     /// Records one accepted edit of the unsubmitted line. This is
@@ -301,10 +366,22 @@ impl TerminalReplay {
     /// may retain or erase a draft without echoing it, and automatic
     /// replacement must preserve that invisible state. The Host therefore
     /// counts only what it wrote. A count that returns to zero is an empty
-    /// prompt again, which releases draft-guarded automation and the
-    /// pending-input fact alike; input the Host cannot follow holds both
-    /// until the next accepted submit.
-    pub fn record_controller_draft_edit(&mut self, edit: ControllerDraftEdit) {
+    /// prompt again, which releases draft-guarded automation, the
+    /// pending-input fact and held agent prompts alike; input the Host
+    /// cannot follow holds them until the next accepted submit. Returns the
+    /// projection to publish when released prompts leave it.
+    pub fn record_controller_draft_edit(
+        &mut self,
+        edit: ControllerDraftEdit,
+    ) -> Result<Option<AgentRuntimeStateProjection>, TerminalReplayError> {
+        self.apply_controller_draft_edit(edit);
+        if !self.unsubmitted_controller_draft.is_empty() || !self.held_agent_prompts.release() {
+            return Ok(None);
+        }
+        self.republish_presentation()
+    }
+
+    fn apply_controller_draft_edit(&mut self, edit: ControllerDraftEdit) {
         self.record_controller_write();
         let before = self.unsubmitted_controller_draft;
         let after = before.apply(edit);
@@ -344,6 +421,80 @@ impl TerminalReplay {
     #[must_use]
     pub fn has_unsubmitted_controller_draft(&self) -> bool {
         !self.unsubmitted_controller_draft.is_empty()
+    }
+
+    /// Records that an agent prompt to the running conversation was refused
+    /// because the person's unsent input stands at the prompt. The pane and
+    /// session listings show how many prompts that input holds and since
+    /// when, so nobody reads the agent as idle while its messages wait.
+    /// Returns the projection to publish when the count changed.
+    pub fn hold_agent_prompt(
+        &mut self,
+        prompt: AgentPromptKey,
+        now_unix_ms: u64,
+    ) -> Result<Option<AgentRuntimeStateProjection>, TerminalReplayError> {
+        if !self.has_unsubmitted_controller_draft()
+            || !self.held_agent_prompts.hold(prompt, now_unix_ms)
+        {
+            return Ok(None);
+        }
+        self.republish_presentation()
+    }
+
+    /// Held prompts are published only beside a running agent.
+    pub(super) fn held_prompts_projection(
+        &self,
+        lifecycle: AgentRuntimeLifecycle,
+    ) -> Option<HeldAgentPromptsProjection> {
+        (lifecycle == AgentRuntimeLifecycle::Running)
+            .then(|| self.held_agent_prompts.projection())
+            .flatten()
+    }
+
+    /// Republishes the agent projection after a presentation-only fact
+    /// changed: the program's own status or the prompts unsent input holds.
+    /// Only those and the ordering fields move. Nothing the Host knows about
+    /// the turn has changed, so semantic idle age stays put and every
+    /// revision-fenced decision (a settling turn completion, a working lease)
+    /// moves to the new revision instead of being superseded by it.
+    pub(super) fn republish_presentation(
+        &mut self,
+    ) -> Result<Option<AgentRuntimeStateProjection>, TerminalReplayError> {
+        let Some(current) = &self.agent_runtime_state else {
+            return Ok(None);
+        };
+        let program_status = self.program_status_projection(current.lifecycle);
+        let held_prompts = self.held_prompts_projection(current.lifecycle);
+        if current.program_status == program_status && current.held_prompts == held_prompts {
+            return Ok(None);
+        }
+        let previous = current.revision;
+        let revision = previous
+            .checked_add(1)
+            .ok_or(TerminalReplayError::StateRevisionExhausted)?;
+        let projection = AgentRuntimeStateProjection {
+            revision,
+            observed_through_output_seq: self.output_seq,
+            program_status,
+            held_prompts,
+            ..current.clone()
+        };
+        if let Some(deadline) = self
+            .working_deadline
+            .as_mut()
+            .filter(|deadline| deadline.state_revision == previous)
+        {
+            deadline.state_revision = revision;
+        }
+        if let Some(pending) = self
+            .pending_turn_completion
+            .as_mut()
+            .filter(|pending| pending.state_revision == Some(previous))
+        {
+            pending.state_revision = Some(revision);
+        }
+        self.agent_runtime_state = Some(projection.clone());
+        Ok(Some(projection))
     }
 
     /// Whether the running provider reports a question or approval prompt it
@@ -429,6 +580,23 @@ impl TerminalReplay {
                 .is_some_and(|state| state.is_semantically_quiescent())
     }
 
+    /// Whether a quiescence-fenced managed stop may end the provider here:
+    /// it is semantically quiescent, or its turn settled on a typed API
+    /// failure that nobody has answered yet. Input pending at the prompt, an
+    /// Escape, or key input since the failure was raised (a person may be
+    /// answering it in the terminal) keeps the session. Never idle: semantic
+    /// idle age and hibernation stay quiescence-only.
+    pub(crate) fn is_stop_boundary(&self) -> bool {
+        self.is_semantically_quiescent()
+            || (!self.has_pending_controller_input()
+                && !self.interrupt_requested
+                && !self.attention_input_since_raised
+                && self
+                    .agent_runtime_state
+                    .as_ref()
+                    .is_some_and(AgentRuntimeStateProjection::is_settled_turn_failure))
+    }
+
     pub(crate) fn semantic_idle_ms_at(&self, now: Instant) -> Option<u64> {
         if !self.is_semantically_quiescent() {
             return None;
@@ -447,6 +615,9 @@ impl TerminalReplay {
         // no longer unsubmitted even if the fallible provider fold fails, and
         // the turn it starts has its own reports to answer an earlier Escape.
         self.unsubmitted_controller_draft = ControllerDraft::Empty;
+        // The submitted input no longer holds prompts back; their senders'
+        // next attempts meet the turn it starts instead.
+        let released = self.held_agent_prompts.release();
         self.interrupt_requested = false;
         if self.pending_turn_completion.is_some()
             || self.agent_runtime_state.as_ref().is_some_and(|state| {
@@ -468,14 +639,21 @@ impl TerminalReplay {
                 self.submitted_over_work_id = Some(work_id);
             }
             self.pending_controller_input = PendingControllerInput::Submitted;
-            return Ok(None);
+            return if released {
+                self.republish_presentation()
+            } else {
+                Ok(None)
+            };
         }
         if !self.has_agent_runtime_state() {
             return Ok(None);
         }
-        self.observe_agent_runtime_state(AgentRuntimeObservation::working(
+        match self.observe_agent_runtime_state(AgentRuntimeObservation::working(
             AgentRuntimeStateSource::ControllerInput,
-        ))
+        ))? {
+            None if released => self.republish_presentation(),
+            projection => Ok(projection),
+        }
     }
 
     pub(super) fn acknowledge_controller_submit(&mut self) {

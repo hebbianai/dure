@@ -67,7 +67,7 @@ async function handlePaneClose(
 	let target: ReturnType<typeof paneCloseTarget>;
 	try {
 		target = paneCloseTarget(request.params);
-		if ((await dependencies.routeToSpaceOwner(request)).kind === "forwarded")
+		if ((await dependencies.routeToSpaceOwner(request)).kind === "elsewhere")
 			return null;
 	} catch (error) {
 		if (!(await dependencies.claim(request.reqId))) return null;
@@ -128,7 +128,7 @@ async function handlePaneMove(
 			throw new Error(
 				"pane move requires targetPanelId, fromSpaceId and spaceId",
 			);
-		if ((await dependencies.routeToSpaceOwner(request)).kind === "forwarded")
+		if ((await dependencies.routeToSpaceOwner(request)).kind === "elsewhere")
 			return null;
 		claimed = await dependencies.claim(request.reqId);
 		if (!claimed) return null;
@@ -276,7 +276,7 @@ async function handlePaneOpen(
 				"pane open requires tool mobile or file and an exact Space",
 			);
 		const path = tool === "file" ? localFilePath(request.params) : undefined;
-		if ((await dependencies.routeToSpaceOwner(request)).kind === "forwarded")
+		if ((await dependencies.routeToSpaceOwner(request)).kind === "elsewhere")
 			return null;
 		claimed = await dependencies.claim(request.reqId);
 		if (!claimed) return null;

@@ -37,7 +37,8 @@ pub(super) fn item(
         provider_message_id: provider
             .map(|id| AgentProviderMessageIdV1::new(format!("pi-{id}")).map_err(store_error))
             .transpose()?,
-        body,
+        // One oversized part must not fail its whole message.
+        body: body.fitted(),
         created_at_ms: at,
     };
     item.validate().map_err(store_error)?;
@@ -61,9 +62,19 @@ pub(super) fn lifecycle(
     )
 }
 
+/// The selected conversation branch, oldest first.
+pub(super) struct Branch<'a> {
+    pub(super) entries: Vec<&'a Value>,
+    /// The entry before the branch's oldest one, which a window leaves out.
+    /// `None` when the branch starts the conversation.
+    pub(super) before: Option<&'a str>,
+}
+
 /// Follow parent IDs from the explicit leaf. Append order also contains forks;
 /// it is not the selected conversation branch and must never seed a transcript.
-pub(super) fn branch(entries: &Entries) -> Result<Vec<&Value>, Error> {
+/// In a window that leaves older entries out, the branch starts at its oldest
+/// entry the window holds.
+pub(super) fn branch(entries: &Entries) -> Result<Branch<'_>, Error> {
     let mut by_id = BTreeMap::new();
     for entry in &entries.entries {
         let id = field(entry, "id")?;
@@ -74,9 +85,12 @@ pub(super) fn branch(entries: &Entries) -> Result<Vec<&Value>, Error> {
     let mut cursor = entries.leaf_id.as_deref();
     let mut selected = Vec::new();
     while let Some(id) = cursor {
-        let entry = *by_id
-            .get(id)
-            .ok_or_else(|| protocol_error("Pi branch has a missing parent"))?;
+        let Some(entry) = by_id.get(id).copied() else {
+            if !entries.omits_older {
+                return Err(protocol_error("Pi branch has a missing parent"));
+            }
+            break;
+        };
         selected.push(entry);
         if selected.len() > entries.entries.len() {
             return Err(protocol_error("Pi branch contains a cycle"));
@@ -88,13 +102,47 @@ pub(super) fn branch(entries: &Entries) -> Result<Vec<&Value>, Error> {
         };
     }
     selected.reverse();
-    Ok(selected)
+    Ok(Branch {
+        entries: selected,
+        before: cursor,
+    })
+}
+
+/// Keeps what the next projection needs for the turn in progress: the
+/// branch's newest prompt and the entries between it and the message before
+/// it. A prompt Dure sent is anchored at the leaf it was sent at, and Pi may
+/// append other entries, such as a model change, before the prompt itself.
+/// The timeline holds what the entries before them projected, and what Pi
+/// appends next follows them.
+pub(super) fn retain_newest_turn(entries: &mut Entries) -> Result<(), Error> {
+    let message = |entry: &&Value| entry.get("type").and_then(Value::as_str) == Some("message");
+    let selected = branch(entries)?.entries;
+    let Some(prompt) = selected.iter().rposition(|entry| {
+        message(entry) && entry.pointer("/message/role").and_then(Value::as_str) == Some("user")
+    }) else {
+        return Ok(());
+    };
+    let Some(before) = selected[..prompt].iter().rposition(message) else {
+        return Ok(());
+    };
+    let first = field(selected[before + 1], "id")?.to_owned();
+    let start = entries
+        .entries
+        .iter()
+        .position(|entry| entry.get("id").and_then(Value::as_str) == Some(&first))
+        .ok_or_else(|| protocol_error("Pi branch entry missing"))?;
+    entries.entries.drain(..start);
+    entries.omits_older = true;
+    Ok(())
 }
 
 pub(super) struct ProjectedHistory {
     pub(super) items: Vec<AgentTimelineItemDraftV1>,
     pub(super) accepted: BTreeMap<AgentClientMessageIdV1, String>,
     pub(super) completed: std::collections::BTreeSet<AgentClientMessageIdV1>,
+    /// Whether the conversation continues before the oldest entry the items
+    /// show, which a window left out.
+    pub(super) omits_older: bool,
 }
 
 pub(super) fn project(
@@ -110,12 +158,18 @@ pub(super) fn project(
             return Err(protocol_error("Pi prompt boundaries conflict"));
         }
     }
-    let mut next = at_leaf.get(&None).copied();
+    let Branch {
+        entries: selected,
+        before,
+    } = branch(entries)?;
+    // A prompt Dure sent follows the leaf it was sent at, which may precede
+    // the branch's oldest entry in a window.
+    let mut next = at_leaf.get(&before).copied();
     let mut context = None;
     let mut items = Vec::new();
     let mut accepted = BTreeMap::new();
     let mut completed = std::collections::BTreeSet::new();
-    for entry in branch(entries)? {
+    for entry in selected {
         let id = field(entry, "id")?;
         if entry.get("type").and_then(Value::as_str) == Some("message") {
             let message = entry
@@ -126,6 +180,12 @@ pub(super) fn project(
                 .get("timestamp")
                 .and_then(Value::as_i64)
                 .ok_or_else(|| protocol_error("Pi message timestamp missing"))?;
+            // Pi records four message roles. A role it may add later is left
+            // out, as an entry type the projection does not know is.
+            let turn_role = matches!(role, "user" | "assistant" | "toolResult");
+            if role == "bashExecution" {
+                items.push(shell_command(id, message, at)?);
+            }
             let mut imported_user = false;
             if role == "user" {
                 context = Some(if let Some(owned) = next.take() {
@@ -141,8 +201,11 @@ pub(super) fn project(
                     }
                 });
             }
-            if let Some(context) = &context {
-                if role == "user" {
+            // In a window, the entries before its oldest prompt end a turn
+            // whose prompt the window left out. They show without that turn.
+            if turn_role && (context.is_some() || before.is_some()) {
+                let turn = context.as_ref();
+                if let Some(context) = turn.filter(|_| role == "user") {
                     items.push(lifecycle(
                         context,
                         AgentTimelineLifecycleStateV1::TurnStarted,
@@ -160,7 +223,7 @@ pub(super) fn project(
                     if role == "toolResult" {
                         items.push(item(
                             &format!("entry:{id}:result"),
-                            Some(context),
+                            turn,
                             Some(id),
                             AgentTimelineItemBodyV1::Tool {
                                 tool_call_id: field(message, "toolCallId")?.into(),
@@ -208,7 +271,7 @@ pub(super) fn project(
                             };
                             items.push(item(
                                 &format!("entry:{id}:{index}"),
-                                Some(context),
+                                turn,
                                 Some(id),
                                 body,
                                 at,
@@ -221,7 +284,7 @@ pub(super) fn project(
                     Some("error" | "aborted") => Some(AgentTimelineLifecycleStateV1::TurnFailed),
                     _ => None,
                 };
-                if let Some(state) = terminal {
+                if let (Some(state), Some(context)) = (terminal, turn) {
                     completed.insert(context.client_message_id.clone());
                     items.push(lifecycle(context, state, at)?);
                 }
@@ -235,7 +298,64 @@ pub(super) fn project(
         items,
         accepted,
         completed,
+        omits_older: before.is_some(),
     })
+}
+
+/// A command the person ran in Pi itself (`!`, or `!!` to keep it out of the
+/// model's context) instead of sending a prompt. It shows as that command
+/// line, as Claude's shell input does. It belongs to no turn: Pi holds it back
+/// while a turn runs and records it after the turn's last message. What it
+/// printed stays out of the person's message.
+fn shell_command(id: &str, message: &Value, at: i64) -> Result<AgentTimelineItemDraftV1, Error> {
+    let prefix = if message.get("excludeFromContext") == Some(&Value::Bool(true)) {
+        "!!"
+    } else {
+        "!"
+    };
+    item(
+        &format!("entry:{id}:0"),
+        None,
+        Some(id),
+        AgentTimelineItemBodyV1::Message {
+            role: AgentTimelineMessageRoleV1::User,
+            markdown: format!("{prefix} {}", field(message, "command")?.trim()),
+        },
+        at,
+    )
+}
+
+impl ProjectedHistory {
+    /// The items to append, oldest first. A window that `meets_timeline`,
+    /// whose items the timeline partly holds, continues its rows. One that
+    /// leaves out older history the timeline does not hold opens with the
+    /// existing boundary row. The shared transcript reader does not page Pi
+    /// sessions, so the row says only that the history is left out, not
+    /// where it is.
+    pub(super) fn take_items(
+        &mut self,
+        meets_timeline: bool,
+    ) -> Result<Vec<AgentTimelineItemDraftV1>, Error> {
+        let mut items = std::mem::take(&mut self.items);
+        if let Some(oldest) = items
+            .first()
+            .filter(|_| self.omits_older && !meets_timeline)
+        {
+            let boundary = item(
+                &format!("history-boundary:{}", oldest.item_id),
+                None,
+                None,
+                AgentTimelineItemBodyV1::HistoryBoundary {
+                    reason: PROVIDER_HISTORY_TRUNCATED_BOUNDARY_V1.into(),
+                    requested_after_provider_sequence: 0,
+                    dropped_through_provider_sequence: 1,
+                },
+                oldest.created_at_ms,
+            )?;
+            items.insert(0, boundary);
+        }
+        Ok(items)
+    }
 }
 
 pub(super) fn pending_draft(
@@ -315,10 +435,12 @@ mod tests {
                 json!({"id":"decoy","parentId":"a"}),
             ],
             leaf_id: Some("b".into()),
+            omits_older: false,
         };
         assert_eq!(
             branch(&entries)
                 .unwrap()
+                .entries
                 .iter()
                 .map(|entry| entry["id"].as_str().unwrap())
                 .collect::<Vec<_>>(),
@@ -352,6 +474,7 @@ mod tests {
                 json!({"id":"answer","parentId":"owned","type":"message","message":{"role":"assistant","content":[{"type":"text","text":"answer"}],"stopReason":"stop","timestamp":3}}),
             ],
             leaf_id: Some("answer".into()),
+            omits_older: false,
         };
         let history = project(&entries, &anchors).unwrap();
         assert_eq!(
@@ -414,5 +537,403 @@ mod tests {
             pending_answer(&input, &json!({"answers":{"answer":"한글\ninput"}})).unwrap(),
             json!({"id":"input","value":"한글\ninput"})
         );
+    }
+
+    /// One tool call, tool result or message over the timeline's item bound
+    /// fits by the shared rule instead of failing the history, which fails
+    /// the attach and every later sync.
+    #[test]
+    fn oversized_entries_fit_the_timeline_instead_of_failing_the_history() {
+        let large = "x".repeat(MAX_AGENT_TIMELINE_JSON_BYTES_V1 + 1);
+        let entries = Entries {
+            entries: vec![
+                json!({"id":"user","parentId":null,"type":"message","message":{"role":"user","content":format!("Paste {large}"),"timestamp":1}}),
+                json!({"id":"call","parentId":"user","type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"tool-write","name":"write","arguments":{"path":"/fixture/a","content":large}}],"stopReason":"toolUse","timestamp":2}}),
+                json!({"id":"result","parentId":"call","type":"message","message":{"role":"toolResult","toolCallId":"tool-write","toolName":"write","content":[{"type":"text","text":large}],"isError":false,"timestamp":3}}),
+                json!({"id":"answer","parentId":"result","type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Done"}],"stopReason":"stop","timestamp":4}}),
+            ],
+            leaf_id: Some("answer".into()),
+            omits_older: false,
+        };
+        let history = project(&entries, &BTreeMap::new()).unwrap();
+        let tools = history
+            .items
+            .iter()
+            .filter_map(|item| match &item.body {
+                AgentTimelineItemBodyV1::Tool {
+                    tool_call_id,
+                    input,
+                    output,
+                    ..
+                } => Some((tool_call_id.as_str(), input.is_some(), output.is_some())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tools,
+            [("tool-write", false, false), ("tool-write", false, false)]
+        );
+        let texts = history
+            .items
+            .iter()
+            .filter_map(|item| match &item.body {
+                AgentTimelineItemBodyV1::Message { markdown, .. } => Some(markdown.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(texts.len(), 2);
+        assert!(texts[0].starts_with("Paste xxx") && texts[0].ends_with('…'));
+        assert_eq!(texts[1], "Done");
+        for item in &history.items {
+            item.validate().unwrap();
+        }
+    }
+
+    /// A session of `turns` answered prompts as Pi appends them: each prompt,
+    /// a tool call and its result, then the answer.
+    fn session(turns: usize) -> Vec<Value> {
+        let mut entries = Vec::new();
+        let mut parent = Value::Null;
+        for turn in 0..turns {
+            let at = turn as i64 * 4;
+            let ids = ["prompt", "call", "result", "answer"].map(|kind| format!("{kind}-{turn}"));
+            entries.extend([
+                json!({"id":ids[0],"parentId":parent,"type":"message","message":{"role":"user","content":format!("Prompt {turn}"),"timestamp":at}}),
+                json!({"id":ids[1],"parentId":ids[0],"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":format!("tool-{turn}"),"name":"read","arguments":{"path":"a"}}],"stopReason":"toolUse","timestamp":at + 1}}),
+                json!({"id":ids[2],"parentId":ids[1],"type":"message","message":{"role":"toolResult","toolCallId":format!("tool-{turn}"),"toolName":"read","content":[{"type":"text","text":"file"}],"isError":false,"timestamp":at + 2}}),
+                json!({"id":ids[3],"parentId":ids[2],"type":"message","message":{"role":"assistant","content":[{"type":"text","text":format!("Answer {turn}")}],"stopReason":"stop","timestamp":at + 3}}),
+            ]);
+            parent = json!(ids[3]);
+        }
+        entries
+    }
+
+    /// The entries of `session` from `start` on, as a window reads them.
+    fn window(session: &[Value], start: usize) -> Entries {
+        Entries {
+            entries: session[start..].to_vec(),
+            leaf_id: session
+                .last()
+                .map(|entry| entry["id"].as_str().unwrap().into()),
+            omits_older: start > 0,
+        }
+    }
+
+    /// Each item as its kind, turn and text, oldest first.
+    fn shown(items: &[AgentTimelineItemDraftV1]) -> Vec<String> {
+        items
+            .iter()
+            .map(|item| {
+                let turn = item.turn_id.as_ref().map_or("-", |turn| turn.as_str());
+                match &item.body {
+                    AgentTimelineItemBodyV1::HistoryBoundary { reason, .. } => {
+                        format!("boundary {reason}")
+                    }
+                    AgentTimelineItemBodyV1::Message { markdown, .. } => {
+                        format!("{turn} {markdown}")
+                    }
+                    AgentTimelineItemBodyV1::Tool {
+                        tool_call_id,
+                        state,
+                        ..
+                    } => format!("{turn} {tool_call_id} {state:?}"),
+                    AgentTimelineItemBodyV1::Lifecycle { state, .. } => {
+                        format!("{turn} {state:?}")
+                    }
+                    other => format!("{turn} {other:?}"),
+                }
+            })
+            .collect()
+    }
+
+    /// Appends `items` the way the journal does: each item once, in order.
+    fn append(timeline: &mut Vec<AgentTimelineItemDraftV1>, items: Vec<AgentTimelineItemDraftV1>) {
+        for item in items {
+            if !timeline.iter().any(|held| held.item_id == item.item_id) {
+                timeline.push(item);
+            }
+        }
+    }
+
+    /// A window that cuts a turn shows the rest of that turn without it,
+    /// then its whole turns, behind one boundary. As Pi appends, each sync
+    /// keeps only the turn in progress, and the timeline gets each item once,
+    /// in order, as a projection of the whole session gives them.
+    #[test]
+    fn a_window_opens_behind_a_boundary_and_continues_each_item_once() {
+        let whole = session(6);
+        let full = project(&window(&whole, 0), &BTreeMap::new()).unwrap();
+        assert!(!full.omits_older);
+
+        // The window starts at turn 2's tool result.
+        let mut entries = window(&whole[..20], 10);
+        let mut history = project(&entries, &BTreeMap::new()).unwrap();
+        assert!(history.omits_older);
+        let mut timeline = Vec::new();
+        append(&mut timeline, history.take_items(false).unwrap());
+        assert_eq!(
+            shown(&timeline)[..4],
+            [
+                "boundary provider_history_truncated",
+                "- tool-2 Completed",
+                "- Answer 2",
+                "pi-turn-prompt-3 TurnStarted",
+            ]
+        );
+
+        // Only the turn in progress stays for the next sync.
+        retain_newest_turn(&mut entries).unwrap();
+        assert_eq!(entries.entries[0]["id"], "prompt-4");
+        assert_eq!(entries.entries.len(), 4);
+        assert!(entries.omits_older);
+
+        // Pi appends turn 5. Its window meets the timeline, so no second
+        // boundary appears.
+        entries.entries.extend_from_slice(&whole[20..]);
+        entries.leaf_id = Some("answer-5".into());
+        let mut history = project(&entries, &BTreeMap::new()).unwrap();
+        assert!(history.omits_older);
+        let meets = history
+            .items
+            .iter()
+            .any(|item| timeline.iter().any(|held| held.item_id == item.item_id));
+        assert!(meets);
+        append(&mut timeline, history.take_items(meets).unwrap());
+
+        // The whole session's turns 3 to 5, unchanged and each once.
+        let from = full
+            .items
+            .iter()
+            .position(|item| item.turn_id.as_ref().unwrap().as_str() == "pi-turn-prompt-3")
+            .unwrap();
+        assert_eq!(timeline[3..], full.items[from..]);
+        assert_eq!(
+            shown(&timeline)
+                .iter()
+                .filter(|row| row.starts_with("boundary"))
+                .count(),
+            1
+        );
+    }
+
+    /// A prompt Dure sent at the entry right before a window keeps its own
+    /// turn, as it does when the whole session is read.
+    #[test]
+    fn a_prompt_sent_right_before_a_window_keeps_its_turn() {
+        let whole = session(3);
+        let context = TurnContext {
+            turn_id: AgentTurnIdV1::new("dure-turn").unwrap(),
+            client_message_id: AgentClientMessageIdV1::new("dure-client").unwrap(),
+        };
+        let anchors = BTreeMap::from([(
+            context.client_message_id.clone(),
+            PromptAnchor {
+                context: context.clone(),
+                previous_leaf: Some("answer-1".into()),
+                runtime: AgentProviderRuntimeFenceV1 {
+                    runtime_generation: "runtime".into(),
+                    provider_epoch: "epoch".into(),
+                },
+            },
+        )]);
+        for start in [0, 8] {
+            let history = project(&window(&whole, start), &anchors).unwrap();
+            assert_eq!(
+                history
+                    .accepted
+                    .get(&context.client_message_id)
+                    .map(String::as_str),
+                Some("prompt-2")
+            );
+            assert!(history.completed.contains(&context.client_message_id));
+            assert!(history.items.iter().any(|item| {
+                item.turn_id.as_ref().map(AgentTurnIdV1::as_str) == Some("dure-turn")
+            }));
+        }
+    }
+
+    /// Pi may append an entry, such as a model change, between the leaf a
+    /// prompt Dure sent is anchored at and the prompt itself. Later syncs
+    /// still give that prompt its own turn, so it shows once and its turn
+    /// completes, with no second boundary.
+    #[test]
+    fn a_prompt_after_an_entry_pi_appended_keeps_its_turn_across_syncs() {
+        let whole = session(2);
+        let context = TurnContext {
+            turn_id: AgentTurnIdV1::new("dure-turn").unwrap(),
+            client_message_id: AgentClientMessageIdV1::new("dure-client").unwrap(),
+        };
+        let anchors = BTreeMap::from([(
+            context.client_message_id.clone(),
+            PromptAnchor {
+                context: context.clone(),
+                previous_leaf: Some("answer-1".into()),
+                runtime: AgentProviderRuntimeFenceV1 {
+                    runtime_generation: "runtime".into(),
+                    provider_epoch: "epoch".into(),
+                },
+            },
+        )]);
+        let mut entries = window(&whole, 4);
+        let mut timeline = Vec::new();
+        let sync = |entries: &mut Entries, timeline: &mut Vec<AgentTimelineItemDraftV1>| {
+            let mut history = project(entries, &anchors).unwrap();
+            let meets = history
+                .items
+                .iter()
+                .any(|item| timeline.iter().any(|held| held.item_id == item.item_id));
+            append(timeline, history.take_items(meets).unwrap());
+            retain_newest_turn(entries).unwrap();
+            history
+        };
+        sync(&mut entries, &mut timeline);
+        for (newer, leaf) in [
+            (
+                vec![
+                    json!({"id":"model","parentId":"answer-1","type":"model_change"}),
+                    json!({"id":"dure-prompt","parentId":"model","type":"message","message":{"role":"user","content":"Dure prompt","timestamp":10}}),
+                ],
+                "dure-prompt",
+            ),
+            (
+                vec![
+                    json!({"id":"dure-answer","parentId":"dure-prompt","type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Dure answer"}],"stopReason":"stop","timestamp":11}}),
+                ],
+                "dure-answer",
+            ),
+        ] {
+            entries.entries.extend(newer);
+            entries.leaf_id = Some(leaf.into());
+            let history = sync(&mut entries, &mut timeline);
+            assert_eq!(
+                history
+                    .accepted
+                    .get(&context.client_message_id)
+                    .map(String::as_str),
+                Some("dure-prompt")
+            );
+        }
+        let shown = shown(&timeline);
+        assert_eq!(
+            shown
+                .iter()
+                .filter(|row| row.starts_with("boundary"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            shown[shown.len() - 3..],
+            [
+                "dure-turn TurnStarted",
+                "dure-turn Dure answer",
+                "dure-turn TurnCompleted",
+            ]
+        );
+    }
+
+    /// A `!` or `!!` command the person ran in Pi is a `bashExecution`
+    /// message with no content. It shows as that command line, outside any
+    /// turn, and what it printed stays out. A message role the projection
+    /// does not know is left out instead of failing the whole history, which
+    /// fails the attach and every later sync.
+    #[test]
+    fn shell_commands_show_as_the_command_line_the_person_ran() {
+        let shell = |id: &str, parent: &str, command: &str, excluded: bool| json!({"id":id,"parentId":parent,"type":"message","message":{"role":"bashExecution","command":command,"output":"dure\n","exitCode":0,"cancelled":false,"truncated":false,"timestamp":10,"excludeFromContext":excluded}});
+        let mut entries = session(2);
+        entries.splice(
+            4..4,
+            [
+                shell("shell", "answer-0", "echo dure\n", false),
+                shell("private", "shell", "echo private", true),
+                json!({"id":"future","parentId":"private","type":"message","message":{"role":"futureRole","timestamp":11}}),
+            ],
+        );
+        entries[7]["parentId"] = json!("future");
+        let first = json!({"id":"first","parentId":null,"type":"message","message":{"role":"bashExecution","command":"ls","output":"","exitCode":0,"cancelled":false,"truncated":false,"timestamp":0}});
+        entries[0]["parentId"] = json!("first");
+        entries.insert(0, first);
+        let history = project(&window(&entries, 0), &BTreeMap::new()).unwrap();
+        assert_eq!(
+            shown(&history.items),
+            [
+                "- ! ls",
+                "pi-turn-prompt-0 TurnStarted",
+                "pi-turn-prompt-0 Prompt 0",
+                "pi-turn-prompt-0 tool-0 Running",
+                "pi-turn-prompt-0 tool-0 Completed",
+                "pi-turn-prompt-0 Answer 0",
+                "pi-turn-prompt-0 TurnCompleted",
+                "- ! echo dure",
+                "- !! echo private",
+                "pi-turn-prompt-1 TurnStarted",
+                "pi-turn-prompt-1 Prompt 1",
+                "pi-turn-prompt-1 tool-1 Running",
+                "pi-turn-prompt-1 tool-1 Completed",
+                "pi-turn-prompt-1 Answer 1",
+                "pi-turn-prompt-1 TurnCompleted",
+            ]
+        );
+        let command = history
+            .items
+            .iter()
+            .find(|item| {
+                item.provider_message_id
+                    .as_ref()
+                    .is_some_and(|id| id.as_str() == "pi-shell")
+            })
+            .unwrap();
+        assert!(matches!(
+            command.body,
+            AgentTimelineItemBodyV1::Message {
+                role: AgentTimelineMessageRoleV1::User,
+                ..
+            }
+        ));
+        assert_eq!(command.client_message_id, None);
+
+        // A prompt Dure sends after them still gets its own turn.
+        let context = TurnContext {
+            turn_id: AgentTurnIdV1::new("dure-turn").unwrap(),
+            client_message_id: AgentClientMessageIdV1::new("dure-client").unwrap(),
+        };
+        let anchors = BTreeMap::from([(
+            context.client_message_id.clone(),
+            PromptAnchor {
+                context: context.clone(),
+                previous_leaf: Some("future".into()),
+                runtime: AgentProviderRuntimeFenceV1 {
+                    runtime_generation: "runtime".into(),
+                    provider_epoch: "epoch".into(),
+                },
+            },
+        )]);
+        let history = project(&window(&entries, 0), &anchors).unwrap();
+        assert_eq!(
+            history
+                .accepted
+                .get(&context.client_message_id)
+                .map(String::as_str),
+            Some("prompt-1")
+        );
+        assert!(history.completed.contains(&context.client_message_id));
+    }
+
+    /// Only a window that leaves out history the timeline does not hold opens
+    /// with a boundary. A whole session still needs every parent it names.
+    #[test]
+    fn only_a_window_that_leaves_history_out_opens_with_a_boundary() {
+        let whole = session(2);
+        let opens = |start, meets_timeline| {
+            let mut history = project(&window(&whole, start), &BTreeMap::new()).unwrap();
+            shown(&history.take_items(meets_timeline).unwrap())[0].clone()
+        };
+        assert_eq!(opens(4, false), "boundary provider_history_truncated");
+        assert_eq!(opens(4, true), "pi-turn-prompt-1 TurnStarted");
+        assert_eq!(opens(0, false), "pi-turn-prompt-0 TurnStarted");
+        let mut empty = project(&window(&whole, 8), &BTreeMap::new()).unwrap();
+        assert!(empty.take_items(false).unwrap().is_empty());
+        let mut cut = window(&whole, 4);
+        cut.omits_older = false;
+        assert!(project(&cut, &BTreeMap::new()).is_err());
     }
 }

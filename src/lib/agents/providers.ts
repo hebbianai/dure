@@ -39,6 +39,12 @@ export function supportsStructuredChat(provider: Provider): boolean {
 	return spec(provider).structuredChat === true;
 }
 
+/** Whether a Chat turn refused at this provider's usage limit can continue
+ * once after the reset its runtime reported. */
+export function supportsLimitResetContinuation(provider: Provider): boolean {
+	return spec(provider).limitResetContinuation === true;
+}
+
 /** 계정 UI(추가·전환·로그인)에 노출할 프로바이더. */
 export function accountProviders(): Provider[] {
   return PROVIDER_IDS.filter(supportsAccounts);

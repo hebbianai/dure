@@ -1,6 +1,6 @@
 use dure_app::{
-    AgentExecutionProfileV1, DomainStoreErrorV1, ProviderIdV1, ProviderRecoveryAccountV1,
-    ProviderRecoveryUsageV1,
+    AgentExecutionProfileV1, DomainStoreErrorV1, ProviderCredentialProfileV1, ProviderIdV1,
+    ProviderRecoveryAccountV1, ProviderRecoveryUsageV1,
 };
 use sqlx::{Row, SqliteConnection};
 
@@ -67,15 +67,40 @@ pub(crate) async fn report_limit_on(
     Ok(())
 }
 
+/// IDs registered for one profile directory share its credential generation,
+/// so they are one login: setting one aside sets aside all of them.
+fn same_login(left: &ProviderCredentialProfileV1, right: &ProviderCredentialProfileV1) -> bool {
+    left.provider_id == right.provider_id
+        && (left.reference_id == right.reference_id
+            || left.credential_generation == right.credential_generation)
+}
+
+/// Picks the allowed account with the most observed headroom, in policy
+/// order. It never returns the source's own login or one in `unusable`.
 pub(crate) async fn select_on(
     connection: &mut SqliteConnection,
     accounts: &[ProviderRecoveryAccountV1],
     source: &AgentExecutionProfileV1,
+    unusable: &[ProviderCredentialProfileV1],
     observed_at_ms: i64,
 ) -> Result<Option<ProviderRecoveryAccountV1>, DomainStoreErrorV1> {
     let mut best: Option<(&ProviderRecoveryAccountV1, f64)> = None;
     for account in accounts {
-        if matches!(source, AgentExecutionProfileV1::CredentialReference { reference_id, .. } if reference_id == &account.profile.reference_id)
+        let source_login = match source {
+            AgentExecutionProfileV1::CredentialReference {
+                reference_id,
+                credential_generation,
+            } => {
+                reference_id == &account.profile.reference_id
+                    || credential_generation.as_ref()
+                        == Some(&account.profile.credential_generation)
+            }
+            AgentExecutionProfileV1::ProviderDefault => false,
+        };
+        if source_login
+            || unusable
+                .iter()
+                .any(|profile| same_login(profile, &account.profile))
         {
             continue;
         }

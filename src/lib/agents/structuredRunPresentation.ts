@@ -213,16 +213,8 @@ export function projectStructuredRunAgent(
 			},
 		};
 	}
-	if (
-		state.agents.some(
-			(agent) => agent.projectId === project.id && agent.name === run.agentName,
-		)
-	) {
-		fail(
-			"client_agent_name_conflict",
-			"structured Agent name is already in use for this project",
-		);
-	}
+	// Like a terminal Run, a started Chat Run is identified by its Agent and
+	// interaction; a repeated Run name must not hide it.
 	const agent: Agent = {
 		id: run.agentId,
 		canonicalSpawn,

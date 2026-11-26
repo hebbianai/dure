@@ -395,13 +395,27 @@ describe("groupSpacesRows", () => {
 		const groups = groupSpacesRows(
 			[
 				{ key: "waiting", displayState: "waiting" as const },
-				{ key: "blocked-a", displayState: "blocked" as const },
+				{
+					key: "blocked-a",
+					displayState: "blocked" as const,
+					needsPerson: "approval" as const,
+				},
 				{ key: "unknown" },
-				{ key: "error", displayState: "error" as const },
-				{ key: "blocked-b", displayState: "blocked" as const },
-				{ key: "input", displayState: "input" as const },
+				{ key: "error", displayState: "error" as const, needsPerson: "error" as const },
+				{
+					key: "blocked-b",
+					displayState: "blocked" as const,
+					needsPerson: "approval" as const,
+				},
+				{ key: "input", displayState: "input" as const, needsPerson: "input" as const },
 				{ key: "working", displayState: "working" as const },
 				{ key: "connecting", displayState: "connecting" as const },
+				// An exited agent counts only when the authority flags its exit.
+				{
+					key: "crashed",
+					displayState: "exited" as const,
+					needsPerson: "unexpected_exit" as const,
+				},
 				{ key: "exited", displayState: "exited" as const },
 			],
 			"status",
@@ -425,7 +439,7 @@ describe("groupSpacesRows", () => {
 			{ bucket: "working", rows: ["working"], attention: 0 },
 			{ bucket: "connecting", rows: ["connecting"], attention: 0 },
 			{ bucket: "waiting", rows: ["waiting"], attention: 0 },
-			{ bucket: "exited", rows: ["exited"], attention: 0 },
+			{ bucket: "exited", rows: ["crashed", "exited"], attention: 1 },
 			{ bucket: "unknown", rows: ["unknown"], attention: 0 },
 		]);
 	});
@@ -433,7 +447,12 @@ describe("groupSpacesRows", () => {
 	it("keeps a visible bucket's attention count independent of search", () => {
 		const rows = [
 			{ key: "visible", activityAt: 10, displayState: "working" as const },
-			{ key: "filtered", activityAt: 10, displayState: "blocked" as const },
+			{
+				key: "filtered",
+				activityAt: 10,
+				displayState: "blocked" as const,
+				needsPerson: "approval" as const,
+			},
 		];
 		const [group] = groupSpacesRows(
 			rows,
@@ -459,6 +478,7 @@ describe("groupSpacesRows", () => {
 				key: "host-attention",
 				activityAt: 10,
 				displayState: "blocked" as const,
+				needsPerson: "approval" as const,
 				programStatusKind: "permission" as const,
 			},
 		];

@@ -220,6 +220,7 @@ pub use hmux_session_protocol::{
     AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY, AgentApprovalChoice, AgentApprovalRequest,
 };
 pub use hmux_session_protocol::{AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY, AgentStartupGate};
+pub use hmux_session_protocol::{AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY, AgentTurnFailure};
 pub use hmux_session_protocol::{
     FrameBody, MANAGED_PROVIDER_QUIESCENT_STOP_CAPABILITY, SESSION_RETIREMENT_ADMIN_CAPABILITY,
     SESSION_RETIREMENT_CAPABILITY, ScreenSnapshotProfile, ScreenSnapshotRequest, SessionFence,

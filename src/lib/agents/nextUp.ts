@@ -1,81 +1,151 @@
-// Which agent needs the person next — a presentation over the attention
-// watcher's facts. Membership comes only from Host-owned display states and
-// unread completion episodes; nothing here is persisted or answered, and a
-// program's own status report never puts an agent in the list.
+// Which agent needs the person next — a presentation over the needs-person
+// map and the attention watcher's completion episodes. Membership comes only
+// from the needs-person authority and unread results; nothing here is
+// persisted or answered, and a program's own status report never puts an
+// agent in the list.
 import {
 	type AttentionEpisodeKind,
 	isAgentUnread,
 } from "@/lib/agents/agentAttentionStore";
+import { compareWaitStart, hasResult } from "@/lib/agents/agentResult";
+import type { AgentRowFacts } from "@/lib/agents/agentRowModel";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
-import { ATTENTION_DISPLAY_STATES } from "@/lib/spaces/spacesStateFilter";
+import type {
+	NeedsPerson,
+	NeedsPersonMap,
+	NeedsPersonReason,
+} from "@/lib/agents/needsPerson";
 
-export type NextUpReason = "approval" | "input" | "error" | "finished";
+type NextUpReason = NeedsPersonReason | "result";
 
 export interface NextUpEntry {
 	agentId: string;
 	reason: NextUpReason;
 	/** The agent's display state now, which its row's dot shows. */
 	state: AgentDisplayState;
-	/** When this window saw the reason begin. Absent when it began unobserved. */
+	/** When the reason began. Absent when it began unobserved. */
 	sinceMs?: number;
+	/** An unexpected exit at the provider's sign-in screen. */
+	signIn?: true;
 }
 
 export interface NextUp {
-	/** Agents a human is blocking, oldest wait first. */
+	/** Agents only a person can move forward, oldest wait first. */
 	needsYou: NextUpEntry[];
-	/** Finished turns nobody has looked at yet, oldest first. */
-	finished: NextUpEntry[];
+	/** Results nobody has looked at yet, oldest first. */
+	results: NextUpEntry[];
 }
 
 export interface NextUpFacts {
 	/** Agents in store order; the tie-break between equal waits. */
 	agentIds: readonly string[];
+	needsPerson: NeedsPersonMap;
 	displayStates: Readonly<Record<string, AgentDisplayState>>;
 	episodes: Readonly<Record<string, number>>;
 	acks: Readonly<Record<string, number>>;
 	episodeKinds: Readonly<Record<string, AttentionEpisodeKind>>;
 	episodeAt: Readonly<Record<string, number>>;
-	waitingSince: Readonly<Record<string, number>>;
 }
 
-/** Every display state that needs a human, named for the person. Covering
- * ATTENTION_DISPLAY_STATES exactly is a tested contract. */
-export const NEXT_UP_REASON_BY_STATE: Readonly<
-	Partial<Record<AgentDisplayState, Exclude<NextUpReason, "finished">>>
-> = { blocked: "approval", input: "input", error: "error" };
+/** One agent's attention facts, as the needs-person map and the attention
+ * watcher hold them. */
+export interface NextUpAgentFacts {
+	readonly needsPerson: NeedsPerson | undefined;
+	readonly state: AgentDisplayState | undefined;
+	/** The latest episode was a finished turn. */
+	readonly turnFinished: boolean;
+	readonly resultAtMs?: number;
+	/** The latest episode has not been looked at in this window. */
+	readonly unread: boolean;
+}
+
+export function nextUpAgentFacts(
+	facts: Omit<NextUpFacts, "agentIds">,
+	agentId: string,
+): NextUpAgentFacts {
+	const resultAtMs = facts.episodeAt[agentId];
+	return {
+		needsPerson: facts.needsPerson.get(agentId),
+		state: facts.displayStates[agentId],
+		turnFinished: facts.episodeKinds[agentId] === "done",
+		...(resultAtMs === undefined ? {} : { resultAtMs }),
+		unread: isAgentUnread(facts.episodes, facts.acks, agentId),
+	};
+}
+
+/** Why one agent is in Next up, if it is. Any surface that reports an agent
+ * the way Next up does (a crowded pane's status card) reads this. */
+export function nextUpEntry(
+	agentId: string,
+	facts: NextUpAgentFacts,
+): NextUpEntry | undefined {
+	const { needsPerson: need, state, resultAtMs } = facts;
+	if (need) {
+		return {
+			agentId,
+			reason: need.reason,
+			// An exit the watcher has not resolved yet still lists, as the
+			// badge counts it.
+			state: state ?? "unknown",
+			...(need.sinceMs === undefined ? {} : { sinceMs: need.sinceMs }),
+			...(need.signIn ? { signIn: true as const } : {}),
+		};
+	}
+	if (state === undefined) return undefined;
+	// Next up's window is "not looked at yet": an unread episode in this
+	// window, which bringing the agent's pane into view clears.
+	return hasResult(
+		{
+			state,
+			turnFinished: facts.turnFinished,
+			...(resultAtMs === undefined ? {} : { resultAtMs }),
+		},
+		{ unread: facts.unread },
+	)
+		? {
+				agentId,
+				reason: "result",
+				state,
+				...(resultAtMs === undefined ? {} : { sinceMs: resultAtMs }),
+			}
+		: undefined;
+}
 
 export function deriveNextUp(facts: NextUpFacts): NextUp {
 	const needsYou: NextUpEntry[] = [];
-	const finished: NextUpEntry[] = [];
+	const results: NextUpEntry[] = [];
 	for (const agentId of facts.agentIds) {
-		const state = facts.displayStates[agentId];
-		if (state === undefined) continue;
-		const reason = ATTENTION_DISPLAY_STATES.has(state)
-			? NEXT_UP_REASON_BY_STATE[state]
-			: undefined;
-		if (reason) {
-			needsYou.push(entry(agentId, reason, state, facts.waitingSince[agentId]));
-		} else if (
-			// Once work resumes, the result the turn produced is no longer the
-			// latest. An agent that went unobserved or exited still has one.
-			state !== "working" &&
-			facts.episodeKinds[agentId] === "done" &&
-			isAgentUnread(facts.episodes, facts.acks, agentId)
-		) {
-			finished.push(entry(agentId, "finished", state, facts.episodeAt[agentId]));
-		}
+		const entry = nextUpEntry(agentId, nextUpAgentFacts(facts, agentId));
+		if (entry) (entry.reason === "result" ? results : needsYou).push(entry);
 	}
 	const order = new Map(facts.agentIds.map((agentId, index) => [agentId, index]));
 	const byWait = (left: NextUpEntry, right: NextUpEntry) =>
-		// An unobserved start predates everything this window saw begin.
-		(left.sinceMs ?? Number.NEGATIVE_INFINITY) -
-			(right.sinceMs ?? Number.NEGATIVE_INFINITY) ||
+		compareWaitStart(left, right) ||
 		(order.get(left.agentId) ?? 0) - (order.get(right.agentId) ?? 0);
-	return { needsYou: needsYou.sort(byWait), finished: finished.sort(byWait) };
+	return { needsYou: needsYou.sort(byWait), results: results.sort(byWait) };
 }
 
 export function nextUpEntries(nextUp: NextUp): NextUpEntry[] {
-	return [...nextUp.needsYou, ...nextUp.finished];
+	return [...nextUp.needsYou, ...nextUp.results];
+}
+
+/** Where a Next up entry stands, for its row: why it is listed and since
+ * when, in the needs-person and has-result vocabulary every row shares. */
+export function nextUpRowPlacement(
+	entry: NextUpEntry,
+): Pick<AgentRowFacts, "state" | "needsPerson" | "hasResult" | "sinceMs"> {
+	return {
+		state: entry.state,
+		...(entry.reason === "result"
+			? { hasResult: true }
+			: {
+					needsPerson: {
+						reason: entry.reason,
+						...(entry.signIn ? { signIn: entry.signIn } : {}),
+					},
+				}),
+		...(entry.sinceMs === undefined ? {} : { sinceMs: entry.sinceMs }),
+	};
 }
 
 /** The agent after the one in focus, in list order, wrapping around. A
@@ -87,15 +157,4 @@ export function nextUpTarget(
 	if (entries.length === 0) return undefined;
 	const index = entries.findIndex((item) => item.agentId === focusedAgentId);
 	return entries[(index + 1) % entries.length];
-}
-
-function entry(
-	agentId: string,
-	reason: NextUpReason,
-	state: AgentDisplayState,
-	sinceMs: number | undefined,
-): NextUpEntry {
-	return sinceMs === undefined
-		? { agentId, reason, state }
-		: { agentId, reason, state, sinceMs };
 }

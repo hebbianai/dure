@@ -6,7 +6,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, expect, it, vi } from "vitest";
-import { agentRuntimeProjectionContext, nativeRuntimeReceipt } from "../src/test/dureAgentRuntimeFixtures.ts";
+import {
+  agentRuntimeBackendEnvelope, agentRuntimeProjectionContext, nativeRuntimeReceipt,
+} from "../src/test/dureAgentRuntimeFixtures.ts";
 import {
   collectManagedRehostFinish, collectManagedRehostNamed, MANAGED_REHOST_RUNNING_EXIT_CODE, managedRecoveryExitCode,
 } from "../cli/lib/managed-rehost-named.mjs";
@@ -622,17 +624,61 @@ it("another name preview proposes a new attempt, not a retry of an earlier opera
   expect(second.nativeExecution).toBe("not_requested");
 });
 
-it("does not give local execution commands for a remote backend", async () => {
-  let requested = false;
-  const report = await collectManagedRehostPreview({
-    opts: { name: "worker", rest: ["rehost"] },
+/** A remote backend answers the runtime inspection; Hmux here must never run. */
+function remoteRecovery(observation, applied) {
+  const operations = [];
+  const requestBackend = async (profile, request) => {
+    operations.push([profile.id, request.operation, request.body]);
+    return { result: request.operation === "agent_runtime.projection.inspect" ? observation : applied };
+  };
+  const run = async (argv) => { throw new Error(`Unexpected native command: ${argv.join(" ")}`); };
+  const recover = (collect, confirmRestart) => collect({
+    opts: { name: "worker", rest: ["rehost"], confirmRestart },
     registry: { state: "available", agents: [projectedAgent] },
     resolveBackend: async () => ({ profile: { id: "remote", transport: { kind: "ssh" } } }),
-    requestBackend: async () => { requested = true; },
+    requestBackend, command: "/missing/hmux", run,
   });
-  expect(report.error.code).toBe("rehost_preview_local_only");
-  expect(report.continuation).toBeUndefined();
-  expect(requested).toBe(false);
+  return { operations, recover };
+}
+
+it("does not give local execution commands for a remote native source", async () => {
+  const { operations, recover } = remoteRecovery(projection());
+  for (const report of [await recover(collectManagedRehostPreview), await recover(collectManagedRehostNamed, true)]) {
+    expect(report).toMatchObject({ ok: false, agentId: "agent-1", error: { code: "rehost_preview_local_only" } });
+    expect(report.error.message).toContain("dure runs resume agent-1 on that host");
+    expect(report.continuation).toBeUndefined();
+  }
+  expect(operations.map(([, operation]) => operation)).toEqual(
+    ["agent_runtime.projection.inspect", "agent_runtime.projection.inspect"]);
+});
+
+it("wakes a sleeping Agent on a remote backend through that backend", async () => {
+  const { operations, recover } = remoteRecovery(dormantProjection(), projection());
+  const preview = await recover(collectManagedRehostPreview);
+  expect(preview).toMatchObject({ ok: true, state: "preview", continuation: { kind: "runtime_wake",
+    operationId: "sleep-operation", expectedJournalRevision: 3 } });
+  expect(preview.continuation.start).toContain("remote");
+  const woken = await recover(collectManagedRehostNamed, true);
+  expect(woken).toMatchObject({ ok: true, state: "completed", backendExecution: "completed" });
+  expect(operations.map(([backend, operation]) => `${backend}:${operation}`)).toEqual([
+    "remote:agent_runtime.projection.inspect", "remote:agent_runtime.projection.inspect", "remote:agent_runtime.wake"]);
+});
+
+it("restarts a stopped Chat Agent on a remote backend through that backend's transition", async () => {
+  const stopped = stoppedProjection();
+  stopped.source.interactionProfile = "structured_protocol";
+  const restarted = agentRuntimeBackendEnvelope().result;
+  restarted.receipt.selectionRevision = 5;
+  const { operations, recover } = remoteRecovery(stopped, restarted);
+  const preview = await recover(collectManagedRehostPreview);
+  expect(preview.continuation).toMatchObject({ kind: "runtime_restart", targetInteractionProfile: "structured_protocol" });
+  expect(preview.continuation.start.slice(0, 4)).toEqual(["runtime", "switch", "agent-1", "chat"]);
+  expect(preview.continuation.start).toContain("remote");
+  const applied = await recover(collectManagedRehostNamed, true);
+  expect(applied).toMatchObject({ ok: true, state: "completed", publication: "published",
+    conversationId: "conversation-1" });
+  expect(operations.at(-1)).toEqual(["remote", "agent_runtime.transition", { schemaVersion: 1, agentId: "agent-1",
+    targetInteractionProfile: "structured_protocol", expectedSourceRevision: 4 }]);
 });
 
 it("names a missing Agent's recovery path and lists every same-named Agent with an exact selector", async () => {

@@ -5,6 +5,11 @@
 !mobile/push-service/Dockerfile
 !mobile/push-service/Dockerfile.dockerignore
 !mobile/push-service/apns.mjs
+!mobile/push-service/bindings.mjs
+!mobile/push-service/challenges.mjs
+!mobile/push-service/entrypoint.sh
+!mobile/push-service/grant.mjs
+!mobile/push-service/limits.mjs
 !mobile/push-service/main.mjs
 !mobile/push-service/service.mjs
 !mobile/src

@@ -10,15 +10,17 @@ import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
 import { formatRunCandidates, listRunRecords, selectRunRecord } from "./run-agent-selection.mjs";
 
 export const AGENT_STOP_HELP = `Usage:
-  dure stop <agent-name-or-id> [--target-panel-id ID] --yes [--json]
-  dure hmux stop --name <agent-name-or-id> [--target-panel-id ID] --yes [--json]
+  dure stop <agent-name-or-id> [--target-panel-id ID] [--backend ID] --yes [--json]
+  dure hmux stop --name <agent-name-or-id> [--target-panel-id ID] [--backend ID] --yes [--json]
 
 Stop one Agent and remove its registration and panes. Workspaces, worktrees and
-conversation history are preserved. Use project/name for ambiguous names.
+conversation history are preserved, but the Agent cannot restart in place;
+dure runs resume AGENT_ID names its conversation to continue in a new Agent.
+Use project/name for ambiguous names.
 The Dure app selected by DURE_APP_CHANNEL routes each Agent it presents to its
-owning backend. --backend is not supported by this client-scoped command.
-A Run the app has not opened, such as a schedule occurrence, or any Run on a
-host without the Dure app, is stopped through its Run record on
+owning backend. A Run the app has not opened, such as a schedule occurrence or a
+headless Run on a remote backend, or any Run on a host without the Dure app, is
+stopped through its Run record on the backend selected by --backend,
 DURE_BACKEND_PROFILE or the local backend; select it by its Agent ID, operation
 ID or Run name. project/name and --target-panel-id need the app.
 Omit --yes only in an interactive terminal to confirm there.
@@ -42,8 +44,8 @@ export function parseAgentStopCommand(args) {
       const key = arg.slice(2);
       if (options[key]) throw new Error(AGENT_STOP_HELP);
       options[key] = true;
-    } else if (["--name", "--target-panel-id"].includes(arg)) {
-      const key = arg === "--name" ? "name" : "targetPanelId";
+    } else if (["--name", "--target-panel-id", "--backend"].includes(arg)) {
+      const key = { "--name": "name", "--target-panel-id": "targetPanelId", "--backend": "backend" }[arg];
       const value = args[++index];
       if (options[key] !== undefined || !value?.trim() || value.startsWith("--")) throw new Error(AGENT_STOP_HELP);
       options[key] = value;
@@ -64,7 +66,8 @@ const NO_APP_PRESENTATION = new Set(["pane_not_found", "app_server_not_found"]);
 export function appServerMissingReceipt() {
   return { ok: false, error: { code: "app_server_not_found",
     message: "The Dure app server was not found. Without the app, dure stop reaches only a Run record " +
-      "selected by Agent ID, operation ID or Run name on DURE_BACKEND_PROFILE or the local backend." } };
+      "selected by Agent ID, operation ID or Run name on the backend selected by --backend, DURE_BACKEND_PROFILE " +
+      "or the local backend." } };
 }
 
 /** The app presents no Agent for this selector, or no app runs here. A Run
@@ -101,10 +104,19 @@ function refusedAsStalePlan(error) {
     error.details?.code === "agent_dispatch_stop_conflict" && error.details?.disposition === "stale_generation";
 }
 
+/** The app's answer, naming the backend that has no Run record for the
+ * selector either, so a Run on another backend can be selected. */
+function noRunRecord(appReceipt, backendId, selector) {
+  return { ...appReceipt, error: { ...appReceipt.error,
+    message: `${appReceipt.error.message} No Run record on backend ${backendId} matches ${selector} either; ` +
+      "for a Run on another backend, select it with --backend ID." } };
+}
+
 /** Stops one unpresented Run through its backend's dispatch.stop journal,
  * keeping its workspace: the status → preview → apply sequence the app runs for
- * an Agent it presents, without a presentation to clean up. Returns
- * `appReceipt` unchanged when the backend has no Run record for the selector. */
+ * an Agent it presents, without a presentation to clean up. Returns the app's
+ * answer, naming the selected backend, when it has no Run record for the
+ * selector. */
 export async function collectRunRecordStop({
   selector, appReceipt, resolveBackend, requestBackend = performBackendProfileRequest,
 }) {
@@ -118,10 +130,11 @@ export async function collectRunRecordStop({
     }
     const listed = await listRunRecords({ backend, requestBackend, selector });
     if (listed.error) return { ok: false, error: listed.error };
-    const selection = selectRunRecord(listed.page, selector, (agentId) => ["stop", agentId, "--yes"]);
+    const selection = await selectRunRecord({ page: listed.page, selector, backend, requestBackend,
+      retry: (agentId) => ["stop", agentId, "--backend", backend.profile.id, "--yes"] });
     if (selection.error) return { ok: false, error: selection.error };
     const run = selection.run;
-    if (!run) return appReceipt;
+    if (!run) return noRunRecord(appReceipt, backend.profile.id, selector);
     agent = { id: run.agentId, name: run.name };
     const request = async (operation, body) => {
       const response = await requestBackend(backend.profile, {

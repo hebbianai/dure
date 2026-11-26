@@ -44,9 +44,10 @@ use crate::local_protocol::{
 };
 pub use agent_identity::AgentIdentityObservation;
 pub use agent_runtime::{
-    AgentRuntimeObservation, AgentStateReportFold, AgentStateReportObservation, ControllerDraftEdit,
+    AgentPromptKey, AgentRuntimeObservation, AgentStateReportFold, AgentStateReportObservation,
+    ControllerDraftEdit,
 };
-use agent_runtime::{ControllerDraft, PendingControllerInput};
+use agent_runtime::{ControllerDraft, HeldAgentPrompts, PendingControllerInput};
 pub use canonical_snapshot::TerminalProjections;
 pub use execution_location::ExecutionLocationObservation;
 use std::time::{Duration, Instant};
@@ -141,9 +142,18 @@ fn runtime_agent_prompt_admission(
     let prompt_accepts_input = runtime.activity == AgentRuntimeActivity::Waiting
         || runtime.background_work
         || interrupt_requested;
+    // A question or an approval would take the prompt as its answer. A failed
+    // turn is over instead: the provider is back at its own prompt and does
+    // not retry, so another message is how its conversation continues, just
+    // as a provider error does not hold guarded input. A fresh agent's
+    // one-shot brief still waits for a start that did not fail.
+    let attention_admits_prompt = match runtime.attention {
+        AgentRuntimeAttention::None => runtime.attention_id.is_none(),
+        AgentRuntimeAttention::Error => !target.is_fresh(),
+        AgentRuntimeAttention::InputRequired | AgentRuntimeAttention::ApprovalRequired => false,
+    };
     if runtime.lifecycle != AgentRuntimeLifecycle::Running
-        || runtime.attention != AgentRuntimeAttention::None
-        || runtime.attention_id.is_some()
+        || !attention_admits_prompt
         || !prompt_accepts_input
     {
         return AgentPromptAdmission::Refused;
@@ -439,6 +449,9 @@ pub struct TerminalReplay {
     // submit, so a draft-guarded write can tell a person's unsubmitted text
     // from a turn that is merely awaiting its provider report.
     unsubmitted_controller_draft: ControllerDraft,
+    // Agent prompts that unsent input refused. Presentation-only: it never
+    // admits or refuses anything itself, and the draft above releases it.
+    held_agent_prompts: HeldAgentPrompts,
     // A fresh prompt is one-shot within a terminal epoch. The first actual
     // non-empty PTY prefix consumes it through the common controller-input
     // fold; read-only preparation never changes this fact.
@@ -779,6 +792,7 @@ impl TerminalReplay {
             recovered_history_boundary: None,
             pending_controller_input: PendingControllerInput::None,
             unsubmitted_controller_draft: ControllerDraft::Empty,
+            held_agent_prompts: HeldAgentPrompts::default(),
             fresh_agent_prompt_consumed: false,
             interrupt_requested: false,
             agent_startup_gate: None,
@@ -828,6 +842,7 @@ impl TerminalReplay {
             recovered_presentation: None,
             pending_controller_input: PendingControllerInput::None,
             unsubmitted_controller_draft: ControllerDraft::Empty,
+            held_agent_prompts: HeldAgentPrompts::default(),
             fresh_agent_prompt_consumed: false,
             interrupt_requested: false,
             agent_startup_gate: None,
@@ -985,7 +1000,7 @@ impl TerminalReplay {
         self.output_seq = output_seq;
         self.retained.push(delta.clone());
         let agent_runtime_state = if program_status.records_changed {
-            self.republish_program_status()?
+            self.republish_presentation()?
         } else {
             None
         };
@@ -1482,6 +1497,7 @@ impl TerminalReplay {
                     .is_some_and(|current| current.background_work));
         let observation = AgentRuntimeObservation {
             background_work,
+            turn_failure: report.turn_failure,
             ..AgentRuntimeObservation::new(
                 lifecycle,
                 activity,
@@ -1837,6 +1853,15 @@ impl TerminalReplay {
                 .or_else(|| continued.and_then(|current| current.approval_request.clone())),
             _ => None,
         };
+        // A failure belongs to the error episode it arrived with: the
+        // episode's idle reports keep it, and any other attention or a new
+        // turn ends both.
+        let turn_failure = match observation.attention {
+            AgentRuntimeAttention::Error => observation
+                .turn_failure
+                .or_else(|| continued.and_then(|current| current.turn_failure)),
+            _ => None,
+        };
         // Each request a provider reports is its own prompt, even one that
         // reads the same as the last (the same command run twice). Only a
         // report without content, such as the provider's own notice of the
@@ -1851,6 +1876,7 @@ impl TerminalReplay {
                 && current.background_work == observation.background_work
                 && current.progress == progress
                 && current.approval_request == approval_request
+                && current.turn_failure == turn_failure
                 && !replaces_request
         });
         // A new input acknowledgement ends the old semantic idle epoch even
@@ -1914,6 +1940,8 @@ impl TerminalReplay {
             program_status: self.program_status_projection(observation.lifecycle),
             background_work: observation.background_work,
             approval_request,
+            held_prompts: self.held_prompts_projection(observation.lifecycle),
+            turn_failure,
         };
         self.agent_runtime_state = Some(projection.clone());
         self.agent_runtime_changed_at = Some(now);

@@ -4,6 +4,8 @@
  * The alert names the agent by the key the home list already finds rows by
  * (`agentSeatKey` on the computer), so opening it is a tap on that row: the
  * same row, through the same open path, as the list or a Needs you card.
+ * Two computers can list an agent under the same key, so the row is the one
+ * from the computer the alert came from.
  */
 
 import type { AgentApprovalChoice } from "@/lib/agents/approvalRequest";
@@ -12,6 +14,11 @@ import type { NeedsYouCard } from "./homeProjection";
 
 /** Rust `PushActivation`: the agent a tapped alert names. */
 export interface PushActivation {
+	/**
+	 * The paired computer the alert came from (`hubId`). Alerts from any
+	 * other computer never reach the screen.
+	 */
+	readonly hub: string;
 	readonly sessionId: string;
 	/**
 	 * Allow once or Deny, pressed on the alert while approvals need Face ID:
@@ -51,8 +58,16 @@ export function activatedRow(
 	activation: PushActivation,
 ): UnifiedRow | undefined {
 	return rows.find(
-		(row) =>
-			row.sessionId === activation.sessionId && sourceOpenable(row.source),
+		(row) => isActivated(row, activation) && sourceOpenable(row.source),
+	);
+}
+
+/** The row is the alerted agent on the alerting computer. */
+function isActivated(row: UnifiedRow, activation: PushActivation): boolean {
+	return (
+		row.sessionId === activation.sessionId &&
+		row.source.kind === "hub" &&
+		row.source.hubId === activation.hub
 	);
 }
 
@@ -69,7 +84,7 @@ export function activatedApproval(
 	if (!answer) return undefined;
 	return cards.find(
 		(card) =>
-			card.view.row.sessionId === activation.sessionId &&
+			isActivated(card.view.row, activation) &&
 			card.approval?.attentionId === answer.attentionId &&
 			card.view.row.source.session.terminal_epoch === answer.terminalEpoch &&
 			card.approval.request.choices.includes(answer.choice),

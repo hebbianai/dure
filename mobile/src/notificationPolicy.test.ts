@@ -36,8 +36,9 @@ function decide(
   previous: AgentRuntimeState | undefined,
   next: AgentRuntimeState,
   hidden = true,
+  muted = false,
 ) {
-  return decideNotification({ preference, previous, next, hidden, session: "planner" });
+  return decideNotification({ preference, previous, next, hidden, muted, session: "planner" });
 }
 
 describe("decideNotification", () => {
@@ -47,6 +48,13 @@ describe("decideNotification", () => {
 
   it("says nothing while the app is in the foreground — the screen itself shows it", () => {
     expect(decide("all", runtime(), approval(), false)).toBeNull();
+  });
+
+  it("says nothing for an agent muted on the computer, approvals included", () => {
+    expect(decide("all", runtime(), approval(), true, true)).toBeNull();
+    const before = runtime({ turnCompletedCount: "4" });
+    const after = runtime({ activity: "waiting", turnCompletedCount: "5" });
+    expect(decide("all", before, after, true, true)).toBeNull();
   });
 
   it("says nothing for the seed record of an attach: nothing happened since the person looked", () => {
@@ -115,13 +123,15 @@ describe("decideNotification", () => {
 });
 
 describe("createNotificationObserver", () => {
-  it("remembers the last state, reads preference and visibility per record, hands the notice on", () => {
+  it("remembers the last state, reads preference, visibility and mute per record, hands the notice on", () => {
     const notify = vi.fn();
     let preference: NotificationPreference = "approvals";
     let hidden = false;
+    let muted = false;
     const observer = createNotificationObserver({
       preference: () => preference,
       hidden: () => hidden,
+      muted: () => muted,
       session: "planner",
       notify,
     });
@@ -138,8 +148,13 @@ describe("createNotificationObserver", () => {
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenLastCalledWith(APPROVAL);
 
-    preference = "off";
+    muted = true;
     observer.observe(approval("appr-3"));
+    expect(notify).toHaveBeenCalledTimes(1);
+
+    muted = false;
+    preference = "off";
+    observer.observe(approval("appr-4"));
     expect(notify).toHaveBeenCalledTimes(1);
   });
 });

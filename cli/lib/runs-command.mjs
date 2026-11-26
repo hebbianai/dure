@@ -30,7 +30,9 @@ export const RUNS_HELP = `Usage:
 Lists durable Run records, including headless Runs and earlier app/Host generations.
 launchState describes the original launch, not current process liveness. List is
 bounded to 64 records; continue with nextCursor until null. A name shared by
-several Runs or Agents is refused with each candidate's exact retry command.
+several Runs or Agents is refused with each candidate's exact retry command. A
+retry_required or failed launch whose Agent never got a runtime does not make
+its name ambiguous.
 Agents launched, resumed or imported by the app have no Run record. Every action
 also selects them by Agent ID, or by name or Session ID from the app's Agent list;
 the backend confirms each. A Session ID also resolves through the backend's own
@@ -42,8 +44,10 @@ live Session after the app lost its panes. Resume previews exact local recovery;
 --confirm-restart to execute and publish it. A confirmed stopped source waiting
 for a deferred target uses backend wake; an existing native source uses native
 rehost; a closed, stopped Agent restarts through the app's backend transition.
-All preserve the conversation without an open app. Remote resume is not
-supported here.
+All preserve the conversation without an open app. On an SSH backend, wake
+and restart run from here; a native rehost runs on the backend's host. An Agent
+stopped with dure stop is removed and cannot restart in place; resume names its
+conversation for resume --conversation, which continues it in a new Agent.
 Resuming an Agent retains its original project and working folder, and refuses
 --project, --path and --cwd. Use runs move for an idle or stopped Claude or Codex
 conversation on the same backend. Move previews first and returns an exact Apply
@@ -150,8 +154,8 @@ export async function collectRunsCommand({
     const listed = await listRunRecords({ backend, requestBackend, selector, cursor: opts.cursor });
     if (listed.error) return failure(listed.error);
     if (action === "list") return { ...base, ok: true, backend: listed.backend, ...listed.page };
-    const selection = selectRunRecord(listed.page, selector,
-      (agentId) => exactRunRetry({ action, agentId, opts, backendId: backend.profile.id }));
+    const selection = await selectRunRecord({ page: listed.page, selector, backend, requestBackend,
+      retry: (agentId) => exactRunRetry({ action, agentId, opts, backendId: backend.profile.id }) });
     if (selection.error) return failure(selection.error);
     // App-launched, resumed and imported Agents have no spawn receipt; the
     // backend runtime projection still owns their account and recovery.

@@ -643,6 +643,28 @@ test(
 );
 
 test(
+	"native relay exits with a failing status when its child ends without a host request",
+	{ skip: !relayBinary, timeout: 10_000 },
+	async () => {
+		for (const [exitCode, relayExitCode] of [
+			[0, 69],
+			[23, 23],
+		]) {
+			await withNativeRelay(async ({ endpoint, launchCapability, root }) => {
+				const stateDirectory = path.join(root, "child-state");
+				fs.mkdirSync(stateDirectory, { mode: 0o700 });
+				const { child } = nativeSpawn(endpoint, launchCapability, stateDirectory, {
+					mode: "exit",
+					exitCode,
+				});
+				child.stdout.resume();
+				assert.deepEqual(await once(child, "exit"), [exitCode, null]);
+			}, relayExitCode);
+		}
+	},
+);
+
+test(
 	"native relay rejects a replaced executable identity before spawning Claude",
 	{ skip: !relayBinary, timeout: 10_000 },
 	async () => {

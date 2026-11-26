@@ -11,6 +11,7 @@ import { WorkspaceTitleBar } from "@/components/workspace/WindowTitleBar";
 import { WorkspaceDeck } from "@/components/workspace/WorkspaceDeck";
 import { visibleActiveDesktopId } from "@/lib/workspace/desktop/activeDesktop";
 import { installAgentAttentionWatch } from "@/lib/agents/agentAttentionWatch";
+import { installStructuredAgentRuntimeWatch } from "@/lib/agents/structuredAgentRuntimeWatch";
 import { installAgentTracker } from "@/lib/agents/agentTracker";
 import { detectInstalledProviders } from "@/lib/agents/agentInstalls";
 import { installAutomaticManagedRehostService } from "@/lib/sessions/managed/automaticManagedRehostService";
@@ -297,6 +298,9 @@ export default function App() {
   // attention watcher — 해석 표시 상태·에피소드의 단일 생산자.
   // 모든 창에서 돈다 (dot/unread는 창별 스토어).
   useEffect(() => installAgentAttentionWatch(), []);
+  // Chat Agents have no Host: their backends' chat runtime tier feeds the
+  // watcher, one subscription per backend, in every window beside it.
+  useEffect(() => installStructuredAgentRuntimeWatch(), []);
   // turn 완료 뒤 credential 교체는 durable intent를 소비하는 메인 창 한 곳만
   // 실행한다. 보조 WebView는 rehost sync receipt만 적용한다.
   useEffect(() => {

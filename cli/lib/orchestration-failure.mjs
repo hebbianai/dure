@@ -2,85 +2,78 @@ import { backendTransportErrorReport } from "./backend-transport.mjs";
 
 // Only derive guidance from known codes. Backend messages may contain private
 // paths or provider output and must not be copied into CLI/MCP responses.
-// A goal continues a structured conversation. Neither refusal below changes by
-// resending the same request, so the hint is terminal even when an older
-// backend still reports retry_same.
-const GOAL_REFUSALS = Object.freeze({
+// A goal continues a structured conversation, and the orchestration inbox
+// belongs to a native CLI Session. No refusal below changes by resending the
+// same request, so the hint is terminal even when an older backend still
+// reports retry_same.
+const TERMINAL_REFUSALS = Object.freeze({
   agent_goal_interaction_profile_unsupported:
     "This agent runs a native CLI (for example a provider terminal started by dure run or a pane), and Dure goals continue only a structured conversation such as the app's chat. Goals are unavailable for this agent: tell the user, keep the work in this conversation, and do not resend agent_goal_put; retrying cannot succeed.",
   agent_goal_conversation_not_found:
     "The backend has no conversation for this agentId, so it cannot store a goal for it. Use the agent ID from the Dure conversation context or run receipt; retrying the same request cannot succeed.",
+  orchestration_interaction_profile_unsupported:
+    "This agent runs on its Chat runtime (a structured conversation such as the app's chat), and the Dure orchestration inbox and completion reports reach only an agent that runs a native CLI (a provider terminal). Orchestration is unavailable for this agent: report your result in this conversation, and do not resend the lookup, restart the agent, or create another Run; retrying cannot succeed.",
 });
 
-// orchestration_generation_conflict reasons that say why the exact Session
-// generation cannot use orchestration, and what changes that.
-const GENERATION_CONFLICTS = Object.freeze({
-  hmux_session_exited:
-    "This managed Session generation has exited, so it no longer owns an orchestration inbox. " +
-    "If it is this process's own Session, this process outlived a restart or account switch " +
-    "(for example a background fork): stop acting from it and continue in the Agent's current " +
-    "Session, which `dure runs show <agent>` names; its tools resolve the moved inbox automatically. " +
-    "If it is a destination Session, resolve that Agent's current Session before sending. " +
-    "Retrying from this generation cannot succeed.",
-  session_agent_binding_missing:
-    "This managed Session is live, but no Dure Agent binds it as its current Session, so it " +
-    "cannot report through orchestration. If the Agent was just restarted or switched accounts, " +
-    "that restart has not published its binding: `dure runs resume <agent>` shows it and prints " +
-    "the command that finishes it. Otherwise the provider was started outside a Dure Agent; " +
-    "`dure runs show <agent>` names the Agent's current Session. Retrying the same lookup " +
-    "cannot succeed until that binding changes; do not create another Run.",
-  session_dispatch_unassigned:
-    "This managed Session is live, but it has not opened its durable inbox: no orchestration " +
-    "Dispatch names it yet. A Session opens its own inbox when its provider resolves its " +
-    "orchestration context, at session start through the dure-orchestration integration or at " +
-    "its first orchestration tool call; no other Session can open it. In that Session, " +
-    "`dure orchestration tool orchestration_context_get_current` opens it, and " +
-    "`dure orchestration status` shows whether the integration is installed. Retrying before " +
-    "then cannot succeed.",
-});
-
-function sessionUnavailableMessage(reasonCode) {
-  switch (reasonCode) {
-    case "hmux_runtime_identity_changed":
-      return "The backend's Hmux runtime changed after startup. Restart the Dure app that owns this backend, reconnect the orchestration tools, then retry the same context lookup.";
-    case "hmux_descriptor_timeout":
-    case "hmux_descriptor_unavailable":
-      return "The backend could not observe the managed session. Retry the same context lookup after connectivity recovers; do not reset the Dispatch or create another Run.";
-    default:
-      return "The backend could not validate the session observation. Run dure diagnostics --json and include this reason code in feedback if it persists; do not reset the Dispatch or create another Run.";
+export function orchestrationFailureDetail(error) {
+  const detail = backendTransportErrorReport(error).error;
+  if (Object.hasOwn(TERMINAL_REFUSALS, detail.remoteCode)) {
+    return { ...detail, disposition: "terminal", message: TERMINAL_REFUSALS[detail.remoteCode] };
   }
-}
-
-/** What a typed backend refusal means and what to do next, or null when its
- * codes carry no guidance. `detail` is a backend transport error report. */
-export function orchestrationFailureGuidance(detail) {
-  const { remoteCode, reasonCode } = detail;
-  if (Object.hasOwn(GOAL_REFUSALS, remoteCode)) {
-    return { disposition: "terminal", message: GOAL_REFUSALS[remoteCode] };
-  }
-  if (remoteCode === "orchestration_request_invalid") {
-    return { disposition: "terminal", message:
+  if (detail.remoteCode === "orchestration_request_invalid") {
+    return { ...detail, disposition: "terminal", message:
       "The request body is invalid. Correct it using the tool's input schema or the dure-orchestration skill before resubmitting; retrying the unchanged body cannot succeed." };
   }
-  if (remoteCode === "orchestration_method_unsupported") {
-    return { message:
+  if (detail.remoteCode === "orchestration_method_unsupported") {
+    return { ...detail, message:
       "The backend does not accept this orchestration method. Methods are dotted names such as " +
       "interaction.get or events.read (see dure orchestration --help); MCP tool names run with " +
       "dure orchestration tool. A backend older than this client may not offer the method yet; " +
       "retrying the same method cannot succeed." };
   }
-  if (remoteCode === "orchestration_generation_conflict" &&
-      Object.hasOwn(GENERATION_CONFLICTS, reasonCode)) {
-    return { message: GENERATION_CONFLICTS[reasonCode] };
+  if (detail.remoteCode === "orchestration_generation_conflict" &&
+      detail.reasonCode === "hmux_session_exited") {
+    return { ...detail, message:
+      "This managed Session generation has exited, so it no longer owns an orchestration inbox. " +
+      "If it is this process's own Session, this process outlived a restart or account switch " +
+      "(for example a background fork): stop acting from it and continue in the Agent's current " +
+      "Session, which `dure runs show <agent>` names; its tools resolve the moved inbox automatically. " +
+      "If it is a destination Session, resolve that Agent's current Session before sending. " +
+      "Retrying from this generation cannot succeed." };
   }
-  if (remoteCode === "orchestration_session_unavailable") {
-    return { message: sessionUnavailableMessage(reasonCode) };
+  if (detail.remoteCode === "orchestration_generation_conflict" &&
+      detail.reasonCode === "session_agent_binding_missing") {
+    return { ...detail, message:
+      "This managed Session is live, but no Dure Agent binds it as its current Session, so it " +
+      "cannot report through orchestration. If the Agent was just restarted or switched accounts, " +
+      "that restart has not published its binding: `dure runs resume <agent>` shows it and prints " +
+      "the command that finishes it. Otherwise the provider was started outside a Dure Agent; " +
+      "`dure runs show <agent>` names the Agent's current Session. Retrying the same lookup " +
+      "cannot succeed until that binding changes; do not create another Run." };
   }
-  return null;
-}
-
-export function orchestrationFailureDetail(error) {
-  const detail = backendTransportErrorReport(error).error;
-  const guidance = orchestrationFailureGuidance(detail);
-  return guidance ? { ...detail, ...guidance } : detail;
+  if (detail.remoteCode === "orchestration_generation_conflict" &&
+      detail.reasonCode === "session_dispatch_unassigned") {
+    return { ...detail, message:
+      "This managed Session is live, but no Dispatch binds its current generation, so it has " +
+      "no durable inbox to receive a message yet. The agent in that Session opens one when it " +
+      "resolves its own orchestration context (its session-start hook or " +
+      "orchestration_context_get_current). If it was just restarted or switched accounts, " +
+      "`dure runs resume <agent>` shows whether that restart's binding is still unpublished and " +
+      "prints the command that finishes it. Until the inbox opens, reach the agent without it, " +
+      "for example with `dure send` without --track; resending the same message cannot succeed." };
+  }
+  if (detail.remoteCode !== "orchestration_session_unavailable") return detail;
+  let message;
+  switch (detail.reasonCode) {
+    case "hmux_runtime_identity_changed":
+      message = "The backend's Hmux runtime changed after startup. Restart the Dure app that owns this backend, reconnect the orchestration tools, then retry the same context lookup.";
+      break;
+    case "hmux_descriptor_timeout":
+    case "hmux_descriptor_unavailable":
+      message = "The backend could not observe the managed session. Retry the same context lookup after connectivity recovers; do not reset the Dispatch or create another Run.";
+      break;
+    default:
+      message = "The backend could not validate the session observation. Run dure diagnostics --json and include this reason code in feedback if it persists; do not reset the Dispatch or create another Run.";
+  }
+  return { ...detail, message };
 }

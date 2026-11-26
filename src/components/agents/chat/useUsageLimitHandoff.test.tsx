@@ -159,6 +159,29 @@ it.each(["prepared", "accepted", "uncertain"] as const)(
 	},
 );
 
+it("says when the backend continues on the same account and still allows a manual move", async () => {
+	const props = input();
+	const waiting: RecoveryObservation = {
+		...recovery(null),
+		target: null,
+		resumeAtMs: 1_800_000_000_000,
+	};
+	const view = renderHook(() =>
+		useUsageLimitHandoff({ ...props, recovery: waiting }),
+	);
+	expect(view.result.current.view).toMatchObject({
+		kind: "continues",
+		atMs: 1_800_000_000_000,
+	});
+	await waitFor(() =>
+		expect(view.result.current.view).toMatchObject({
+			kind: "continues",
+			decision: { kind: "handoff" },
+		}),
+	);
+	expect(props.performAccountSwitch).not.toHaveBeenCalled();
+});
+
 it("allows manual recovery after a server failure", async () => {
 	const props = input();
 	const failed = {

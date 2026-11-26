@@ -100,3 +100,64 @@ fn ordered_questions_and_permission_decisions_use_provider_reply_shapes() {
         .is_err()
     );
 }
+
+/// One tool call or message over the timeline's item bound fits by the shared
+/// rule instead of failing the whole message, which fails the history an
+/// attach seeds and ends the live event loop.
+#[test]
+fn oversized_parts_fit_the_timeline_instead_of_failing_the_message() {
+    let large = "x".repeat(MAX_AGENT_TIMELINE_JSON_BYTES_V1 + 1);
+    let mut turns = BTreeMap::new();
+    let tool = |id: &str, input: Value, output: Value| {
+        json!({"id": id, "type": "tool", "callID": format!("call_{id}"), "tool": "write",
+            "state": {"status": "completed", "input": input, "output": output}})
+    };
+    let (items, _) = message_items(
+        &json!({
+            "info": {"id": "msg_large", "parentID": "msg_user", "role": "assistant", "finish": "stop", "time": {"created": 2, "completed": 3}},
+            "parts": [
+                tool("part_input", json!({"filePath": "/fixture/a", "content": large}), json!("Wrote file")),
+                tool("part_output", json!({"filePath": "/fixture/b"}), json!(large)),
+                tool("part_both", json!({"content": large}), json!(large)),
+                {"id": "part_text", "type": "text", "text": format!("Answer {large}")},
+            ],
+        }),
+        &mut turns,
+    )
+    .unwrap();
+    let tools = items
+        .iter()
+        .filter_map(|item| match &item.body {
+            AgentTimelineItemBodyV1::Tool {
+                tool_call_id,
+                input,
+                output,
+                ..
+            } => Some((tool_call_id.as_str(), input.clone(), output.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tools,
+        [
+            ("call_part_input", None, Some(json!("Wrote file"))),
+            (
+                "call_part_output",
+                Some(json!({"filePath": "/fixture/b"})),
+                None
+            ),
+            ("call_part_both", None, None),
+        ]
+    );
+    let text = items
+        .iter()
+        .find_map(|item| match &item.body {
+            AgentTimelineItemBodyV1::Message { markdown, .. } => Some(markdown),
+            _ => None,
+        })
+        .unwrap();
+    assert!(text.starts_with("Answer xxx") && text.ends_with('…'));
+    for item in &items {
+        item.validate().unwrap();
+    }
+}

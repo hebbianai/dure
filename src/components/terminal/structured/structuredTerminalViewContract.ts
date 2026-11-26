@@ -19,6 +19,9 @@ export interface StructuredTerminalViewProps extends TerminalKillActionProps {
 	/** Window-local Dockview pane key used only for connection-health projection. */
 	readonly paneHealthId?: string;
 	readonly binding: HmuxPaneBindingV1;
+	/** The folder the pane was opened in. Relative paths in its output resolve
+	 * against the session's reported working folder, or this one until then. */
+	readonly runtimeWorkingDirectory?: string;
 	readonly inputDisabled?: boolean;
 	readonly paneApi?: IDockviewPanelProps["api"];
 	readonly presentationRole?: TerminalPresentationRole;

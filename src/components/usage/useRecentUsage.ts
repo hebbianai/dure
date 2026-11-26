@@ -4,9 +4,9 @@
 // with its own copy, one screen could drift when only the other was updated.
 import { useEffect, useRef, useState } from "react";
 import {
+	accountUsageProfilesSync,
 	type ClaudeCollectorState,
 	claudeCollectorStatus,
-	codexUsageProfilesSync,
 	type UsageRecentReport,
 	usageRecent,
 	usageRefresh,
@@ -15,7 +15,7 @@ import {
 	clearMaintenanceLaneInterval,
 	setMaintenanceLaneInterval,
 } from "@/lib/scheduling/maintenanceLaneInterval";
-import { codexUsageProfiles } from "@/lib/usage/codexUsageSnapshots";
+import { accountUsageProfiles } from "@/lib/usage/accountUsageProfiles";
 import type { UsageRefreshProvider } from "@/lib/usage/recentUsageClient";
 import { prepareUsageRefresh } from "@/lib/usage/usageRefreshPreparation";
 import type { AccountProfile } from "@/types";
@@ -52,9 +52,9 @@ export function useRecentUsage(accounts: readonly AccountProfile[]) {
 				.then((u) => !stop && setU24(u))
 				.catch(() => {});
 		};
-		// Sync the codex collection catalog first so the report covers every
-		// registered account; load runs regardless of sync failure.
-		const catalog = codexUsageProfilesSync(codexUsageProfiles(accounts));
+		// Sync the account usage check's catalog first so the report covers
+		// every registered account; load runs regardless of sync failure.
+		const catalog = accountUsageProfilesSync(accountUsageProfiles(accounts));
 		void catalog.catch(() => {}).then(load);
 		refresh.current = async (provider) => {
 			if (stop || refreshing) return;

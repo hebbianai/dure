@@ -27,6 +27,7 @@ import { presentActionError } from "@/lib/agents/chat/actionErrorPresentation";
 import type { AgentChatSessionView } from "@/lib/agents/chat/agentChatSessionView";
 import { useAgentChatDraft } from "@/components/agents/chat/useAgentChatDraft";
 import {
+	continuationTimeLabel,
 	latestTurnFailure,
 	TURN_FAILURE_REASON_COPY,
 } from "@/lib/agents/chat/turnFailureReason";
@@ -44,7 +45,7 @@ import {
 	slashCommandQuery,
 } from "@/lib/agents/chat/slashCommands";
 import { PROVIDER_IDS } from "@/lib/agents/providers";
-import { t } from "@/lib/i18n";
+import { currentLang, t } from "@/lib/i18n";
 import { saveChatAttachments } from "@/lib/ipc";
 import { track } from "@/lib/ipc/telemetry";
 import type { Provider } from "@/types";
@@ -117,6 +118,9 @@ export interface ChatTurnFailureRecovery {
 		readonly toName: string;
 		readonly resend?: () => void | Promise<void>;
 	};
+	/** The backend continues the failed turn on the same account at this
+	 * Unix millisecond, after the limit resets. */
+	readonly continuesAtMs?: number;
 }
 
 /** The floating glass composer: session-level error banners, a single-line
@@ -496,6 +500,10 @@ export function ChatComposer({
 						<ChatAlert className="mb-2 flex-wrap items-center">
 							<span className="min-w-0 flex-1">
 								{t(TURN_FAILURE_REASON_COPY[failureRecovery.reason])}
+								{recovery.continuesAtMs !== undefined &&
+									` ${t("agents.chat.recovery.continuesAt", {
+										time: continuationTimeLabel(recovery.continuesAtMs, currentLang()),
+									})}`}
 							</span>
 							<div className="ml-auto flex flex-wrap justify-end gap-1">
 								{failureRecovery.recoveries.includes("sign_in") &&

@@ -24,6 +24,7 @@ export type SpaceRowView = Pick<
 	| "managedPromotion"
 	| "displayState"
 	| "hidden"
+	| "notificationsMuted"
 	| "unread"
 	| "agentId"
 	| "activityAt"

@@ -1,13 +1,15 @@
 use std::collections::BTreeMap;
 use std::fmt;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 
 use dure_app::{
     AgentExecutionProfileV1, DomainStoreErrorV1, PROVIDER_CREDENTIAL_PROFILE_SCHEMA_VERSION_V1,
     ProviderCredentialProfileDirectoryNameV1, ProviderCredentialProfileRegistrationV1,
     ProviderCredentialProfileStore, ProviderCredentialProfileV1, ProviderIdV1,
-    provider_credential_environment_policy_v1,
+    ProviderRecoveryAccountV1, ProviderRecoveryUsageV1, provider_credential_environment_policy_v1,
 };
 use hmux_client::ProviderStateEnvironment;
 use serde::Deserialize;
@@ -15,6 +17,7 @@ use serde::Deserialize;
 #[path = "provider_credential_profile_marker.rs"]
 mod marker;
 
+use crate::provider_login_observation::ProviderLoginObservationV1;
 use marker::{
     new_credential_generation, observe_profile_directory, publish_profile_generation,
     read_profile_generation, reobserve_same_profile_directory,
@@ -93,6 +96,39 @@ pub(crate) trait ProviderCredentialProfileLaunchPreparer: Send + Sync {
     ) -> Result<ProviderStateEnvironment, ProviderCredentialProfileErrorV1> {
         native_provider_state_environment(provider_id, None)
     }
+
+    /// What this host last recorded about one login (`None` directory is the
+    /// provider's default login), from the files the app's account meter and
+    /// the provider keep. Unknown facts stay unknown.
+    fn observe_login(
+        &self,
+        _provider_id: &ProviderIdV1,
+        _directory: Option<&Path>,
+        _reference_ids: &[String],
+        _observed_at_ms: i64,
+    ) -> ProviderLoginObservationV1 {
+        ProviderLoginObservationV1::default()
+    }
+
+    /// The provider's own answer to whether a launch with this environment
+    /// finds a usable login. `None` when it gives none.
+    fn login_signed_in<'a>(
+        &'a self,
+        _provider_id: &'a ProviderIdV1,
+        _environment: &'a ProviderStateEnvironment,
+        _observed_at_ms: i64,
+    ) -> Pin<Box<dyn Future<Output = Option<bool>> + Send + 'a>> {
+        Box::pin(async { None })
+    }
+}
+
+/// What account recovery may use from one look at a provider's pool.
+#[derive(Debug, Default)]
+pub(crate) struct RecoveryPoolObservationV1 {
+    /// The app's latest reading for each account, for the usage owner.
+    pub(crate) usage: Vec<ProviderRecoveryUsageV1>,
+    /// Accounts known to be signed out or to be the source's own login.
+    pub(crate) unusable: Vec<ProviderCredentialProfileV1>,
 }
 
 pub(crate) struct NativeProviderCredentialProfileLaunchPreparer {
@@ -167,6 +203,74 @@ impl ProviderCredentialProfileLaunchPreparer for NativeProviderCredentialProfile
             );
         }
         native_provider_state_environment(provider_id, None)
+    }
+
+    fn observe_login(
+        &self,
+        provider_id: &ProviderIdV1,
+        directory: Option<&Path>,
+        reference_ids: &[String],
+        observed_at_ms: i64,
+    ) -> ProviderLoginObservationV1 {
+        let Some(platform_home) = self.platform_home.as_deref() else {
+            return ProviderLoginObservationV1::default();
+        };
+        crate::provider_login_observation::observe(
+            provider_id.as_str(),
+            &crate::provider_login_observation::ProviderLoginLocationV1 {
+                application_home: &self.dure_home,
+                platform_home,
+                profile_directory: directory,
+                reference_ids,
+            },
+            observed_at_ms,
+        )
+    }
+
+    fn login_signed_in<'a>(
+        &'a self,
+        provider_id: &'a ProviderIdV1,
+        environment: &'a ProviderStateEnvironment,
+        observed_at_ms: i64,
+    ) -> Pin<Box<dyn Future<Output = Option<bool>> + Send + 'a>> {
+        Box::pin(async move {
+            if provider_id.as_str() != "claude" {
+                return None;
+            }
+            use hebbian_bounded_process::{CommandSpec, OutputLimitAction, run_async};
+            let executable =
+                crate::provider_executable::resolve_provider_executable("claude").ok()?;
+            let mut command = CommandSpec::new(executable);
+            command
+                .args(["auth", "status", "--json"])
+                .clear_env()
+                .on_output_limit(OutputLimitAction::TerminateProcessTree);
+            // Exactly the environment a launch with this login gets.
+            for (name, value) in std::env::vars_os() {
+                if name.to_str().is_none_or(|name| {
+                    !environment.removals().contains(name)
+                        && !environment.values().contains_key(name)
+                }) {
+                    command.env(name, value);
+                }
+            }
+            for (name, value) in environment.values() {
+                command.env(name, value);
+            }
+            let output = run_async(
+                &command,
+                std::time::Duration::from_secs(10),
+                64 * 1024,
+                tokio::time::sleep,
+            )
+            .await
+            .ok()?;
+            // Claude Code exits 1 when it is not logged in.
+            if !output.status.success() && output.status.code() != Some(1) {
+                return None;
+            }
+            crate::provider_login_observation::claude_auth_status(&output.stdout, observed_at_ms)
+        })
     }
 }
 
@@ -765,6 +869,130 @@ where
                 workspace,
             )
             .map_err(str::to_string)
+    }
+
+    /// One look at a recovery pool for an agent on `model`: the app's latest
+    /// reading for each account and the accounts it must not move to, because
+    /// the app found them signed out, found that model's own window used up,
+    /// or they sign in as the same provider account as the source.
+    pub(crate) async fn observe_recovery_pool(
+        &self,
+        provider_id: &ProviderIdV1,
+        source: &AgentExecutionProfileV1,
+        model: Option<&str>,
+        accounts: &[ProviderRecoveryAccountV1],
+        observed_at_ms: i64,
+    ) -> RecoveryPoolObservationV1 {
+        let registered = self
+            .store
+            .provider_credential_profiles(provider_id)
+            .await
+            .unwrap_or_default();
+        let source_account = self
+            .observe_login(provider_id, &registered, source, observed_at_ms)
+            .await
+            .and_then(|source| source.account);
+        let mut pool = RecoveryPoolObservationV1::default();
+        for account in accounts {
+            let Some(login) = self
+                .observe_login(
+                    provider_id,
+                    &registered,
+                    &account.execution_profile(),
+                    observed_at_ms,
+                )
+                .await
+            else {
+                continue;
+            };
+            if let Some((used_percent, observed_at_ms)) = login.usage {
+                pool.usage.push(ProviderRecoveryUsageV1 {
+                    profile: account.profile.clone(),
+                    used_percent,
+                    observed_at_ms,
+                });
+            }
+            if login.signed_in == Some(false)
+                || login.exhausted_for_model(model)
+                || (login.account.is_some() && login.account == source_account)
+            {
+                pool.unusable.push(account.profile.clone());
+            }
+        }
+        pool
+    }
+
+    /// When one login's limit resets, as its provider last reported the
+    /// fuller current window to this host. `None` when nothing current is
+    /// recorded for it.
+    pub(crate) async fn observe_limit_reset(
+        &self,
+        provider_id: &ProviderIdV1,
+        profile: &AgentExecutionProfileV1,
+        observed_at_ms: i64,
+    ) -> Option<i64> {
+        let registered = self
+            .store
+            .provider_credential_profiles(provider_id)
+            .await
+            .unwrap_or_default();
+        self.observe_login(provider_id, &registered, profile, observed_at_ms)
+            .await?
+            .limit_resets_at_ms
+    }
+
+    /// The host's latest record of one login, with every ID registered for
+    /// its profile directory. `None` when the profile cannot be resolved.
+    async fn observe_login(
+        &self,
+        provider_id: &ProviderIdV1,
+        registered: &[ProviderCredentialProfileV1],
+        profile: &AgentExecutionProfileV1,
+        observed_at_ms: i64,
+    ) -> Option<ProviderLoginObservationV1> {
+        let resolved = match profile {
+            AgentExecutionProfileV1::ProviderDefault => None,
+            profile => Some(self.resolve(provider_id, profile).await.ok().flatten()?),
+        };
+        let reference_ids = resolved.as_ref().map_or_else(Vec::new, |resolved| {
+            registered
+                .iter()
+                .filter(|registered| {
+                    registered.credential_generation == resolved.profile().credential_generation
+                })
+                .map(|registered| registered.reference_id.clone())
+                .collect()
+        });
+        Some(
+            self.launch_preparer.observe_login(
+                provider_id,
+                resolved
+                    .as_ref()
+                    .map(ResolvedProviderCredentialProfileV1::directory),
+                &reference_ids,
+                observed_at_ms,
+            ),
+        )
+    }
+
+    /// Whether the provider says this account's login is signed out, asked
+    /// with the environment its launch would get. Unknown is not signed out.
+    pub(crate) async fn login_signed_out(
+        &self,
+        provider_id: &ProviderIdV1,
+        execution_profile: &AgentExecutionProfileV1,
+        observed_at_ms: i64,
+    ) -> bool {
+        let Ok(prepared) = self
+            .prepare_for_launch(provider_id, execution_profile)
+            .await
+        else {
+            return false;
+        };
+        self.launch_preparer
+            .login_signed_in(provider_id, &prepared.environment, observed_at_ms)
+            .await
+            == Some(false)
     }
 
     /// Prepare one generation-fenced profile at the last boundary before exec.

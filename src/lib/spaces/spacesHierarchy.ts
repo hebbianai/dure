@@ -6,8 +6,9 @@ import {
 	type RepositorySpaceRow,
 	spaceRepositoryGroupKey,
 } from "@/lib/spaces/spaceRepositoryGroups";
+import type { NeedsPersonReason } from "@/lib/agents/needsPerson";
 import {
-	ATTENTION_DISPLAY_STATES,
+	countsTowardNeedsPersonRollup,
 	countsTowardProgramStatusRollup,
 } from "@/lib/spaces/spacesStateFilter";
 import {
@@ -19,6 +20,8 @@ import {
 export interface HierarchySpaceRow extends RepositorySpaceRow {
 	readonly desktopId: string;
 	readonly displayState?: string;
+	/** Why a person is needed, from the needs-person authority. */
+	readonly needsPerson?: NeedsPersonReason;
 	readonly programStatusKind?: string;
 }
 
@@ -71,10 +74,7 @@ export function bucketVisibleSpaces<Row extends HierarchySpaceRow>(
 	const programStatusByDesktop = new Map<string, number>();
 	const programStatusByRepository = new Map<string, number>();
 	for (const row of rows) {
-		if (
-			row.displayState !== undefined &&
-			ATTENTION_DISPLAY_STATES.has(row.displayState)
-		) {
+		if (countsTowardNeedsPersonRollup(row)) {
 			increment(attentionByDesktop, row.desktopId);
 			increment(attentionByRepository, spaceRepositoryGroupKey(row));
 		} else if (countsTowardProgramStatusRollup(row)) {

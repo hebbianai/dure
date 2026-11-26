@@ -1,41 +1,28 @@
 import { describe, expect, it } from "vitest";
 import {
-	ATTENTION_DISPLAY_STATES,
-	countAttentionDisplayStates,
 	countProgramStatusRows,
+	countsTowardNeedsPersonRollup,
 } from "@/lib/spaces/spacesStateFilter";
 
 describe("spacesStateFilter", () => {
-	it("counts a program's waiting report only where Host attention has not already spoken", () => {
+	it("counts a program's waiting report only where the needs-person authority has not already spoken", () => {
 		expect(
 			countProgramStatusRows([
-				{ displayState: "waiting", programStatusKind: "permission" },
+				{ programStatusKind: "permission" },
 				{ programStatusKind: "question" },
-				{ displayState: "blocked", programStatusKind: "permission" },
-				{ displayState: "error", programStatusKind: "auth" },
-				{ displayState: "waiting" },
+				{ needsPerson: "approval", programStatusKind: "permission" },
+				{ needsPerson: "error", programStatusKind: "auth" },
+				{ needsPerson: "unexpected_exit", programStatusKind: "auth" },
+				{},
 			]),
 		).toBe(2);
 	});
 
-	it("treats error, blocked and input as the states that need a human", () => {
-		expect([...ATTENTION_DISPLAY_STATES].sort()).toEqual([
-			"blocked",
-			"error",
-			"input",
-		]);
-	});
-
-	it("counts only attention states for the rail badge", () => {
-		expect(
-			countAttentionDisplayStates({
-				a: "blocked",
-				b: "input",
-				c: "working",
-				d: "waiting",
-				e: "error",
-				f: undefined,
-			}),
-		).toBe(3);
+	it("rolls up exactly the rows the needs-person authority flagged", () => {
+		expect(countsTowardNeedsPersonRollup({ needsPerson: "input" })).toBe(true);
+		expect(countsTowardNeedsPersonRollup({ needsPerson: "unexpected_exit" })).toBe(
+			true,
+		);
+		expect(countsTowardNeedsPersonRollup({})).toBe(false);
 	});
 });

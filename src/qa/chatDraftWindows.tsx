@@ -167,6 +167,7 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 		queuedMessages: [],
 		retryConnection() {},
 		loadOlder: async () => {},
+		readProviderHistory: async () => null,
 		send: async () => {
 			submissions += 1;
 			throw new Error("Native draft QA must not submit");
@@ -422,6 +423,7 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 				};
 			},
 			readQueue: forbidden,
+			readProviderHistory: forbidden,
 			enqueueTurn: forbidden,
 			continueTurn: async () => {
 				throw new Error("Unexpected automatic continuation in this fixture");

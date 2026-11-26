@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { NeedsPersonReason } from "@/lib/agents/needsPerson";
 import {
 	bucketVisibleSpaces,
 	leadWorkerRowKeys,
@@ -16,6 +17,7 @@ interface Row {
 	readonly projectName: string;
 	readonly hostId?: string;
 	readonly displayState?: string;
+	readonly needsPerson?: NeedsPersonReason;
 	readonly programStatusKind?: string;
 }
 
@@ -37,6 +39,7 @@ describe("bucketVisibleSpaces", () => {
 			projectId: "alpha",
 			projectName: "Alpha",
 			displayState: "blocked",
+			needsPerson: "approval",
 		},
 		{
 			key: "b",
@@ -51,6 +54,7 @@ describe("bucketVisibleSpaces", () => {
 			projectId: "alpha",
 			projectName: "Alpha",
 			displayState: "input",
+			needsPerson: "input",
 		},
 		{ key: "d", desktopId: "d2", projectName: "로컬" },
 	];
@@ -85,6 +89,39 @@ describe("bucketVisibleSpaces", () => {
 		]);
 	});
 
+	it("counts the rows the needs-person authority flagged, an unexpected exit included", () => {
+		const flagged: Row[] = [
+			{
+				key: "crashed",
+				desktopId: "d1",
+				projectId: "alpha",
+				projectName: "Alpha",
+				displayState: "exited",
+				needsPerson: "unexpected_exit",
+			},
+			{
+				key: "stopped",
+				desktopId: "d1",
+				projectId: "alpha",
+				projectName: "Alpha",
+				displayState: "exited",
+			},
+			// The rollup reads the authority's verdict, never a display state.
+			{
+				key: "unflagged",
+				desktopId: "d1",
+				projectId: "alpha",
+				projectName: "Alpha",
+				displayState: "blocked",
+			},
+		];
+		const buckets = bucketVisibleSpaces(flagged, () => false);
+		expect([...buckets.attentionByDesktop.entries()]).toEqual([["d1", 1]]);
+		expect([...buckets.attentionByRepository.entries()]).toEqual([
+			['["project","alpha"]', 1],
+		]);
+	});
+
 	it("rolls a program's waiting report up beside attention without counting a row twice", () => {
 		const reporting: Row[] = [
 			{
@@ -101,6 +138,7 @@ describe("bucketVisibleSpaces", () => {
 				projectId: "alpha",
 				projectName: "Alpha",
 				displayState: "blocked",
+				needsPerson: "approval",
 				programStatusKind: "question",
 			},
 			{

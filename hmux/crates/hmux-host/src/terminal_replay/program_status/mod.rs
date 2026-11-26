@@ -8,11 +8,9 @@
 mod records;
 mod report;
 
+use super::TerminalReplay;
 use super::osc_scanner::{OscFilter, OscScanEvent, OscScanner, OscTerminator};
-use super::{TerminalReplay, TerminalReplayError};
-use crate::local_protocol::{
-    AgentRuntimeLifecycle, AgentRuntimeStateProjection, ProgramStatusProjection,
-};
+use crate::local_protocol::{AgentRuntimeLifecycle, ProgramStatusProjection};
 use records::ProgramStatusRecords;
 use report::ProgramStatusCommand;
 
@@ -123,49 +121,6 @@ impl TerminalReplay {
             .then(|| self.program_status.root())
             .flatten()
             .map(Box::new)
-    }
-
-    /// Republishes the agent projection after the program's own status
-    /// changed. Only `program_status` and the ordering fields move. Nothing
-    /// the Host knows has changed, so semantic idle age stays put and every
-    /// revision-fenced decision (a settling turn completion, a working lease)
-    /// moves to the new revision instead of being superseded by it.
-    pub(super) fn republish_program_status(
-        &mut self,
-    ) -> Result<Option<AgentRuntimeStateProjection>, TerminalReplayError> {
-        let Some(current) = &self.agent_runtime_state else {
-            return Ok(None);
-        };
-        let program_status = self.program_status_projection(current.lifecycle);
-        if current.program_status == program_status {
-            return Ok(None);
-        }
-        let previous = current.revision;
-        let revision = previous
-            .checked_add(1)
-            .ok_or(TerminalReplayError::StateRevisionExhausted)?;
-        let projection = AgentRuntimeStateProjection {
-            revision,
-            observed_through_output_seq: self.output_seq,
-            program_status,
-            ..current.clone()
-        };
-        if let Some(deadline) = self
-            .working_deadline
-            .as_mut()
-            .filter(|deadline| deadline.state_revision == previous)
-        {
-            deadline.state_revision = revision;
-        }
-        if let Some(pending) = self
-            .pending_turn_completion
-            .as_mut()
-            .filter(|pending| pending.state_revision == Some(previous))
-        {
-            pending.state_revision = Some(revision);
-        }
-        self.agent_runtime_state = Some(projection.clone());
-        Ok(Some(projection))
     }
 }
 

@@ -1,6 +1,10 @@
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useCallback, useEffect } from "react";
-import type { AgentConversationHistoryActionLease } from "@/components/agents/AgentConversationHistoryControl";
+import {
+	type AgentConversationHistoryActionLease,
+	AgentConversationHistoryControl,
+} from "@/components/agents/AgentConversationHistoryControl";
+import { AgentStatusCard } from "@/components/agents/AgentStatusCard";
 import { useAgentChatSession } from "@/components/agents/chat/useAgentChatSession";
 import { useApprovedPlanPermissionSelection } from "@/components/agents/chat/useApprovedPlanPermissionSelection";
 import { useChatPaneActions } from "@/components/agents/chat/useChatPaneActions";
@@ -79,6 +83,7 @@ export function StructuredAgentPanel({
 	profile,
 	panelProps,
 	launchSelection,
+	statusCard = false,
 	onRuntimeInvalidated,
 	switchCredential,
 	switchToNativeTerminal,
@@ -88,6 +93,9 @@ export function StructuredAgentPanel({
 	profile: AgentStructuredInteractionProfileV1;
 	panelProps: AgentPanelDockProps;
 	launchSelection: AgentRuntimeLaunchSelectionView;
+	/** The pane is too small to read: its status card replaces the chat view.
+	 * The conversation session above stays owned by this pane. */
+	statusCard?: boolean;
 	onRuntimeInvalidated(
 		generation: StructuredAgentRuntimeProjectionGenerationV1,
 	): boolean | Promise<boolean>;
@@ -205,9 +213,18 @@ export function StructuredAgentPanel({
 	useEffect(() => {
 		if (!panelProps.api.isVisible) return;
 		if (paneDesktopId && getActiveSpaceId() !== paneDesktopId) return;
+		// A status card paints no conversation, so its wait is not an open time.
+		if (statusCard) return;
 		workspacePerformance.beginPaneOpen(paneId, `agent:${agent.provider}`);
 		return () => workspacePerformance.cancelPaneOpen(paneId);
-	}, [agent.provider, getActiveSpaceId, paneDesktopId, paneId, panelProps.api]);
+	}, [
+		agent.provider,
+		getActiveSpaceId,
+		paneDesktopId,
+		paneId,
+		panelProps.api,
+		statusCard,
+	]);
 
 	const markReady = useCallback(
 		() => workspacePerformance.markPaneReady(paneId),
@@ -355,7 +372,9 @@ export function StructuredAgentPanel({
 		performAccountSwitch,
 	});
 	const handoffDecision =
-		handoffView.kind === "decided" || handoffView.kind === "failed"
+		handoffView.kind === "decided" ||
+		handoffView.kind === "failed" ||
+		handoffView.kind === "continues"
 			? handoffView.decision
 			: undefined;
 	const presentedAccountFailure =
@@ -472,6 +491,8 @@ export function StructuredAgentPanel({
 										resend: resendLastMessage !== undefined,
 									}
 								: null,
+						continuesAtMs:
+							handoffView.kind === "continues" ? handoffView.atMs : null,
 					}
 				: null,
 		},
@@ -540,6 +561,38 @@ export function StructuredAgentPanel({
 		paneSurface,
 		publishAgentSessionChatPane,
 	);
+	const paneStatus = <AgentPluginClaimStatus agent={agent} paneId={paneId} />;
+	const history = {
+		actionLease: historyActionLease,
+		activeConversationId: agent.conversationId ?? null,
+		activity: chatActivity,
+		conversations,
+		mutationAllowed: true,
+		mutationDisabledTitle: "",
+		onError: (error: unknown) => setConversationFailure(String(error)),
+		onLoad: () => void loadConversations(),
+		onSwitchExisting: async () => {
+			throw new Error("structured_conversation_history_requires_sibling");
+		},
+		paneDesktopId,
+		panelId: paneId,
+		projectKind: project?.kind,
+		resuming: accountMovesLocked,
+	};
+	if (statusCard) {
+		// The pane menu's history entry opens the pane's own hidden control,
+		// so it moves into the card with the pane's status.
+		return (
+			<AgentStatusCard agent={agent} paneId={paneId} view="conversation">
+				{paneStatus}
+				<AgentConversationHistoryControl
+					{...history}
+					agent={agent}
+					binding={undefined}
+				/>
+			</AgentStatusCard>
+		);
+	}
 	return (
 		<StructuredAgentView
 			agent={agent}
@@ -558,29 +611,13 @@ export function StructuredAgentPanel({
 				// The pane's own project move locks it through its presentation.
 				transitioning: false,
 				setTransitioning: setProjectMoveBusy,
-				paneStatus: <AgentPluginClaimStatus agent={agent} paneId={paneId} />,
+				paneStatus,
 				composer: {
 					paneApi: panelProps.api,
 					launchSelection,
 					catalogSource: agentProviderCatalogSource(agent, project, accounts),
 				},
-				history: {
-					actionLease: historyActionLease,
-					activeConversationId: agent.conversationId ?? null,
-					activity: chatActivity,
-					conversations,
-					mutationAllowed: true,
-					mutationDisabledTitle: "",
-					onError: (error) => setConversationFailure(String(error)),
-					onLoad: () => void loadConversations(),
-					onSwitchExisting: async () => {
-						throw new Error("structured_conversation_history_requires_sibling");
-					},
-					paneDesktopId,
-					panelId: paneId,
-					projectKind: project?.kind,
-					resuming: accountMovesLocked,
-				},
+				history,
 			}}
 		/>
 	);

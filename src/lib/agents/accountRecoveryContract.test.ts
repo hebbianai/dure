@@ -53,6 +53,41 @@ describe("backend account recovery wire contract", () => {
 			parseRecoveryObservation({ ...observation, ...change }),
 		).toBeUndefined();
 	});
+	it("keeps when the same account continues after its reset", () => {
+		const waiting = {
+			...observation,
+			target: null,
+			turnState: null,
+			resumeAtMs: 200,
+		};
+		expect(parseRecoveryObservation(waiting)).toEqual(waiting);
+		// A switch has no reset to wait for; a time must be one.
+		expect(
+			parseRecoveryObservation({ ...observation, resumeAtMs: 200 }),
+		).toBeUndefined();
+		expect(
+			parseRecoveryObservation({ ...waiting, resumeAtMs: -1 }),
+		).toBeUndefined();
+	});
+	it("reads continuing after a reset, absent as off", () => {
+		const policy = {
+			schemaVersion: 1,
+			providerId: "codex",
+			revision: 1,
+			enabled: false,
+			accounts: [],
+			activatedAtMs: 100,
+			updatedAtMs: 100,
+		};
+		expect(parseRecoveryPolicy(policy)?.continueAfterReset).toBe(false);
+		expect(
+			parseRecoveryPolicy({ ...policy, continueAfterReset: true })
+				?.continueAfterReset,
+		).toBe(true);
+		expect(
+			parseRecoveryPolicy({ ...policy, continueAfterReset: "yes" }),
+		).toBeUndefined();
+	});
 	it("rejects a policy with an account from a different provider", () => {
 		expect(
 			parseRecoveryPolicy({

@@ -508,6 +508,7 @@ impl CatalogSource for LocalSessions {
                         .collect::<Vec<HubCatalogEntry>>(),
                     unreachable: Vec::new(),
                     layout: self.layout.to_catalog_layout(),
+                    push_registration: None,
                 },
                 // Chat-owned agents live on the backend, not in Hmux: a census
                 // that fails does not take their rows away.
@@ -515,6 +516,7 @@ impl CatalogSource for LocalSessions {
                     chat_sessions: layout.chat_sessions(&self.box_id, &self.box_label),
                     hub_catalog_version: HUB_CATALOG_VERSION,
                     layout: self.layout.to_catalog_layout(),
+                    push_registration: None,
                     sessions: Vec::new(),
                     unreachable: vec![UnreachableBox {
                         box_id: self.box_id.clone(),
@@ -906,7 +908,15 @@ fn serve_one(
     // 받아서 "형식 오류" 로 읽고, 그건 사람에게 다시 페어링하라는 뜻이 된다.
     // ack 는 위에서 이미 나갔으므로 폰이 보는 것은 조용한 종료이고, 그것이
     // 이 경우의 정직한 모양이다 — 이 노트북을 갱신하면 된다.
-    if hello.request == HubRequest::Unsupported {
+    //
+    // A V2 push registration is the same case (#660): this build reads its
+    // shape but does not register grants yet, so it does not advertise
+    // `push_registration` and answers a phone that sends it anyway as a
+    // desktop that predates the request would.
+    if matches!(
+        hello.request,
+        HubRequest::Unsupported | HubRequest::UpdatePushSubscriptionV2 { .. }
+    ) {
         return;
     }
 
@@ -922,7 +932,9 @@ fn serve_one(
             Ok(()) => PushSubscriptionResult::Saved,
             Err(detail) => PushSubscriptionResult::Refused { detail },
         };
-        if let Ok(frame) = dure_hub_protocol::frame::encode(&result, 4096) {
+        if let Ok(frame) =
+            dure_hub_protocol::frame::encode(&result, dure_hub_protocol::push::MAX_RESULT_BYTES)
+        {
             let _ = tls.write_all(&frame);
             let _ = tls.flush();
         }
@@ -1575,6 +1587,7 @@ mod tests {
             chat_sessions: Vec::new(),
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
+            push_registration: None,
             sessions: Vec::new(),
             unreachable: Vec::new(),
         }))

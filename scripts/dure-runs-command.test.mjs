@@ -1192,8 +1192,84 @@ describe("Run selector ambiguity", () => {
       { agentId: "agent-other", projectId: "project-other", launchState: "failed",
         retry: ["runs", "resume", "agent-other", "--backend", "local"] },
     ] } });
-    expect(f.requestBackend).toHaveBeenCalledOnce();
+    // The failed launch's Agent has a runtime, so it is still a target.
+    expect(f.requestBackend.mock.calls.map((c) => [c[1].operation, c[1].body.agentId])).toEqual([
+      ["agent_spawn.list", undefined], ["agent_runtime.projection.inspect", "agent-other"]]);
     expect(formatRunsCommand(report)).toContain("dure 'runs' 'resume' 'agent-other' '--backend' 'local'");
+  });
+
+  /** Same-named launches that stopped in `states`; the backend holds no
+   * runtime for their Agents unless `withRuntime` names one. */
+  function withStoppedLaunches(states, { withRuntime = [], inspectError } = {}) {
+    const f = fixture();
+    const stopped = states.map((launchState, i) => ({ ...f.entry, agentId: `agent-stopped-${i}`,
+      operationId: `${f.entry.operationId}${i}`, launchState }));
+    f.page.runs.push(...stopped);
+    const answer = f.requestBackend.getMockImplementation();
+    f.requestBackend.mockImplementation(async (profile, request) => {
+      const agentId = request.body.agentId;
+      if (request.operation !== "agent_runtime.projection.inspect" || !agentId.startsWith("agent-stopped-") ||
+          withRuntime.includes(agentId)) return answer(profile, request);
+      if (inspectError) throw inspectError;
+      return { result: { schemaVersion: 1, state: "unmanaged", agentId } };
+    });
+    const inspected = () => f.requestBackend.mock.calls
+      .filter((c) => c[1].operation === "agent_runtime.projection.inspect").map((c) => c[1].body.agentId);
+    return { ...f, stopped, inspected };
+  }
+
+  it.each(["show", "resume", "switch-account"])(
+    "does not let launches that stopped before their Agent had a runtime shadow the launched Run (%s)", async (action) => {
+    const f = withStoppedLaunches(["retry_required", "failed"]);
+    const report = await collectRunsCommand({ ...f, opts: { rest: [action, f.entry.name],
+      ...(action === "switch-account" ? { account: "work" } : {}) }, run: vi.fn() });
+    expect(report.error?.code).not.toBe("run_selector_ambiguous");
+    expect(report.run).toEqual(f.entry);
+    expect(f.inspected().slice(0, 2)).toEqual(["agent-stopped-0", "agent-stopped-1"]);
+  });
+
+  it("checks only stopped launches, so a launched Run's name costs no extra request", async () => {
+    const f = withStoppedLaunches([]);
+    f.page.runs.push({ ...f.entry, agentId: "agent-twin", operationId: `${f.entry.operationId}t` });
+    const report = await collectRunsCommand(f);
+    expect(report).toMatchObject({ ok: false, error: { code: "run_selector_ambiguous" } });
+    expect(f.inspected()).toEqual([]);
+  });
+
+  it("selects a retry_required launch whose Agent has a runtime over one that never had one", async () => {
+    const f = withStoppedLaunches(["retry_required", "retry_required"], { withRuntime: ["agent-stopped-1"] });
+    f.page.runs.shift();
+    const report = await collectRunsCommand(f);
+    expect(report.run).toEqual(f.stopped[1]);
+    expect(report.error?.code).not.toBe("run_selector_ambiguous");
+    expect(f.inspected().slice(0, 2)).toEqual(["agent-stopped-0", "agent-stopped-1"]);
+  });
+
+  it("still lists every stopped launch when none of the same-named Runs has a runtime", async () => {
+    const f = withStoppedLaunches(["retry_required", "failed"]);
+    f.page.runs.shift();
+    const report = await collectRunsCommand(f);
+    expect(report).toMatchObject({ ok: false, error: { code: "run_selector_ambiguous", candidates: [
+      { agentId: "agent-stopped-0", launchState: "retry_required" },
+      { agentId: "agent-stopped-1", launchState: "failed" },
+    ] } });
+  });
+
+  it("keeps a stopped launch as a candidate when its runtime cannot be read", async () => {
+    const f = withStoppedLaunches(["retry_required"],
+      { inspectError: new BackendTransportError("backend_transport_timeout") });
+    const report = await collectRunsCommand(f);
+    expect(report).toMatchObject({ ok: false, error: { code: "run_selector_ambiguous", candidates: [
+      { agentId: f.entry.agentId }, { agentId: "agent-stopped-0", launchState: "retry_required" },
+    ] } });
+  });
+
+  it.each(["applying", "inspect_before_retry", "manual_intervention_required"])(
+    "keeps a same-named %s launch as a candidate without reading its runtime", async (launchState) => {
+    const f = withStoppedLaunches([launchState]);
+    const report = await collectRunsCommand(f);
+    expect(report).toMatchObject({ ok: false, error: { code: "run_selector_ambiguous" } });
+    expect(f.inspected()).toEqual([]);
   });
 });
 
@@ -1256,6 +1332,32 @@ describe("Closed Agents", () => {
     const applied = await collectRunsCommand({ ...f, opts: { rest: ["switch-account", f.entry.name], account: "work", confirmRestart: true } });
     expect(applied).toMatchObject({ ok: true, accountSwitch: { state: "completed", conversationId: "conversation-closed" } });
     expect(f.requestBackend.mock.calls.at(-1)[1].body).toMatchObject({ expectedSourceRevision: 4, targetInteractionProfile: "native_cli" });
+  });
+
+  it("never offers an in-place restart for an Agent that dure stop removed, and names the conversation to continue", async () => {
+    const f = closedFixture();
+    Object.assign(f.closed, { closedBy: "agent_removal", providerConversationRef: "conversation-closed" });
+    const resume = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name] } });
+    expect(resume).toMatchObject({ ok: false, error: { code: "rehost_native_source_unavailable" } });
+    expect(resume.error.message).toContain("stopped and removed, for example by dure stop, so it cannot restart in place");
+    expect(resume.error.message).toContain(
+      `dure runs resume --conversation conversation-closed --provider claude --project ${f.entry.projectId}`);
+    expect(formatRunsCommand(resume)).not.toContain("Restart: dure 'runtime' 'switch'");
+    const accountSwitch = await collectRunsCommand({ ...f, opts: { rest: ["switch-account", f.entry.name], account: "work", confirmRestart: true } });
+    expect(accountSwitch).toMatchObject({ ok: false, error: { code: "account_switch_source_unavailable" } });
+    expect(accountSwitch.error.message).toContain("cannot restart in place");
+    expect(f.requestBackend.mock.calls.map((call) => call[1].operation)).not.toContain("agent_runtime.transition");
+
+    delete f.closed.providerConversationRef;
+    const unresumable = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name] } });
+    expect(unresumable.error.message).toContain("It retained no provider conversation to continue.");
+  });
+
+  it("still restarts a close the runtime stop owns", async () => {
+    const f = closedFixture();
+    f.closed.closedBy = "runtime_stop";
+    const preview = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name] } });
+    expect(preview.recovery.continuation).toMatchObject({ kind: "runtime_restart", expectedSourceRevision: 4 });
   });
 
   it("explains a close that has not stopped instead of a generic source error", async () => {

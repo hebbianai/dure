@@ -90,6 +90,14 @@ impl<S: AgentTimelineStore + 'static> ProviderTimelineJournal<S> {
         self.position.lock().await.sequence
     }
 
+    /// Whether the timeline already holds any of `items`.
+    pub(crate) async fn holds_any(&self, items: &[AgentTimelineItemDraftV1]) -> bool {
+        let position = self.position.lock().await;
+        items
+            .iter()
+            .any(|item| position.rows.contains(&item.item_id))
+    }
+
     pub(crate) async fn append_once(
         &self,
         items: Vec<AgentTimelineItemDraftV1>,
@@ -117,6 +125,15 @@ impl<S: AgentTimelineStore + 'static> ProviderTimelineJournal<S> {
                 .extend(chunk.iter().map(|item| item.item_id.clone()));
         }
         Ok(())
+    }
+
+    /// Reports that the history read at attach is reconciled, so the store
+    /// settles whether the timeline holds all of it.
+    pub(crate) async fn settle_history(&self) -> Result<(), Error> {
+        self.commit(vec![AgentTimelineMutationV1::SettleHistory {
+            settled_at_ms: now_ms()?,
+        }])
+        .await
     }
 
     pub(crate) async fn commit(

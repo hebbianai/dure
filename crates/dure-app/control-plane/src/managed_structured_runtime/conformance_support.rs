@@ -212,3 +212,54 @@ pub(super) async fn fixture(
     );
     (store, service, manager)
 }
+
+/// The timeline's history boundaries and the leading words of its prompts,
+/// oldest first.
+pub(super) async fn conversation(
+    service: &AgentConversationService<SqliteDomainStore>,
+    binding: &AgentInteractionBindingV1,
+) -> Vec<String> {
+    let mut rows = Vec::new();
+    let mut direction = AgentTimelineReadDirectionV1::Tail;
+    let mut cursor = None;
+    loop {
+        let read = service
+            .read(&AgentTimelineReadRequestV1 {
+                schema_version: 1,
+                interaction_session_id: binding.interaction_session_id.clone(),
+                direction,
+                cursor,
+                limit: MAX_AGENT_TIMELINE_PAGE_ITEMS_V1,
+            })
+            .await
+            .unwrap();
+        let AgentTimelineReadV1::Page { page } = read else {
+            panic!("timeline reset")
+        };
+        cursor = page.rows.first().map(|row| row.cursor.clone());
+        let more = page.has_more;
+        rows.splice(0..0, page.rows);
+        if !more {
+            break;
+        }
+        direction = AgentTimelineReadDirectionV1::Before;
+    }
+    rows.iter()
+        .filter_map(|row| match &row.item.body {
+            AgentTimelineItemBodyV1::HistoryBoundary { reason, .. } => {
+                Some(format!("boundary:{reason}"))
+            }
+            AgentTimelineItemBodyV1::Message {
+                role: AgentTimelineMessageRoleV1::User,
+                markdown,
+            } => Some(
+                markdown
+                    .strip_prefix("Terminal prompt ")
+                    .and_then(|rest| rest.split(' ').next())
+                    .map(|index| format!("Terminal prompt {index}"))
+                    .unwrap_or_else(|| markdown.clone()),
+            ),
+            _ => None,
+        })
+        .collect()
+}

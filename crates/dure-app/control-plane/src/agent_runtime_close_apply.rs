@@ -181,7 +181,7 @@ async fn advance_close(
     close: &AgentRuntimeCloseRecordV1,
     advance: AgentRuntimeCloseAdvanceV1,
 ) -> Result<AgentRuntimeCloseRecordV1, BackendDispatchError> {
-    state
+    let advanced = state
         .store
         .advance_agent_runtime_close(&AgentRuntimeCloseAdvanceRequestV1 {
             schema_version: AGENT_RUNTIME_CLOSE_SCHEMA_VERSION_V1,
@@ -191,7 +191,13 @@ async fn advance_close(
             advanced_at_ms: clock_at_least(close.updated_at_ms)?,
         })
         .await
-        .map_err(store_error)
+        .map_err(store_error)?;
+    // A hint only: the committed close is the authority.
+    let _ = state
+        .agent_conversations
+        .publish_runtime_change(&close.intent.source.agent_id)
+        .await;
+    Ok(advanced)
 }
 
 fn unblock_retained_structured_source(

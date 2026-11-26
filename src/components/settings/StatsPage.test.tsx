@@ -21,7 +21,7 @@ vi.mock("@/lib/ipc", () => ({
   usageStats: (days: number) => usageStatsMock(days),
   claudeCollectorStatus: () => collectorStatusMock(),
   claudeCollectorInstall: () => Promise.resolve("installed"),
-  codexUsageProfilesSync: () => Promise.resolve(),
+  accountUsageProfilesSync: () => Promise.resolve(),
   accountLoginIdentity: () => Promise.resolve({ email: null, plan: null }),
 }));
 

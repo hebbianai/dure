@@ -105,6 +105,7 @@ function session(): AgentChatSessionView {
 		},
 		retryConnection: vi.fn(),
 		loadOlder: vi.fn(async () => {}),
+		readProviderHistory: vi.fn(async () => null),
 		send: vi.fn(async () => {}),
 		loadMoreQueued: vi.fn(async () => {}),
 		queueMessage: vi.fn(),

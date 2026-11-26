@@ -28,6 +28,7 @@ fn policy() -> ProviderRecoveryPolicyPutV1 {
                 name: reference.into(),
             })
             .collect(),
+        continue_after_reset: false,
     }
 }
 
@@ -251,4 +252,60 @@ async fn schema_49_migration_adds_recovery_without_enabling_any_provider() {
             .revision,
         1
     );
+}
+
+#[tokio::test]
+async fn continuing_after_a_reset_alone_activates_recovery_and_keeps_its_activation() {
+    let root = TempDir::new().unwrap();
+    let store = SqliteDomainStore::open(&root.path().join("reset.sqlite"))
+        .await
+        .unwrap();
+    // Off, the policy serializes as clients that predate the switch read it.
+    let off = store
+        .put_provider_recovery_policy(
+            &ProviderRecoveryPolicyPutV1 {
+                enabled: false,
+                ..policy()
+            },
+            100,
+        )
+        .await
+        .unwrap();
+    assert_eq!(off.activated_at_ms, None);
+    assert!(
+        serde_json::to_value(&off)
+            .unwrap()
+            .get("continueAfterReset")
+            .is_none()
+    );
+    let on = store
+        .put_provider_recovery_policy(
+            &ProviderRecoveryPolicyPutV1 {
+                expected_revision: 1,
+                idempotency_key: "continue".into(),
+                enabled: false,
+                continue_after_reset: true,
+                ..policy()
+            },
+            200,
+        )
+        .await
+        .unwrap();
+    assert!(on.continue_after_reset);
+    assert_eq!(on.activated_at_ms, Some(200));
+    assert!(!on.active_at(199) && on.active_at(200));
+    // Turning on account switching as well does not make older failures eligible.
+    let both = store
+        .put_provider_recovery_policy(
+            &ProviderRecoveryPolicyPutV1 {
+                expected_revision: 2,
+                idempotency_key: "both".into(),
+                continue_after_reset: true,
+                ..policy()
+            },
+            300,
+        )
+        .await
+        .unwrap();
+    assert_eq!(both.activated_at_ms, Some(200));
 }

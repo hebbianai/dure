@@ -106,6 +106,7 @@ const sentNotifications: unknown[] = [];
 let notificationPermission: "granted" | "denied" | "default" = "default";
 let pushSupported = false;
 let pushFailure: string | null = null;
+let pushCode: string | undefined;
 /**
  * What the notification plugin's JS surface believes: the real plugin snapshots
  * the state once at page load and only refreshes it from `requestPermission`,
@@ -172,7 +173,7 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
 }));
 
 /** The channel the app listens for alert taps on (`push_activations`). */
-let pushActivationChannel: { onmessage?: (activation: { sessionId: string }) => void } | undefined;
+let pushActivationChannel: { onmessage?: (activation: { hub: string; sessionId: string }) => void } | undefined;
 
 vi.mock("@tauri-apps/api/core", () => ({
   Channel: class {
@@ -651,7 +652,8 @@ vi.mock("@tauri-apps/api/core", () => ({
           },
         });
       case "sync_push_notifications":
-        return Promise.resolve({ supported: pushSupported, outcomes: [{ id: "hub-1", error: pushFailure }] });
+        return Promise.resolve({ supported: pushSupported,
+          outcomes: [{ id: "hub-1", computer: "Laptop", error: pushFailure, code: pushCode }] });
       case "plugin:notification|is_permission_granted":
         return Promise.resolve(
           notificationPermission === "granted"
@@ -1041,6 +1043,7 @@ beforeEach(() => {
   notificationPermission = "default";
   pushSupported = false;
   pushFailure = null;
+  pushCode = undefined;
   pluginPermissionCache = "default";
   permissionRequests = 0;
   sheetAnswer = "granted";
@@ -3588,6 +3591,20 @@ describe("알림", () => {
     expect(pick(root, ".settings-choice__note").textContent).not.toContain("Push service unavailable");
   });
 
+  it("names the computer whose alerts need a newer Dure there", async () => {
+    pushSupported = true;
+    pushFailure = "This computer has no configured push service";
+    pushCode = "computer_update";
+    const root = await launch();
+    pick(root, ".home__settings").click();
+    await settle();
+    settingsRow(root, "notifications").click();
+    await settle();
+    const note = pick(root, ".settings-choice__note").textContent ?? "";
+    expect(note).toContain(t("notifications.push.computerUpdate", { computer: "Laptop" }));
+    expect(note).not.toContain(pushFailure);
+  });
+
   it("백그라운드에서 새 승인이 오면 세션 이름을 담아 알린다", async () => {
     setHidden(true);
     await openWith(working("4"), approval);
@@ -4913,7 +4930,7 @@ describe("페어링한 컴퓨터", () => {
     expect(pushActivationChannel).toBeDefined();
     expect(invocations.map((entry) => entry.command)).not.toContain("attach_hub_session");
 
-    pushActivationChannel?.onmessage?.({ sessionId: "hub-live" });
+    pushActivationChannel?.onmessage?.({ hub: HUB_ID, sessionId: "hub-live" });
     await settle();
 
     const opened = invocations.find((entry) => entry.command === "attach_hub_session");
@@ -4925,7 +4942,7 @@ describe("페어링한 컴퓨터", () => {
     expect(root.querySelector(".terminal")).not.toBeNull();
 
     // A second tap on the agent already on screen does not attach it again.
-    pushActivationChannel?.onmessage?.({ sessionId: "hub-live" });
+    pushActivationChannel?.onmessage?.({ hub: HUB_ID, sessionId: "hub-live" });
     await settle();
     expect(invocations.filter((entry) => entry.command === "attach_hub_session")).toHaveLength(1);
   });
@@ -4935,14 +4952,15 @@ describe("페어링한 컴퓨터", () => {
     const root = await launch();
     const reads = invocations.filter((entry) => entry.command === "hub_open").length;
 
-    // An exited session is listed but cannot be opened; an unknown one is not listed.
-    for (const sessionId of ["hub-done", "gone"]) {
-      pushActivationChannel?.onmessage?.({ sessionId });
+    // An exited session is listed but cannot be opened; an unknown one is not
+    // listed; and the live one is listed by this computer, not the alert's.
+    for (const [hub, sessionId] of [[HUB_ID, "hub-done"], [HUB_ID, "gone"], ["SHA256:another-computer", "hub-live"]] as const) {
+      pushActivationChannel?.onmessage?.({ hub, sessionId });
       await settle();
     }
 
     // Each tap read the list once more before giving up.
-    expect(invocations.filter((entry) => entry.command === "hub_open").length).toBe(reads + 2);
+    expect(invocations.filter((entry) => entry.command === "hub_open").length).toBe(reads + 3);
     expect(invocations.map((entry) => entry.command)).not.toContain("attach_hub_session");
     expect(root.querySelector(".terminal")).toBeNull();
     expect(root.textContent).toContain(t("notifications.push.open.unavailable"));
@@ -6583,6 +6601,8 @@ describe("설정 › 컴퓨터", () => {
     const forget = calls.indexOf("hub_forget");
     expect(invocations[forget]).toEqual({ command: "hub_forget", args: { id: HUB_ID } });
     expect(calls.indexOf("hub_list", forget)).toBeGreaterThan(forget);
+    // #660: the computers still paired get the epoch the forget raised.
+    expect(calls.indexOf("sync_push_notifications", forget)).toBeGreaterThan(forget);
     expect(root.querySelector(".confirm-dialog")).toBeNull();
     expect(root.textContent).not.toContain("192.168.0.12:47821");
     expect(root.textContent).toContain("192.168.0.13:47821");

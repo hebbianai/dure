@@ -69,6 +69,9 @@ export interface ProviderToolCall {
 export interface ProviderConversationActivity
 	extends ProviderConversationTranscriptV1 {
 	tools?: unknown;
+	/** Where older records begin: the byte offset an older page reads
+	 * `before`. Absent once the read reaches the transcript's start. */
+	olderCursor?: number;
 }
 
 export const listConversations = (
@@ -110,21 +113,27 @@ export function readProviderConversationTranscript(
 	conversationId: string,
 ): Promise<ProviderConversationTranscript>;
 /** With `includeTools`, the answer also carries the tool calls between the
- * messages; the entries are the same either way. */
+ * messages; the entries are the same either way. `before` reads the older
+ * page that ends at an earlier answer's `olderCursor`. */
 export function readProviderConversationTranscript(
 	provider: string,
 	conversationId: string,
-	options: { includeTools: true },
+	options: { includeTools: true; before?: number },
 ): Promise<ProviderConversationActivity>;
 export function readProviderConversationTranscript(
 	provider: string,
 	conversationId: string,
-	options?: { includeTools: true },
+	options?: { includeTools: true; before?: number },
 ) {
 	return invoke<ProviderConversationActivity>(
 		"read_provider_conversation_transcript",
 		options?.includeTools
-			? { provider, conversationId, includeTools: true }
+			? {
+					provider,
+					conversationId,
+					includeTools: true,
+					...(options.before === undefined ? {} : { before: options.before }),
+				}
 			: { provider, conversationId },
 	);
 }

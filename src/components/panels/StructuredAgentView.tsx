@@ -195,6 +195,9 @@ function StructuredAgentViewContent({
 							},
 						}
 					: {}),
+				...(presentation.recovery.continuesAtMs !== null
+					? { continuesAtMs: presentation.recovery.continuesAtMs }
+					: {}),
 				// Remote panes sign in on the host through the account switcher
 				// instead of a local terminal.
 				...(presentation.recovery.signIn

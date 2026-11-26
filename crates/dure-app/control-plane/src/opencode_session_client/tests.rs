@@ -230,3 +230,84 @@ async fn malformed_runtime_status_cannot_authorize_idle_replacement() {
         server.await.unwrap();
     }
 }
+
+/// What OpenCode's `read` tool keeps of an image or PDF it read: the whole
+/// file, encoded, in the tool part's attachments.
+fn attached(mut value: Value, bytes: usize) -> Value {
+    let part = &mut value["parts"][0];
+    part["type"] = json!("tool");
+    part["tool"] = json!("read");
+    part["callID"] = json!("call_read");
+    part["state"] = json!({"status": "completed", "output": "PDF read successfully", "attachments": [{"type": "file", "mime": "application/pdf", "url": format!("data:application/pdf;base64,{}", "A".repeat(bytes))}]});
+    value
+}
+
+#[tokio::test]
+async fn a_message_larger_than_an_answer_of_several_is_read_whole_as_one_record() {
+    let session = SessionId::parse("ses_exact").unwrap();
+    let large = attached(message("msg_large", "ses_exact"), MAX_RESPONSE_BYTES);
+    let (client, server) = fixture(vec![(200, String::new(), large.clone())]).await;
+
+    let read = client.message(&session, "msg_large").await;
+    // The values are too large to print.
+    assert_eq!(read.as_ref().err(), None);
+    assert!(read.unwrap() == Some(large));
+
+    server.await.unwrap();
+}
+
+/// An event stream that writes `body` in small pieces, as a large event
+/// arrives in many chunks.
+async fn event_stream(body: String) -> OpenCodeEvents {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = OpenCodeSessionClient::new(
+        listener.local_addr().unwrap().port(),
+        "fixture-only".into(),
+        Path::new("/fixture"),
+    )
+    .unwrap();
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut head = Vec::new();
+        while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+            let mut buffer = [0; 1024];
+            let size = socket.read(&mut buffer).await.unwrap();
+            assert_ne!(size, 0);
+            head.extend_from_slice(&buffer[..size]);
+        }
+        socket.write_all(format!("HTTP/1.1 200 Fixture\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+        for piece in body.as_bytes().chunks(4093) {
+            socket.write_all(piece).await.unwrap();
+            socket.flush().await.unwrap();
+        }
+    });
+    client.events().await.unwrap()
+}
+
+#[tokio::test]
+async fn an_event_larger_than_an_answer_of_several_is_read_whole_as_one_record() {
+    // The update of a tool part that read a large file carries the file.
+    let large = json!({"type": "message.part.updated", "properties": {"part": attached(message("msg_large", "ses_exact"), MAX_RESPONSE_BYTES)["parts"][0].clone()}});
+    let next = json!({"type": "session.idle", "properties": {"sessionID": "ses_exact"}});
+    let mut events = event_stream(format!("data: {large}\n\ndata: {next}\r\n\r\n")).await;
+
+    let event = events.next().await;
+    // The event is too large to print.
+    assert_eq!(event.as_ref().err(), None);
+    assert!(event.unwrap() == large);
+    assert_eq!(events.next().await, Ok(next));
+}
+
+#[test]
+fn a_frame_ends_at_its_first_blank_line_wherever_its_search_resumes() {
+    for (frames, end) in [
+        (&b"data: 1\n\ndata: 2\n\n"[..], 9),
+        (&b"data: 1\r\n\r\ndata: 2\r\n\r\n"[..], 11),
+    ] {
+        // The bytes before `searched` hold no whole blank line.
+        for searched in 0..end {
+            assert_eq!(frame_end(frames, searched), Some(end), "{searched}");
+        }
+        assert_eq!(frame_end(&frames[..end - 1], end - 1), None);
+    }
+}

@@ -694,6 +694,8 @@ mod tests {
                 turn_completed_count: 0,
                 program_status: None,
                 background_work: false,
+                held_prompts: None,
+                turn_failure: None,
             }),
             provider_conversation_identity: None,
             recovered_presentation: None,
@@ -931,6 +933,8 @@ mod tests {
             turn_completed_count: 0,
             program_status: None,
             background_work: false,
+            held_prompts: None,
+            turn_failure: None,
         });
         let ordinary = FrameBody::Detach(Detach { reason: None });
         let observer = delivery(SnapshotProjection::new(false, false));

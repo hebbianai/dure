@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { t } from "@/lib/i18n";
 import { buildSpaceMenu, type SpaceMenuEntry } from "@/lib/spaces/spacesActions";
 
 const ids = (entries: SpaceMenuEntry[]) => entries.map((entry) => entry.id);
@@ -240,6 +241,24 @@ describe("buildSpaceMenu", () => {
     // 안 고른 줄은 체크가 없다 — 렌더가 자리만 비워 글자 시작점을 맞춘다.
     const fallback = many.find((e) => e.id === "account:default");
     expect(fallback?.kind === "item" && fallback.checked).toBe(false);
+  });
+
+  it("offers Mute or Unmute for one registered agent only, from its current state", () => {
+    const item = (entries: SpaceMenuEntry[]) => {
+      const entry = entries.find((candidate) => candidate.id === "mute");
+      return entry?.kind === "item" ? { label: entry.label, action: entry.action } : undefined;
+    };
+    expect(item(buildSpaceMenu({ count: 1, isAgent: true, notificationsMuted: false }))).toEqual({
+      label: t("agents.notifications.mute"),
+      action: { type: "mute" },
+    });
+    expect(item(buildSpaceMenu({ count: 1, isAgent: true, notificationsMuted: true }))).toEqual({
+      label: t("agents.notifications.unmute"),
+      action: { type: "unmute" },
+    });
+    // A terminal row has no agent to mute, and a selection does not mute in bulk.
+    expect(item(buildSpaceMenu({ count: 1 }))).toBeUndefined();
+    expect(item(buildSpaceMenu({ count: 2, notificationsMuted: false }))).toBeUndefined();
   });
 
   it("에이전트는 '삭제', 터미널은 '종료'로 마지막 항목 문구가 갈린다", () => {

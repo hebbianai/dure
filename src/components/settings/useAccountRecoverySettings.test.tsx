@@ -104,7 +104,9 @@ it("edits the viewed server's allowed account order without selecting or copying
 	view.rerender(<AccountRecoverySettings authority={structuredClone(authority)} />);
 	expect(mocks.get).toHaveBeenCalledOnce();
 	fireEvent.click(screen.getByRole("button", { name: "Move two up" }));
-	fireEvent.click(screen.getByRole("switch"));
+	fireEvent.click(
+		screen.getByRole("switch", { name: "Automatic account recovery · Beta" }),
+	);
 	fireEvent.click(screen.getByRole("button", { name: "Save" }));
 	await waitFor(() => expect(mocks.put).toHaveBeenCalledOnce());
 	expect(mocks.get).toHaveBeenCalledWith("team", "codex", authority);
@@ -113,8 +115,32 @@ it("edits the viewed server's allowed account order without selecting or copying
 	expect(mocks.put.mock.calls[0][0]).toMatchObject({
 		enabled: true,
 		accounts: [{ profile: profiles[1] }, { profile: profiles[0] }],
+		continueAfterReset: false,
 	});
 	expect(mocks.put.mock.calls[0][1]).toEqual(authority);
+});
+
+it("saves continuing after a reset on its own, without allowing any account", async () => {
+	const authority = snapshot("team").routeAuthority;
+	render(<AccountRecoverySettings authority={authority} />);
+	// Offered only where the provider's runtime reports its reset.
+	await screen.findByRole("switch", { name: "Automatic account recovery · Beta" });
+	expect(
+		screen.queryByRole("switch", { name: "Continue when the limit resets" }),
+	).toBeNull();
+	cleanup();
+	const view = renderHook(useAccountRecoverySettings);
+	await waitFor(() => expect(view.result.current.ready).toBe(true));
+	act(() => view.result.current.setProvider("claude"));
+	await waitFor(() => expect(view.result.current.ready).toBe(true));
+	act(() => view.result.current.setContinueAfterReset(true));
+	await act(async () => view.result.current.save());
+	expect(mocks.put.mock.calls[0][0]).toMatchObject({
+		providerId: "claude",
+		enabled: false,
+		accounts: [],
+		continueAfterReset: true,
+	});
 });
 
 it("only offers personal accounts after explicit selection and save on the local server", async () => {

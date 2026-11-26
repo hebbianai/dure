@@ -9,6 +9,9 @@ pub(super) fn operation_body_capability(
         )
     {
         Some("browser.profile_recovery.v1")
+    } else if operation == "provider_recovery.put" && body.get("continueAfterReset").is_some() {
+        // A backend with this switch also has account recovery.
+        Some("account_recovery.continue_after_reset.v1")
     } else if operation == "schedule.put"
         && body.pointer("/runTemplate/interactionPreference").is_some()
     {
@@ -51,6 +54,9 @@ pub(super) fn operation_capability(operation: &str) -> Option<&'static str> {
         "agent_conversation.inspect" => Some("agent_conversation.inspect"),
         "agent_conversation.interrupt_turn" => Some("agent_conversation.interrupt_turn"),
         "agent_conversation.read" => Some("agent_conversation.read.v7"),
+        "agent_conversation.read_provider_history" => {
+            Some("agent_conversation.read_provider_history")
+        }
         "agent_conversation.read_queue" => Some("agent_conversation.read_queue"),
         "agent_conversation.inspect_input" => Some("agent_conversation.inspect_input"),
         "agent_conversation.recover" => Some("agent_conversation.recover"),
@@ -166,6 +172,25 @@ mod tests {
                 &serde_json::json!({"runTemplate": {"worktree": {"kind": "dedicated"}}})
             ),
             Some("schedule.put")
+        );
+    }
+
+    #[test]
+    fn continuing_after_a_reset_requires_its_capability_but_omission_stays_compatible() {
+        use super::operation_body_capability;
+        assert_eq!(
+            operation_body_capability(
+                "provider_recovery.put",
+                &serde_json::json!({"enabled": false, "continueAfterReset": true})
+            ),
+            Some("account_recovery.continue_after_reset.v1")
+        );
+        assert_eq!(
+            operation_body_capability(
+                "provider_recovery.put",
+                &serde_json::json!({"enabled": true})
+            ),
+            Some("account_recovery.v1")
         );
     }
 

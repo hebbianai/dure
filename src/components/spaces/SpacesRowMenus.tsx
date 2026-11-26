@@ -7,6 +7,8 @@
 // same entries, they just live inside the menu's lifetime.
 
 import {
+	Bell,
+	BellOff,
 	Check,
 	EyeOff,
 	GitFork,
@@ -37,6 +39,7 @@ import {
 	ContextMenuSubTrigger,
 } from "@/components/ui/context-menu";
 import { useAvailableProviders } from "@/lib/agents/agentInstalls";
+import { useAgentNotificationsMute } from "@/lib/agents/agentNotificationMute";
 import { providerForkInheritsConversation } from "@/lib/agents/providerForkCapability";
 import { t } from "@/lib/i18n";
 import {
@@ -51,6 +54,8 @@ import { type Agent, PROVIDERS, type Provider } from "@/types";
 const MENU_ICONS: Partial<Record<string, React.ReactNode>> = {
 	pin: <Pin />,
 	unpin: <PinOff />,
+	mute: <BellOff />,
+	unmute: <Bell />,
 	restart: <RotateCw />,
 	fork: <GitFork />,
 	"promote-managed": <ShieldCheck />,
@@ -60,7 +65,10 @@ const MENU_ICONS: Partial<Record<string, React.ReactNode>> = {
 function renderMenuEntries(
 	entries: SpaceMenuEntry[],
 	spaceKey: string,
-	handlers: SpaceMenuHandlers & { onTogglePin: () => void },
+	handlers: SpaceMenuHandlers & {
+		onTogglePin: () => void;
+		onToggleNotificationsMuted: () => void;
+	},
 ) {
 	return entries.map((entry) => {
 		if (entry.kind === "label") {
@@ -87,6 +95,8 @@ function renderMenuEntries(
 		const onSelect = () => {
 			if (action.type === "switch-account" && entry.checked) return;
 			if (action.type === "pin" || action.type === "unpin") handlers.onTogglePin();
+			else if (action.type === "mute" || action.type === "unmute")
+				handlers.onToggleNotificationsMuted();
 			else if (action.type === "view-diff") handlers.onViewDiff(spaceKey);
 			else if (action.type === "move-to-desktop")
 				handlers.onMoveToDesktop(spaceKey, action.desktopId);
@@ -179,12 +189,14 @@ export function OpenSpaceRowMenu({
 	// 이동 서브메뉴의 대상 후보 — popout·현재 데스크탑 필터는 buildSpaceMenu가
 	// 소유하므로 여기서는 스토어 목록을 그대로 흘린다.
 	const { desktops, pinned, togglePin } = useOpenSpaceMenuState(space);
+	const notifications = useAgentNotificationsMute(space.agentId);
 	// 메뉴는 렌더마다가 아니라 실제 입력이 바뀔 때만 다시 만든다.
 	const entries = useMemo(
 		() =>
 			buildSpaceMenu({
 				count: selectionCount,
 				pinned,
+				notificationsMuted: notifications.muted,
 				currentDesktopId: space.desktopId,
 				desktops,
 				canViewDiff,
@@ -200,6 +212,7 @@ export function OpenSpaceRowMenu({
 		[
 			selectionCount,
 			pinned,
+			notifications.muted,
 			space.desktopId,
 			desktops,
 			canViewDiff,
@@ -212,7 +225,15 @@ export function OpenSpaceRowMenu({
 			accounts,
 		],
 	);
-	return <>{renderMenuEntries(entries, space.key, { ...menuHandlers, onTogglePin: togglePin })}</>;
+	return (
+		<>
+			{renderMenuEntries(entries, space.key, {
+				...menuHandlers,
+				onTogglePin: togglePin,
+				onToggleNotificationsMuted: notifications.toggle,
+			})}
+		</>
+	);
 }
 
 /** Unopened-row context menu body — same lazy-mount contract as above. */
@@ -236,6 +257,7 @@ export function UnopenedAgentRowMenu({
 	onKill: (agent: Agent) => void;
 }) {
 	const forkProviders = useAvailableProviders();
+	const notifications = useAgentNotificationsMute(agent.id);
 	return (
 		<>
 			<ContextMenuLabel>{displayName}</ContextMenuLabel>
@@ -255,6 +277,12 @@ export function UnopenedAgentRowMenu({
 			<ContextMenuItem onSelect={() => onHide(agent)}>
 				<EyeOff />
 				{t("common.hideFromList")}
+			</ContextMenuItem>
+			<ContextMenuItem onSelect={notifications.toggle}>
+				{notifications.muted ? <Bell /> : <BellOff />}
+				{notifications.muted
+					? t("agents.notifications.unmute")
+					: t("agents.notifications.mute")}
 			</ContextMenuItem>
 			<ContextMenuSeparator />
 			<ContextMenuLabel className="flex items-center gap-1.5">

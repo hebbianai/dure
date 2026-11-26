@@ -73,7 +73,7 @@ async fn stable_structured_authority(
                 Err(AgentConversationApiErrorV1::Conflict)
             }
         },
-        AgentRuntimeObservedV1::Closed(_) | AgentRuntimeObservedV1::Transitioning { .. } => {
+        AgentRuntimeObservedV1::Closed { .. } | AgentRuntimeObservedV1::Transitioning { .. } => {
             Err(AgentConversationApiErrorV1::Conflict)
         }
     }

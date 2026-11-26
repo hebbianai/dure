@@ -38,6 +38,7 @@ fn list_and_inspect_preserve_the_same_host_progress() {
         expected_observation: None,
         background_work: false,
         startup_gate: None,
+        turn_failure: None,
     };
     let reporter = ManagedAgentStateReporter::new(env!("CARGO_BIN_EXE_hmux-runtime"), state.path())
         .with_discovery_root(&discovery);
@@ -205,6 +206,7 @@ fn list_and_inspect_report_how_long_a_quiet_agent_has_been_idle() {
                     expected_observation: None,
                     background_work: false,
                     startup_gate: None,
+                    turn_failure: None,
                 },
             )
             .unwrap(),

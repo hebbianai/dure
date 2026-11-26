@@ -42,9 +42,51 @@ pub struct ProviderRecoveryPolicyV1 {
     pub revision: u64,
     pub enabled: bool,
     pub accounts: Vec<ProviderRecoveryAccountV1>,
+    /// With no allowed account left, continue the same request once when the
+    /// provider's reported limit resets. Absent when off, so clients that
+    /// predate it read an unchanged policy.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub continue_after_reset: bool,
     /// Enabling recovery does not automatically replay older failed work.
     pub activated_at_ms: Option<i64>,
     pub updated_at_ms: i64,
+}
+
+impl ProviderRecoveryPolicyV1 {
+    /// Whether any automatic recovery is on for failures from `at_ms` on.
+    pub fn active_at(&self, at_ms: i64) -> bool {
+        (self.enabled || self.continue_after_reset)
+            && self
+                .activated_at_ms
+                .is_some_and(|activated| activated <= at_ms)
+    }
+
+    /// Whether a recovery plan for a failure at `failed_at_ms` is permitted:
+    /// a switch to `target` needs the switch enabled and the account allowed;
+    /// with no target, a same-account continuation after the reported reset
+    /// needs continuing after a reset turned on.
+    pub fn permits(
+        &self,
+        failed_at_ms: i64,
+        target: Option<&ProviderRecoveryAccountV1>,
+        continues_after_reset: bool,
+    ) -> bool {
+        self.active_at(failed_at_ms)
+            && match target {
+                Some(target) => {
+                    self.enabled
+                        && self
+                            .accounts
+                            .iter()
+                            .any(|account| account.profile == target.profile)
+                }
+                None => continues_after_reset && self.continue_after_reset,
+            }
+    }
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -56,6 +98,9 @@ pub struct ProviderRecoveryPolicyPutV1 {
     pub idempotency_key: String,
     pub enabled: bool,
     pub accounts: Vec<ProviderRecoveryAccountV1>,
+    /// Requires the `account_recovery.continue_after_reset.v1` capability.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub continue_after_reset: bool,
 }
 
 impl ProviderRecoveryPolicyPutV1 {

@@ -1488,6 +1488,8 @@ fn terminal_surface_carries_initial_and_live_runtime_state_with_one_revision_fen
         turn_completed_count: revision - 7,
         program_status: None,
         background_work: false,
+        held_prompts: None,
+        turn_failure: None,
     };
     let (client, mut host) = MemoryEndpoint::pair();
     let mut ack = hello_ack(&[
@@ -1592,6 +1594,8 @@ fn terminal_surface_advances_output_before_delivering_runtime_state_at_that_view
         turn_completed_count: 0,
         program_status: None,
         background_work: false,
+        held_prompts: None,
+        turn_failure: None,
     };
     let (client, mut host) = MemoryEndpoint::pair();
     let mut ack = hello_ack(&[
@@ -1689,6 +1693,8 @@ fn terminal_surface_stages_latest_semantics_until_async_viewport_catches_up() {
         turn_completed_count: revision - 7,
         program_status: None,
         background_work: false,
+        held_prompts: None,
+        turn_failure: None,
     };
     let (client, mut host) = MemoryEndpoint::pair();
     let mut ack = hello_ack(&[
@@ -2729,6 +2735,8 @@ fn terminal_surface_delivery_counts_hidden_future_controls_against_the_pull_cap(
                         turn_completed_count: 0,
                         program_status: None,
                         background_work: false,
+                        held_prompts: None,
+                        turn_failure: None,
                     }),
                 })
                 .unwrap(),
@@ -5324,6 +5332,8 @@ fn terminal_stream_reducer_fences_agent_runtime_state_by_output_and_revision() {
             turn_completed_count: 0,
             program_status: None,
             background_work: false,
+            held_prompts: None,
+            turn_failure: None,
         })
     };
     let mut reducer = TerminalStreamReducer::new(fence(), 2, None, Some(3), None, None);
@@ -5434,6 +5444,8 @@ fn structured_semantic_staging_keeps_fences_revisions_and_identity_fail_closed()
             turn_completed_count: 0,
             program_status: None,
             background_work: false,
+            held_prompts: None,
+            turn_failure: None,
         })
     };
     let identity = |conversation_id: &str, revision: u64, output_seq: u64| {
