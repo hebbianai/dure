@@ -1,12 +1,17 @@
+import { spawn } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   hmuxSession,
@@ -16,11 +21,13 @@ import {
   runSessionCli,
   writeRegistry,
 } from "./lib/dure-session-test-fixture.mjs";
-import { sshBackendProfile } from "./lib/dure-cli-ssh-fixture.mjs";
+import { FUNCTIONAL_DEADLINE_MS, sshBackendProfile } from "./lib/dure-cli-ssh-fixture.mjs";
 import { LocalBackendError } from "../cli/lib/local-backend.mjs";
+import { RECOVERY_WAITS_CAPABILITY } from "../cli/lib/recovery-waits.mjs";
 import {
   collectSessionQuery,
   sessionQueryExitCode,
+  withRecoveryWaits,
 } from "../cli/lib/session-query.mjs";
 import { collectAllBackendsSessionQuery } from "../cli/lib/session-query-all-backends.mjs";
 
@@ -858,5 +865,259 @@ describe("dure ls --all-backends", () => {
     expect(report.source.kind).toBe("local_hmux");
     expect(report.backends).toBeUndefined();
     expect(report.sessions[0].backendProfileId).toBeUndefined();
+  });
+});
+
+describe("dure ls recovery waits", () => {
+  const SESSION_CAPABILITIES = [
+    "sessions.list",
+    "sessions.list.bounded_catalog_v1",
+    "sessions.read",
+    "sessions.show",
+  ];
+  // 2h 10m and a margin for the listing itself, so the column is exact.
+  const inTwoHoursTenMinutes = () => Date.now() + (2 * 60 + 10) * 60_000 + 30_000;
+
+  function remoteAgent(id, sessionIndex) {
+    return {
+      id, name: id, displayName: id, sessionId: `session-${sessionIndex}`,
+      provider: "codex", worktree: "/repo",
+      runtimeBinding: {
+        runtime: "hmux_managed_v1", source: "ssh", hostId: "remote-build",
+        ...hostGeneration({ sessionId: `session-${sessionIndex}`, workspaceId: `workspace-${sessionIndex}` }),
+      },
+    };
+  }
+
+  function remoteEnvironment(root, remote) {
+    return {
+      PATH: `${remote.bin}:${process.env.PATH}`,
+      DURE_BACKEND_KNOWN_HOSTS_FILE: remote.knownHostsFile,
+      DURE_BACKEND_SSH_REFERENCE_PROFILE: "remote-build",
+      DURE_SESSION_REQUEST_LOG: remote.requestLog,
+    };
+  }
+
+  function requestedOperations(remote) {
+    return readFileSync(remote.requestLog, "utf8").trim().split("\n")
+      .map((line) => JSON.parse(line).operation).sort();
+  }
+
+  function rowOf(stdout, sessionId) {
+    return stdout.trim().split("\n").find((line) => line.startsWith(`${sessionId}\t`)).split("\t");
+  }
+
+  it("shows when each waiting Agent continues, from the backend that lists it", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, { error: "must not execute" }, { status: 77 });
+    const resumeAtMs = inTwoHoursTenMinutes();
+    const remote = installRemoteBackendFixture(root, [hmuxSession(1), hmuxSession(2)], {
+      capabilities: [...SESSION_CAPABILITIES, RECOVERY_WAITS_CAPABILITY],
+      results: {
+        "agent_recovery.waits": {
+          schemaVersion: 1,
+          waits: [
+            { agentId: "remote-agent-1", attemptId: "attempt-1", resumeAtMs },
+            // An Agent no listed row names stays off the rows.
+            { agentId: "agent-elsewhere", attemptId: "attempt-2", resumeAtMs },
+          ],
+        },
+      },
+    });
+    writeRegistry(root, [remoteAgent("remote-agent-1", 1), remoteAgent("remote-agent-2", 2)]);
+    const environment = remoteEnvironment(root, remote);
+
+    const json = runSessionCli(root, hmux, ["ls", "--backend", "remote-build", "--json"], environment);
+    const table = runSessionCli(root, hmux, ["ls", "--backend", "remote-build"], environment);
+
+    expect(json.status, `${json.stdout}\n${json.stderr}`).toBe(0);
+    const sessions = JSON.parse(json.stdout).sessions;
+    expect(sessions.map((session) => [session.sessionId, session.recoveryWaits])).toEqual([
+      ["session-1", [{ agentId: "remote-agent-1", attemptId: "attempt-1", resumeAtMs }]],
+      ["session-2", []],
+    ]);
+    expect(table.status, `${table.stdout}\n${table.stderr}`).toBe(0);
+    expect(table.stdout.split("\n")[0].split("\t").at(-1)).toBe("CONTINUES");
+    expect(rowOf(table.stdout, "session-1").at(-1)).toBe("in 2h 10m");
+    expect(rowOf(table.stdout, "session-2").at(-1)).toBe("-");
+    expect(requestedOperations(remote)).toEqual([
+      "agent_recovery.waits", "agent_recovery.waits", "sessions.list", "sessions.list",
+    ]);
+  });
+
+  it("says unknown, without asking, when the backend predates the list", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, { error: "must not execute" }, { status: 77 });
+    const remote = installRemoteBackendFixture(root, [hmuxSession(1), hmuxSession(2)]);
+    writeRegistry(root, [remoteAgent("remote-agent-1", 1)]);
+    const environment = remoteEnvironment(root, remote);
+
+    const json = runSessionCli(root, hmux, ["ls", "--backend", "remote-build", "--json"], environment);
+    const table = runSessionCli(root, hmux, ["ls", "--backend", "remote-build"], environment);
+
+    expect(json.status, `${json.stdout}\n${json.stderr}`).toBe(0);
+    expect(JSON.parse(json.stdout).sessions.map((session) => session.recoveryWaits)).toEqual([null, null]);
+    // Only a row that names an Agent has a wait to be unknown.
+    expect(rowOf(table.stdout, "session-1").at(-1)).toBe("unknown");
+    expect(rowOf(table.stdout, "session-2").at(-1)).toBe("-");
+    expect(requestedOperations(remote)).toEqual(["sessions.list", "sessions.list"]);
+  });
+
+  function managedLocalCatalog(root, capabilities) {
+    const socketPath = join(root, "backend", "control-plane.sock");
+    const profile = {
+      id: "local",
+      default: true,
+      transport: { kind: "local", endpoint: { kind: "unix_socket", path: socketPath } },
+      auth: { kind: "peer" },
+      trust: { kind: "local_peer" },
+      expected: {
+        backendId: "dure-local",
+        generation: `local-v1-${"1".repeat(32)}`,
+        protocol: { minimum: { major: 1, minor: 0 }, maximum: { major: 1, minor: 0 } },
+        capabilities,
+      },
+      deadlineMs: FUNCTIONAL_DEADLINE_MS,
+    };
+    mkdirSync(join(root, "backend"), { recursive: true, mode: 0o700 });
+    writeFileSync(
+      join(root, "backend-profiles.json"),
+      JSON.stringify({ schemaVersion: 1, kind: "dure.backend_profiles", profiles: [profile] }),
+      { mode: 0o600 },
+    );
+    return { profile, socketPath };
+  }
+
+  function localBackendServer(profile, waits) {
+    const requests = [];
+    const server = createServer((socket) => {
+      let source = "";
+      socket.on("data", (chunk) => {
+        source += chunk.toString("utf8");
+        if (!source.includes("\n")) return;
+        const request = JSON.parse(source.trim());
+        requests.push(request);
+        socket.end(`${JSON.stringify({
+          schemaVersion: 1,
+          apiVersion: "dure.backend-transport/v1",
+          kind: "dure.backend.response",
+          requestId: request.requestId,
+          backend: {
+            id: profile.expected.backendId,
+            generation: profile.expected.generation,
+            protocol: { major: 1, minor: 0 },
+            capabilities: profile.expected.capabilities,
+            observedAtMs: Date.now(),
+          },
+          result: { schemaVersion: 1, waits },
+        })}\n`);
+      });
+    });
+    return { requests, server };
+  }
+
+  function listen(server, socketPath) {
+    return new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, () => {
+        server.off("error", reject);
+        chmodSync(socketPath, 0o600);
+        resolve();
+      });
+    });
+  }
+
+  // The listing must not block this process: the backend answers from here.
+  function runSessionCliAsync(root, hmux, args) {
+    const cliPath = fileURLToPath(new URL("../cli/dure.mjs", import.meta.url));
+    return new Promise((resolve, reject) => {
+      const child = spawn(process.execPath,
+        [cliPath, ...args, "--deadline-ms", String(FUNCTIONAL_DEADLINE_MS)], {
+          env: { PATH: process.env.PATH, DURE_APP_CHANNEL: "stable", DURE_HOME: root, DURE_HMUX_BIN: hmux },
+        });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.on("error", reject);
+      child.on("close", (status) => resolve({ status, stdout, stderr }));
+    });
+  }
+
+  function localAgent(id) {
+    return {
+      id, name: id, displayName: id, sessionId: "session-1", provider: "codex", worktree: "/repo",
+      runtimeBinding: { runtime: "hmux_managed_v1", source: "local", hostId: "local", ...hostGeneration() },
+    };
+  }
+
+  it("asks this machine's running backend for plain dure ls", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dure-lsw-"));
+    temporaryRoots.push(root);
+    const hmux = installHmuxStub(root, [hmuxSession()]);
+    writeRegistry(root, [localAgent("agent-local")]);
+    const { profile, socketPath } = managedLocalCatalog(root, ["sessions.list", RECOVERY_WAITS_CAPABILITY]);
+    const resumeAtMs = inTwoHoursTenMinutes();
+    const backend = localBackendServer(profile, [
+      { agentId: "agent-local", attemptId: "attempt-1", resumeAtMs },
+    ]);
+    await listen(backend.server, socketPath);
+
+    try {
+      const result = await runSessionCliAsync(root, hmux, ["ls", "--json"]);
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const report = JSON.parse(result.stdout);
+      expect(report.source.kind).toBe("local_hmux");
+      expect(report.sessions[0].recoveryWaits).toEqual([
+        { agentId: "agent-local", attemptId: "attempt-1", resumeAtMs },
+      ]);
+      expect(backend.requests.map((request) => request.operation)).toEqual(["agent_recovery.waits"]);
+    } finally {
+      await new Promise((resolve) => backend.server.close(resolve));
+    }
+  });
+
+  it("starts no service for plain dure ls when this machine's backend is not running", () => {
+    const root = mkdtempSync(join(tmpdir(), "dure-lsw-"));
+    temporaryRoots.push(root);
+    const hmux = installHmuxStub(root, [hmuxSession()]);
+    writeRegistry(root, [localAgent("agent-local")]);
+    managedLocalCatalog(root, ["sessions.list", RECOVERY_WAITS_CAPABILITY]);
+
+    const result = runSessionCli(root, hmux, ["ls", "--json"]);
+    const table = runSessionCli(root, hmux, ["ls"]);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(JSON.parse(result.stdout).sessions[0].recoveryWaits).toBeNull();
+    expect(rowOf(table.stdout, "session-1").at(-1)).toBe("unknown");
+    expect(existsSync(join(root, "backend", "control-plane.json"))).toBe(false);
+    expect(existsSync(join(root, "server.json"))).toBe(false);
+  });
+
+  it("reads each listed backend's own waits and never another backend's for it", async () => {
+    const seen = [];
+    const local = { profile: { id: "local" } };
+    const collect = withRecoveryWaits(async (query) => ({
+      kind: "dure.sessions.list",
+      sessions: [{ clientProjection: { agents: [{ id: "agent-1" }] } }],
+      backendId: query.backend?.profile?.id ?? null,
+    }), {
+      localBackend: local,
+      readWaits: async (backend) => {
+        seen.push(backend?.profile?.id ?? (backend?.error ? "error" : null));
+        return backend?.profile ? [{ agentId: "agent-1", attemptId: "a", resumeAtMs: 1 }] : null;
+      },
+    });
+
+    const remote = await collect({ backend: { profile: { id: "remote-build" } } });
+    const failed = await collect({ backend: { error: new Error("unreachable") } });
+    const plain = await collect({ backend: null });
+
+    expect(seen).toEqual(["remote-build", "error", "local"]);
+    expect(remote.sessions[0].recoveryWaits).toHaveLength(1);
+    // A backend that could not be resolved is unknown, not this machine's.
+    expect(failed.sessions[0].recoveryWaits).toBeNull();
+    expect(plain.sessions[0].recoveryWaits).toHaveLength(1);
   });
 });

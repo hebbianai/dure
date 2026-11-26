@@ -10,6 +10,11 @@ import {
   formatRegisteredAccounts,
   summarizeRegisteredAccounts,
 } from "./recovery-accounts.mjs";
+import {
+  RECOVERY_WAITS_BODY,
+  RECOVERY_WAITS_CAPABILITY,
+  RECOVERY_WAITS_OPERATION,
+} from "./recovery-waits.mjs";
 
 export const RECOVERY_HELP = `dure recovery — automatic account recovery on the owning backend (Beta)
 
@@ -52,7 +57,8 @@ status then shows wait {agentId, attemptId, resumeAtMs} for a Chat or terminal
 agent while it waits, and a Chat agent's recovery.resumeAtMs. waits lists every
 agent on the backend that waits for a reset this way, with the same fields;
 the app shows "Continues at ..." on these agents' rows and leaves them out of
-Needs you. A person's input before then takes over and ends the wait.
+Needs you, and dure ls shows it in CONTINUES. A person's input before then
+takes over and ends the wait.
 Joining a workspace does not register or offer personal accounts. Unknown usage
 is eligible; optional observations contain {profile, usedPercent, observedAtMs}.
 Before switching, the backend also reads the usage the app last observed on
@@ -122,7 +128,7 @@ export function parseRecoveryCommand(args) {
     if (!Array.isArray(observations)) throw new Error(RECOVERY_HELP);
     body = { schemaVersion: 1, observations };
   } else if (action === "waits") {
-    body = { schemaVersion: 1 };
+    body = RECOVERY_WAITS_BODY;
   } else {
     body = { schemaVersion: 1,
       ...(action === "get" ? { providerId: target } : { agentId: target }) };
@@ -130,9 +136,9 @@ export function parseRecoveryCommand(args) {
   return {
     action, backend: options["--backend"], body, json,
     operation: action === "status" ? "agent_recovery.read"
-      : action === "waits" ? "agent_recovery.waits"
+      : action === "waits" ? RECOVERY_WAITS_OPERATION
       : `provider_recovery.${action === "observe" ? "observe_usage" : action}`,
-    requiredCapabilities: action === "waits" ? ["account_recovery.waits.v1"]
+    requiredCapabilities: action === "waits" ? [RECOVERY_WAITS_CAPABILITY]
       : ["account_recovery.v1",
         ...(body.continueAfterReset ? ["account_recovery.continue_after_reset.v1"] : [])],
   };

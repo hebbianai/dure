@@ -7,6 +7,7 @@ import {
   findAgentPane,
   parseClientPresentation,
 } from "./client-presentation-state.mjs";
+import { readRecoveryWaits } from "./recovery-waits.mjs";
 import { supportsHmuxCapability } from "./runtime-diagnostics.mjs";
 import {
   HMUX_SESSION_PAGINATION_CAPABILITY, SESSION_PAGINATION_CAPABILITY,
@@ -1024,6 +1025,38 @@ export function collectAliveSessionQuery(options, collect = collectSessionQuery)
   );
 }
 
+/** Each row's Agents whose recovery continues them by itself after a usage
+ * limit resets, as the backend that owns the listing reports them: a backend
+ * listing uses its own list, and a Hmux listing of this machine the managed
+ * local backend's (`localBackend`). `recoveryWaits` is null when that backend
+ * cannot say. The list is read alongside the listing, within its deadline. */
+export function withRecoveryWaits(collect, {
+  localBackend = null,
+  readWaits = readRecoveryWaits,
+} = {}) {
+  return async (query) => {
+    const [report, waits] = await Promise.all([
+      collect(query),
+      readWaits(query.backend ?? localBackend, {
+        requestBackend: query.requestBackend,
+        deadlineMs: query.deadlineMs ?? DEFAULT_SESSION_QUERY_DEADLINE_MS,
+        signal: query.signal,
+      }),
+    ]);
+    const attach = (session) => ({
+      ...session,
+      recoveryWaits: waits && waits.filter((wait) =>
+        session.clientProjection.agents.some((agent) => agent.id === wait.agentId)),
+    });
+    if (report.kind === "dure.sessions.list") {
+      return { ...report, sessions: report.sessions.map(attach) };
+    }
+    return report.kind === "dure.sessions.show"
+      ? { ...report, session: attach(report.session) }
+      : report;
+  };
+}
+
 export function sessionQueryExitCode(report) {
   if (report.kind === "dure.sessions.error") return 2;
   // A listing across backends still succeeds when only some of them answered.
@@ -1047,8 +1080,21 @@ function heldColumn(session) {
     : "-";
 }
 
+// When recovery continues a row's waiting Agents, measured against the same
+// observation as IDLE. A row that names Agents its backend could not report
+// on is unknown; a wait whose time has come is due.
+function continuesColumn(session) {
+  const waits = session.recoveryWaits;
+  if (waits === null) return session.clientProjection.agents.length > 0 ? "unknown" : "-";
+  if (!waits?.length) return "-";
+  return waits.map((wait) => {
+    const remainingMs = wait.resumeAtMs - session.liveness.observedAtMs;
+    return remainingMs > 0 ? `in ${formatDuration(remainingMs)}` : "due";
+  }).join(",");
+}
+
 export const SESSION_TABLE_HEADER =
-  "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tACTIVITY\tIDLE\tHELD\tAGENTS\tACCOUNT\tFAILURE\tPROGRESS";
+  "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tACTIVITY\tIDLE\tHELD\tAGENTS\tACCOUNT\tFAILURE\tPROGRESS\tCONTINUES";
 
 export function sessionTableRow(session) {
   return [
@@ -1070,6 +1116,7 @@ export function sessionTableRow(session) {
       ? `${session.failure.code} (${session.failure.correlationId})`
       : "-",
     session.runtime?.agentRuntimeState?.progress?.progress_unconfirmed ? "progress_unconfirmed" : session.runtime?.agentRuntimeState?.progress?.report.phase ?? "unknown",
+    continuesColumn(session),
   ].join("\t");
 }
 

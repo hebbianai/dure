@@ -1547,6 +1547,21 @@ export function isManagedDefaultLocalProfile(profile, environment = process.env)
   );
 }
 
+/** The managed local backend's profile as its catalog records it, or null.
+ * It neither starts nor reconciles the service, so a read that must not start
+ * one can use it; a profile the running service has replaced fails its own
+ * request instead. */
+export function recordedManagedLocalProfile(environment = process.env) {
+  let catalog;
+  try {
+    catalog = loadBackendProfiles({ environment });
+  } catch {
+    return null;
+  }
+  return catalog.profiles.find((profile) =>
+    isCanonicalManagedLocalProfile(profile, environment)) ?? null;
+}
+
 export async function loadBackendProfilesWithDefault({
   cliScriptPath,
   environment = process.env,

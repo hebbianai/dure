@@ -335,6 +335,9 @@ Automatic recovery is a separate opt-in backend policy. `dure recovery --help`
 describes `get`, revision-fenced `put`, and read-only `status AGENT_ID`. The policy
 uses only explicitly allowed accounts; configuring it may require Dure Pro.
 Never enable it or select additional accounts without the user's authorization.
+When recovery will continue an agent by itself after its usage limit resets,
+`dure ls` shows when in `CONTINUES` (`in 2h 10m`). Input sent before then takes
+over and ends the wait.
 
 ## Find and recover an existing Run
 

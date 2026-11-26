@@ -64,6 +64,6 @@ Claude and Codex usage controls show available provider-reported limits and rese
 
 Fresh available usage is preferred; unknown or stale usage does not prevent trying an allowed account. A failed or uncertain attempt remains visible and is not blindly resent. Later human input takes priority. Manual account switching remains available, and authentication failures still need attention.
 
-Use `dure recovery get codex --backend SERVER --json` to inspect the policy and registered profile handles, `dure recovery status AGENT_ID --backend SERVER --json` to read a recovery outcome, or `dure recovery waits --backend SERVER` to list the agents waiting for a reset. `dure recovery help` describes revision-based edits and optional usage observations. These commands connect directly to the selected backend.
+Use `dure recovery get codex --backend SERVER --json` to inspect the policy and registered profile handles, `dure recovery status AGENT_ID --backend SERVER --json` to read a recovery outcome, or `dure recovery waits --backend SERVER` to list the agents waiting for a reset; `dure ls` shows when each waiting agent continues in its `CONTINUES` column. `dure recovery help` describes revision-based edits and optional usage observations. These commands connect directly to the selected backend.
 
 Default provider and permission choices are under **Settings → General**. Choose permissions for the actual task; [worktrees do not create a sandbox](/en/current-limits#file-separation-and-permissions).

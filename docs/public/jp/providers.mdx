@@ -64,6 +64,6 @@ Claude と Codex の使用量コントロールは、プロバイダーが返し
 
 最近の使用量に余裕があるアカウントを優先しますが、使用量が不明または古くても許可したアカウントは試行できます。失敗や結果不明の試行は表示され、無条件に再送されません。後から届いた人の入力が優先されます。手動切り替えは引き続き利用でき、認証の失敗には対応が必要です。
 
-`dure recovery get codex --backend SERVER --json`で設定と登録済みアカウントを、`dure recovery status AGENT_ID --backend SERVER --json`で復旧結果を、`dure recovery waits --backend SERVER`でリセットを待っているエージェントを確認できます。リビジョンを指定する設定変更や使用量の送信については`dure recovery help`を参照してください。コマンドは選択したサーバーに直接接続します。
+`dure recovery get codex --backend SERVER --json`で設定と登録済みアカウントを、`dure recovery status AGENT_ID --backend SERVER --json`で復旧結果を、`dure recovery waits --backend SERVER`でリセットを待っているエージェントを確認できます。`dure ls`の`CONTINUES`列には、待っているエージェントがいつ再開するかが表示されます。リビジョンを指定する設定変更や使用量の送信については`dure recovery help`を参照してください。コマンドは選択したサーバーに直接接続します。
 
 既定のプロバイダーと権限は **Settings → General** で選べます。実際のタスクに合わせて設定してください。[worktree はサンドボックスではありません](/jp/current-limits#ファイル分離と権限)。
