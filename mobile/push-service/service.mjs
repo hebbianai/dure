@@ -19,7 +19,7 @@ import { createServer } from "node:http";
 import { bindingId, createBindings } from "./bindings.mjs";
 import { CHALLENGE_REPEAT_MS, createChallenges, createRefusedTokens } from "./challenges.mjs";
 import { grantFits, grantSignatureHolds, readGrant } from "./grant.mjs";
-import { APPROVAL_RESERVE, charge, createLimits } from "./limits.mjs";
+import { APPROVAL_RESERVE, charge, clientKey, createLimits } from "./limits.mjs";
 
 const MAX_REQUEST = 16 * 1024;
 /** The alert kinds this service sends. */
@@ -136,19 +136,20 @@ function readMessage(message, { version, operation, now, audiences }) {
  * - `bindings`: the proven bindings; in memory unless given a durable store.
  * - `clientAddressHeader`: a header the proxy in front sets to the client's
  *   address, such as `fly-client-ip`. Without one, the socket's address.
- * - `limits`: the abuse limits, {@link createLimits} unless a test narrows one.
+ * - `limits`, `challenges`: the abuse limits and the pending challenges, as
+ *   {@link createLimits} and {@link createChallenges} make them unless a test
+ *   narrows one.
  */
-export function createPushServer({ allowedHubs = [], audiences = [], sender, now = Date.now, bindings = createBindings({ now }), limits = createLimits({ now }), clientAddressHeader }) {
+export function createPushServer({ allowedHubs = [], audiences = [], sender, now = Date.now, bindings = createBindings({ now }), limits = createLimits({ now }), challenges = createChallenges({ now }), clientAddressHeader }) {
   const hubs = new Set([...allowedHubs].map(readHubFingerprint));
   const services = new Set([...audiences].map(readAudience));
   if (services.size === 0) throw new Error("At least one push audience is required");
   const api = hubs.size ? [1, 2] : [2];
-  const challenges = createChallenges({ now });
   const refusedTokens = createRefusedTokens({ now });
   const receipts = new Map();
   const pending = new Map();
   const addressHeader = clientAddressHeader?.toLowerCase();
-  const clientAddress = (request) => String((addressHeader && request.headers[addressHeader]) || request.socket.remoteAddress || "unknown").slice(0, 64);
+  const clientAddress = (request) => clientKey((addressHeader && request.headers[addressHeader]) || request.socket.remoteAddress || "unknown");
 
   // The alert itself, for a sender already allowed to reach this token.
   // Concurrent copies of one event share one APNs call and one charge.
@@ -193,24 +194,28 @@ export function createPushServer({ allowedHubs = [], audiences = [], sender, now
   }
 
   // A phone key that has not proved receipt is sent a challenge. The answer
-  // is the same whether the token is unbound or bound to another key.
+  // is the same whether the token is unbound or bound to another key. A
+  // challenge is recorded only once its alert is charged and sent, so
+  // refused registers cannot fill the table.
   async function challenge({ id, grant, subscription, ip }) {
-    const entry = challenges.open(id, grant.keyId);
-    if (!entry) return limited(Math.ceil(CHALLENGE_REPEAT_MS / 1000));
     const sent = answer(202, "challenge_sent", { key: grant.keyId });
-    if (entry.pushedAt !== undefined && now() - entry.pushedAt < CHALLENGE_REPEAT_MS) return sent;
+    const pendingChallenge = challenges.get(id, grant.key);
+    if (pendingChallenge && now() - pendingChallenge.pushedAt < CHALLENGE_REPEAT_MS) return sent;
+    if (!pendingChallenge && challenges.full()) return limited(Math.ceil(CHALLENGE_REPEAT_MS / 1000));
     const wait = charge([limits.challengeStarts, ip], [limits.challenges, "all"], [limits.tokenChallengesHour, id], [limits.tokenChallengesDay, id]);
     if (wait) return limited(wait);
-    const previous = entry.pushedAt;
+    const entry = pendingChallenge ?? challenges.open(id, grant.key);
+    const previous = pendingChallenge?.pushedAt;
     entry.pushedAt = now();
     const result = await Promise.resolve().then(() => sender.challenge(subscription, { nonce: entry.nonce, key: grant.keyId }, id)).catch(() => ({ status: "unavailable" }));
     if (result.status === "accepted") return sent;
     if (result.status === "unregistered") {
       refusedTokens.add(id);
-      challenges.close(id, grant.keyId);
+      challenges.close(id, grant.key);
       return REFUSED;
     }
-    entry.pushedAt = previous;
+    if (pendingChallenge) entry.pushedAt = previous;
+    else challenges.close(id, grant.key);
     return answer(502, "unavailable");
   }
 
@@ -245,11 +250,11 @@ export function createPushServer({ allowedHubs = [], audiences = [], sender, now
       return stored(await bindings.put(id, renewed));
     }
     if (fit === "expired") return REFUSED;
-    if (claims.nonce && challenges.answers(id, grant.keyId, claims.nonce)) {
+    if (claims.nonce && challenges.answers(id, grant.key, claims.nonce)) {
       // Proof of receipt: this key's phone got the challenge. It binds the
       // token, replacing any other key.
       const result = await bindings.put(id, { key: grant.key, epoch: claims.epoch, until: claims.expiresAt, boundAt: Math.floor(now() / 1000) });
-      if (result === "saved") challenges.close(id, grant.keyId);
+      if (result === "saved") challenges.close(id, grant.key);
       return stored(result);
     }
     return challenge({ id, grant, subscription, ip });

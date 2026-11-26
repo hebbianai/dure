@@ -159,6 +159,22 @@ test("a change that cannot be written is undone and answered unavailable", async
   assert.equal(bindings.get(fresh), undefined);
 });
 
+test("queued changes that all fail leave the record as the journal last held it", async () => {
+  const state = directory();
+  const bindings = await openBindings({ directory: state, now: () => NOW, log: quiet() });
+  assert.equal(await bindings.put(id, record()), "saved");
+  await bindings.close();
+  // Two rebinds in flight at once, neither written: the first must not come back.
+  assert.deepEqual(await Promise.all([bindings.put(id, record({ key: otherKey })), bindings.put(id, record({ epoch: 9 }))]), ["unavailable", "unavailable"]);
+  assert.deepEqual(bindings.get(id), record());
+  // A drop and a put in flight at once, neither written.
+  assert.deepEqual(await Promise.all([bindings.drop(id), bindings.put(id, record({ epoch: 9 }))]), ["unavailable", "unavailable"]);
+  assert.deepEqual(bindings.get(id), record());
+  const reopened = await openBindings({ directory: state, now: () => NOW, log: quiet() });
+  assert.deepEqual(reopened.get(id), record());
+  await reopened.close();
+});
+
 test("a directory that cannot be written fails when the store opens", async () => {
   const blocked = path.join(root, "not-a-directory");
   writeFileSync(blocked, "");

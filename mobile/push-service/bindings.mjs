@@ -51,9 +51,35 @@ function store(records, journal, { now, max, log }) {
     prune(records, now);
     return records.size >= max;
   };
-  // The change is already in memory, so a concurrent request sees it. It is
-  // undone only if it is still the latest change of that record.
-  const persist = (entry, undo) => (journal ? journal.append(entry) : Promise.resolve()).then(() => "saved", () => { undo(); return "unavailable"; });
+  // A change is in memory at once, so a concurrent request sees it. While
+  // writes of a record are in flight, `durable` is what the journal last
+  // took for it. A failed write puts that back, unless a later change of the
+  // record has replaced this one since: that change's own write decides.
+  const inflight = new Map();
+  const change = (id, next, entry) => {
+    let flight = inflight.get(id);
+    if (!flight) {
+      flight = { durable: records.get(id), writes: 0, latest: undefined };
+      inflight.set(id, flight);
+    }
+    const mark = {};
+    flight.latest = mark;
+    flight.writes++;
+    if (next) records.set(id, next);
+    else records.delete(id);
+    const settle = (saved) => {
+      if (saved) flight.durable = next;
+      else if (flight.latest === mark) {
+        if (flight.durable) records.set(id, flight.durable);
+        else records.delete(id);
+      }
+      if (--flight.writes === 0) inflight.delete(id);
+      return saved ? "saved" : "unavailable";
+    };
+    // Settling in the write's own reaction runs before the next queued write
+    // starts, so `durable` always follows journal order.
+    return (journal ? journal.append(entry) : Promise.resolve()).then(() => settle(true), () => settle(false));
+  };
   return {
     get(id) {
       const record = records.get(id);
@@ -69,26 +95,17 @@ function store(records, journal, { now, max, log }) {
     put(id, value) {
       if (!isId(id)) throw new TypeError("Invalid binding id");
       const record = readRecord(value);
-      const previous = records.get(id);
-      if (!previous && full()) return Promise.resolve("capacity");
-      records.set(id, record);
+      if (!records.has(id) && full()) return Promise.resolve("capacity");
+      const saved = change(id, record, { op: "put", id, ...record });
       if (!warned && records.size >= max * WARN_RATIO) {
         warned = true;
         log("Push bindings reached 80% of capacity");
       }
-      return persist({ op: "put", id, ...record }, () => {
-        if (records.get(id) !== record) return;
-        if (previous) records.set(id, previous);
-        else records.delete(id);
-      });
+      return saved;
     },
     drop(id) {
-      const previous = records.get(id);
-      if (!previous) return Promise.resolve("saved");
-      records.delete(id);
-      return persist({ op: "drop", id }, () => {
-        if (!records.has(id)) records.set(id, previous);
-      });
+      if (!records.has(id)) return Promise.resolve("saved");
+      return change(id, undefined, { op: "drop", id });
     },
     get size() { return records.size; },
     close: () => journal?.close() ?? Promise.resolve(),
@@ -141,13 +158,15 @@ async function syncDirectory(directory) {
   try { await handle.sync(); } finally { await handle.close(); }
 }
 
-async function writeSnapshot(directory, records) {
+const snapshotText = (records) => JSON.stringify({ version: SNAPSHOT_VERSION, bindings: Object.fromEntries(records) });
+
+async function writeSnapshot(directory, text) {
   const target = path.join(directory, SNAPSHOT);
   const staged = `${target}.tmp`;
   const handle = await open(staged, "w", 0o600);
   try {
     await handle.chmod(0o600);
-    await handle.writeFile(JSON.stringify({ version: SNAPSHOT_VERSION, bindings: Object.fromEntries(records) }));
+    await handle.writeFile(text);
     await handle.sync();
   } finally {
     await handle.close();
@@ -182,7 +201,7 @@ export async function openBindings({ directory, now = Date.now, max = MAX_BINDIN
     records = new Map();
   }
   prune(records, now);
-  await writeSnapshot(directory, records);
+  await writeSnapshot(directory, snapshotText(records));
   const reset = await open(journalFile, "w", 0o600);
   try { await reset.chmod(0o600); await reset.sync(); } finally { await reset.close(); }
   await chmod(journalFile, 0o600);
@@ -193,13 +212,14 @@ export async function openBindings({ directory, now = Date.now, max = MAX_BINDIN
   let bytes = 0;
   let lines = 0;
   let broken = false;
-  const compact = async () => {
-    prune(records, now);
-    await writeSnapshot(directory, records);
+  // `text` is taken before the first await, so later changes stay out of it
+  // and reach the new journal after it.
+  const compact = async (text) => {
+    await writeSnapshot(directory, text);
     await handle.truncate(0);
-    await handle.sync();
     bytes = 0;
     lines = 0;
+    await handle.sync();
   };
   const journal = {
     append(entry) {
@@ -220,7 +240,8 @@ export async function openBindings({ directory, now = Date.now, max = MAX_BINDIN
         // Only while nothing else is queued is memory exactly what the
         // journal holds, so only then may it become the snapshot.
         if (queued === 1 && lines > 2 * records.size + slack) {
-          await compact().catch(() => log("Push binding snapshot could not be rewritten"));
+          prune(records, now);
+          await compact(snapshotText(records)).catch(() => log("Push binding snapshot could not be rewritten"));
         }
       }).finally(() => { queued--; });
       tail = run.catch(() => {});

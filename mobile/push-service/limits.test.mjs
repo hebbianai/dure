@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { charge, createBuckets, createLimits } from "./limits.mjs";
+import { charge, clientKey, createBuckets, createLimits } from "./limits.mjs";
 
 const clock = (start = 1_000_000) => {
   let at = start;
@@ -80,4 +80,17 @@ test("the service limits match the documented budgets", () => {
   assert.equal(burst(limits.tokenSends, "token"), 50);
   assert.equal(burst(limits.hubSends, "binding+hub"), 10);
   assert.equal(limits.hubSends.take("binding+hub"), 60);
+});
+
+test("a client is an IPv4 address, or the /64 of an IPv6 one", () => {
+  assert.equal(clientKey("198.51.100.7"), "198.51.100.7");
+  assert.equal(clientKey("::ffff:198.51.100.7"), "198.51.100.7", "IPv4 on a dual-stack socket");
+  const subnet = "2001:db8:1:2::/64";
+  for (const address of ["2001:db8:1:2::1", "2001:db8:1:2:ffff:ffff:ffff:ffff", "2001:DB8:0001:0002:a::b", " 2001:db8:1:2::3 ", "2001:db8:1:2::4%en0"]) {
+    assert.equal(clientKey(address), subnet, address);
+  }
+  assert.equal(clientKey("2001:db8:1:3::1"), "2001:db8:1:3::/64");
+  assert.equal(clientKey("2001:db8::1"), "2001:db8:0:0::/64");
+  assert.equal(clientKey("64:ff9b::192.0.2.1"), "64:ff9b:0:0::/64");
+  assert.equal(clientKey("x".repeat(100)), "x".repeat(64), "anything else, bounded");
 });

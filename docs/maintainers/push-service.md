@@ -39,7 +39,7 @@ code.
 
 ## Limits
 
-Keyed by the client address (`Fly-Client-IP`), before anything is verified:
+Keyed by the client address (`Fly-Client-IP`; an IPv6 address by its /64), before anything is verified:
 30 failures a minute, 30 registers a minute and 10 challenge starts an hour.
 All challenges together: 1,200 an hour. After verification: 10 registers a
 minute per computer; per token 3 challenges an hour and 10 a day, and 300

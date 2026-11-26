@@ -3,6 +3,8 @@
 // A bucket that is full holds nothing a fresh one would not, so only full
 // buckets are ever evicted. When a map is full of buckets that are still
 // draining, a new key is refused rather than let it erase someone's limit.
+import { isIP } from "node:net";
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -40,6 +42,25 @@ export function createBuckets({ capacity, refillMs, maxKeys = 100_000, now = Dat
     },
     get size() { return buckets.size; },
   };
+}
+
+/**
+ * The key a client address is limited under: an IPv4 address as it is, an
+ * IPv6 address by its /64, which one subscriber holds whole, so rotating
+ * addresses inside it gains nothing.
+ */
+export function clientKey(address) {
+  const value = String(address).trim().replace(/%.*$/, "");
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(value);
+  if (mapped) return mapped[1];
+  if (isIP(value) !== 6) return value.slice(0, 64);
+  const [head, tail] = value.split("::");
+  // An embedded IPv4 address stands for the last two groups.
+  const groups = (part) => (part ? part.split(":").flatMap((group) => (group.includes(".") ? ["0", "0"] : [group])) : []);
+  const left = groups(head);
+  const right = groups(tail);
+  const all = tail === undefined ? left : [...left, ...Array(8 - left.length - right.length).fill("0"), ...right];
+  return `${all.slice(0, 4).map((group) => Number.parseInt(group, 16).toString(16)).join(":")}::/64`;
 }
 
 /** Takes one token from every `[buckets, key, options]` or from none. */

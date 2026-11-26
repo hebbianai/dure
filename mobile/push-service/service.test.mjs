@@ -10,6 +10,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { createApnsSender } from "./apns.mjs";
 import { bindingId, openBindings } from "./bindings.mjs";
+import { createChallenges } from "./challenges.mjs";
 import { createBuckets, createLimits } from "./limits.mjs";
 import { createPushServer } from "./service.mjs";
 import { en } from "../src/locales/en.ts";
@@ -669,6 +670,38 @@ test("v2: challenge alerts from forged registers are capped per token, per clien
   }
   assert.deepEqual(results, [202, 202, 429]);
   assert.equal(narrowed.challenges.length, 2);
+});
+
+test("v2: registers refused by a challenge budget leave nothing behind for a real phone to wait on", async () => {
+  const now = clock();
+  const sender = recorder();
+  // A table of two and one challenge per client, so a test can try to fill it.
+  const limits = { ...createLimits({ now }), challengeStarts: createBuckets({ capacity: 1, refillMs: 3600_000, now }) };
+  const post = await service({ sender, now, limits, challenges: createChallenges({ now, max: 2 }), clientAddressHeader: "X-Client" });
+  const attacker = { "x-client": "198.51.100.66" };
+  const forged = (index) => {
+    const subscription = subscriptionOf({ token: (index + 64).toString(16).padStart(2, "0").repeat(32) });
+    return v2(now, "register", grantFor(phoneKey(), now, { subscription }), { subscription });
+  };
+  assert.equal((await post("/v2/register", forged(0), attacker)).status, 202);
+  for (let index = 1; index < 6; index++) assert.equal((await post("/v2/register", forged(index), attacker)).status, 429);
+  assert.equal(sender.challenges.length, 1);
+  const phone = phoneKey();
+  assert.equal((await post("/v2/register", v2(now, "register", grantFor(phone, now)), { "x-client": "203.0.113.5" })).body.status, "challenge_sent", "the table still has room");
+  // A challenge APNs could not take is not kept either.
+  const failing = recorder({ challenge: "unavailable" });
+  const flaky = await service({ sender: failing, now, challenges: createChallenges({ now, max: 1 }), clientAddressHeader: "X-Client" });
+  assert.equal((await flaky("/v2/register", forged(10), { "x-client": "192.0.2.10" })).status, 502);
+  assert.equal((await flaky("/v2/register", forged(11), { "x-client": "192.0.2.11" })).status, 502, "a second token finds room");
+  assert.equal(failing.challenges.length, 2);
+});
+
+test("pre-verification limits count an IPv6 client by its /64", async () => {
+  const now = clock();
+  const post = await service({ sender: recorder(), now, clientAddressHeader: "X-Client" });
+  for (let index = 0; index < 30; index++) assert.equal((await post("/v2/send", { forged: index }, { "x-client": `2001:db8:5:6::${index.toString(16)}` })).status, 403);
+  assert.equal((await post("/v2/send", { forged: true }, { "x-client": "2001:db8:5:6:ffff::1" })).status, 429, "another address of the same /64");
+  assert.equal((await post("/v2/send", { forged: true }, { "x-client": "2001:db8:5:7::1" })).status, 403, "the next /64 is another client");
 });
 
 test("v2: alert limits answer 429 before APNs, and one computer cannot spend another's approvals", async () => {
