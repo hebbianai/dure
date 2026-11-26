@@ -548,13 +548,11 @@ where
         if let Some(directory) = memory_directory {
             query_binding.insert("autoMemoryDirectory".into(), json!(directory));
         }
-        let mut environment = attachment.environment;
-        if let Some(home) = self.service.backend_home() {
-            environment.insert(
-                "DURE_ORCHESTRATION_HOME".into(),
-                home.to_string_lossy().into_owned(),
-            );
-        }
+        let environment = query_environment(
+            attachment.environment,
+            &attachment.binding.agent_id,
+            self.service.backend_home(),
+        );
         query_binding.insert("env".into(), json!(environment));
         query_binding.insert(
             "instructions".into(),
@@ -1321,6 +1319,27 @@ fn retirement_receipt(
     Ok(receipt)
 }
 
+/// The environment the SDK host gives the Claude process and its tool
+/// shells: the prepared credential environment plus the Agent's own identity
+/// and, when the backend has one, its orchestration home.
+fn query_environment(
+    mut environment: BTreeMap<String, String>,
+    agent_id: &dure_app::AgentIdV1,
+    backend_home: Option<&Path>,
+) -> BTreeMap<String, String> {
+    environment.insert(
+        crate::structured_provider_runtime::AGENT_ID_ENVIRONMENT_KEY.into(),
+        agent_id.to_string(),
+    );
+    if let Some(home) = backend_home {
+        environment.insert(
+            "DURE_ORCHESTRATION_HOME".into(),
+            home.to_string_lossy().into_owned(),
+        );
+    }
+    environment
+}
+
 async fn connected_host_identity(
     client: &ClaudeDch1Client,
 ) -> Result<ClaudeDch1HostIdentity, ClaudeConversationHostErrorV1> {
@@ -1520,6 +1539,27 @@ fn safe_token(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn query_environment_names_the_agent_for_its_tool_shells() {
+        let agent_id = dure_app::AgentIdV1::new("agent-coordinator").unwrap();
+        let prepared = BTreeMap::from([("HOME".to_string(), "/home/person".to_string())]);
+        assert_eq!(
+            query_environment(prepared.clone(), &agent_id, Some(Path::new("/backend"))),
+            BTreeMap::from([
+                ("DURE_AGENT_ID".to_string(), "agent-coordinator".to_string()),
+                (
+                    "DURE_ORCHESTRATION_HOME".to_string(),
+                    "/backend".to_string()
+                ),
+                ("HOME".to_string(), "/home/person".to_string()),
+            ])
+        );
+        assert_eq!(
+            query_environment(prepared, &agent_id, None).get("DURE_AGENT_ID"),
+            Some(&"agent-coordinator".to_string())
+        );
+    }
 
     fn authority(
         phase: ClaudeDch1ProviderRetirementPhase,

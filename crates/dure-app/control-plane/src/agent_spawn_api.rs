@@ -81,13 +81,17 @@ pub(crate) async fn list(
                 "createdAtMs": receipt.created_at_ms,
                 "updatedAtMs": receipt.updated_at_ms,
             });
-            // The planned terminal Session and the starting agent let a
-            // parent find and observe its children from one listing.
+            // The planned terminal Session and the starting agent (its
+            // Session, or its Agent when it has none) let a parent find and
+            // observe its children from one listing.
             if let AgentSpawnLaunchPlanV1::NativeCli { session_id, .. } = &receipt.plan.launch {
                 run["sessionId"] = serde_json::json!(session_id);
             }
             if let Some(parent) = &receipt.plan.request.parent {
                 run["parent"] = serde_json::json!(parent);
+            }
+            if let Some(parent_agent) = &receipt.plan.request.parent_agent {
+                run["parentAgent"] = serde_json::json!(parent_agent);
             }
             run
         })
@@ -468,11 +472,12 @@ mod tests {
     use dure_app::{
         AgentExecutionProfileV1, AgentInteractionBindingV1, AgentInteractionProfileV1,
         AgentInteractionSessionIdV1, AgentProviderRuntimeFenceV1, AgentSpawnEffortSelectionV1,
-        AgentSpawnModelSelectionV1, AgentSpawnParentV1, AgentSpawnPermissionModeV1,
-        AgentSpawnPromptDigestV1, AgentSpawnWorktreePolicyV1, AgentTimelineEpochV1,
-        PROVIDER_LAUNCH_DEFAULTS_SCHEMA_VERSION_V1, ProviderIdV1, ProviderLaunchDefaultV1,
-        ProviderLaunchDefaultsPutRequestV1, ProviderLaunchPermissionModeV1,
-        ProviderLaunchPermissionOverrideV1, ProviderPermissionModeV1,
+        AgentSpawnModelSelectionV1, AgentSpawnParentAgentV1, AgentSpawnParentV1,
+        AgentSpawnPermissionModeV1, AgentSpawnPromptDigestV1, AgentSpawnWorktreePolicyV1,
+        AgentTimelineEpochV1, PROVIDER_LAUNCH_DEFAULTS_SCHEMA_VERSION_V1, ProviderIdV1,
+        ProviderLaunchDefaultV1, ProviderLaunchDefaultsPutRequestV1,
+        ProviderLaunchPermissionModeV1, ProviderLaunchPermissionOverrideV1,
+        ProviderPermissionModeV1,
     };
 
     use super::*;
@@ -503,6 +508,7 @@ mod tests {
             effort: None,
             interaction_preference: None,
             parent: None,
+            parent_agent: None,
         }
     }
 
@@ -1002,6 +1008,85 @@ mod tests {
         relinked.parent = Some(AgentSpawnParentV1 {
             session_id: "session-other".into(),
             ..parent
+        });
+        for divergent in [unlinked, relinked] {
+            assert_eq!(
+                preview(
+                    &store,
+                    &providers,
+                    "dure-local",
+                    "generation-1",
+                    project(),
+                    divergent,
+                    2,
+                )
+                .await
+                .unwrap_err(),
+                "agent_spawn_idempotency_conflict"
+            );
+        }
+        let replay = preview(
+            &store,
+            &providers,
+            "dure-local",
+            "generation-1",
+            project(),
+            linked,
+            3,
+        )
+        .await
+        .unwrap();
+        assert_eq!(replay, receipt);
+    }
+
+    #[tokio::test]
+    async fn parent_agent_is_recorded_listed_and_fenced_by_the_idempotency_key() {
+        let root = tempfile::tempdir().unwrap();
+        let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+            .await
+            .unwrap();
+        let providers = crate::provider_extension::test_local_agent_provider_registry();
+        let parent_agent = AgentSpawnParentAgentV1 {
+            agent_id: AgentIdV1::new("agent-coordinator").unwrap(),
+        };
+        let mut linked = request("pi-child");
+        linked.provider_id = ProviderIdV1::new("pi").unwrap();
+        linked.parent_agent = Some(parent_agent.clone());
+        let receipt = preview(
+            &store,
+            &providers,
+            "dure-local",
+            "generation-1",
+            project(),
+            linked.clone(),
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(receipt.plan.request.parent_agent, Some(parent_agent));
+        assert_eq!(receipt.plan.request.parent, None);
+
+        let listed = list(
+            &store,
+            AgentSpawnListBody {
+                schema_version: 1,
+                after: None,
+                selector: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            listed["runs"][0]["parentAgent"],
+            serde_json::json!({ "agentId": "agent-coordinator" })
+        );
+        assert!(listed["runs"][0].get("parent").is_none());
+
+        let mut unlinked = linked.clone();
+        unlinked.parent_agent = None;
+        let mut relinked = linked.clone();
+        relinked.parent_agent = Some(AgentSpawnParentAgentV1 {
+            agent_id: AgentIdV1::new("agent-other").unwrap(),
         });
         for divergent in [unlinked, relinked] {
             assert_eq!(

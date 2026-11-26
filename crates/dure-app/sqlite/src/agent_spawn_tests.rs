@@ -89,6 +89,7 @@ fn spawn_draft(
             effort: None,
             interaction_preference: None,
             parent: None,
+            parent_agent: None,
         },
         agent_id: AgentIdV1::new(agent_id).unwrap(),
         workspace_id: WorkspaceIdV1::new(format!("workspace-{operation}")).unwrap(),

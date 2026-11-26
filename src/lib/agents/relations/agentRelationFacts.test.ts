@@ -70,6 +70,38 @@ describe("agentRelationEdges", () => {
 	});
 });
 
+describe("a Chat agent's Runs", () => {
+	it("records the parent Agent itself, above any Session fact", () => {
+		const coordinator = agent("coordinator", undefined);
+		const worker = agent("worker", "s-worker", { agentId: "coordinator" });
+		expect(agentRelationEdges([coordinator, worker])).toEqual([
+			{ child: "worker", manager: "coordinator", source: "run_parent_agent" },
+		]);
+		const relations = agentRelationsOf([coordinator, worker]);
+		expect(relations.managerOf("worker")).toBe("coordinator");
+		expect(relations.managedBy("coordinator")).toEqual(["worker"]);
+	});
+
+	it("nests a Chat coordinator's terminal lead's workers below it", () => {
+		const agents = [
+			agent("coordinator", undefined),
+			agent("lead", "s-lead", { agentId: "coordinator" }),
+			agent("worker", "s-worker", { sessionId: "s-lead", workspaceId: "ws" }),
+		];
+		expect(agentRelationsOf(agents).chain("worker")).toEqual([
+			"coordinator",
+			"lead",
+		]);
+	});
+
+	it("leaves the worker a root when its parent Agent is unknown or itself", () => {
+		const orphan = agent("worker", "s-worker", { agentId: "gone" });
+		expect(agentRelationsOf([orphan]).managerOf("worker")).toBeUndefined();
+		const self = agent("worker", "s-worker", { agentId: "worker" });
+		expect(agentRelationsOf([self]).roots).toEqual(["worker"]);
+	});
+});
+
 describe("agentRelationsOf", () => {
 	it("nests Runs started from Runs to any depth", () => {
 		const agents = [

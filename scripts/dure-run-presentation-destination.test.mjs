@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  RUN_PARENT_AGENT_PRESENTATION_CAPABILITY,
   RUN_PARENT_PRESENTATION_CAPABILITY,
   RUN_START_ORDER_PRESENTATION_CAPABILITY,
   managedRunPresentationRequest,
@@ -138,6 +139,28 @@ describe.each([
     expect("parent" in project({ ...options(makeReceipt()), descriptor: accepting })).toBe(false);
   });
 
+  it("sends the Run's parent Agent only to an app that reads it, else the Session or nothing", () => {
+    const chatParented = makeReceipt();
+    chatParented.plan.request.parentAgent = { agentId: "agent-coordinator" };
+    const both = makeReceipt();
+    const parent = { sessionId: "session-lead", workspaceId: "workspace-lead" };
+    both.plan.request.parent = parent;
+    both.plan.request.parentAgent = { agentId: "agent-coordinator" };
+    const agentAware = {
+      capabilities: [RUN_PARENT_PRESENTATION_CAPABILITY, RUN_PARENT_AGENT_PRESENTATION_CAPABILITY],
+    };
+    const sessionOnly = { capabilities: [RUN_PARENT_PRESENTATION_CAPABILITY] };
+    expect(project({ ...options(chatParented), descriptor: agentAware }).parent)
+      .toEqual({ agentId: "agent-coordinator" });
+    expect(project({ ...options(both), descriptor: agentAware }).parent)
+      .toEqual({ agentId: "agent-coordinator" });
+    // An app that reads only Session parents still gets one, and never an
+    // Agent shape it would refuse as an invalid parent.
+    expect(project({ ...options(both), descriptor: sessionOnly }).parent).toEqual(parent);
+    expect("parent" in project({ ...options(chatParented), descriptor: sessionOnly })).toBe(false);
+    expect("parent" in project({ ...options(chatParented), descriptor: { capabilities: [] } })).toBe(false);
+  });
+
   it("sends the Run's start time only to an app that orders workers by it", () => {
     const receipt = makeReceipt();
     const accepting = { capabilities: [RUN_START_ORDER_PRESENTATION_CAPABILITY] };
@@ -251,6 +274,7 @@ describe("Run receipt summary", () => {
       presentation: "opened",
       interactionProfile: "native_cli",
       parent: null,
+      parentAgent: null,
       startupGate: null,
       error: null,
     });
@@ -306,12 +330,13 @@ describe("Run receipt summary", () => {
       presentation: null,
       interactionProfile: "native_cli",
       parent: null,
+      parentAgent: null,
       startupGate: null,
       error: null,
     });
     expect(runReceiptSummary({ kind: "dure.agent_spawn.error", error: { code: "x" } })).toEqual({
       agentId: null, sessionId: null, workspaceId: null, panelId: null, spaceId: null,
-      state: null, presentation: null, interactionProfile: null, parent: null, startupGate: null, error: null,
+      state: null, presentation: null, interactionProfile: null, parent: null, parentAgent: null, startupGate: null, error: null,
     });
   });
 

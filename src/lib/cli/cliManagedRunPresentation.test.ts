@@ -240,6 +240,27 @@ describe("managed Run parent", () => {
 			leadAgentId: "agent-lead",
 		});
 	});
+
+	it("accepts and records a Chat agent as the Run's parent", () => {
+		const parentAgent = { agentId: "agent-coordinator" };
+		expect(
+			parseCliManagedRunPresentationRequest({ ...request, parent: parentAgent })
+				.parent,
+		).toEqual(parentAgent);
+		expect(() =>
+			parseCliManagedRunPresentationRequest({
+				...request,
+				parent: { ...parentAgent, ...parent },
+			}),
+		).toThrow(CliManagedRunPresentationError);
+		const worker = projectManagedRunPresentationAgent(
+			state(),
+			{ ...request, agentName: "work-553", parent: parentAgent },
+			project,
+			binding(),
+		);
+		expect(worker.agent.runParent).toEqual(parentAgent);
+	});
 });
 
 describe("managed Run start order", () => {

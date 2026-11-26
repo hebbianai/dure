@@ -1,13 +1,13 @@
 import {
-	type AgentRunParentSessionV1,
+	type AgentRunParentRefV1,
 	agentRunParentKey,
 } from "@/lib/agents/agentRunParent";
 
 /** What orders one Run's presentation among its lead's other workers: the
- * lead's Session and when the Run's spawn operation started. */
+ * lead's Session or Agent and when the Run's spawn operation started. */
 interface RunPresentationOrderKey {
 	readonly operationId?: string;
-	readonly parent?: AgentRunParentSessionV1;
+	readonly parent?: AgentRunParentRefV1;
 	readonly startedAtMs?: number;
 }
 

@@ -4,7 +4,7 @@ import {
 	sameAgentCanonicalSpawn,
 } from "@/lib/agents/agentCanonicalSpawn";
 import {
-	type AgentRunParentSessionV1,
+	type AgentRunParentRefV1,
 	presentedAgentRunParent,
 } from "@/lib/agents/agentRunParent";
 import {
@@ -119,7 +119,7 @@ export function projectStructuredRunAgent(
 	run: DureStructuredAgentRunResultV1,
 	project: Project,
 	presentationWorktree?: AgentRunPresentationWorktree,
-	parent?: AgentRunParentSessionV1,
+	parent?: AgentRunParentRefV1,
 ): {
 	patch: Partial<CliManagedRunPresentationState>;
 	agent: Agent;
@@ -257,7 +257,7 @@ export async function presentStructuredRunInBackground(
 		projectPath?: string;
 		executionTarget?: BackendPresentationTarget;
 		presentationWorktree?: AgentRunPresentationWorktree;
-		parent?: AgentRunParentSessionV1;
+		parent?: AgentRunParentRefV1;
 	},
 	dependencies: StructuredRunPresentationDependencies = defaultDependencies,
 ): Promise<Agent> {
@@ -312,7 +312,7 @@ interface StructuredRunPaneTarget {
 	referencePanelId?: string;
 	position?: PanelPosition;
 	presentationWorktree?: AgentRunPresentationWorktree;
-	parent?: AgentRunParentSessionV1;
+	parent?: AgentRunParentRefV1;
 	/** When the Run's spawn operation started; orders a lead's workers. */
 	startedAtMs?: number;
 }

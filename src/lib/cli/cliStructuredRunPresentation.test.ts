@@ -109,6 +109,20 @@ describe("handleCliStructuredRunPresentation", () => {
 		expect(refused).not.toHaveBeenCalled();
 	});
 
+	it("carries a Chat agent parent to the presentation", async () => {
+		const parent = { agentId: "agent-coordinator" };
+		const present = vi.fn(async () => ({ ok: true }));
+		await handleCliStructuredRunPresentation(
+			{ ...request(), parent },
+			"request-parent-agent",
+			{ claim: async () => true, present, presentBackground: vi.fn() },
+		);
+		expect(present).toHaveBeenCalledWith(
+			expect.any(Object),
+			expect.objectContaining({ parent }),
+		);
+	});
+
 	it("carries the Run's start time to the presentation and refuses a malformed one", async () => {
 		const present = vi.fn(async () => ({ ok: true }));
 		await handleCliStructuredRunPresentation(

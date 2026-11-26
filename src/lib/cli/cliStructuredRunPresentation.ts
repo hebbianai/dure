@@ -1,5 +1,5 @@
 import {
-	type AgentRunParentSessionV1,
+	type AgentRunParentRefV1,
 	parseRequestedAgentRunParent,
 } from "@/lib/agents/agentRunParent";
 import { parseAgentExecutionProfileV1 } from "@/lib/agents/chat/agentConversationContract";
@@ -62,7 +62,7 @@ interface CliStructuredRunPresentationRequest {
 		executionTarget: BackendPresentationTarget;
 		projectPath?: string;
 		windowLabel: string;
-		parent?: AgentRunParentSessionV1;
+		parent?: AgentRunParentRefV1;
 		startedAtMs?: number;
 	} & (
 		| { presentation: "background" }

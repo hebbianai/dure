@@ -13,6 +13,9 @@ import type { NeedsPersonMap } from "@/lib/agents/needsPerson";
 
 /** Where an edge fact comes from, highest display priority first. */
 const AGENT_RELATION_SOURCES = [
+	/** The Agent recorded as the Run's parent: the Chat agent that started it
+	 * from its tool shell, which has no Session of its own. */
+	"run_parent_agent",
 	/** The Agent bound to the Run's parent Session now. */
 	"run_parent_session",
 	/** The Agent that owned that Session when this client first presented
