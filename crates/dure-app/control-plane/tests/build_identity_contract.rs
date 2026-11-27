@@ -70,6 +70,9 @@ fn runtime_lifecycle_is_fully_advertised() {
         "agent_runtime.stop",
         "agent_runtime.remove",
         "agent_runtime.transition",
+        // `dure runs resume` relaunches a Chat Agent whose provider ended.
+        "agent_conversation.recover",
+        "agent_conversation.recover.provider_exit.v1",
     ] {
         assert!(
             capabilities.contains(&operation),

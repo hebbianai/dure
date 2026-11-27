@@ -49,7 +49,7 @@ const SKIP_MESSAGES = {
   closed: "This Agent was stopped deliberately, so it is not restored.",
   hibernated: "This Agent is hibernating and wakes when it next receives work.",
   transition_in_progress: "A runtime transition is in progress for this Agent.",
-  chat_runtime: "Chat agents are not restored by this command. Open the agent to continue it.",
+  chat_runtime: "Chat agents are not restored by this command. The backend relaunches one on its next input; to relaunch it now, run dure runs resume with its Agent ID.",
   runtime_not_restorable: "This Agent's runtime has no local Hmux source to restore.",
   no_conversation_id: "No provider conversation ID was saved. Open its pane to choose a conversation.",
   provider_without_resume: "This provider cannot resume a conversation.",

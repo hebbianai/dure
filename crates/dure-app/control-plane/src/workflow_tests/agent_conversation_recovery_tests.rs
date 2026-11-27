@@ -221,6 +221,40 @@ async fn exact_codex_recovery_rotates_one_dead_runtime_generation() {
     );
 }
 
+/// `dure runs resume` sends the binding the runtime projection reported as
+/// recover's exact fence, and requires the capability saying that recover
+/// relaunches a provider that ended.
+#[tokio::test]
+async fn the_projected_chat_binding_fences_a_recover_that_requires_provider_exit() {
+    let (_root, state, expected, attach_count) =
+        selected_codex_recovery_fixture(AgentExecutionProfileV1::ProviderDefault).await;
+    let mut inspect = recovery_request(&state, &expected);
+    inspect.request_id = "agent-runtime-projection-inspect-1".into();
+    inspect.operation = "agent_runtime.projection.inspect".into();
+    inspect.body = json!({ "schemaVersion": 1, "agentId": expected.agent_id });
+    let observed = dispatch(&state, &inspect).await.unwrap();
+    assert_eq!(observed["state"], "stable");
+    let authority = &observed["receipt"]["authority"];
+    assert_eq!(authority["interactionProfile"], "structured_protocol");
+
+    let mut recover = recovery_request(&state, &expected);
+    recover.body = json!({ "schemaVersion": 1, "expectedBinding": authority["binding"] });
+    recover.expected.required_capabilities = vec![
+        "agent_conversation.recover".into(),
+        "agent_conversation.recover.provider_exit.v1".into(),
+    ];
+    let response = dispatch(&state, &recover).await.unwrap();
+    let recovered: AgentInteractionBindingV1 =
+        serde_json::from_value(response["binding"].clone()).unwrap();
+
+    assert_eq!(attach_count.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        recovered.interaction_session_id,
+        expected.interaction_session_id
+    );
+    assert_ne!(recovered.runtime, expected.runtime);
+}
+
 #[tokio::test]
 async fn stale_credential_recovery_never_reaches_the_provider_process() {
     let current_profile = AgentExecutionProfileV1::CredentialReference {

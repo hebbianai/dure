@@ -6,7 +6,7 @@ import { CommandExit } from "./process-exit.mjs";
 import { collectAgentSpawnQuery } from "./agent-spawn-query.mjs";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
 import { collectManagedRehostNamed, MANAGED_REHOST_RUNNING_GUIDANCE, managedRecoveryExitCode } from "./managed-rehost-named.mjs";
-import { collectManagedRehostPreview, formatManagedRecoveryCommands } from "./managed-rehost-preview.mjs";
+import { collectManagedRehostPreview, formatManagedRecoveryCommands, formatRecoveryOutcome } from "./managed-rehost-preview.mjs";
 import { appPresentsAgentRuntime, presentAgentRunRuntime, presentAgentRuntime } from "./run-presentation.mjs";
 import { collectRunAccountSwitch, formatRunAccountSwitch } from "./run-account-switch.mjs";
 import { collectAgentProjectMove, formatAgentProjectMove } from "./agent-project-move-command.mjs";
@@ -44,10 +44,12 @@ live Session after the app lost its panes. Resume previews exact local recovery;
 --confirm-restart to execute and publish it. A confirmed stopped source waiting
 for a deferred target uses backend wake; an existing native source uses native
 rehost; a closed, stopped Agent restarts through the app's backend transition.
-All preserve the conversation without an open app. On an SSH backend, wake
-and restart run from here; a native rehost runs on the backend's host. An Agent
-stopped with dure stop is removed and cannot restart in place; resume names its
-conversation for resume --conversation, which continues it in a new Agent.
+A Chat Agent uses the same backend recover as the app: it relaunches a provider
+that ended and leaves a running one as it is, so repeating it is safe. All
+preserve the conversation without an open app. On an SSH backend, wake, restart
+and Chat recover run from here; a native rehost runs on the backend's host. An
+Agent stopped with dure stop is removed and cannot restart in place; resume
+names its conversation for resume --conversation, which continues it in a new Agent.
 Resuming an Agent retains its original project and working folder, and refuses
 --project, --path and --cwd. Use runs move for an idle or stopped Claude or Codex
 conversation on the same backend. Move previews first and returns an exact Apply
@@ -294,6 +296,7 @@ function formatRecovery(recovery) {
   return [
     `${recovery.agentId}: ${recovery.state} (${recovery.continuation?.kind?.startsWith("runtime_") ? `backend ${recovery.backendExecution ?? "not_requested"}` : `native ${recovery.nativeExecution}`})`,
     ...(recovery.publication ? [`Binding publication: ${recovery.publication}`] : []),
+    ...formatRecoveryOutcome(recovery),
     ...(recovery.state === "running" ? [MANAGED_REHOST_RUNNING_GUIDANCE] : []),
     ...(recovery.conversationId ? [`Conversation: ${recovery.conversationId}`] : []),
     ...formatManagedRecoveryCommands(recovery.continuation),

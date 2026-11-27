@@ -8,6 +8,7 @@ import {
 } from "./managed-rehost-source-host.mjs";
 import { collectManagedRehostStatus, observeManagedRehostSource } from "./managed-rehost-status.mjs";
 import {
+  agentRuntimeChatBinding,
   agentRuntimeRestartableClosedSource,
   agentRuntimeSourceUnavailableReason,
   agentRuntimeWakeTarget,
@@ -154,6 +155,22 @@ export async function collectManagedRehostPreview({
       },
     };
   }
+  const chat = agentRuntimeChatBinding(observation);
+  if (chat) {
+    // A stable Chat selection says nothing about its provider process. The
+    // backend's recover, which the app uses too, relaunches it on the same
+    // conversation only when it no longer finds it running.
+    const requestId = randomUUID();
+    const start = ["runs", "resume", agentId, "--confirm-restart", "--backend", backend.profile.id, "--json"];
+    return {
+      ...base, ok: true, state: "preview", backendExecution: "not_requested",
+      agentId, backend: report.backend, observation,
+      continuation: {
+        kind: "runtime_recover", expectedBinding: chat, requestId, start, retry: [...start],
+        status: ["runtime", "get", agentId, "--backend", backend.profile.id, "--json"],
+      },
+    };
+  }
   const selected = observation.receipt?.authority;
   const source = selected?.authority;
   const binding = source?.binding;
@@ -240,26 +257,43 @@ export async function collectManagedRehostPreview({
 export const rehostCommandLine = (args) =>
   "dure " + args.map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(" ");
 
+/** Recoveries the backend runs, by continuation kind: what it recovers, what
+ * the command does, and the command's label. Native rehost has none of these. */
+export const BACKEND_RECOVERY = {
+  runtime_wake: { subject: "dormant runtime", label: "Wake",
+    guidance: "The backend owns wake and binding publication. Retain this exact operation, revision and request key." },
+  runtime_restart: { subject: "stopped runtime", label: "Restart",
+    guidance: "This Agent is stopped. The backend restarts it with its retained conversation through the app's transition. Retain this exact revision and request key." },
+  runtime_recover: { subject: "Chat runtime", label: "Recover",
+    guidance: "This is a Chat Agent. If its provider process ended, the backend relaunches it on the same conversation, through the same recover the app uses. A provider that is still running is left as it is, so repeating this never restarts it." },
+};
+
+/** What a completed Chat recover did: the backend relaunches only a provider it
+ * no longer finds running. */
+export function formatRecoveryOutcome(report) {
+  if (report.continuation?.kind !== "runtime_recover" || report.state !== "completed") return [];
+  return [report.relaunched
+    ? "Its provider had ended. The backend relaunched it on the same conversation."
+    : "The backend finds its provider running, so nothing was restarted."];
+}
+
 export function formatManagedRecoveryCommands(continuation) {
   if (!continuation) return [];
-  const wake = continuation.kind === "runtime_wake";
-  const restart = continuation.kind === "runtime_restart";
+  const backend = BACKEND_RECOVERY[continuation.kind];
   const held = continuation.retained;
   return [
-    wake
-      ? "The backend owns wake and binding publication. Retain this exact operation, revision and request key."
-      : restart
-        ? "This Agent is stopped. The backend restarts it with its retained conversation through the app's transition. Retain this exact revision and request key."
-        : held?.nativeState === "running"
-          ? `Hmux is still applying a restart of this Agent (operation ${held.operationId}). Finish waits for it and publishes it once; do not start another operation.`
-          : held
-            ? `Hmux already restarted this Agent (operation ${held.operationId}), but its binding is not published yet. Finish publishes it once without restarting again.`
-            : continuation.sourceHost === "absent"
-              ? `This Agent's Hmux Host is gone, for example after a reboot. The restart starts a replacement on conversation ${continuation.expectedConversationId} once Hmux proves the old Host is gone; it never contacts that Host.`
-              : "Retain these exact commands for this attempt; another name request proposes a different operation.",
+    backend
+      ? backend.guidance
+      : held?.nativeState === "running"
+        ? `Hmux is still applying a restart of this Agent (operation ${held.operationId}). Finish waits for it and publishes it once; do not start another operation.`
+        : held
+          ? `Hmux already restarted this Agent (operation ${held.operationId}), but its binding is not published yet. Finish publishes it once without restarting again.`
+          : continuation.sourceHost === "absent"
+            ? `This Agent's Hmux Host is gone, for example after a reboot. The restart starts a replacement on conversation ${continuation.expectedConversationId} once Hmux proves the old Host is gone; it never contacts that Host.`
+            : "Retain these exact commands for this attempt; another name request proposes a different operation.",
     ...(continuation.finish ? [`Finish: ${rehostCommandLine(continuation.finish)}`] : []),
     // A held operation's start is its retry; print it once.
-    ...(held ? [] : [`${wake ? "Wake" : restart ? "Restart" : "Start"}: ${rehostCommandLine(continuation.start)}`]),
+    ...(held ? [] : [`${backend?.label ?? "Start"}: ${rehostCommandLine(continuation.start)}`]),
     `Status: ${rehostCommandLine(continuation.status)}`,
     `Retry the original request after inspection: ${rehostCommandLine(continuation.retry)}`,
     ...(continuation.publish ? [`Publish: ${rehostCommandLine(continuation.publish)}`] : []),
@@ -279,8 +313,7 @@ export async function runManagedRehostPreview(opts, registryPath, resolveBackend
   });
   const output = opts.json ? JSON.stringify(report) : report.ok
     ? [
-      `Preview: ${report.agentId} (${report.continuation.kind === "runtime_wake" ? "dormant runtime"
-        : report.continuation.kind === "runtime_restart" ? "stopped runtime" : report.continuation.sourceSessionId})`,
+      `Preview: ${report.agentId} (${BACKEND_RECOVERY[report.continuation.kind]?.subject ?? report.continuation.sourceSessionId})`,
       "Nothing was started or reserved. This is not proof of liveness or a recoverable conversation.",
       ...formatManagedRecoveryCommands(report.continuation),
     ].join("\n")

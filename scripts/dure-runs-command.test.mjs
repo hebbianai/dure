@@ -1372,6 +1372,127 @@ describe("Closed Agents", () => {
   });
 });
 
+describe("Chat Agents", () => {
+  const RECOVER = ["agent_conversation.recover", "agent_conversation.recover.provider_exit.v1"];
+
+  /** A stable Chat selection; `recover` answers the backend's agent_conversation.recover. */
+  function chatFixture(recover = (request) => ({ result: { schemaVersion: 1, binding: {
+    ...request.body.expectedBinding, runtime: { runtimeGeneration: "runtime-2", providerEpoch: "provider-2" },
+    bindingRevision: 2, updatedAtMs: 2 } } })) {
+    const f = fixture();
+    const binding = { schemaVersion: 1, interactionSessionId: "interaction-1", agentId: f.entry.agentId,
+      providerId: f.entry.providerId, executionProfile: { kind: "provider_default" },
+      providerConversationRef: "conversation-1",
+      runtime: { runtimeGeneration: "runtime-1", providerEpoch: "provider-1" }, timelineEpoch: "timeline-1",
+      bindingRevision: 1, historyComplete: true, createdAtMs: 1, updatedAtMs: 1 };
+    f.runtime.receipt.authority = { interactionProfile: "structured_protocol", binding };
+    f.requestBackend.mockImplementation(async (_profile, request) => {
+      if (request.operation === "agent_spawn.list") return { result: f.page };
+      if (request.operation === "agent_runtime.projection.inspect") return { result: f.runtime };
+      if (request.operation === "agent_conversation.recover") return recover(request);
+      throw new Error(`Unexpected operation ${request.operation}`);
+    });
+    return { ...f, binding, run: vi.fn(), opts: { rest: ["resume", f.entry.name] } };
+  }
+  const operations = (f) => f.requestBackend.mock.calls.map((call) => call[1].operation);
+
+  it("previews the backend's recover instead of refusing a Chat Agent, without touching it", async () => {
+    const f = chatFixture();
+    const report = await collectRunsCommand(f);
+    expect(report).toMatchObject({ ok: true, recovery: { state: "preview", backendExecution: "not_requested",
+      continuation: { kind: "runtime_recover", expectedBinding: f.binding } } });
+    const c = report.recovery.continuation;
+    expect(c.start).toEqual(["runs", "resume", f.entry.agentId, "--confirm-restart", "--backend", "local", "--json"]);
+    expect(c.retry).toEqual(c.start);
+    expect(c.status).toEqual(["runtime", "get", f.entry.agentId, "--backend", "local", "--json"]);
+    expect(operations(f)).toEqual(["agent_spawn.list", "agent_runtime.projection.inspect"]);
+    expect(f.run).not.toHaveBeenCalled();
+    const text = formatRunsCommand(report);
+    expect(text).toContain("If its provider process ended, the backend relaunches it on the same conversation");
+    expect(text).toContain("Recover: dure 'runs' 'resume'");
+  });
+
+  it("relaunches a Chat Agent whose provider ended through the backend's recover, fenced to the observed binding", async () => {
+    const f = chatFixture();
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report).toMatchObject({ ok: true, recovery: { state: "completed", backendExecution: "completed",
+      publication: "published", relaunched: true, conversationId: "conversation-1" } });
+    expect(runsCommandExitCode(report)).toBe(0);
+    expect(operations(f)).toEqual(["agent_spawn.list", "agent_runtime.projection.inspect", "agent_conversation.recover"]);
+    expect(f.requestBackend.mock.calls[2][1]).toEqual({ requestId: report.recovery.continuation.requestId,
+      operation: "agent_conversation.recover", requiredCapabilities: RECOVER,
+      body: { schemaVersion: 1, expectedBinding: f.binding } });
+    expect(f.run).not.toHaveBeenCalled();
+    expect(formatRunsCommand(report)).toContain("Its provider had ended. The backend relaunched it on the same conversation.");
+  });
+
+  it("reports that nothing restarted when the backend finds the provider running", async () => {
+    const f = chatFixture((request) => ({ result: { schemaVersion: 1, binding: request.body.expectedBinding } }));
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report).toMatchObject({ ok: true, recovery: { state: "completed", relaunched: false, publication: "unchanged" } });
+    expect(formatRunsCommand(report)).toContain("The backend finds its provider running, so nothing was restarted.");
+  });
+
+  it("recovers a Chat Agent on an SSH backend from here, without Hmux", async () => {
+    const f = chatFixture();
+    f.backend.profile = { id: "remote", transport: { kind: "ssh" } };
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report).toMatchObject({ ok: true, recovery: { state: "completed", relaunched: true } });
+    expect(report.recovery.continuation.start).toContain("remote");
+    expect(f.run).not.toHaveBeenCalled();
+  });
+
+  it("refuses on a backend whose recover cannot relaunch an ended provider, rather than calling it running", async () => {
+    const f = chatFixture(() => {
+      throw new BackendTransportError("backend_transport_capability_missing",
+        { details: { capability: "agent_conversation.recover.provider_exit.v1" } });
+    });
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report).toMatchObject({ ok: false, recovery: { state: "unknown", backendExecution: "unconfirmed" },
+      error: { code: "backend_transport_capability_missing" } });
+    expect(report.recovery.relaunched).toBeUndefined();
+    expect(runsCommandExitCode(report)).toBe(2);
+    const text = formatRunsCommand(report);
+    expect(text).toContain("This backend cannot relaunch a Chat Agent whose provider ended. Update Dure on the backend's host");
+    expect(text).not.toContain("nothing was restarted.\n");
+    expect(text).toContain("Recover: dure 'runs' 'resume'");
+  });
+
+  it.each([
+    ["agent_conversation_conflict", "runtime changed since it was read"],
+    ["agent_conversation_runtime_unavailable", "could not relaunch this Agent's provider now"],
+  ])("explains a %s refusal and keeps the retry", async (code, guidance) => {
+    const f = chatFixture(() => {
+      throw new BackendTransportError("backend_transport_remote_error", { details: { code } });
+    });
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report).toMatchObject({ ok: false, error: { remoteCode: code } });
+    const text = formatRunsCommand(report);
+    expect(text).toContain(`${code}: `);
+    expect(text).toContain(guidance);
+    expect(text).toContain("Status: dure 'runtime' 'get'");
+  });
+
+  it.each([
+    ["names another Agent", (binding) => { binding.agentId = "agent-other"; }],
+    ["has no interaction session", (binding) => { delete binding.interactionSessionId; }],
+    ["has no runtime fence", (binding) => { delete binding.runtime; }],
+  ])("does not offer recover for a Chat binding that %s", async (_case, change) => {
+    const f = chatFixture();
+    change(f.binding);
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report).toMatchObject({ ok: false, error: { code: "rehost_native_source_unavailable" } });
+    expect(operations(f)).not.toContain("agent_conversation.recover");
+  });
+
+  it("refuses a recover answer for another conversation", async () => {
+    const f = chatFixture((request) => ({ result: { schemaVersion: 1, binding: {
+      ...request.body.expectedBinding, interactionSessionId: "interaction-other" } } }));
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report).toMatchObject({ ok: false, error: { code: "agent_conversation_recover_receipt_invalid" } });
+  });
+});
+
 describe("Resume from a provider conversation ID", () => {
   const CONVERSATION = "019a4c2e-7d3b-7f00-9c11-conversation";
   const CONFLICT = "hmux_managed_conversation_writer_conflict";

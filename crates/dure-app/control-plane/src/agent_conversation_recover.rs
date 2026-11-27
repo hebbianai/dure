@@ -17,6 +17,11 @@ pub(super) struct AgentConversationRecoverBodyV1 {
     expected_binding: AgentInteractionBindingV1,
 }
 
+/// Reattaches or relaunches the stable structured runtime behind
+/// `expected_binding`. A provider the runtime no longer finds running is
+/// relaunched on the same conversation; the build identity advertises that as
+/// `agent_conversation.recover.provider_exit.v1`, which `dure runs resume`
+/// requires before it reports an unchanged runtime as running.
 pub(super) async fn recover(
     state: &ServiceState,
     body: AgentConversationRecoverBodyV1,
