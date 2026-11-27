@@ -83,6 +83,9 @@ impl ClaudeDch1Transport for ClaudeDch1Client {
 /// cloned from the backend's single SDK-host connection; this bridge never
 /// opens a per-pane Node connection or process.
 pub struct ClaudeTimelineBridge<S, T> {
+    /// Set once this bridge committed its Query's exit: the host no longer
+    /// runs the Query, so no input sent through this bridge can reach Claude.
+    exited: AtomicBool,
     history_released: AtomicBool,
     identity: ClaudeDch1QueryIdentity,
     interaction_session_id: AgentInteractionSessionIdV1,
@@ -108,6 +111,7 @@ where
             .validate()
             .map_err(|error| ClaudeTimelineBridgeError::new(error.reason()))?;
         Ok(Self {
+            exited: AtomicBool::new(false),
             history_released: AtomicBool::new(false),
             identity,
             interaction_session_id,
@@ -127,6 +131,11 @@ where
 
     pub fn identity(&self) -> &ClaudeDch1QueryIdentity {
         &self.identity
+    }
+
+    /// Whether this bridge committed its Query's exit.
+    pub fn query_exited(&self) -> bool {
+        self.exited.load(Ordering::Acquire)
     }
 
     pub fn validate_attached_snapshot(
@@ -516,6 +525,9 @@ where
             .commit_provider_event(&commit)
             .await
             .map_err(conversation_error)?;
+        if event.kind == "query_exited" {
+            self.exited.store(true, Ordering::Release);
+        }
         Ok(())
     }
 

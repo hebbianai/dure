@@ -677,6 +677,7 @@ pub async fn prepare_with_agent_conversation_runtimes(
         agent_conversations,
         agent_operations: agent_operation_lock::AgentOperationLocks::default(),
         agent_runtime_recovery_wake: Notify::new(),
+        stable_runtime_requests: Default::default(),
         managed_rehost_recovery_wake: Notify::new(),
         goal_wakeup: Notify::new(),
         runtime_idle: idle::IdleRuntime::from_environment(),

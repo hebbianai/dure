@@ -48,6 +48,11 @@ function queryFactory() {
 					providerMessageId,
 					providerSessionId: `session-${clientMessageId}`,
 				});
+				// The Claude process ends by itself once the turn is over, as
+				// a crashed or killed Claude does: nothing asked to close it.
+				if (input === "end-after-turn") {
+					setTimeout(() => terminal({ code: 0, signal: null }), 0);
+				}
 				return { clientMessageId, stopReason: "end_turn" };
 			},
 			async close() {

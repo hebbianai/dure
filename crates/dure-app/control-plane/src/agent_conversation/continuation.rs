@@ -14,7 +14,7 @@ use tokio::task::{Id, JoinSet};
 use crate::agent_conversation::AgentConversationNotificationKindV1;
 use crate::agent_conversation_api::AgentConversationApiErrorV1;
 use crate::agent_recovery::AgentRecoveryHoldV1;
-use crate::{ServiceState, agent_goal, agent_recovery, now_ms};
+use crate::{ServiceState, agent_goal, agent_recovery, agent_runtime_recovery, now_ms};
 
 /// The wait before the first retry of owed work; each further failure in a
 /// row doubles it, up to `RETRY_MAX_MS`.
@@ -206,8 +206,14 @@ pub(crate) async fn advance(
         .map_err(|_| Stalled::owed("agent_queue_store_failed"))?
     {
         return match state.agent_conversations.start_queued_turn(&binding).await {
-            // Runtime recovery publishes readiness; no effect was claimed.
-            Ok(_) | Err(AgentConversationApiErrorV1::RuntimeUnavailable) => Ok(wake_at_ms),
+            Ok(_) => Ok(wake_at_ms),
+            // No provider takes the input and no effect was claimed. Runtime
+            // recovery relaunches the conversation, and its completion wakes
+            // this loop to start the input.
+            Err(AgentConversationApiErrorV1::RuntimeUnavailable) => {
+                agent_runtime_recovery::request_stable(state, agent_id).await;
+                Ok(wake_at_ms)
+            }
             // A failed claim leaves the input queued. A provider refusal has
             // recorded its outcome; the retry claims the next input, if any.
             Err(error) => Err(Stalled::owed(error.code())),
