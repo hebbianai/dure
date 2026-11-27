@@ -418,6 +418,24 @@ where
         Ok(false)
     }
 
+    /// Whether the host runs this exact Query, whichever controller bound it.
+    /// A restarted control plane has no route for the Queries its predecessor
+    /// bound, and the host keeps them running after that controller exits.
+    /// An unreachable host is an error, never proof that the Query ended.
+    pub(crate) async fn hosts_live_query(
+        &self,
+        identity: &ClaudeDch1QueryIdentity,
+    ) -> Result<bool, ClaudeConversationHostErrorV1> {
+        let (client, _) = self.ensure_client().await?;
+        let snapshot = client
+            .request("snapshot", json!({}))
+            .await
+            .map_err(|error| {
+                ClaudeConversationHostErrorV1::new(format!("snapshot_{}", error.reason()))
+            })?;
+        Ok(listed_query(snapshot, identity)?.is_some_and(|query| query.is_live()))
+    }
+
     /// What the connected host reports one live Query doing, read without
     /// starting a host. `None` when no live host is connected, it does not
     /// list the Query, or the Query is neither running nor waiting for input.
@@ -561,131 +579,23 @@ where
             effort: attachment.effort.clone(),
             reconcile_lock: AsyncMutex::new(()),
         });
-        let replay_base = self
-            .service
-            .provider_cursor(
-                &attachment.binding.interaction_session_id,
-                &attachment.binding.runtime,
-            )
-            .await
-            .map_err(|_| ClaudeConversationHostErrorV1::new("replay_base_unavailable"))?
-            .committed_through_sequence;
-        let mut query_binding = Map::new();
-        query_binding.insert("identity".into(), json!(identity));
-        query_binding.insert("cwd".into(), json!(cwd));
-        if let Some(directory) = memory_directory {
-            query_binding.insert("autoMemoryDirectory".into(), json!(directory));
-        }
-        let environment = query_environment(
-            attachment.environment,
-            &attachment.binding.agent_id,
-            self.service.backend_home(),
-        );
-        query_binding.insert("env".into(), json!(environment));
-        query_binding.insert(
-            "instructions".into(),
-            json!(crate::agent_goal::tool_instructions(
-                &attachment.binding.agent_id
-            )),
-        );
-        query_binding.insert(
-            "permissionMode".into(),
-            Value::String(
-                match attachment.permission_mode {
-                    ProviderPermissionModeV1::Default => "default",
-                    ProviderPermissionModeV1::AutoEdit => "auto_edit",
-                    ProviderPermissionModeV1::Plan => "plan",
-                    ProviderPermissionModeV1::SkipPermissions => "skip_permissions",
-                }
-                .into(),
-            ),
-        );
-        if let Some(model) = attachment.model.as_ref() {
-            query_binding.insert("model".into(), Value::String(model.as_str().into()));
-        }
-        if let Some(effort) = attachment.effort.as_ref() {
-            query_binding.insert("effort".into(), Value::String(effort.as_str().into()));
-        }
-        if let Some(process) = attachment.process.as_ref() {
-            query_binding.insert(
-                "process".into(),
-                json!({
-                    "relayEndpoint": process.relay_endpoint,
-                    "relayCapability": process.relay_capability,
-                }),
-            );
-        }
-        if let Some(provider_session_id) = attachment.binding.provider_conversation_ref.as_ref() {
-            query_binding.insert(
-                "providerSessionId".into(),
-                Value::String(provider_session_id.clone()),
-            );
-        }
-        let mut bind_options = Map::new();
-        bind_options.insert("replayBase".into(), Value::from(replay_base));
-        if let Some(authority) = attachment.replacement_authority {
-            bind_options.insert("authority".into(), json!(authority));
-        }
-        let bind_result = client
-            .request(
-                "bind",
-                json!({
-                    "binding": Value::Object(query_binding),
-                    "replacement": Value::Object(bind_options),
-                }),
-            )
-            .await;
-        let bind_receipt = match bind_result {
-            Ok(receipt) => receipt,
-            Err(error) => {
-                let reason = format!("bind_{}", error.reason());
-                if error.has_exact_retirement_candidate() {
-                    return Err(self
-                        .failed_attachment_error(
-                            &client,
-                            &attachment.binding,
-                            &identity,
-                            &route,
-                            reason,
-                        )
-                        .await);
-                }
-                self.remove_route(&identity, &route).await;
-                return Err(if error.is_remote_response() {
-                    ClaudeConversationHostErrorV1::new(reason)
-                } else {
-                    ClaudeConversationHostErrorV1::attach_unknown(reason)
-                });
-            }
-        };
-        let bind_receipt: ClaudeQueryBindReceiptV1 = match serde_json::from_value(bind_receipt) {
-            Ok(receipt) => receipt,
-            Err(_) => {
-                return Err(self
-                    .failed_attachment_error(
-                        &client,
-                        &attachment.binding,
-                        &identity,
-                        &route,
-                        "bind_receipt_invalid",
-                    )
-                    .await);
-            }
-        };
-        if bind_receipt.identity != identity
-            || bind_receipt.state != "waiting_for_input"
-            || bind_receipt.host_identity.validate().is_err()
+        let bound_host_identity = match self
+            .adoptable_query(&client, &attachment, &identity)
+            .await?
         {
-            return Err(self
-                .failed_attachment_error(
+            Some(host_identity) => host_identity,
+            None => {
+                self.bind_query(
                     &client,
-                    &attachment.binding,
+                    &attachment,
                     &identity,
+                    &cwd,
+                    memory_directory,
                     &route,
-                    "bind_receipt_invalid",
                 )
-                .await);
-        }
+                .await?
+            }
+        };
         let snapshot = match client.request("snapshot", json!({})).await {
             Ok(snapshot) => snapshot,
             Err(error) => {
@@ -720,7 +630,7 @@ where
                     .await);
             }
         };
-        if snapshot_host_identity != bind_receipt.host_identity {
+        if snapshot_host_identity != bound_host_identity {
             return Err(self
                 .failed_attachment_error(
                     &client,
@@ -775,9 +685,195 @@ where
         Ok(ClaudeConversationAttachmentReceiptV1 {
             binding,
             host_process_id,
-            host_identity: bind_receipt.host_identity,
+            host_identity: bound_host_identity,
             identity,
         })
+    }
+
+    /// The host identity when the host already runs this exact Query, which
+    /// the attachment then adopts instead of binding it again. A restarted
+    /// control plane meets the Queries its predecessor bound this way: the
+    /// host keeps them running after their controller exits, and their relay
+    /// took its one connection, so a second bind could not start them anyway.
+    /// A replacement target always binds, where the host checks its fence.
+    async fn adoptable_query(
+        &self,
+        client: &ClaudeDch1Client,
+        attachment: &ClaudeConversationAttachmentV1,
+        identity: &ClaudeDch1QueryIdentity,
+    ) -> Result<Option<ClaudeDch1HostIdentity>, ClaudeConversationHostErrorV1> {
+        if attachment.replacement_authority.is_some() {
+            return Ok(None);
+        }
+        let snapshot = client
+            .request("snapshot", json!({}))
+            .await
+            .map_err(|error| {
+                // Nothing is bound yet, so this says nothing about the Query.
+                ClaudeConversationHostErrorV1::attach_unknown(format!(
+                    "snapshot_{}",
+                    error.reason()
+                ))
+            })?;
+        let Some(query) = listed_query(snapshot.clone(), identity)? else {
+            return Ok(None);
+        };
+        if !query.is_live() {
+            // The host answers a bind of an ended Query itself.
+            return Ok(None);
+        }
+        if query.state == "starting" {
+            // Another controller's bind is still starting it.
+            return Err(ClaudeConversationHostErrorV1::attach_unknown(
+                "query_starting",
+            ));
+        }
+        if query.provider_session_id.is_some()
+            && attachment.binding.provider_conversation_ref.is_some()
+            && query.provider_session_id != attachment.binding.provider_conversation_ref
+        {
+            return Err(ClaudeConversationHostErrorV1::new("identity_conflict"));
+        }
+        host_identity_from_snapshot(snapshot).map(Some)
+    }
+
+    /// Binds a Query the host does not run yet and returns the identity of
+    /// the host that bound it.
+    async fn bind_query(
+        &self,
+        client: &ClaudeDch1Client,
+        attachment: &ClaudeConversationAttachmentV1,
+        identity: &ClaudeDch1QueryIdentity,
+        cwd: &Path,
+        memory_directory: Option<PathBuf>,
+        route: &Arc<ConversationRoute<S>>,
+    ) -> Result<ClaudeDch1HostIdentity, ClaudeConversationHostErrorV1> {
+        let replay_base = self
+            .service
+            .provider_cursor(
+                &attachment.binding.interaction_session_id,
+                &attachment.binding.runtime,
+            )
+            .await
+            .map_err(|_| ClaudeConversationHostErrorV1::new("replay_base_unavailable"))?
+            .committed_through_sequence;
+        let mut query_binding = Map::new();
+        query_binding.insert("identity".into(), json!(identity));
+        query_binding.insert("cwd".into(), json!(cwd));
+        if let Some(directory) = memory_directory {
+            query_binding.insert("autoMemoryDirectory".into(), json!(directory));
+        }
+        let environment = query_environment(
+            attachment.environment.clone(),
+            &attachment.binding.agent_id,
+            self.service.backend_home(),
+        );
+        query_binding.insert("env".into(), json!(environment));
+        query_binding.insert(
+            "instructions".into(),
+            json!(crate::agent_goal::tool_instructions(
+                &attachment.binding.agent_id
+            )),
+        );
+        query_binding.insert(
+            "permissionMode".into(),
+            Value::String(
+                match attachment.permission_mode {
+                    ProviderPermissionModeV1::Default => "default",
+                    ProviderPermissionModeV1::AutoEdit => "auto_edit",
+                    ProviderPermissionModeV1::Plan => "plan",
+                    ProviderPermissionModeV1::SkipPermissions => "skip_permissions",
+                }
+                .into(),
+            ),
+        );
+        if let Some(model) = attachment.model.as_ref() {
+            query_binding.insert("model".into(), Value::String(model.as_str().into()));
+        }
+        if let Some(effort) = attachment.effort.as_ref() {
+            query_binding.insert("effort".into(), Value::String(effort.as_str().into()));
+        }
+        if let Some(process) = attachment.process.as_ref() {
+            query_binding.insert(
+                "process".into(),
+                json!({
+                    "relayEndpoint": process.relay_endpoint,
+                    "relayCapability": process.relay_capability,
+                }),
+            );
+        }
+        if let Some(provider_session_id) = attachment.binding.provider_conversation_ref.as_ref() {
+            query_binding.insert(
+                "providerSessionId".into(),
+                Value::String(provider_session_id.clone()),
+            );
+        }
+        let mut bind_options = Map::new();
+        bind_options.insert("replayBase".into(), Value::from(replay_base));
+        if let Some(authority) = attachment.replacement_authority.as_ref() {
+            bind_options.insert("authority".into(), json!(authority));
+        }
+        let bind_result = client
+            .request(
+                "bind",
+                json!({
+                    "binding": Value::Object(query_binding),
+                    "replacement": Value::Object(bind_options),
+                }),
+            )
+            .await;
+        let bind_receipt = match bind_result {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                let reason = format!("bind_{}", error.reason());
+                if error.has_exact_retirement_candidate() {
+                    return Err(self
+                        .failed_attachment_error(
+                            client,
+                            &attachment.binding,
+                            identity,
+                            route,
+                            reason,
+                        )
+                        .await);
+                }
+                self.remove_route(identity, route).await;
+                return Err(if error.is_remote_response() {
+                    ClaudeConversationHostErrorV1::new(reason)
+                } else {
+                    ClaudeConversationHostErrorV1::attach_unknown(reason)
+                });
+            }
+        };
+        let bind_receipt: ClaudeQueryBindReceiptV1 = match serde_json::from_value(bind_receipt) {
+            Ok(receipt) => receipt,
+            Err(_) => {
+                return Err(self
+                    .failed_attachment_error(
+                        client,
+                        &attachment.binding,
+                        identity,
+                        route,
+                        "bind_receipt_invalid",
+                    )
+                    .await);
+            }
+        };
+        if bind_receipt.identity != *identity
+            || bind_receipt.state != "waiting_for_input"
+            || bind_receipt.host_identity.validate().is_err()
+        {
+            return Err(self
+                .failed_attachment_error(
+                    client,
+                    &attachment.binding,
+                    identity,
+                    route,
+                    "bind_receipt_invalid",
+                )
+                .await);
+        }
+        Ok(bind_receipt.host_identity)
     }
 
     /// Retire one exact Query and commit its terminal replay before removing
@@ -1492,6 +1588,9 @@ struct ListedQuery {
     /// A host from before background-work tracking reports none.
     #[serde(default)]
     background_task_count: u64,
+    /// `None` until Claude reports its session.
+    #[serde(default)]
+    provider_session_id: Option<String>,
 }
 
 impl ListedQuery {

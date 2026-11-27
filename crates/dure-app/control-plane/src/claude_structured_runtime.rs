@@ -335,9 +335,30 @@ struct ClaudeRuntimeFiles {
 }
 
 struct PreparedClaudeRuntime {
+    /// The relay's launch capability until the relay consumes it.
     capability: Option<String>,
     files: ClaudeRuntimeFiles,
     journal: ClaudeRuntimeLaunchJournalV1,
+}
+
+impl PreparedClaudeRuntime {
+    /// What a Query binds to while the relay still waits for its host. A
+    /// claimed relay has consumed its capability; reattaching then adopts the
+    /// Query the SDK Host already runs and binds nothing.
+    fn process_binding(&self) -> Option<ClaudeConversationProcessBindingV1> {
+        self.capability
+            .clone()
+            .map(|relay_capability| ClaudeConversationProcessBindingV1 {
+                relay_capability,
+                relay_endpoint: self.files.endpoint.clone(),
+            })
+    }
+
+    /// Whether the relay is still waiting for its one host connection. It
+    /// removes its endpoint and launch capability once it accepts one.
+    fn relay_is_unclaimed(&self) -> bool {
+        self.capability.is_some() && relay_is_ready(&self.files.endpoint)
+    }
 }
 
 enum ManagedRelayCreateOutcome {
@@ -566,10 +587,7 @@ where
                 cursor.committed_through_sequence == 0 && prepared.capability.is_some()
             }
             ClaudeRuntimeLaunchStateV1::RelayReady => prepared.capability.is_some(),
-            ClaudeRuntimeLaunchStateV1::Attached => {
-                prepared.capability.is_some()
-                    && wait_for_relay(&prepared.files.endpoint).await.is_ok()
-            }
+            ClaudeRuntimeLaunchStateV1::Attached => self.attached_relay_is_live(&prepared).await?,
             ClaudeRuntimeLaunchStateV1::QueryRetired
             | ClaudeRuntimeLaunchStateV1::StopCleanupPending
             | ClaudeRuntimeLaunchStateV1::FailureCleanupPending
@@ -584,6 +602,35 @@ where
         }
         self.replace_runtime(binding, workspace_id, cwd, prepared)
             .await
+    }
+
+    /// Whether an Attached journal's relay can still be reattached. A relay
+    /// its host has not connected to yet holds its endpoint and capability.
+    /// A claimed relay has removed both and lives as long as the Query its
+    /// SDK Host runs; the Host keeps that Query running after the control
+    /// plane that bound it exits, so only the Host's listing shows whether
+    /// it still runs. A relay whose Hmux processes are gone runs nothing,
+    /// whatever the Host still lists; a Host that cannot be asked proves
+    /// nothing.
+    async fn attached_relay_is_live(
+        &self,
+        prepared: &PreparedClaudeRuntime,
+    ) -> Result<bool, ClaudeStructuredRuntimeErrorV1> {
+        if prepared.relay_is_unclaimed() {
+            return Ok(true);
+        }
+        let descriptor = prepared
+            .journal
+            .descriptor()
+            .ok_or(ClaudeStructuredRuntimeErrorV1::JournalFailed)?;
+        // A failed probe proves no absence; the Host still decides.
+        if relay_generation_is_absent(descriptor).unwrap_or(false) {
+            return Ok(false);
+        }
+        self.host
+            .hosts_live_query(&prepared.journal.query_identity())
+            .await
+            .map_err(|_| ClaudeStructuredRuntimeErrorV1::HostAttachUncertain)
     }
 
     async fn is_active_transition_source(
@@ -1159,7 +1206,10 @@ where
                 return Err(ClaudeStructuredRuntimeErrorV1::JournalFailed.into());
             }
         };
-        if wait_for_relay(&prepared.files.endpoint).await.is_err() {
+        // An Attached relay was proven live by prepare_launch; once claimed it
+        // has no endpoint left to wait for.
+        let reattaching = prepared.journal.state() == ClaudeRuntimeLaunchStateV1::Attached;
+        if !reattaching && wait_for_relay(&prepared.files.endpoint).await.is_err() {
             self.publish_failure(
                 &mut prepared,
                 ClaudeStructuredRecordedFailureV1::RelayReadiness,
@@ -1168,8 +1218,11 @@ where
                 .await?;
             return Err(ClaudeStructuredRuntimeErrorV1::RelayReadinessFailed.into());
         }
+        let process = prepared.process_binding();
+        if process.is_none() && !reattaching {
+            return Err(ClaudeStructuredRuntimeErrorV1::JournalFailed.into());
+        }
 
-        let reattaching = prepared.journal.state() == ClaudeRuntimeLaunchStateV1::Attached;
         let replacement_authority = if reattaching {
             None
         } else {
@@ -1186,13 +1239,7 @@ where
                 permission_mode: launch_options.permission_mode.clone(),
                 model: launch_options.model.clone(),
                 effort: launch_options.effort.clone(),
-                process: Some(ClaudeConversationProcessBindingV1 {
-                    relay_capability: prepared
-                        .capability
-                        .clone()
-                        .ok_or(ClaudeStructuredRuntimeErrorV1::JournalFailed)?,
-                    relay_endpoint: prepared.files.endpoint.clone(),
-                }),
+                process,
                 relay_id: prepared.files.relay_id.clone(),
                 replacement_authority,
             })
@@ -1245,7 +1292,7 @@ where
     /// conversation. A live relay keeps its exact runtime generation; a relay
     /// proven dead is replaced through the same launch journal while preserving
     /// the logical interaction and provider conversation.
-    pub(crate) async fn attach_existing(
+    pub async fn attach_existing(
         &self,
         selection: &AgentRuntimeSelectionV1,
         binding: &AgentInteractionBindingV1,
@@ -1349,14 +1396,10 @@ where
             .journal
             .descriptor()
             .ok_or(ClaudeStructuredRuntimeErrorV1::JournalFailed)?;
-        if wait_for_relay(&prepared.files.endpoint).await.is_err() {
+        if !self.attached_relay_is_live(&prepared).await? {
             drop(active);
             return self.recover_existing_context(context, launch_options).await;
         }
-        let capability = prepared
-            .capability
-            .clone()
-            .ok_or(ClaudeStructuredRuntimeErrorV1::JournalFailed)?;
         let prepared_profile = self
             .credential_profiles
             .prepare_for_launch(
@@ -1378,10 +1421,7 @@ where
                 permission_mode: launch_options.permission_mode.clone(),
                 model: launch_options.model.clone(),
                 effort: launch_options.effort.clone(),
-                process: Some(ClaudeConversationProcessBindingV1 {
-                    relay_capability: capability,
-                    relay_endpoint: prepared.files.endpoint.clone(),
-                }),
+                process: prepared.process_binding(),
                 relay_id: prepared.files.relay_id.clone(),
                 replacement_authority: None,
             })
