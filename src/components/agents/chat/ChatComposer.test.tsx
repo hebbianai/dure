@@ -7,14 +7,27 @@ import {
 	render,
 	screen,
 } from "@testing-library/react";
+import { useSyncExternalStore } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "@/components/agents/chat/ChatComposer";
 import { AgentChatSessionController } from "@/lib/agents/chat/agentChatSessionController";
-import type { AgentChatSubmission } from "@/lib/agents/chat/agentChatSubmission";
+import {
+	type AgentChatSubmission,
+	agentChatSubmissionKey,
+} from "@/lib/agents/chat/agentChatSubmission";
+import type { AgentChatSessionView } from "@/lib/agents/chat/agentChatSessionView";
+import type {
+	AgentTimelinePageV1,
+	AgentTimelineRowV1,
+} from "@/lib/agents/chat/agentConversationContract";
 import { chatInputLatency } from "@/lib/agents/chat/chatInputLatency";
 import { continuationTimeLabel } from "@/lib/agents/chat/turnFailureReason";
 import { currentLang, t } from "@/lib/i18n";
-import type { DureAgentConversationClient } from "@/lib/ipc/dureAgentConversation";
+import type {
+	AgentConversationInvalidationV1,
+	DureAgentConversationClient,
+} from "@/lib/ipc/dureAgentConversation";
+import { DureBackendRequestError } from "@/lib/ipc/dureBackend";
 import type { DureAgentRuntimeLaunchSelectionV1 } from "@/lib/ipc/dureAgentRuntime";
 import { getForegroundInteractionBudget } from "@/lib/scheduling/foregroundInteractionBudget";
 import { getWorkspacePerformanceSnapshot } from "@/lib/workspace/performance/workspacePerformance";
@@ -819,6 +832,276 @@ describe("ChatComposer uncertain send recovery", () => {
 		expect((composer as HTMLTextAreaElement).value).toBe(
 			"original input\nnew draft",
 		);
+	});
+});
+
+function sessionLifecycleRow(
+	sequence: number,
+	state: "session_ready" | "session_exited",
+	detail: string | null,
+): AgentTimelineRowV1 {
+	return {
+		cursor: { epoch: "timeline-1", sequence },
+		item: {
+			itemId: `lifecycle-${sequence}`,
+			turnId: null,
+			clientMessageId: null,
+			providerMessageId: null,
+			createdAtMs: sequence,
+			body: { type: "lifecycle", state, detail },
+		},
+	};
+}
+
+/** A session view whose timeline ends with its provider's exit. */
+function exitedSession(detail: string | null) {
+	const value = session("claude");
+	value.page!.rows = [
+		...value.page!.rows,
+		sessionLifecycleRow(2, "session_exited", detail),
+	];
+	value.page!.finalCursor = { epoch: "timeline-1", sequence: 2 };
+	return value;
+}
+
+/** The composer over a real session controller, as the pane renders it. */
+function ControlledComposer({
+	controller,
+	base,
+}: {
+	controller: AgentChatSessionController;
+	base: AgentChatSessionView;
+}) {
+	const snapshot = useSyncExternalStore(
+		controller.subscribe,
+		controller.getSnapshot,
+	);
+	return (
+		<ChatComposer
+			disabled={false}
+			session={{
+				...base,
+				...snapshot,
+				send: (input) => controller.send(input),
+				steerOrQueue: (input) => controller.steerOrQueue(input),
+				queueMessage: (input) => controller.queueMessage(input),
+				retryTurn: () => controller.retryTurn(),
+				editRetryableTurn: (restore) => controller.editRetryableTurn(restore),
+				dismissActionError: () => controller.dismissActionError(),
+			}}
+		/>
+	);
+}
+
+describe("ChatComposer after its provider exited", () => {
+	afterEach(() => {
+		cleanup();
+		useStore.setState({ chatDrafts: {} });
+	});
+
+	it("says the session ended and keeps what is typed as the draft", async () => {
+		const value = exitedSession('{"code":143,"signal":null}');
+		render(<ChatComposer session={value} disabled={false} />);
+		expect(
+			screen.getByText(
+				t("agents.chat.providerExitedWithReason", { reason: "exit 143" }),
+			),
+		).toBeTruthy();
+		const composer = screen.getByRole("textbox") as HTMLTextAreaElement;
+		expect(composer.disabled).toBe(false);
+		fireEvent.change(composer, { target: { value: "still here" } });
+		await act(async () => {
+			fireEvent.keyDown(composer, { key: "Enter" });
+		});
+		expect(value.send).not.toHaveBeenCalled();
+		expect(value.steerOrQueue).not.toHaveBeenCalled();
+		expect(composer.value).toBe("still here");
+		expect(
+			(
+				screen.getByRole("button", {
+					name: t("agents.chat.send"),
+				}) as HTMLButtonElement
+			).disabled,
+		).toBe(true);
+	});
+
+	it("says a clean exit ended the session without a reason", () => {
+		const value = exitedSession('{"code":0,"signal":null}');
+		render(<ChatComposer session={value} disabled={false} />);
+		expect(screen.getByText(t("agents.chat.providerExited"))).toBeTruthy();
+	});
+
+	it("still runs Dure's own commands", async () => {
+		const value = exitedSession('{"code":143,"signal":null}');
+		const onNewConversation = vi.fn();
+		render(
+			<ChatComposer
+				session={value}
+				disabled={false}
+				onNewConversation={onNewConversation}
+			/>,
+		);
+		const composer = screen.getByRole("textbox");
+		fireEvent.change(composer, { target: { value: "/clear" } });
+		await act(async () => {
+			fireEvent.keyDown(composer, { key: "Enter" });
+		});
+		expect(onNewConversation).toHaveBeenCalledOnce();
+		expect(value.send).not.toHaveBeenCalled();
+	});
+
+	it("returns an unconfirmed send to the draft instead of offering a retry", async () => {
+		const value = exitedSession('{"code":143,"signal":null}');
+		value.retryTurnAvailable = true;
+		value.actionError = t("ipc.agentConversation.deliveryUnconfirmed");
+		value.editRetryableTurn = vi.fn(async (restore) => restore("original input"));
+		render(<ChatComposer session={value} disabled={false} />);
+		await act(async () => {});
+		expect(value.editRetryableTurn).toHaveBeenCalledOnce();
+		expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
+			"original input",
+		);
+		expect(value.retryTurn).not.toHaveBeenCalled();
+		// This session view keeps the turn parked, as a failed return would:
+		// the person can return it again, never retry it to a dead provider.
+		expect(
+			screen.queryByRole("button", { name: t("agents.chat.retrySend") }),
+		).toBeNull();
+		expect(
+			screen.getByRole("button", { name: t("agents.chat.editUncertainSend") }),
+		).toBeTruthy();
+	});
+
+	it("keeps a message sent just before the exit was known as the draft (#807)", async () => {
+		const routeAuthority = testDureBackendRouteAuthority("backend", "one");
+		const base = session("claude");
+		const page: AgentTimelinePageV1 = {
+			...base.page!,
+			rows: [sessionLifecycleRow(1, "session_ready", null)],
+			finalCursor: { epoch: "timeline-1", sequence: 1 },
+		};
+		let invalidate: (event: AgentConversationInvalidationV1) => void = () => {};
+		const client: DureAgentConversationClient = {
+			inspectInput: async () => null,
+			readQueue: vi.fn(),
+			readProviderHistory: vi.fn(),
+			enqueueTurn: vi.fn(),
+			cancelQueuedTurn: vi.fn(),
+			inspect: async () => ({
+				backend: routeAuthority.backend,
+				routeAuthority,
+				binding: page.binding,
+			}),
+			recover: async (binding) => binding,
+			read: async (request) => ({
+				backend: routeAuthority.backend,
+				routeAuthority,
+				read: {
+					type: "page",
+					page: {
+						...page,
+						rows: page.rows.filter(
+							(row) => row.cursor.sequence > (request.cursor?.sequence ?? 0),
+						),
+					},
+				},
+			}),
+			subscribe: async (_request, onInvalidation) => {
+				invalidate = onInvalidation;
+				return {
+					backend: routeAuthority.backend,
+					routeAuthority,
+					initial: { type: "page", page },
+					subscriptionId: "test",
+					close: async () => {},
+				};
+			},
+			continueTurn: async () => {
+				throw new Error("Unexpected automatic continuation in this fixture");
+			},
+			// The provider process is gone; the host refuses the turn.
+			startTurn: vi.fn(async () => {
+				throw new DureBackendRequestError(
+					"agent_conversation_provider_failed",
+					"remote_query_exited",
+					{ kind: "operation", disposition: "terminal" },
+				);
+			}),
+			steerTurn: vi.fn(),
+			answerPending: vi.fn(),
+			interruptTurn: vi.fn(),
+			putGoal: vi.fn(),
+		};
+		const stored = new Map<string, AgentChatSubmission>();
+		const controller = new AgentChatSessionController({
+			agentId: "agent-1",
+			interactionSessionId: "interaction-1",
+			client,
+			submissionStore: {
+				subscribe: () => () => {},
+				list: async () => [...stored.values()],
+				put: async (input) => {
+					stored.set(agentChatSubmissionKey(input), input);
+				},
+				remove: async (input) => {
+					stored.delete(agentChatSubmissionKey(input));
+				},
+			},
+		});
+		controller.start();
+		try {
+			await vi.waitFor(() =>
+				expect(controller.getSnapshot().phase).toBe("ready"),
+			);
+			render(<ControlledComposer controller={controller} base={base} />);
+			const composer = screen.getByRole("textbox") as HTMLTextAreaElement;
+			fireEvent.change(composer, { target: { value: "hello" } });
+			await act(async () => {
+				fireEvent.keyDown(composer, { key: "Enter" });
+			});
+			await vi.waitFor(() =>
+				expect(controller.getSnapshot().retryTurnAvailable).toBe(true),
+			);
+			expect(composer.value).toBe("");
+
+			// The exit row lands on the timeline the conversation shows.
+			page.rows = [
+				...page.rows,
+				sessionLifecycleRow(2, "session_exited", '{"code":143,"signal":null}'),
+			];
+			page.finalCursor = { epoch: "timeline-1", sequence: 2 };
+			await act(async () => {
+				invalidate({
+					kind: "changed",
+					interactionSessionId: "interaction-1",
+					timelineCursor: page.finalCursor,
+					kinds: ["timeline"],
+				});
+			});
+			await vi.waitFor(() => expect(composer.value).toBe("hello"));
+			await vi.waitFor(() =>
+				expect(controller.getSnapshot().retryTurnAvailable).toBe(false),
+			);
+			expect(stored.size).toBe(0);
+			expect(
+				screen.getByText(
+					t("agents.chat.providerExitedWithReason", { reason: "exit 143" }),
+				),
+			).toBeTruthy();
+			expect(
+				screen.queryByText(t("ipc.agentConversation.deliveryUnconfirmed")),
+			).toBeNull();
+			expect(
+				screen.queryByRole("button", { name: t("agents.chat.retrySend") }),
+			).toBeNull();
+			await act(async () => {
+				fireEvent.keyDown(composer, { key: "Enter" });
+			});
+			expect(client.startTurn).toHaveBeenCalledTimes(1);
+			expect(composer.value).toBe("hello");
+		} finally {
+			controller.stop();
+		}
 	});
 });
 

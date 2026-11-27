@@ -17,17 +17,22 @@ const HIDDEN_STATES = new Set([
 	"turn_canceled",
 ]);
 
-function humanizedExitDetail(detail: string | null): string | null {
+/** How a provider session ended, as its `session_exited` row recorded it:
+ * `exit 143`, `signal SIGKILL`, or the driver's reason token (for example
+ * `sdk_stream_failed`). Null for a clean exit, which says nothing to act on.
+ * The transcript row and the composer's notice both read it from here. */
+export function sessionExitReason(detail: string | null): string | null {
 	if (detail === null) return null;
 	try {
 		const parsed: unknown = JSON.parse(detail);
 		if (typeof parsed !== "object" || parsed === null) return detail;
-		const status = parsed as { code?: unknown; signal?: unknown };
+		const status = parsed as { code?: unknown; signal?: unknown; reason?: unknown };
 		if (status.code === 0 && !status.signal) return null;
 		if (typeof status.signal === "string" && status.signal) {
 			return `signal ${status.signal}`;
 		}
 		if (typeof status.code === "number") return `exit ${status.code}`;
+		if (typeof status.reason === "string" && status.reason) return status.reason;
 		return detail;
 	} catch {
 		return detail;
@@ -42,7 +47,7 @@ export function presentLifecycleRow(
 	if (state === "session_exited") {
 		// A clean exit is the norm and says nothing the reader must act on;
 		// only an abnormal status keeps the row.
-		const humanized = humanizedExitDetail(detail);
+		const humanized = sessionExitReason(detail);
 		if (humanized === null) return { kind: "hidden" };
 		return { kind: "notice", detail: humanized, failed: false };
 	}

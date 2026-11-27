@@ -231,6 +231,8 @@ export const agents: Record<string, string> = {
 	"agents.chat.reconnecting": "Chat에 다시 연결하는 중…",
 	"agents.chat.requestDetails": "요청 세부 정보",
 	"agents.chat.editUncertainSend": "원래 메시지 편집",
+	"agents.chat.providerExited": "이 세션은 종료되었습니다. 메시지를 전달할 수 없으므로 작성한 내용은 초안으로 여기에 남습니다.",
+	"agents.chat.providerExitedWithReason": "이 세션은 종료되었습니다({reason}). 메시지를 전달할 수 없으므로 작성한 내용은 초안으로 여기에 남습니다.",
 	"agents.chat.retrySend": "같은 요청 다시 보내기",
 	"agents.chat.send": "보내기",
 	"agents.chat.streaming": "응답 중…",

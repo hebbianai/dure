@@ -34,6 +34,7 @@ import {
 import {
 	observedProviderCatalog,
 	observedProviderCommands,
+	observedProviderExit,
 	observedSessionInit,
 } from "@/lib/agents/chat/observedRuntimeFacts";
 import {
@@ -170,6 +171,7 @@ export function ChatComposer({
 			model: observedSessionInit(page).model,
 			catalog: observedProviderCatalog(page),
 			commands: observedProviderCommands(page),
+			exit: observedProviderExit(page),
 		};
 	}, [rows]);
 	const turnFailure = session.activeTurn
@@ -218,6 +220,22 @@ export function ChatComposer({
 	const replacementInFlight = runtimeLaunch.switching;
 	const submissionInFlight =
 		authority !== null && submittingAuthority === authority;
+	// The conversation shows its provider exited: nothing is running to
+	// receive input, so the composer says so and keeps what is written.
+	const providerExit = historyFacts.exit;
+	const [returnedExitedSendFor, setReturnedExitedSendFor] = useState<
+		string | null
+	>(null);
+	const exitedSendPending =
+		providerExit !== undefined &&
+		session.retryTurnAvailable &&
+		returnedExitedSendFor !== providerExit.itemId;
+	// The unconfirmed-delivery banner stays away while that send is due to
+	// return or returning; only a failed return shows it, with its error.
+	const exitedSendReturning =
+		providerExit !== undefined &&
+		session.retryTurnAvailable &&
+		(exitedSendPending || session.sending);
 	const pendingQueueEdits = session.pendingQueueEdits ?? [];
 	const queueRows = [
 		...pendingQueueEdits,
@@ -311,6 +329,9 @@ export function ChatComposer({
 				return;
 			}
 		}
+		// Dure's own commands run on the pane; anything for the provider stays
+		// in the draft while the provider has exited.
+		if (providerExit) return;
 		setCommandNotice(null);
 		if (!attachmentsEnabled && attachments.length > 0) {
 			setAttachmentError(t("agents.chat.attachmentRemoteUnavailable"));
@@ -346,7 +367,8 @@ export function ChatComposer({
 				!mayEditDraft() ||
 				!activeSession ||
 				activeSession.phase !== "ready" ||
-				activeSession.retryTurnAvailable
+				activeSession.retryTurnAvailable ||
+				observedProviderExit(activeSession.page)
 			) {
 				return;
 			}
@@ -394,6 +416,32 @@ export function ChatComposer({
 		}
 	};
 
+	const restoreRetryableTurn = () => {
+		if (!mayEditDraft()) return;
+		void session
+			.editRetryableTurn((restored) => {
+				setDraft((current) => (current ? `${restored}\n${current}` : restored));
+			})
+			.catch(() => {});
+	};
+	// A send still unconfirmed when the provider is known to have exited goes
+	// back to the draft, once per exit, by the same path as "Edit original
+	// message": nothing is running that could take it, so it is never left
+	// as an unconfirmed retry.
+	useEffect(() => {
+		if (
+			!providerExit ||
+			!exitedSendPending ||
+			session.sending ||
+			disabled ||
+			draftMoving ||
+			!mayEditDraft()
+		)
+			return;
+		setReturnedExitedSendFor(providerExit.itemId);
+		restoreRetryableTurn();
+	}, [providerExit, exitedSendPending, session.sending, disabled, draftMoving]);
+
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const inputDisabled =
 		disabled ||
@@ -429,6 +477,17 @@ export function ChatComposer({
 			onSubmit={() => void submit()}
 			notices={
 				<>
+					{providerExit && (
+						<ChatAlert tone="warn" role="status" className="mb-2 items-center">
+							<span className="min-w-0 flex-1">
+								{providerExit.reason
+									? t("agents.chat.providerExitedWithReason", {
+											reason: providerExit.reason,
+										})
+									: t("agents.chat.providerExited")}
+							</span>
+						</ChatAlert>
+					)}
 					{session.error && !session.reconnecting && (
 						<ChatAlert className="mb-2 items-center">
 							<span className="min-w-0 flex-1">{session.error}</span>
@@ -549,7 +608,7 @@ export function ChatComposer({
 							</div>
 						</ChatAlert>
 					)}
-					{session.actionError && (
+					{session.actionError && !exitedSendReturning && (
 						<ChatAlert className="mb-2 flex-wrap items-center">
 							<ActionErrorText raw={session.actionError} />
 							{!session.retryTurnAvailable && (
@@ -564,28 +623,21 @@ export function ChatComposer({
 							)}
 							{session.retryTurnAvailable && (
 								<div className="ml-auto flex w-full flex-wrap justify-end gap-1 @lg/chat:w-auto">
+									{!providerExit && (
+										<Button
+											type="button"
+											size="xs"
+											variant="outline"
+											onClick={() => void session.retryTurn().catch(() => {})}
+										>
+											{t("agents.chat.retrySend")}
+										</Button>
+									)}
 									<Button
 										type="button"
 										size="xs"
 										variant="outline"
-										onClick={() => void session.retryTurn().catch(() => {})}
-									>
-										{t("agents.chat.retrySend")}
-									</Button>
-									<Button
-										type="button"
-										size="xs"
-										variant="outline"
-										onClick={() => {
-											if (!mayEditDraft()) return;
-											void session
-												.editRetryableTurn((restored) => {
-													setDraft((current) =>
-														current ? `${restored}\n${current}` : restored,
-													);
-												})
-												.catch(() => {});
-										}}
+										onClick={restoreRetryableTurn}
 									>
 										{t("agents.chat.editUncertainSend")}
 									</Button>
@@ -815,7 +867,8 @@ export function ChatComposer({
 							(!draft.trim() && attachments.length === 0) ||
 							session.sending ||
 							session.retryTurnAvailable ||
-							session.phase !== "ready"
+							session.phase !== "ready" ||
+							providerExit !== undefined
 						}
 					/>
 				)

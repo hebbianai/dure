@@ -4,8 +4,60 @@ import {
 	observedConversationActivity,
 	observedConversationTitle,
 	observedProviderCatalog,
+	observedProviderExit,
 	observedSessionInit,
 } from "@/lib/agents/chat/observedRuntimeFacts";
+
+describe("observedProviderExit", () => {
+	const lifecycle = (
+		itemId: string,
+		sequence: number,
+		state: "session_ready" | "session_exited" | "turn_failed",
+		detail: string | null = null,
+	): AgentTimelinePageV1["rows"][number] => ({
+		cursor: { epoch: "timeline-1", sequence },
+		item: {
+			itemId,
+			turnId: null,
+			clientMessageId: null,
+			providerMessageId: null,
+			createdAtMs: sequence,
+			body: { type: "lifecycle", state, detail },
+		},
+	});
+
+	it("reports the exit when it is the newest session row, with how it ended", () => {
+		expect(
+			observedProviderExit(
+				page([
+					lifecycle("ready", 1, "session_ready"),
+					lifecycle("exit", 2, "session_exited", '{"code":143,"signal":null}'),
+					lifecycle("failed", 3, "turn_failed", "query_exited_during_turn"),
+				]),
+			),
+		).toEqual({ itemId: "exit", reason: "exit 143" });
+		expect(
+			observedProviderExit(
+				page([lifecycle("exit", 1, "session_exited", '{"code":0,"signal":null}')]),
+			),
+		).toEqual({ itemId: "exit", reason: null });
+	});
+
+	it("ends the episode at a later ready and says nothing without session rows", () => {
+		expect(
+			observedProviderExit(
+				page([
+					lifecycle("exit", 1, "session_exited", '{"code":143,"signal":null}'),
+					lifecycle("ready", 2, "session_ready"),
+				]),
+			),
+		).toBeUndefined();
+		expect(
+			observedProviderExit(page([lifecycle("failed", 1, "turn_failed")])),
+		).toBeUndefined();
+		expect(observedProviderExit(undefined)).toBeUndefined();
+	});
+});
 
 describe("observedConversationActivity", () => {
 	it("does not count attach time or provider metadata as work", () => {

@@ -4,6 +4,7 @@ import {
 } from "./agentChatActionRequests";
 import { agentChatErrorMessage } from "./agentChatConnectionError";
 import type { AgentChatSessionSnapshot } from "./agentChatSessionView";
+import { observedProviderExit } from "./observedRuntimeFacts";
 import {
 	type AgentChatDeliverySubmission,
 	type AgentChatSubmission,
@@ -85,11 +86,20 @@ export class AgentChatSubmissionController {
 		);
 	}
 
+	/** Input for a provider the conversation shows has exited cannot be
+	 * delivered or confirmed, so it is refused before any intent exists; the
+	 * caller keeps its text. */
+	private refuseWhileProviderExited(): void {
+		if (observedProviderExit(this.snapshot.page))
+			throw new Error("agent_chat_provider_exited");
+	}
+
 	async send(input: string): Promise<void> {
 		const parsedInput = parseAgentChatInput(input);
 		if (this.retryableTurn || this.snapshot.sending) {
 			throw new Error("agent_chat_turn_already_pending");
 		}
+		this.refuseWhileProviderExited();
 		const { binding, routeAuthority } = this.requireConversationAuthority();
 		const turn: AgentChatDeliverySubmission = {
 			agentId: this.agentId,
@@ -108,6 +118,7 @@ export class AgentChatSubmissionController {
 		const parsedInput = parseAgentChatInput(input);
 		if (this.snapshot.sending)
 			throw new Error("agent_chat_turn_already_pending");
+		this.refuseWhileProviderExited();
 		const { binding, routeAuthority } = this.requireConversationAuthority();
 		const turn: AgentChatDeliverySubmission = {
 			agentId: this.agentId,

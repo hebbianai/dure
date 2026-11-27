@@ -1,6 +1,7 @@
 import type { AgentTimelinePageV1 } from "@/lib/agents/chat/agentConversationContract";
 import type { ObservedProviderModelV1 } from "@/lib/agents/providerModels";
 import { parseProviderModels } from "@/lib/agents/providerModels";
+import { sessionExitReason } from "@/lib/agents/chat/lifecycleRowPresentation";
 
 export interface ObservedSessionInit {
 	readonly model: string | null;
@@ -33,6 +34,40 @@ export function observedConversationActivity(page: AgentTimelinePageV1): {
 		at = Math.max(at ?? 0, pending.request.createdAtMs);
 	}
 	return { text, at };
+}
+
+/** The provider process behind a conversation has ended: the newest session
+ * lifecycle row on the page is its exit. */
+export interface ObservedProviderExit {
+	/** The exit row, so an ended episode has one identity. */
+	readonly itemId: string;
+	/** How it ended (`exit 143`), or null for a clean exit. */
+	readonly reason: string | null;
+}
+
+/** Whether the provider behind this conversation has exited, read from the
+ * timeline the conversation already shows: of its `session_ready` and
+ * `session_exited` rows, the newest is the exit. A relaunched provider writes
+ * `session_ready` after it, which ends the episode. Undefined while the page
+ * holds neither. */
+export function observedProviderExit(
+	page: Pick<AgentTimelinePageV1, "rows"> | undefined,
+): ObservedProviderExit | undefined {
+	if (!page) return undefined;
+	for (let index = page.rows.length - 1; index >= 0; index -= 1) {
+		const item = page.rows[index]?.item;
+		const body = item?.body;
+		if (
+			!item ||
+			body?.type !== "lifecycle" ||
+			(body.state !== "session_ready" && body.state !== "session_exited")
+		)
+			continue;
+		return body.state === "session_exited"
+			? { itemId: item.itemId, reason: sessionExitReason(body.detail) }
+			: undefined;
+	}
+	return undefined;
 }
 
 /** What the running provider session reported about itself at initialization

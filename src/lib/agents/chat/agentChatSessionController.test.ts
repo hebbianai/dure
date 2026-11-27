@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentChatSessionController } from "@/lib/agents/chat/agentChatSessionController";
 import { createAgentChatSessionRegistry } from "@/lib/agents/chat/agentChatSessionRegistry";
+import { observedProviderExit } from "@/lib/agents/chat/observedRuntimeFacts";
 import type {
 	AgentQueuedTurnRecordV1,
 	AgentTimelineReadRequestV1,
@@ -285,6 +286,24 @@ function messageRow(sequence: number) {
 				role: "assistant" as const,
 				markdown: `${sequence}`,
 			},
+			createdAtMs: sequence,
+		},
+	};
+}
+
+function lifecycleRow(
+	sequence: number,
+	state: "session_ready" | "session_exited",
+	detail: string | null,
+): AgentTimelineRowV1 {
+	return {
+		cursor: { epoch: "timeline-1", sequence },
+		item: {
+			itemId: `lifecycle-${sequence}`,
+			turnId: null,
+			clientMessageId: null,
+			providerMessageId: null,
+			body: { type: "lifecycle", state, detail },
 			createdAtMs: sequence,
 		},
 	};
@@ -701,6 +720,71 @@ describe("AgentChatSessionController", () => {
 			reopened.stop();
 		},
 	);
+
+	it("refuses input while its provider has exited and accepts it again after a ready", async () => {
+		// Issue #807: the transcript shows "Session ended · exit 143", yet a
+		// send went to the dead target and came back as an unconfirmed retry.
+		const initial = read();
+		if (initial.type !== "page") throw new Error("expected page fixture");
+		initial.page.rows = [
+			lifecycleRow(1, "session_ready", null),
+			lifecycleRow(2, "session_exited", '{"code":143,"signal":null}'),
+		];
+		initial.page.finalCursor.sequence = 2;
+		const fixture = client(initial);
+		vi.mocked(fixture.transport.startTurn).mockRejectedValue(
+			terminalProviderFailure(),
+		);
+		const controller = new AgentChatSessionController({
+			agentId: "agent-1",
+			interactionSessionId: "interaction-1",
+			client: fixture.transport,
+		});
+		controller.start();
+		await vi.waitFor(() =>
+			expect(controller.getSnapshot().phase).toBe("ready"),
+		);
+		expect(observedProviderExit(controller.getSnapshot().page)).toEqual({
+			itemId: "lifecycle-2",
+			reason: "exit 143",
+		});
+
+		await expect(controller.send("hello")).rejects.toThrow(
+			"agent_chat_provider_exited",
+		);
+		await expect(controller.queueMessage("later")).rejects.toThrow(
+			"agent_chat_provider_exited",
+		);
+		expect(fixture.transport.startTurn).not.toHaveBeenCalled();
+		expect(fixture.transport.enqueueTurn).not.toHaveBeenCalled();
+		expect(storedSubmissions.size).toBe(0);
+		expect(controller.getSnapshot()).toMatchObject({
+			retryTurnAvailable: false,
+			actionError: undefined,
+		});
+
+		// A relaunched provider reports itself ready on the same timeline.
+		initial.page.rows = [
+			...initial.page.rows,
+			lifecycleRow(3, "session_ready", null),
+		];
+		initial.page.finalCursor.sequence = 3;
+		vi.mocked(fixture.transport.startTurn).mockResolvedValue("accepted");
+		fixture.invalidation()?.({
+			kind: "changed",
+			interactionSessionId: "interaction-1",
+			timelineCursor: { epoch: "timeline-1", sequence: 3 },
+			kinds: ["timeline"],
+		});
+		await vi.waitFor(() =>
+			expect(
+				observedProviderExit(controller.getSnapshot().page),
+			).toBeUndefined(),
+		);
+		await controller.send("hello");
+		expect(fixture.transport.startTurn).toHaveBeenCalledTimes(1);
+		controller.stop();
+	});
 
 	it("does not execute before its durable client intent is stored", async () => {
 		const fixture = client();
