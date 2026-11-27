@@ -27,6 +27,9 @@ describe("presentLifecycleRow", () => {
 		expect(
 			presentLifecycleRow("session_exited", '{"code":null,"signal":"SIGKILL"}'),
 		).toEqual({ kind: "notice", detail: "signal SIGKILL", failed: false });
+		expect(
+			presentLifecycleRow("session_exited", '{"reason":"sdk_stream_failed"}'),
+		).toEqual({ kind: "notice", detail: "sdk_stream_failed", failed: false });
 	});
 
 	it("keeps failures and unknown payloads fully visible", () => {

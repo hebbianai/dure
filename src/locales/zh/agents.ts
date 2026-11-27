@@ -232,6 +232,8 @@ export const agents: Record<string, string> = {
 	"agents.chat.reconnecting": "正在重新连接 Chat…",
 	"agents.chat.requestDetails": "请求详情",
 	"agents.chat.editUncertainSend": "编辑原始消息",
+	"agents.chat.providerExited": "此会话已结束。消息无法送达，你输入的内容会作为草稿保留在这里。",
+	"agents.chat.providerExitedWithReason": "此会话已结束（{reason}）。消息无法送达，你输入的内容会作为草稿保留在这里。",
 	"agents.chat.retrySend": "重试同一发送",
 	"agents.chat.send": "发送",
 	"agents.chat.streaming": "回复中…",

@@ -231,6 +231,8 @@ export const agentsEnglishTranslations: Record<string, string> = {
 	"agents.chat.reconnecting": "Reconnecting to Chat…",
 	"agents.chat.requestDetails": "Request details",
 	"agents.chat.editUncertainSend": "Edit original message",
+	"agents.chat.providerExited": "This session ended. Messages can't reach it, so what you write stays here as a draft.",
+	"agents.chat.providerExitedWithReason": "This session ended ({reason}). Messages can't reach it, so what you write stays here as a draft.",
 	"agents.chat.retrySend": "Retry same send",
 	"agents.chat.send": "Send",
 	"agents.chat.streaming": "Responding…",

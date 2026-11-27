@@ -231,6 +231,8 @@ export const agents: Record<string, string> = {
 	"agents.chat.reconnecting": "Reconectando ao Chat…",
 	"agents.chat.requestDetails": "Detalhes da solicitação",
 	"agents.chat.editUncertainSend": "Editar mensagem original",
+	"agents.chat.providerExited": "Esta sessão terminou. As mensagens não chegam até ela, então o que você escrever fica aqui como rascunho.",
+	"agents.chat.providerExitedWithReason": "Esta sessão terminou ({reason}). As mensagens não chegam até ela, então o que você escrever fica aqui como rascunho.",
 	"agents.chat.retrySend": "Repetir o mesmo envio",
 	"agents.chat.send": "Enviar",
 	"agents.chat.streaming": "Respondendo…",

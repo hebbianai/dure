@@ -232,6 +232,8 @@ export const agents: Record<string, string> = {
 	"agents.chat.reconnecting": "Chatに再接続中…",
 	"agents.chat.requestDetails": "リクエストの詳細",
 	"agents.chat.editUncertainSend": "元のメッセージを編集",
+	"agents.chat.providerExited": "このセッションは終了しました。メッセージは届かないため、入力した内容は下書きとしてここに残ります。",
+	"agents.chat.providerExitedWithReason": "このセッションは終了しました（{reason}）。メッセージは届かないため、入力した内容は下書きとしてここに残ります。",
 	"agents.chat.retrySend": "同じ送信を再試行",
 	"agents.chat.send": "送信",
 	"agents.chat.streaming": "応答中…",
