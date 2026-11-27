@@ -267,6 +267,187 @@ async fn wait_for_turn_idle(
     }
 }
 
+type ClaudeController = (
+    Arc<AgentConversationRuntimeRegistry>,
+    Arc<ClaudeConversationHost<SqliteDomainStore>>,
+    ClaudeStructuredRuntimeManager<SqliteDomainStore>,
+);
+
+/// The production Claude stack on real Hmux: the shared SDK Host entrypoint,
+/// the Claude process relay and an installed fake Claude CLI. Unlike the
+/// conversation-host fixture, its Query starts Claude through the relay, so
+/// the relay consumes its endpoint and launch capability as in production.
+struct ProductionClaudeStack {
+    temporary: tempfile::TempDir,
+    node: PathBuf,
+    hmux_runtime: PathBuf,
+    relay: PathBuf,
+    entrypoint: PathBuf,
+    discovery_root: PathBuf,
+    host_state_root: PathBuf,
+    relay_state_root: PathBuf,
+    runtime_root: PathBuf,
+    store: Arc<SqliteDomainStore>,
+    service: Arc<AgentConversationService<SqliteDomainStore>>,
+}
+
+impl ProductionClaudeStack {
+    async fn new(prefix: &str) -> Self {
+        let node = required_executable("DURE_NODE_BIN");
+        let hmux_runtime = required_executable("DURE_HMUX_RUNTIME_BIN");
+        let relay = PathBuf::from(env!("CARGO_BIN_EXE_dure-claude-process-relay"))
+            .canonicalize()
+            .unwrap();
+        let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let driver = manifest_root.join("provider-drivers/claude");
+        let entrypoint = driver
+            .join("shared-sdk-host-entrypoint.mjs")
+            .canonicalize()
+            .unwrap();
+        let installer = driver
+            .join("claude-runtime-install.mjs")
+            .canonicalize()
+            .unwrap();
+        let fake_claude = manifest_root
+            .join("tests/fixtures/fake-claude-agent-sdk-cli.mjs")
+            .canonicalize()
+            .unwrap();
+        let temporary = tempfile::Builder::new()
+            .prefix(prefix)
+            .tempdir_in("/tmp")
+            .unwrap();
+        fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let discovery_root = temporary.path().join("discovery");
+        let host_state_root = temporary.path().join("host-state");
+        let relay_state_root = temporary.path().join("relay-state");
+        let runtime_root = temporary.path().join("runtime");
+        for directory in [&discovery_root, &host_state_root, &relay_state_root] {
+            owner_directory(directory);
+        }
+        let install = Command::new(&node)
+            .args([
+                installer.as_os_str(),
+                "--runtime-root".as_ref(),
+                runtime_root.as_os_str(),
+                "--source".as_ref(),
+                fake_claude.as_os_str(),
+            ])
+            .current_dir(&driver)
+            .output()
+            .unwrap();
+        assert!(
+            install.status.success(),
+            "runtime adoption failed: {}",
+            String::from_utf8_lossy(&install.stderr)
+        );
+        let store = Arc::new(
+            SqliteDomainStore::open(temporary.path().join("domain.sqlite3"))
+                .await
+                .unwrap(),
+        );
+        seed(&store, temporary.path()).await;
+        let service = Arc::new(AgentConversationService::new(Arc::clone(&store)));
+        Self {
+            temporary,
+            node,
+            hmux_runtime,
+            relay,
+            entrypoint,
+            discovery_root,
+            host_state_root,
+            relay_state_root,
+            runtime_root,
+            store,
+            service,
+        }
+    }
+
+    /// One control-plane generation: its own runtime registry, SDK Host
+    /// client and runtime manager over the same durable store and roots.
+    fn controller(&self, generation: &str) -> ClaudeController {
+        let registry = Arc::new(AgentConversationRuntimeRegistry::default());
+        let host = Arc::new(
+            ClaudeConversationHost::new(
+                ClaudeSdkHostSupervisorConfiguration::new(
+                    &self.node,
+                    &self.entrypoint,
+                    &self.host_state_root,
+                    &self.runtime_root,
+                    format!("host-{generation}"),
+                    Vec::new(),
+                )
+                .unwrap(),
+                format!("client-{generation}"),
+                Arc::clone(&self.service),
+                Arc::clone(&registry),
+            )
+            .unwrap(),
+        );
+        let manager = ClaudeStructuredRuntimeManager::new(
+            ClaudeStructuredRuntimeConfiguration::new(
+                generation,
+                &self.hmux_runtime,
+                &self.discovery_root,
+                &self.relay,
+                &self.relay_state_root,
+                BTreeMap::from([
+                    (
+                        "HOME".into(),
+                        self.temporary.path().to_string_lossy().into_owned(),
+                    ),
+                    ("PATH".into(), std::env::var("PATH").unwrap_or_default()),
+                ]),
+            )
+            .unwrap(),
+            Arc::new(ProviderCredentialProfileRegistry::new(
+                self.temporary.path().to_path_buf(),
+                Arc::clone(&self.store),
+            )),
+            Arc::clone(&self.service),
+            Arc::clone(&host),
+            Arc::clone(&self.store),
+        );
+        (registry, host, manager)
+    }
+
+    fn claude_sessions(&self) -> Vec<SessionDescriptor> {
+        LocalSessionCatalog::new(&self.discovery_root)
+            .list()
+            .unwrap()
+            .into_iter()
+            .filter(|descriptor| descriptor.provider_id == "claude")
+            .collect()
+    }
+
+    /// Recorded launch failures, for a panic message.
+    fn journal_failures(&self) -> Vec<serde_json::Value> {
+        fs::read_dir(&self.relay_state_root)
+            .unwrap()
+            .flatten()
+            .filter_map(|entry| fs::read(entry.path().join("launch.json")).ok())
+            .filter_map(|source| serde_json::from_slice::<serde_json::Value>(&source).ok())
+            .filter_map(|journal| journal.get("failure").cloned())
+            .collect()
+    }
+}
+
+fn start_turn_intent(
+    binding: &dure_app::AgentInteractionBindingV1,
+    suffix: &str,
+    input: &str,
+) -> serde_json::Value {
+    serde_json::to_value(AgentStartTurnIntentV1 {
+        schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+        interaction_session_id: binding.interaction_session_id.clone(),
+        runtime: binding.runtime.clone(),
+        turn_id: AgentTurnIdV1::new(format!("turn-{suffix}")).unwrap(),
+        client_message_id: AgentClientMessageIdV1::new(format!("message-{suffix}")).unwrap(),
+        input: input.into(),
+        requested_at_ms: 10,
+    })
+    .unwrap()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires built Hmux, the pinned Node executable, and Claude driver dependencies"]
 async fn replacement_manager_reconciles_one_hmux_relay_and_replaces_one_credential_runtime() {
@@ -759,11 +940,14 @@ async fn replacement_manager_reconciles_one_hmux_relay_and_replaces_one_credenti
         })
         .await
         .unwrap();
-    assert_ne!(
+    // The credential runtime's Claude kept running in the SDK Host, which
+    // outlives its controller. The restarted control plane adopts both
+    // instead of replacing the running Claude (hebbianai/dure#777).
+    assert_eq!(
         resumed_launch.runtime_generation,
         credential_runtime.launch.runtime_generation
     );
-    assert_eq!(host.host_launch_count().unwrap(), 1);
+    assert_eq!(host.host_launch_count().unwrap(), 0);
     assert_eq!(host.client_attach_count(), 1);
 
     let api = AgentConversationApi::new(Arc::clone(&service), registry);
@@ -811,3 +995,6 @@ mod reconnect;
 
 #[path = "claude_structured_runtime_hmux/provider_exit.rs"]
 mod provider_exit;
+
+#[path = "claude_structured_runtime_hmux/restart.rs"]
+mod restart;
