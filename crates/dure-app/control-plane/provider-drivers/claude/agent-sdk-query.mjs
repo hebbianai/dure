@@ -467,12 +467,6 @@ function resultSummary(message, sdkUserMessageId, assistantError, usageLimitPref
 		if (!Number.isSafeInteger(value) || value < 0) throw adapterError(reason);
 		return value;
 	};
-	if (
-		message.user_message_uuid !== undefined &&
-		message.user_message_uuid !== sdkUserMessageId
-	) {
-		throw adapterError("result_message_identity_mismatch");
-	}
 	return Object.freeze({
 		durationApiMs: number(message.duration_api_ms, "result_duration_invalid"),
 		durationMs: number(message.duration_ms, "result_duration_invalid"),
@@ -501,9 +495,9 @@ function resultSummary(message, sdkUserMessageId, assistantError, usageLimitPref
 /** Whether a result ends a turn Claude started itself rather than the host's
  * turn. Claude runs such turns between the host's, chiefly when a background
  * task it started reports back; their result names that provenance (`origin`,
- * such as a task notification) and not the host's prompt. The host never
- * stamps an origin on the prompts it sends. */
-function providerInitiatedResult(message, sdkUserMessageId) {
+ * such as a task notification) and none of the host turn's prompts. The host
+ * never stamps an origin on the prompts it sends. */
+function providerInitiatedResult(message, turn) {
 	const origin = message.origin;
 	if (
 		!origin ||
@@ -514,7 +508,7 @@ function providerInitiatedResult(message, sdkUserMessageId) {
 	) {
 		return false;
 	}
-	return sdkUserMessageId === undefined || message.user_message_uuid !== sdkUserMessageId;
+	return turn?.promptIds.has(message.user_message_uuid) !== true;
 }
 
 function mainToolResultBlocks(message) {
@@ -630,6 +624,12 @@ export function createClaudeAgentSdkQueryFactory({
 			identity: binding.identity,
 		});
 
+		// A result that does not end the host turn leaves it open for a later
+		// answer; what was said before that result is not the turn's answer.
+		const awaitLaterAnswer = (turn) => {
+			turn.finalAssistantTextBlock = null;
+			turn.lastAssistantError = undefined;
+		};
 		const rejectActiveTurn = (error) => {
 			if (!activeTurn) return;
 			const turn = activeTurn;
@@ -1021,21 +1021,30 @@ export function createClaudeAgentSdkQueryFactory({
 				activeTurn.rejectedResetsAtMs =
 					info?.status === "rejected" ? resetMs(info.resetsAt) : undefined;
 			}
+			// Claude reports each prompt it queued as started once it folds the
+			// prompt into the running turn or begins a turn for it, or as
+			// cancelled; either way that steer is no longer owed a turn of its own.
 			if (
-				message.type === "result" &&
-				providerInitiatedResult(message, activeTurn?.sdkUserMessageId)
+				message.type === "command_lifecycle" &&
+				activeTurn &&
+				message.state !== "queued"
 			) {
+				activeTurn.queuedSteerIds.delete(message.command_uuid);
+			}
+			if (message.type === "result" && providerInitiatedResult(message, activeTurn)) {
 				// Claude's own turn ended; its result stays provider evidence. A
 				// host prompt sent meanwhile is queued by Claude and answered by a
-				// later result, so the active turn stays open, and what Claude's
-				// own turn said last is not that turn's answer.
-				if (activeTurn) {
-					activeTurn.finalAssistantTextBlock = null;
-					activeTurn.lastAssistantError = undefined;
-				}
+				// later result, so the active turn stays open.
+				if (activeTurn) awaitLaterAnswer(activeTurn);
 			} else if (message.type === "result") {
 				if (!activeTurn) throw adapterError("result_without_turn");
 				const turn = activeTurn;
+				if (
+					message.user_message_uuid !== undefined &&
+					!turn.promptIds.has(message.user_message_uuid)
+				) {
+					throw adapterError("result_message_identity_mismatch");
+				}
 				const summary = resultSummary(
 					message,
 					turn.sdkUserMessageId,
@@ -1050,7 +1059,7 @@ export function createClaudeAgentSdkQueryFactory({
 						MAX_CANONICAL_STREAM_TEXT_BYTES,
 					);
 					// The pinned SDK makes result.result authoritative when the final stream is absent.
-					const providerMessageId = `result-${turn.sdkUserMessageId}`;
+					const providerMessageId = `result-${message.user_message_uuid ?? turn.sdkUserMessageId}`;
 					if (assistantText.length > 0) {
 						emitFragments("assistant_delta", assistantText, {
 							blockIndex: 0,
@@ -1065,6 +1074,15 @@ export function createClaudeAgentSdkQueryFactory({
 							providerSessionId,
 						});
 					}
+				}
+				if (turn.queuedSteerIds.size > 0) {
+					// A steer that reached Claude after the turn's last tool
+					// boundary is answered in a turn Claude runs right after this
+					// result. It was sent into this host turn, so the turn stays
+					// open for that answer and this result is provider evidence.
+					awaitLaterAnswer(turn);
+					emit("provider_event", { subtype: summary.subtype, type: "result" });
+					return;
 				}
 				activeTurn = undefined;
 				emit("provider_turn_result", summary);
@@ -1265,7 +1283,8 @@ export function createClaudeAgentSdkQueryFactory({
 				if (typeof steerInput !== "string") throw adapterError("turn_input_invalid");
 				// The CLI reads the same streaming input the turns ride; a user
 				// message pushed mid-turn is queued by the provider itself and
-				// applied at its next tool boundary.
+				// applied at its next tool boundary. With none left, Claude
+				// answers it in a turn of its own after the turn's result.
 				const sdkUserMessageId = sdkPromptUuid(binding.identity, clientMessageId);
 				input.push(
 					Object.freeze({
@@ -1281,6 +1300,8 @@ export function createClaudeAgentSdkQueryFactory({
 						uuid: sdkUserMessageId,
 					}),
 				);
+				activeTurn.promptIds.add(sdkUserMessageId);
+				activeTurn.queuedSteerIds.add(sdkUserMessageId);
 				emitUserMessage(clientMessageId, sdkUserMessageId);
 			},
 			startTurn({ clientMessageId, input: turnInput }) {
@@ -1294,6 +1315,12 @@ export function createClaudeAgentSdkQueryFactory({
 					...completion,
 					clientMessageId,
 					finalAssistantTextBlock: null,
+					// Every prompt sent into this turn, its own and each steer;
+					// Claude's results for the turn name one of them.
+					promptIds: new Set([sdkUserMessageId]),
+					// Steers Claude has not folded into the turn or begun yet. The
+					// turn ends at a result only once none is left.
+					queuedSteerIds: new Set(),
 					sdkUserMessageId,
 					tools: new Map(),
 				};

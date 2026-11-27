@@ -1983,10 +1983,23 @@ test("the pinned SDK consumes a persistent fake stream-json CLI without network 
 	assert.equal(stderr, "");
 });
 
-test("a mid-turn steer rides the same streaming input into the running turn", async () => {
-	const prepared = binding();
-	const observed = observations(prepared);
-	const controller = await createController(prepared, observed, ({ prompt, options }) => {
+// What the pinned CLI reports for each uuid-stamped prompt it queues: queued
+// on arrival, started once folded into the running turn or begun as a turn
+// of its own, completed after the turn that answered it.
+function commandLifecycle(commandUuid, state) {
+	return {
+		command_uuid: commandUuid,
+		session_id: SESSION_ID,
+		state,
+		type: "command_lifecycle",
+		uuid: "abababab-cdcd-4efe-8a0a-121212121212",
+	};
+}
+
+// A Query whose CLI hands every prompt it reads to `onInput`, so a test
+// scripts what Claude emits around steers.
+function steeredQuery(observed, onInput) {
+	return ({ prompt, options }) => {
 		observed.queryOptions.push(options);
 		const output = new AsyncQueue();
 		const child = options.spawnClaudeCodeProcess({
@@ -2001,13 +2014,7 @@ test("a mid-turn steer rides the same streaming input into the running turn", as
 		void (async () => {
 			for await (const message of prompt) {
 				observed.inputs.push(message);
-				// Hold the turn open until the steer arrives, then finish once.
-				if (observed.inputs.length < 2) continue;
-				pushAssistantMessage(output, {
-					delta: "steered answer",
-					providerMessageId: "message-1",
-				});
-				output.push(successResult(observed.inputs[0].uuid, "steered answer"));
+				onInput(output, observed.inputs);
 			}
 		})().catch((error) => output.fail(error));
 		return {
@@ -2026,7 +2033,30 @@ test("a mid-turn steer rides the same streaming input into the running turn", as
 				return undefined;
 			},
 		};
-	});
+	};
+}
+
+test("a mid-turn steer rides the same streaming input into the running turn", async () => {
+	const prepared = binding();
+	const observed = observations(prepared);
+	const controller = await createController(
+		prepared,
+		observed,
+		steeredQuery(observed, (output, inputs) => {
+			// Hold the turn open until the steer arrives; Claude folds it in at
+			// the next tool boundary and finishes once.
+			if (inputs.length < 2) return;
+			const steer = inputs[1].uuid;
+			output.push(commandLifecycle(steer, "queued"));
+			output.push(commandLifecycle(steer, "started"));
+			pushAssistantMessage(output, {
+				delta: "steered answer",
+				providerMessageId: "message-1",
+			});
+			output.push(commandLifecycle(steer, "completed"));
+			output.push(successResult(inputs[0].uuid, "steered answer"));
+		}),
+	);
 
 	assert.throws(
 		() =>
@@ -2086,6 +2116,125 @@ test("a mid-turn steer rides the same streaming input into the running turn", as
 		],
 	);
 	await controller.close();
+});
+
+test("a steer Claude answers in a turn of its own keeps the host turn open for it", async () => {
+	const prepared = binding();
+	const observed = observations(prepared);
+	const controller = await createController(
+		prepared,
+		observed,
+		steeredQuery(observed, (output, inputs) => {
+			if (inputs.length === 1) return;
+			const message = inputs.at(-1).uuid;
+			if (inputs.length > 2) {
+				pushAssistantMessage(output, { delta: "next answer", providerMessageId: "message-3" });
+				output.push(successResult(message, "next answer"));
+				return;
+			}
+			// The steer arrived after the turn's last tool boundary, as the
+			// pinned CLI shows: Claude queues it, ends the turn, then answers
+			// it in a turn of its own under the steer's uuid.
+			const prompt = inputs[0].uuid;
+			output.push(commandLifecycle(message, "queued"));
+			pushAssistantMessage(output, { delta: "first answer", providerMessageId: "message-1" });
+			output.push(successResult(prompt, "first answer"));
+			output.push(commandLifecycle(prompt, "completed"));
+			output.push(commandLifecycle(message, "started"));
+			output.push(initializationMessage(observed.bindings.at(-1)));
+			pushAssistantMessage(output, { delta: "steered answer", providerMessageId: "message-2" });
+			output.push({ ...successResult(message, "steered answer"), duration_ms: 22 });
+			output.push(commandLifecycle(message, "completed"));
+		}),
+	);
+
+	const turn = controller.startTurn({
+		clientMessageId: "late-steer-message-1",
+		input: "write about the sea",
+	});
+	await waitForCondition(() => observed.inputs.length === 1);
+	controller.steerTurn({ clientMessageId: "late-steer-message-2", input: "also say banana" });
+	const result = await turn;
+	assert.equal(result.durationMs, 22, "the turn ends once Claude has answered the steer");
+	assert.equal(result.sdkUserMessageId, observed.inputs[0].uuid);
+	assert.deepEqual(observed.terminals, [], "the steer's own result is not a stream failure");
+	assert.equal(observed.closeCalls, 0);
+	assert.equal(observed.children[0].killed, false);
+	assert.deepEqual(
+		observed.events
+			.filter(({ kind }) => kind === "provider_turn_result")
+			.map(({ payload }) => payload.durationMs),
+		[22],
+	);
+	assert.deepEqual(
+		observed.events
+			.filter(({ kind }) => kind === "assistant_delta")
+			.map(({ payload }) => payload.text),
+		["first answer", "steered answer"],
+	);
+
+	const next = await controller.startTurn({ clientMessageId: "late-steer-message-3", input: "hello" });
+	assert.equal(next.sdkUserMessageId, observed.inputs[2].uuid);
+	assert.deepEqual(observed.terminals, []);
+	await controller.close();
+});
+
+test("steers that reach Claude after it ended the turn are answered inside that turn", async () => {
+	const prepared = binding();
+	const observed = observations(prepared);
+	const controller = await createController(
+		prepared,
+		observed,
+		steeredQuery(observed, (output, inputs) => {
+			if (inputs.length < 3) return;
+			// Claude had already ended the turn when both steers arrived. It
+			// queues them, takes them up together and answers under the last.
+			const [prompt, first, second] = inputs.map(({ uuid }) => uuid);
+			output.push(successResult(prompt, "first answer"));
+			for (const steer of [first, second]) output.push(commandLifecycle(steer, "queued"));
+			for (const steer of [first, second]) output.push(commandLifecycle(steer, "started"));
+			pushAssistantMessage(output, { delta: "both answered", providerMessageId: "message-2" });
+			output.push({ ...successResult(second, "both answered"), duration_ms: 33 });
+		}),
+	);
+
+	const turn = controller.startTurn({ clientMessageId: "race-steer-message-1", input: "go" });
+	await waitForCondition(() => observed.inputs.length === 1);
+	controller.steerTurn({ clientMessageId: "race-steer-message-2", input: "first steer" });
+	controller.steerTurn({ clientMessageId: "race-steer-message-3", input: "second steer" });
+	const result = await turn;
+	assert.equal(result.durationMs, 33);
+	assert.equal(result.sdkUserMessageId, observed.inputs[0].uuid);
+	assert.deepEqual(observed.terminals, []);
+	assert.deepEqual(
+		observed.events
+			.filter(({ kind }) => kind === "assistant_delta")
+			.map(({ payload }) => [payload.providerMessageId, payload.text]),
+		[
+			// The first result's answer had no stream, so its own text fills in.
+			[`result-${observed.inputs[0].uuid}`, "first answer"],
+			["message-2", "both answered"],
+		],
+	);
+	await controller.close();
+});
+
+test("a result naming a prompt the turn never sent still fails the stream", async () => {
+	const prepared = binding();
+	const observed = observations(prepared);
+	const controller = await createController(
+		prepared,
+		observed,
+		steeredQuery(observed, (output) => {
+			output.push(successResult("12345678-1234-4234-8234-0000000000ff"));
+		}),
+	);
+
+	await assert.rejects(
+		controller.startTurn({ clientMessageId: "unknown-prompt-message-1", input: "hello" }),
+		/dure_claude_agent_sdk_stream_failed/u,
+	);
+	assert.deepEqual(observed.terminals, [{ reason: "sdk_stream_failed" }]);
 });
 
 const SDK_USAGE_LIMIT_PREFIXES = Object.freeze(["You've hit your", "Fable 5 requires usage credits"]);
