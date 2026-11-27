@@ -130,6 +130,10 @@ describe("agent chat actions", () => {
     expect(actionNotice("send", { state: "done", delivery: "started" })).toBeUndefined();
     expect(actionNotice("send", { state: "done", delivery: "steered" })?.key).toBe("agentChat.sent.steered");
     expect(actionNotice("send", { state: "done", delivery: "queued" })?.key).toBe("agentChat.sent.queued");
+    expect(actionNotice("send", { state: "done", delivery: "relaunching" })).toEqual({
+      key: "agentChat.sent.relaunching", giveBack: false });
+    // A delivery this phone does not know yet says nothing rather than something wrong.
+    expect(actionNotice("send", { state: "done", delivery: "unknown" })).toBeUndefined();
     expect(actionNotice("interrupt", { state: "done" })).toBeUndefined();
   });
 

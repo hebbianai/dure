@@ -443,6 +443,10 @@ pub enum AgentChatDelivery {
     /// A turn was running and the provider cannot be steered: the message
     /// waits for the turn to end.
     Queued,
+    /// The agent's provider had ended: the message waits while the
+    /// computer's backend relaunches it on the same conversation, then
+    /// starts a turn. A phone that predates it reads `Unknown`.
+    Relaunching,
     #[serde(other)]
     Unknown,
 }
@@ -802,12 +806,25 @@ mod tests {
     fn actions_round_trip() {
         for result in [
             HubAgentChatActionResult::done(Some(AgentChatDelivery::Steered)),
+            HubAgentChatActionResult::done(Some(AgentChatDelivery::Relaunching)),
             HubAgentChatActionResult::refused(AgentChatRefusal::TurnChanged, "moved"),
             HubAgentChatActionResult::unknown("lost"),
         ] {
             let framed = encode_action(&result).expect("encodes");
             assert_eq!(read_action(&mut framed.as_slice()).expect("reads"), result);
         }
+    }
+
+    /// A delivery a phone does not know yet reads as `Unknown`, never as a
+    /// broken answer.
+    #[test]
+    fn a_newer_delivery_reads_as_unknown() {
+        let relaunching = serde_json::to_value(AgentChatDelivery::Relaunching).unwrap();
+        assert_eq!(relaunching, "relaunching");
+        assert_eq!(
+            serde_json::from_value::<AgentChatDelivery>(serde_json::json!("later")).unwrap(),
+            AgentChatDelivery::Unknown
+        );
     }
 
     #[test]

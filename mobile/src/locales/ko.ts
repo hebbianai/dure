@@ -260,6 +260,7 @@ export const ko: Record<string, string> = {
   "agentChat.pending.elsewhere": "에이전트가 컴퓨터에서 답을 기다리고 있습니다.",
   "agentChat.sent.steered": "진행 중인 턴에 보냈습니다. 에이전트가 다음 단계에서 읽습니다.",
   "agentChat.sent.queued": "대기열에 넣었습니다. 지금 턴이 끝나면 보냅니다.",
+  "agentChat.sent.relaunching": "에이전트가 멈춰 있었습니다. 컴퓨터에서 다시 시작한 뒤 메시지를 읽습니다.",
   "agentChat.refused.agentNotFound": "컴퓨터에 더 이상 이 에이전트가 없습니다.",
   "agentChat.refused.invalid": "컴퓨터가 받아들이지 않았습니다.",
   "agentChat.refused.turnChanged": "다른 턴이 진행 중입니다. 다시 시도하세요.",

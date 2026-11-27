@@ -199,6 +199,7 @@ export function actionNotice(
     if (kind !== "send") return undefined;
     if (answer.delivery === "queued") return { key: "agentChat.sent.queued", giveBack: false };
     if (answer.delivery === "steered") return { key: "agentChat.sent.steered", giveBack: false };
+    if (answer.delivery === "relaunching") return { key: "agentChat.sent.relaunching", giveBack: false };
     return undefined;
   }
   if (answer.state === "refused") {

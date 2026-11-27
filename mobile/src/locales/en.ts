@@ -824,6 +824,7 @@ export const en: Record<string, string> = {
   "agentChat.pending.elsewhere": "The agent is waiting for an answer on the computer.",
   "agentChat.sent.steered": "Sent to the running turn. The agent reads it at its next step.",
   "agentChat.sent.queued": "Queued. It sends when the current turn ends.",
+  "agentChat.sent.relaunching": "The agent had stopped. It starts again on the computer, then reads your message.",
   "agentChat.refused.agentNotFound": "The computer no longer has this agent.",
   "agentChat.refused.invalid": "The computer did not accept this.",
   "agentChat.refused.turnChanged": "Another turn is running now. Try again.",

@@ -345,7 +345,7 @@ export interface AgentChatTimelineAnswer {
 export interface AgentChatActionAnswer {
   state: "done" | "refused" | "unknown" | "unrecognized";
   /** Where a sent message went. */
-  delivery?: "started" | "steered" | "queued" | "unknown" | null;
+  delivery?: "started" | "steered" | "queued" | "relaunching" | "unknown" | null;
   code?: AgentChatRefusal | null;
   detail?: string | null;
 }
