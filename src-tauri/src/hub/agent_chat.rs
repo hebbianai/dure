@@ -493,29 +493,37 @@ impl BackendAgentChats {
         let write = |operation: &str, turn_id: &str| {
             self.call(&bound.profile_id, operation, intent(turn_id))
         };
-        let Some(active) = &page.active_turn else {
-            return write("agent_conversation.start_turn", &turn_id).map_or_else(
+        // The conversation's queue starts its input once no turn runs. Input
+        // waiting there also makes the backend relaunch a provider that
+        // ended, so the message is never lost to the exit.
+        let queue = |delivery: AgentChatDelivery| {
+            write("agent_conversation.enqueue_turn", &turn_id).map_or_else(
                 |failure| write_failure(&failure),
-                |result| {
-                    turn_outcome(
-                        field(&result, "receipt").as_ref(),
-                        AgentChatDelivery::Started,
-                    )
-                },
-            );
+                |_| HubAgentChatActionResult::done(Some(delivery)),
+            )
         };
-        match write("agent_conversation.steer_turn", active.turn_id.as_str()) {
-            Ok(result) => turn_outcome(
-                field(&result, "receipt").as_ref(),
+        let (operation, written_turn, delivery) = match &page.active_turn {
+            None => (
+                "agent_conversation.start_turn",
+                turn_id.as_str(),
+                AgentChatDelivery::Started,
+            ),
+            Some(active) => (
+                "agent_conversation.steer_turn",
+                active.turn_id.as_str(),
                 AgentChatDelivery::Steered,
             ),
+        };
+        match write(operation, written_turn) {
+            Ok(result) => turn_outcome(field(&result, "receipt").as_ref(), delivery),
             // The provider has no steering channel: wait behind the turn, as
             // the desktop composer does.
             Err(failure) if failure.code == "agent_conversation_steer_unsupported" => {
-                write("agent_conversation.enqueue_turn", &turn_id).map_or_else(
-                    |failure| write_failure(&failure),
-                    |_| HubAgentChatActionResult::done(Some(AgentChatDelivery::Queued)),
-                )
+                queue(AgentChatDelivery::Queued)
+            }
+            // The provider ended. The backend refused before doing anything.
+            Err(failure) if failure.code == "agent_conversation_runtime_unavailable" => {
+                queue(AgentChatDelivery::Relaunching)
             }
             Err(failure) => write_failure(&failure),
         }

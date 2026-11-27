@@ -570,6 +570,52 @@ fn a_message_waits_behind_a_turn_the_provider_cannot_steer() {
     assert_eq!(queued["clientMessageId"], "phone-message-press-1");
 }
 
+/// The provider behind the chat ended. The message waits in the
+/// conversation's queue, which makes the backend relaunch the provider on the
+/// same conversation and then start it, whether or not a turn was showing.
+#[test]
+fn a_message_to_an_agent_whose_provider_ended_waits_for_its_relaunch() {
+    for active in [false, true] {
+        let backend = backend(active, |operation, body| match operation {
+            "agent_conversation.start_turn" | "agent_conversation.steer_turn" => {
+                Err(failure("agent_conversation_runtime_unavailable"))
+            }
+            "agent_conversation.enqueue_turn" => {
+                Ok(json!({"schemaVersion": 1, "receipt": {"intent": body}}))
+            }
+            other => panic!("unexpected {other}"),
+        });
+        let result = send(&chats(&backend), "press-1", "are you still there?");
+        assert_eq!(result.state, AgentChatActionState::Done, "{result:?}");
+        assert_eq!(result.delivery, Some(AgentChatDelivery::Relaunching));
+        let queued = backend.body_of("agent_conversation.enqueue_turn");
+        assert_eq!(queued["turnId"], "phone-turn-press-1");
+        assert_eq!(queued["clientMessageId"], "phone-message-press-1");
+        assert_eq!(queued["input"], "are you still there?");
+        assert_eq!(
+            queued["runtime"],
+            json!({"runtimeGeneration": "runtime-1", "providerEpoch": "provider-1"})
+        );
+        assert_eq!(
+            backend.operations().last().map(String::as_str),
+            Some("agent_conversation.enqueue_turn")
+        );
+    }
+}
+
+/// Queuing it can fail too; that is reported like any other write.
+#[test]
+fn a_message_the_queue_refuses_after_the_provider_ended_is_refused() {
+    let backend = backend(false, |operation, _| match operation {
+        "agent_conversation.start_turn" => Err(failure("agent_conversation_runtime_unavailable")),
+        "agent_conversation.enqueue_turn" => Err(failure("agent_conversation_not_found")),
+        other => panic!("unexpected {other}"),
+    });
+    let result = send(&chats(&backend), "press-1", "hi");
+    assert_eq!(result.state, AgentChatActionState::Refused, "{result:?}");
+    assert_eq!(result.code, Some(AgentChatRefusal::AgentNotFound));
+}
+
 /// A retry after a lost answer finds the message instead of sending another.
 #[test]
 fn a_retried_press_reports_the_message_it_already_sent() {
