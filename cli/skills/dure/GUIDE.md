@@ -375,9 +375,11 @@ replaces a running or unresponsive Host.
 Use the exact Agent or operation ID when names are ambiguous. `open` places the
 current existing runtime without launching another provider. `resume` preserves
 the conversation: a confirmed stopped source with a waiting deferred target uses
-backend wake; an existing native source uses the local recovery broker. Both work
-without an open app and publish the new binding. A retained Run record alone does
-not prove reboot recovery is possible. A `retry_required` or `failed` launch whose
+backend wake; an existing native source uses the local recovery broker. A Chat
+Agent whose provider process ended relaunches on the same conversation through
+the backend's recover; a running one is left as it is, so the restart is safe to
+repeat. All work without an open app and publish the new binding. A retained
+Run record alone does not prove reboot recovery is possible. A `retry_required` or `failed` launch whose
 Agent never got a runtime does not make its name ambiguous.
 
 When no Agent the backend holds can resume a conversation, for example after
@@ -447,8 +449,8 @@ returned `continuation.finish` (`dure hmux rehost finish ...`): it waits on that
 exact operation and publishes it once, never starts another, and is safe to
 repeat until it exits 0. Resuming an Agent whose source Hmux already holds a
 restart for continues that operation. Then use `open` to place the recovered
-Run. On an SSH backend, wake and restart run from the client; a native rehost
-runs on the backend's host.
+Run. On an SSH backend, wake, restart and Chat recover run from the client; a
+native rehost runs on the backend's host.
 For headless input/output, use the Session/workspace pair from `show` with
 `read`, local `send`, and `send-keys`; an Agent name requires client registration. Direct Session
 input verifies the current Host generation without requiring an app registry.

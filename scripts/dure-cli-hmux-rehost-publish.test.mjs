@@ -22,7 +22,7 @@ afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
 });
 
-async function fixture(respond) {
+async function fixture(respond, { capabilities = [] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "dure-publish-"));
   cleanup.push(() => rmSync(root, { recursive: true, force: true }));
   const socket = join(root, "backend.sock");
@@ -36,7 +36,8 @@ async function fixture(respond) {
   };
   const backend = {
     id: "fixture", generation: "generation-1", protocol: { major: 1, minor: 0 },
-    capabilities: [operation, "agent_runtime.projection.inspect", "agent_runtime.wake", "agent_runtime.transition"], observedAtMs: Date.now(),
+    capabilities: [operation, "agent_runtime.projection.inspect", "agent_runtime.wake", "agent_runtime.transition",
+      ...capabilities], observedAtMs: Date.now(),
   };
   const server = createServer((stream) => {
     let input = "";
@@ -679,6 +680,47 @@ it("restarts a stopped Chat Agent on a remote backend through that backend's tra
     conversationId: "conversation-1" });
   expect(operations.at(-1)).toEqual(["remote", "agent_runtime.transition", { schemaVersion: 1, agentId: "agent-1",
     targetInteractionProfile: "structured_protocol", expectedSourceRevision: 4 }]);
+});
+
+const CHAT_RECOVER = ["agent_conversation.recover", "agent_conversation.recover.provider_exit.v1"];
+const chatProjection = () => ({ ...agentRuntimeBackendEnvelope().result, state: "stable",
+  projectionContext: agentRuntimeProjectionContext() });
+
+it.each([false, true])("relaunches a Chat Agent through the backend's recover without native rehost (confirmed: %s)", async (confirmed) => {
+  const binding = chatProjection().receipt.authority.binding;
+  const { root, calls, runCommand, nativeCalls } = await fixture((request) => ({
+    result: request.operation === "agent_runtime.projection.inspect" ? chatProjection()
+      : { schemaVersion: 1, binding: { ...binding, runtime: { runtimeGeneration: "runtime-2", providerEpoch: "provider-2" } } },
+  }), { capabilities: CHAT_RECOVER });
+  writeRegistry(root);
+  const output = await runCommand([...previewArgs.filter((arg) => arg !== "--json"),
+    ...(confirmed ? ["--confirm-restart"] : [])]);
+  expect(output.code, output.stderr).toBe(0);
+  expect(output.stdout).toContain(confirmed ? "agent-1: recover completed (conversation conversation-1)" : "Preview: agent-1 (Chat runtime)");
+  expect(output.stdout).toContain(confirmed ? "Its provider had ended. The backend relaunched it on the same conversation."
+    : "Nothing was started or reserved.");
+  expect(output.stdout).toContain("Recover: dure 'runs' 'resume' 'agent-1' '--confirm-restart' '--backend' 'fixture' '--json'");
+  expect(calls.map((request) => request.operation)).toEqual([
+    "agent_runtime.projection.inspect", ...(confirmed ? ["agent_conversation.recover"] : []),
+  ]);
+  if (confirmed) {
+    expect(calls[1].body).toEqual({ schemaVersion: 1, expectedBinding: binding });
+    expect(calls[1].expected.requiredCapabilities).toEqual(expect.arrayContaining(CHAT_RECOVER));
+  }
+  expect(nativeCalls()).toEqual([]);
+});
+
+it("never asks a backend without the ended-provider recover to recover a Chat Agent", async () => {
+  const { root, calls, runCommand, nativeCalls } = await fixture(() => ({ result: chatProjection() }),
+    { capabilities: ["agent_conversation.recover"] });
+  writeRegistry(root);
+  const output = await runCommand([...previewArgs, "--confirm-restart"]);
+  expect(output.code).toBe(1);
+  expect(JSON.parse(output.stderr)).toMatchObject({ ok: false, state: "unknown",
+    error: { capability: "agent_conversation.recover.provider_exit.v1" } });
+  expect(output.stderr).toContain("Update Dure on the backend's host");
+  expect(calls.map((request) => request.operation)).toEqual(["agent_runtime.projection.inspect"]);
+  expect(nativeCalls()).toEqual([]);
 });
 
 it("names a missing Agent's recovery path and lists every same-named Agent with an exact selector", async () => {

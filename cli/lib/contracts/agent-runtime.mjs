@@ -167,6 +167,21 @@ export function agentRuntimeRestartableClosedSource(value) {
     : undefined;
 }
 
+/** A stable Chat selection names the conversation binding that the backend's
+ * recover is fenced to. Selection is not liveness: the backend relaunches only
+ * a provider it no longer finds running and leaves a running one alone. */
+export function agentRuntimeChatBinding(value) {
+  const authority = value?.receipt?.authority;
+  const binding = authority?.binding;
+  return record(value) && value.schemaVersion === 1 && value.state === "stable" &&
+    record(authority) && authority.interactionProfile === "structured_protocol" &&
+    record(binding) && binding.schemaVersion === 1 && binding.agentId === value.receipt.agentId &&
+    binding.providerId === value.receipt.providerId &&
+    isDureDomainIdV1(binding.interactionSessionId) && record(binding.runtime)
+    ? binding
+    : undefined;
+}
+
 /** Explain why an observation offers no actionable source, without guessing liveness. */
 export function agentRuntimeSourceUnavailableReason(value) {
   switch (value?.state) {

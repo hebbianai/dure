@@ -19,6 +19,7 @@
       "agent_conversation.read_provider_history.after.v1",
       "agent_conversation.read_queue",
       "agent_conversation.recover",
+      "agent_conversation.recover.provider_exit.v1",
       "agent_conversation.start_turn",
       "agent_conversation.steer_turn",
       "agent_conversation.subscribe.v7",

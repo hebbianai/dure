@@ -162,6 +162,16 @@ export function agentRuntimeRestartableClosedSource(
   value: unknown,
 ): { readonly selectionRevision: number; readonly interactionProfile: RuntimeInteractionProfile } | undefined;
 
+export function agentRuntimeChatBinding(
+  value: unknown,
+): (Record<string, unknown> & {
+  readonly schemaVersion: 1;
+  readonly agentId: string;
+  readonly providerId: string;
+  readonly interactionSessionId: string;
+  readonly runtime: Record<string, unknown>;
+}) | undefined;
+
 export function agentRuntimeSourceUnavailableReason(value: unknown): string;
 
 export interface RuntimeHibernateIntent {

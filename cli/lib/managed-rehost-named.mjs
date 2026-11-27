@@ -1,13 +1,14 @@
 import { loadSessionClientProjection } from "./client-registry.mjs";
 import { collectManagedRehostCommand } from "./managed-rehost-command.mjs";
 import {
-  collectManagedRehostPreview, formatManagedRecoveryCommands, formatNameCandidates, managedRehostFinishCommand,
-  rehostCommandLine,
+  BACKEND_RECOVERY, collectManagedRehostPreview, formatManagedRecoveryCommands, formatNameCandidates,
+  formatRecoveryOutcome, managedRehostFinishCommand, rehostCommandLine,
 } from "./managed-rehost-preview.mjs";
 import { collectManagedRehostPublication } from "./managed-rehost-publication.mjs";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
+import { recoverAgentConversation } from "./agent-conversation-recover.mjs";
 import { ManagedRuntimeRecoveryIncompleteError, wakeManagedRuntime } from "./managed-runtime-recovery.mjs";
 
 export const MANAGED_REHOST_RUNNING_GUIDANCE =
@@ -100,6 +101,19 @@ export async function collectManagedRehostNamed({
     }
     return { ...prepared, state: "completed", backendExecution: "completed", publication: "published",
       conversationId: receipt.providerConversationRef ?? null, result: report.result };
+  }
+  if (prepared.continuation.kind === "runtime_recover") {
+    if (!opts.confirmRestart) return { ...prepared, publication: "not_requested" };
+    const { expectedBinding, requestId } = prepared.continuation;
+    const recovered = await recoverAgentConversation({ backend, expectedBinding, requestId, requestBackend });
+    if (!recovered.ok) {
+      return { ...prepared, ok: false, state: "unknown", backendExecution: "unconfirmed", publication: "unconfirmed",
+        error: recovered.error };
+    }
+    // The same runtime means the backend found its provider running.
+    return { ...prepared, state: "completed", backendExecution: "completed",
+      publication: recovered.relaunched ? "published" : "unchanged", relaunched: recovered.relaunched,
+      conversationId: recovered.binding.providerConversationRef ?? null, result: { binding: recovered.binding } };
   }
   if (prepared.continuation.kind === "runtime_wake") {
     if (!opts.confirmRestart) return { ...prepared, publication: "not_requested" };
@@ -228,12 +242,13 @@ export async function runManagedRehostNamed(opts, registryPath, resolveBackend, 
       ? `${report.agentId}: rehost still running\n${MANAGED_REHOST_RUNNING_GUIDANCE}`
       : report.ok
         ? report.continuation?.kind?.startsWith("runtime_")
-          ? `${report.agentId}: ${report.continuation.kind === "runtime_wake" ? "wake" : "restart"} ${report.state}` +
+          ? `${report.agentId}: ${BACKEND_RECOVERY[report.continuation.kind].label.toLowerCase()} ${report.state}` +
             (report.conversationId ? ` (conversation ${report.conversationId})` : "")
           : `${report.agentId}: rehost completed (${report.receipt.sourceStopReceipt.sessionId} -> ${report.receipt.replacementReceipt.sessionId})`
         : [`${report.error.remoteCode ?? report.error.code}: ${report.error.message}`,
           ...formatNameCandidates(report.error.candidates)].join("\n"),
     `${report.continuation?.kind?.startsWith("runtime_") ? `Backend execution: ${report.backendExecution ?? "not_requested"}` : `Native execution: ${report.nativeExecution}`}. Binding publication: ${report.publication}.`,
+    ...formatRecoveryOutcome(report),
     ...(report.publicationError
       ? [`Publication is unconfirmed: ${report.publicationError.remoteCode ?? report.publicationError.code}. Retry publication only; the native rehost already completed.`]
       : []),
