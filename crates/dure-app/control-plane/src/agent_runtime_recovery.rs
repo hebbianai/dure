@@ -1,13 +1,13 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::panic::AssertUnwindSafe;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dure_app::{
     AgentDispatchStopRecordV1, AgentDispatchStopStateV1, AgentDispatchStopStore, AgentIdV1,
-    AgentInteractionProfileV1, AgentRuntimeBindingAuthorityV1, AgentRuntimeCloseStateV1,
-    AgentRuntimeDeferredTargetV1, AgentRuntimeTransitionStateV1, AgentRuntimeTransitionStore,
-    OperationIdV1,
+    AgentInteractionProfileV1, AgentProviderRuntimeFenceV1, AgentRuntimeBindingAuthorityV1,
+    AgentRuntimeCloseStateV1, AgentRuntimeDeferredTargetV1, AgentRuntimeTransitionStateV1,
+    AgentRuntimeTransitionStore, AgentTimelineStore, OperationIdV1,
 };
 use futures_util::FutureExt;
 use tokio::sync::watch;
@@ -43,8 +43,9 @@ const RECOVERY_RESCAN_INTERVAL: Duration = if cfg!(test) {
 
 /// Restores selected structured runtimes once at startup, then owns recovery
 /// for lifecycle operations admitted during this service lifetime. A converged
-/// runtime is not a recurring recovery candidate. Dropping the coordinator
-/// aborts all child tasks during control-plane shutdown.
+/// runtime is a candidate again only when input waits for it and no provider
+/// takes it (`request_stable`). Dropping the coordinator aborts all child
+/// tasks during control-plane shutdown.
 pub(crate) async fn run(state: Arc<ServiceState>) {
     let mut active = HashSet::new();
     let mut workers = JoinSet::new();
@@ -95,6 +96,126 @@ pub(crate) async fn run(state: Arc<ServiceState>) {
             }
         }
     }
+}
+
+/// Asks for the Agent's selected structured runtime to be relaunched: durable
+/// input waits for it and no provider takes it, as when its provider process
+/// ended (hebbianai/dure#777). The relaunch goes through `attach_existing`,
+/// as a client's recover does, so input reaches an Agent no client watches;
+/// its completion wakes the conversation loop to start the input.
+pub(crate) async fn request_stable(state: &ServiceState, agent_id: &AgentIdV1) {
+    // An unreadable binding asks nothing: the waiting input's next wake asks
+    // again.
+    let Ok(Some(binding)) = state.store.agent_interaction_for_agent(agent_id).await else {
+        return;
+    };
+    if state
+        .stable_runtime_requests
+        .ask(agent_id, &binding.runtime)
+    {
+        state.agent_runtime_recovery_wake.notify_one();
+    }
+}
+
+/// Asks for stable runtimes, from the conversation loop to this coordinator.
+#[derive(Default)]
+pub(crate) struct StableRuntimeRequests(Mutex<StableRuntimeRequestState>);
+
+#[derive(Default)]
+struct StableRuntimeRequestState {
+    /// When each Agent was first asked for. An ask is answered by the first
+    /// worker that starts after it: one already running may have decided
+    /// before the provider ended.
+    asked: BTreeMap<AgentIdV1, Instant>,
+    /// The exact runtime an Agent's last answered ask left without a
+    /// provider, and when. Asking again for it soon after could only repeat
+    /// that outcome (a missing credential, a recorded launch failure) while
+    /// each completion wakes the asker again, so it waits out the longest
+    /// recovery backoff.
+    unrecovered: BTreeMap<AgentIdV1, (AgentProviderRuntimeFenceV1, Instant)>,
+}
+
+impl StableRuntimeRequests {
+    /// True when this ask is new: the coordinator has to be woken.
+    fn ask(&self, agent_id: &AgentIdV1, runtime: &AgentProviderRuntimeFenceV1) -> bool {
+        let Ok(mut requests) = self.0.lock() else {
+            return false;
+        };
+        if requests
+            .unrecovered
+            .get(agent_id)
+            .is_some_and(|(left, at)| left == runtime && at.elapsed() < RECOVERY_RETRY_MAX)
+            || requests.asked.contains_key(agent_id)
+        {
+            return false;
+        }
+        requests.asked.insert(agent_id.clone(), Instant::now());
+        true
+    }
+
+    /// Agents with an unanswered ask. They stay listed until answered.
+    fn asked(&self) -> Vec<AgentIdV1> {
+        self.0
+            .lock()
+            .map(|requests| requests.asked.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Whether a worker that started at `started` answers the Agent's ask.
+    fn answers(&self, agent_id: &AgentIdV1, started: Instant) -> bool {
+        self.0.lock().is_ok_and(|requests| {
+            requests
+                .asked
+                .get(agent_id)
+                .is_some_and(|asked| *asked <= started)
+        })
+    }
+
+    fn answer(
+        &self,
+        agent_id: &AgentIdV1,
+        started: Instant,
+        unrecovered: Option<AgentProviderRuntimeFenceV1>,
+    ) {
+        let Ok(mut requests) = self.0.lock() else {
+            return;
+        };
+        if !requests
+            .asked
+            .get(agent_id)
+            .is_some_and(|asked| *asked <= started)
+        {
+            return;
+        }
+        requests.asked.remove(agent_id);
+        match unrecovered {
+            Some(runtime) => {
+                requests
+                    .unrecovered
+                    .insert(agent_id.clone(), (runtime, Instant::now()));
+            }
+            None => {
+                requests.unrecovered.remove(agent_id);
+            }
+        }
+    }
+}
+
+/// Answers an ask the finished worker covers, recording whether it left the
+/// Agent's conversation with a provider that takes its input.
+async fn answer_stable_request(state: &ServiceState, agent_id: &AgentIdV1, started: Instant) {
+    if !state.stable_runtime_requests.answers(agent_id, started) {
+        return;
+    }
+    let unrecovered = match state.store.agent_interaction_for_agent(agent_id).await {
+        Ok(Some(binding)) if state.agent_conversation_runtimes.resolve(&binding).is_err() => {
+            Some(binding.runtime)
+        }
+        _ => None,
+    };
+    state
+        .stable_runtime_requests
+        .answer(agent_id, started, unrecovered);
 }
 
 /// The coordinator consumes each lossy service wake once and fans it out to
@@ -166,6 +287,7 @@ async fn wait_for_candidates(
                 parents.extend(
                     runtime
                         .into_iter()
+                        .chain(state.stable_runtime_requests.asked())
                         .filter(|agent_id| seen.insert(agent_id.as_str().to_owned())),
                 );
                 return parents;
@@ -195,7 +317,9 @@ fn spawn_candidates(
         let worker_state = Arc::clone(state);
         let worker_wakes = wakes.subscribe();
         workers.spawn(async move {
-            recover_agent(worker_state, agent_id, worker_wakes).await;
+            let started = Instant::now();
+            recover_agent(Arc::clone(&worker_state), agent_id.clone(), worker_wakes).await;
+            answer_stable_request(&worker_state, &agent_id, started).await;
             RecoveryWorkerCompletion { agent_id: key }
         });
     }
@@ -527,5 +651,40 @@ mod tests {
         let advanced = close_step(AgentRuntimeCloseStateV1::Stopped);
         assert!(backoff.superseded_by(Some(&advanced)));
         assert_eq!(backoff.failed(Some(advanced)), RECOVERY_RETRY_MIN);
+    }
+
+    #[test]
+    fn an_ask_is_answered_only_by_a_worker_that_started_after_it() {
+        let agent = AgentIdV1::new("agent-asked").unwrap();
+        let runtime = |generation: &str| AgentProviderRuntimeFenceV1 {
+            runtime_generation: generation.into(),
+            provider_epoch: format!("{generation}-epoch"),
+        };
+        let requests = StableRuntimeRequests::default();
+        let before_ask = Instant::now();
+        std::thread::sleep(Duration::from_millis(2));
+        assert!(requests.ask(&agent, &runtime("runtime-1")));
+        assert!(
+            !requests.ask(&agent, &runtime("runtime-1")),
+            "an unanswered ask does not wake the coordinator again"
+        );
+
+        // A worker already running may have decided before the provider
+        // ended: the ask stays listed for a worker of its own.
+        requests.answer(&agent, before_ask, Some(runtime("runtime-1")));
+        assert_eq!(requests.asked(), std::slice::from_ref(&agent));
+
+        // The next worker answers it. Asking again for the runtime it left
+        // without a provider would only repeat that outcome.
+        let started = Instant::now();
+        assert!(requests.answers(&agent, started));
+        requests.answer(&agent, started, Some(runtime("runtime-1")));
+        assert!(requests.asked().is_empty());
+        assert!(!requests.ask(&agent, &runtime("runtime-1")));
+
+        // Another runtime, or a recovery that left a provider, is asked for.
+        assert!(requests.ask(&agent, &runtime("runtime-2")));
+        requests.answer(&agent, Instant::now(), None);
+        assert!(requests.ask(&agent, &runtime("runtime-2")));
     }
 }

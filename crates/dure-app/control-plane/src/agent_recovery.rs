@@ -454,8 +454,12 @@ async fn advance_locked(
         }
         Ok(Some(_)) => Err("agent_recovery_turn_unconfirmed"),
         Ok(None) => Ok(AgentRecoveryHoldV1::Released),
-        // The runtime owner publishes readiness when startup recovery finishes.
-        Err(AgentConversationApiErrorV1::RuntimeUnavailable) => Ok(AgentRecoveryHoldV1::Owned),
+        // Runtime recovery relaunches the conversation and publishes its
+        // readiness; this turn waits for it.
+        Err(AgentConversationApiErrorV1::RuntimeUnavailable) => {
+            crate::agent_runtime_recovery::request_stable(state, &record.source.agent_id).await;
+            Ok(AgentRecoveryHoldV1::Owned)
+        }
         Err(error) => {
             stop(
                 state,

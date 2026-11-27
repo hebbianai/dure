@@ -370,25 +370,52 @@ where
         self.client_attach_count.load(Ordering::SeqCst)
     }
 
+    /// Whether the Query is attached here and its host still runs it. A route
+    /// outlives a Query whose exit never reached it, so only the host's own
+    /// listing proves the Query can take input; one it no longer lists as
+    /// live leaves the host as its routed exit would.
     pub(crate) async fn attachment_is_live(
         &self,
         identity: &ClaudeDch1QueryIdentity,
         host_identity: &ClaudeDch1HostIdentity,
     ) -> Result<bool, ClaudeConversationHostErrorV1> {
-        let mut client = self.client.lock().await;
-        let Some(connected) = client.as_ref() else {
+        let client = {
+            let mut client = self.client.lock().await;
+            let Some(connected) = client.as_ref() else {
+                return Ok(false);
+            };
+            if connected.host_identity != *host_identity {
+                return Ok(false);
+            }
+            if !self.connected_host_is_live(connected)? {
+                *client = None;
+                drop(client);
+                self.retire_routes().await?;
+                return Ok(false);
+            }
+            connected.client.clone()
+        };
+        let Some(route) = self.routes.read().await.get(identity).cloned() else {
             return Ok(false);
         };
-        if connected.host_identity != *host_identity {
-            return Ok(false);
+        let snapshot = client
+            .request("snapshot", json!({}))
+            .await
+            .map_err(|error| {
+                ClaudeConversationHostErrorV1::new(format!("snapshot_{}", error.reason()))
+            })?;
+        if listed_query(snapshot, identity)?.is_some_and(|query| query.is_live()) {
+            return Ok(true);
         }
-        if !self.connected_host_is_live(connected)? {
-            *client = None;
-            drop(client);
-            self.retire_routes().await?;
-            return Ok(false);
-        }
-        Ok(self.routes.read().await.contains_key(identity))
+        retire_exited_route(
+            &self.routes,
+            &self.runtime_registry,
+            &self.service,
+            identity,
+            &route,
+        )
+        .await;
+        Ok(false)
     }
 
     /// What the connected host reports one live Query doing, read without
@@ -507,6 +534,7 @@ where
             self.runtime_registry
                 .register(binding.clone(), commands)
                 .map_err(registry_error)?;
+            self.retire_route_if_exited(&identity, &route).await;
             return Ok(ClaudeConversationAttachmentReceiptV1 {
                 binding,
                 host_process_id,
@@ -743,6 +771,7 @@ where
                 .failed_attachment_error(&client, &attachment.binding, &identity, &route, reason)
                 .await);
         }
+        self.retire_route_if_exited(&identity, &route).await;
         Ok(ClaudeConversationAttachmentReceiptV1 {
             binding,
             host_process_id,
@@ -812,20 +841,7 @@ where
             Err(error) if error.reason() == "retire_remote_stale_query_identity" => {
                 recover_retirement(&client, identity, allowed_target).await?
             }
-            Err(error) if error.reason() == "retire_remote_retirement_authority_conflict" => {
-                let current = retirement_status(&client, identity).await?;
-                let Some(target) = allowed_target else {
-                    return Err(error);
-                };
-                if !current.replay_committed
-                    || current.authority.phase != ClaudeDch1ProviderRetirementPhase::Retired
-                    || current.authority.allowed_target.is_some()
-                {
-                    return Err(error);
-                }
-                retarget_retirement(&client, &current.authority, target).await?
-            }
-            Err(error) => return Err(error),
+            Err(error) => retarget_ended_query(&client, identity, allowed_target, error).await?,
         };
         if let Some(route) = self.routes.write().await.remove(identity) {
             drop(route);
@@ -857,7 +873,7 @@ where
             return Err(ClaudeConversationHostErrorV1::new("identity_conflict"));
         }
         let (client, _) = self.ensure_client().await?;
-        let authority = self
+        let authority = match self
             .retire_connected_query(
                 &client,
                 binding,
@@ -866,7 +882,11 @@ where
                 route.as_ref(),
                 action,
             )
-            .await?;
+            .await
+        {
+            Ok(authority) => authority,
+            Err(error) => retarget_ended_query(&client, identity, allowed_target, error).await?,
+        };
         if let Some(route) = route.as_ref() {
             self.remove_route(identity, route).await;
         }
@@ -1120,7 +1140,12 @@ where
             terminal: _,
         } = attached;
         let host_identity = host_identity_from_snapshot(snapshot)?;
-        spawn_event_router(Arc::downgrade(&self.routes), events);
+        spawn_event_router(
+            Arc::downgrade(&self.routes),
+            Arc::downgrade(&self.runtime_registry),
+            Arc::downgrade(&self.service),
+            events,
+        );
         self.client_attach_count.fetch_add(1, Ordering::SeqCst);
         *client = Some(ConnectedClaudeSdkHost {
             client: connected.clone(),
@@ -1224,6 +1249,25 @@ where
         }
     }
 
+    /// An exit committed while attaching was not routed: no route was
+    /// registered yet. It leaves the host the same way a routed one does.
+    async fn retire_route_if_exited(
+        &self,
+        identity: &ClaudeDch1QueryIdentity,
+        route: &Arc<ConversationRoute<S>>,
+    ) {
+        if route.bridge.query_exited() {
+            retire_exited_route(
+                &self.routes,
+                &self.runtime_registry,
+                &self.service,
+                identity,
+                route,
+            )
+            .await;
+        }
+    }
+
     async fn remove_route(
         &self,
         identity: &ClaudeDch1QueryIdentity,
@@ -1257,8 +1301,14 @@ fn valid_released_authority_receipt(
         }
 }
 
+/// Commits each pushed event to its conversation, and retires a route as
+/// soon as it commits its Query's exit. It holds only weak references: the
+/// registry keeps each route's bridge and so this connection, and a strong
+/// one would keep a dropped controller attached to the host.
 fn spawn_event_router<S>(
     routes: Weak<RwLock<RouteMap<S>>>,
+    runtime_registry: Weak<AgentConversationRuntimeRegistry>,
+    service: Weak<AgentConversationService<S>>,
     mut events: broadcast::Receiver<crate::claude_sdk_host_client::ClaudeDch1EventFrame>,
 ) where
     S: AgentTimelineStore + 'static,
@@ -1269,23 +1319,77 @@ fn spawn_event_router<S>(
             let Some(routes) = routes.upgrade() else {
                 break;
             };
-            match event {
+            let touched = match event {
                 Ok(frame) => {
                     let route = routes.read().await.get(&frame.identity).cloned();
-                    if let Some(route) = route {
-                        let _ = route.ingest(&frame).await;
-                    }
+                    let Some(route) = route else {
+                        continue;
+                    };
+                    let _ = route.ingest(&frame).await;
+                    vec![(frame.identity, route)]
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => {
-                    let active = routes.read().await.values().cloned().collect::<Vec<_>>();
-                    for route in active {
+                    let active = routes
+                        .read()
+                        .await
+                        .iter()
+                        .map(|(identity, route)| (identity.clone(), Arc::clone(route)))
+                        .collect::<Vec<_>>();
+                    for (_, route) in &active {
                         let _ = route.reconcile().await;
                     }
+                    active
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
+            };
+            for (identity, route) in touched {
+                if !route.bridge.query_exited() {
+                    continue;
+                }
+                let (Some(runtime_registry), Some(service)) =
+                    (runtime_registry.upgrade(), service.upgrade())
+                else {
+                    break;
+                };
+                retire_exited_route(&routes, &runtime_registry, &service, &identity, &route).await;
             }
         }
     });
+}
+
+/// The one way an exited Query leaves the host. Its commands leave the
+/// registry, so the next input finds no runtime and its recovery relaunches
+/// the conversation, and readers are told the runtime changed. Each step is
+/// fenced to this exact route and runtime, so a successor is never touched.
+async fn retire_exited_route<S>(
+    routes: &RwLock<RouteMap<S>>,
+    runtime_registry: &AgentConversationRuntimeRegistry,
+    service: &AgentConversationService<S>,
+    identity: &ClaudeDch1QueryIdentity,
+    route: &Arc<ConversationRoute<S>>,
+) where
+    S: AgentTimelineStore + 'static,
+{
+    {
+        let mut routes = routes.write().await;
+        if !routes
+            .get(identity)
+            .is_some_and(|current| Arc::ptr_eq(current, route))
+        {
+            return;
+        }
+        routes.remove(identity);
+    }
+    let runtime = AgentProviderRuntimeFenceV1 {
+        runtime_generation: identity.runtime_generation.clone(),
+        provider_epoch: identity.query_epoch.clone(),
+    };
+    let _ = runtime_registry.retire(&route.interaction_session_id, &runtime);
+    if let Ok(Some(binding)) = service.binding(&route.interaction_session_id).await
+        && binding.runtime == runtime
+    {
+        let _ = service.invalidate_runtime(&binding).await;
+    }
 }
 
 fn registry_error(error: AgentConversationApiErrorV1) -> ClaudeConversationHostErrorV1 {
@@ -1378,32 +1482,51 @@ fn host_identity_from_snapshot(
     Ok(identity)
 }
 
-fn query_activity_from_snapshot(
+/// One Query as its host lists it in a snapshot.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListedQuery {
+    identity: ClaudeDch1QueryIdentity,
+    state: String,
+    pending_interaction_count: u64,
+    /// A host from before background-work tracking reports none.
+    #[serde(default)]
+    background_task_count: u64,
+}
+
+impl ListedQuery {
+    /// An exited or failed Query takes no more input. Any other state,
+    /// including one a newer host adds, is treated as live so that a running
+    /// Claude is never replaced on a guess.
+    fn is_live(&self) -> bool {
+        !matches!(self.state.as_str(), "exited" | "failed")
+    }
+}
+
+/// The exact Query in a host snapshot, or `None` when the host no longer
+/// lists it: an exited Query leaves the listing once its exit is committed.
+fn listed_query(
     snapshot: Value,
     identity: &ClaudeDch1QueryIdentity,
-) -> Result<Option<AgentActivityEvidence>, ClaudeConversationHostErrorV1> {
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct QuerySnapshot {
-        identity: ClaudeDch1QueryIdentity,
-        state: String,
-        pending_interaction_count: u64,
-        /// A host from before background-work tracking reports none.
-        #[serde(default)]
-        background_task_count: u64,
-    }
+) -> Result<Option<ListedQuery>, ClaudeConversationHostErrorV1> {
     #[derive(Deserialize)]
     struct HostSnapshot {
-        queries: Vec<QuerySnapshot>,
+        queries: Vec<ListedQuery>,
     }
 
     let snapshot: HostSnapshot = serde_json::from_value(snapshot)
         .map_err(|_| ClaudeConversationHostErrorV1::new("snapshot_invalid"))?;
-    let Some(query) = snapshot
+    Ok(snapshot
         .queries
         .into_iter()
-        .find(|query| query.identity == *identity)
-    else {
+        .find(|query| query.identity == *identity))
+}
+
+fn query_activity_from_snapshot(
+    snapshot: Value,
+    identity: &ClaudeDch1QueryIdentity,
+) -> Result<Option<AgentActivityEvidence>, ClaudeConversationHostErrorV1> {
+    let Some(query) = listed_query(snapshot, identity)? else {
         return Ok(None);
     };
     let working = match query.state.as_str() {
@@ -1467,6 +1590,32 @@ async fn recover_retirement(
         ));
     }
     Ok(receipt.authority)
+}
+
+/// A Query that ended by itself was retired by its host with no successor,
+/// so retiring it again for a successor conflicts. When the host's committed
+/// retirement still names none, it is retargeted to that successor; any
+/// other refusal stands.
+async fn retarget_ended_query(
+    client: &ClaudeDch1Client,
+    identity: &ClaudeDch1QueryIdentity,
+    allowed_target: Option<&ClaudeDch1QueryIdentity>,
+    error: ClaudeConversationHostErrorV1,
+) -> Result<ClaudeDch1ProviderRetirementAuthority, ClaudeConversationHostErrorV1> {
+    let Some(target) = allowed_target else {
+        return Err(error);
+    };
+    if error.reason() != "retire_remote_retirement_authority_conflict" {
+        return Err(error);
+    }
+    let current = retirement_status(client, identity).await?;
+    if !current.replay_committed
+        || current.authority.phase != ClaudeDch1ProviderRetirementPhase::Retired
+        || current.authority.allowed_target.is_some()
+    {
+        return Err(error);
+    }
+    retarget_retirement(client, &current.authority, target).await
 }
 
 async fn retarget_retirement(

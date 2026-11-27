@@ -301,3 +301,277 @@ async fn exact_recovery_queued_behind_a_credential_switch_has_zero_provider_effe
     assert_eq!(error.code, "agent_conversation_conflict");
     assert_eq!(attach_count.load(Ordering::SeqCst), 0);
 }
+
+/// A provider that records the input of each turn it starts.
+#[derive(Default)]
+struct RecordingCommands {
+    inputs: StdMutex<Vec<String>>,
+}
+
+impl crate::agent_conversation::AgentProviderCommands for RecordingCommands {
+    fn start_turn<'a>(
+        &'a self,
+        _: &'a AgentInteractionBindingV1,
+        intent: &'a dure_app::AgentStartTurnIntentV1,
+    ) -> crate::agent_conversation::AgentProviderCommandFuture<'a> {
+        self.inputs.lock().unwrap().push(intent.input.clone());
+        Box::pin(async { Ok(json!({ "accepted": true })) })
+    }
+
+    fn answer_pending<'a>(
+        &'a self,
+        _: &'a AgentInteractionBindingV1,
+        _: &'a dure_app::AgentPendingAnswerIntentV1,
+        _: &'a dure_app::AgentPendingRequestV1,
+    ) -> crate::agent_conversation::AgentProviderCommandFuture<'a> {
+        Box::pin(async { unreachable!("no request is pending") })
+    }
+
+    fn interrupt_turn<'a>(
+        &'a self,
+        _: &'a AgentInteractionBindingV1,
+        _: &'a dure_app::AgentInterruptTurnRequestV1,
+    ) -> crate::agent_conversation::AgentProviderCommandFuture<'a> {
+        Box::pin(async { unreachable!("no turn is interrupted") })
+    }
+}
+
+/// A structured runtime whose `attach_existing` keeps a live provider and
+/// relaunches a gone one on a new runtime generation, as the Claude and
+/// Codex runtimes do. With `credential_unavailable`, a relaunch is refused
+/// the way a missing account is.
+struct RelaunchingRuntime {
+    state_store: Arc<SqliteDomainStore>,
+    registry: Arc<crate::agent_conversation_api::AgentConversationRuntimeRegistry>,
+    commands: Arc<RecordingCommands>,
+    kept_live: AtomicUsize,
+    relaunch_attempts: AtomicUsize,
+    credential_unavailable: bool,
+}
+
+impl structured_provider_runtime::StructuredProviderRuntime for RelaunchingRuntime {
+    fn open(
+        &self,
+        _request: structured_provider_runtime::StructuredProviderOpenRequestV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'_, AgentInteractionBindingV1>
+    {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn attach_existing<'a>(
+        &'a self,
+        _selection: &'a AgentRuntimeSelectionV1,
+        binding: &'a AgentInteractionBindingV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'a, AgentInteractionBindingV1>
+    {
+        Box::pin(async move {
+            if self.registry.resolve(binding).is_ok() {
+                self.kept_live.fetch_add(1, Ordering::SeqCst);
+                return Ok(binding.clone());
+            }
+            let attempt = self.relaunch_attempts.fetch_add(1, Ordering::SeqCst) + 1;
+            if self.credential_unavailable {
+                return Err(
+                    structured_provider_runtime::StructuredProviderRuntimeErrorV1::new(
+                        structured_provider_runtime::StructuredProviderRuntimeErrorKindV1::CredentialUnavailable,
+                        "relaunching_runtime_credential_unavailable",
+                    ),
+                );
+            }
+            let relaunched = self
+                .state_store
+                .replace_agent_interaction_runtime(&AgentRuntimeReplacementV1 {
+                    schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+                    interaction_session_id: binding.interaction_session_id.clone(),
+                    expected_binding_revision: binding.binding_revision,
+                    source: binding.runtime.clone(),
+                    source_execution_profile: binding.execution_profile.clone(),
+                    target: AgentProviderRuntimeFenceV1 {
+                        runtime_generation: format!("runtime-relaunched-{attempt}"),
+                        provider_epoch: format!("provider-relaunched-{attempt}"),
+                    },
+                    target_execution_profile: binding.execution_profile.clone(),
+                    provider_conversation_ref: binding.provider_conversation_ref.clone(),
+                    replaced_at_ms: binding.updated_at_ms + 1,
+                })
+                .await
+                .map_err(|_| CountingStructuredRuntime::unavailable())?;
+            self.registry
+                .register(relaunched.clone(), self.commands.clone())
+                .map_err(|_| CountingStructuredRuntime::unavailable())?;
+            Ok(relaunched)
+        })
+    }
+
+    fn open_replacement<'a>(
+        &'a self,
+        _request: structured_provider_runtime::StructuredProviderOpenRequestV1,
+        _transition: &'a AgentRuntimeTransitionRecordV1,
+        _provider_state_environment: hmux_client::ProviderStateEnvironment,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'a, AgentInteractionBindingV1>
+    {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn stop_replacement_source<'a>(
+        &'a self,
+        _transition: &'a AgentRuntimeTransitionRecordV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'a, ()> {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn retire_replacement_source<'a>(
+        &'a self,
+        _transition: &'a AgentRuntimeTransitionRecordV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<
+        'a,
+        dure_app::AgentRuntimeReplacementAuthorityV1,
+    > {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+
+    fn stop_current<'a>(
+        &'a self,
+        _binding: &'a AgentInteractionBindingV1,
+    ) -> structured_provider_runtime::StructuredProviderRuntimeFuture<'a, ()> {
+        Box::pin(async { Err(CountingStructuredRuntime::unavailable()) })
+    }
+}
+
+/// A headless Chat Agent (no client subscribed) whose provider is live, with
+/// the backend's runtime recovery and conversation loops running.
+async fn headless_chat_fixture(
+    credential_unavailable: bool,
+) -> (
+    TempDir,
+    Arc<ServiceState>,
+    AgentInteractionBindingV1,
+    Arc<RelaunchingRuntime>,
+    Vec<tokio::task::JoinHandle<()>>,
+) {
+    let (root, mut state, binding, _) =
+        selected_codex_recovery_fixture(AgentExecutionProfileV1::ProviderDefault).await;
+    let runtime = Arc::new(RelaunchingRuntime {
+        state_store: Arc::clone(&state.store),
+        registry: Arc::clone(&state.agent_conversation_runtimes),
+        commands: Arc::new(RecordingCommands::default()),
+        kept_live: AtomicUsize::new(0),
+        relaunch_attempts: AtomicUsize::new(0),
+        credential_unavailable,
+    });
+    let mut runtimes = structured_provider_runtime::StructuredProviderRuntimeRegistry::default();
+    runtimes
+        .register(binding.provider_id.clone(), runtime.clone())
+        .unwrap();
+    state.structured_runtimes = Arc::new(runtimes);
+    state
+        .agent_conversation_runtimes
+        .register(binding.clone(), runtime.commands.clone())
+        .unwrap();
+    let state = Arc::new(state);
+    let loops = vec![
+        tokio::spawn(crate::agent_runtime_recovery::run(Arc::clone(&state))),
+        tokio::spawn(crate::agent_conversation::continuation::run(Arc::clone(
+            &state,
+        ))),
+    ];
+    // Startup recovery finds the provider live and keeps it.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while runtime.kept_live.load(Ordering::SeqCst) == 0 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "startup recovery never looked at the runtime"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    (root, state, binding, runtime, loops)
+}
+
+/// What the Claude host does when a Query ends by itself: its commands leave
+/// the registry. Then input is queued for the Agent, as `dure send` or a
+/// child's result does.
+async fn provider_ends_then_input_is_queued(
+    state: &ServiceState,
+    binding: &AgentInteractionBindingV1,
+    input: &str,
+) {
+    state
+        .agent_conversation_runtimes
+        .retire(&binding.interaction_session_id, &binding.runtime)
+        .unwrap();
+    state
+        .agent_conversations
+        .enqueue_turn_intent(&dure_app::AgentStartTurnIntentV1 {
+            schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+            interaction_session_id: binding.interaction_session_id.clone(),
+            runtime: binding.runtime.clone(),
+            turn_id: dure_app::AgentTurnIdV1::new("turn-after-exit").unwrap(),
+            client_message_id: dure_app::AgentClientMessageIdV1::new("message-after-exit").unwrap(),
+            input: input.into(),
+            requested_at_ms: binding.updated_at_ms + 1,
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn queued_input_relaunches_a_headless_chat_whose_provider_ended() {
+    let (_root, state, binding, runtime, loops) = headless_chat_fixture(false).await;
+
+    provider_ends_then_input_is_queued(&state, &binding, "continue the work").await;
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while runtime.commands.inputs.lock().unwrap().is_empty() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the queued input never reached a relaunched provider"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        *runtime.commands.inputs.lock().unwrap(),
+        ["continue the work"]
+    );
+    assert_eq!(runtime.relaunch_attempts.load(Ordering::SeqCst), 1);
+    let current = state
+        .store
+        .agent_interaction_for_agent(&binding.agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(current.runtime.runtime_generation, "runtime-relaunched-1");
+    assert_eq!(
+        current.provider_conversation_ref,
+        binding.provider_conversation_ref
+    );
+    for task in loops {
+        task.abort();
+    }
+}
+
+#[tokio::test]
+async fn a_relaunch_that_cannot_succeed_is_not_repeated_for_each_wake() {
+    let (_root, state, binding, runtime, loops) = headless_chat_fixture(true).await;
+
+    provider_ends_then_input_is_queued(&state, &binding, "continue the work").await;
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while runtime.relaunch_attempts.load(Ordering::SeqCst) == 0 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the queued input never asked for a relaunch"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    // Each refused relaunch wakes the conversation loop, which finds the
+    // input still waiting. The same refusal is not asked for again.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    state.goal_wakeup.notify_one();
+    state.agent_runtime_recovery_wake.notify_one();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(runtime.relaunch_attempts.load(Ordering::SeqCst), 1);
+    assert!(runtime.commands.inputs.lock().unwrap().is_empty());
+    for task in loops {
+        task.abort();
+    }
+}

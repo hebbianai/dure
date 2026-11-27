@@ -749,6 +749,7 @@ struct ServiceState {
     agent_conversations: Arc<agent_conversation_api::AgentConversationApi<SqliteDomainStore>>,
     agent_operations: agent_operation_lock::AgentOperationLocks,
     agent_runtime_recovery_wake: Notify,
+    stable_runtime_requests: agent_runtime_recovery::StableRuntimeRequests,
     managed_rehost_recovery_wake: Notify,
     goal_wakeup: Notify,
     runtime_idle: agent_runtime_transition_apply::deferred::idle::IdleRuntime,

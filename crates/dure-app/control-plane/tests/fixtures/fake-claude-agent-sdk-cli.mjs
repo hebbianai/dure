@@ -313,6 +313,11 @@ for await (const line of lines) {
 			requestPermission(value, "question");
 		} else if (text === "interrupt-through-sdk") {
 			pendingTurn = { kind: "interrupt", message: value };
+		} else if (text === "exit-after-turn") {
+			// Claude ends by itself once its turn is written, as a crashed or
+			// killed Claude does: nothing asked it to stop.
+			completeTurn(value);
+			process.stdout.write("", () => process.exit(0));
 		} else {
 			completeTurn(value);
 		}

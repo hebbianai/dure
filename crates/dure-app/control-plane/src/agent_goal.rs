@@ -186,9 +186,10 @@ pub(crate) async fn advance(
     };
     let receipt = match state.agent_conversations.start_goal_turn(&request).await {
         Ok(receipt) => receipt,
-        // Startup recovery owns runtime readiness. No turn has been admitted
+        // Runtime recovery owns runtime readiness. No turn has been admitted
         // when command lookup is unavailable; its completion wakes this loop.
         Err(crate::agent_conversation_api::AgentConversationApiErrorV1::RuntimeUnavailable) => {
+            crate::agent_runtime_recovery::request_stable(state, &goal.agent_id).await;
             return Ok(());
         }
         Err(error) => return Err(error.code()),

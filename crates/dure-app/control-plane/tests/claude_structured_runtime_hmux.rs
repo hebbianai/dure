@@ -808,3 +808,6 @@ async fn replacement_manager_reconciles_one_hmux_relay_and_replaces_one_credenti
 
 #[path = "claude_structured_runtime_hmux/reconnect.rs"]
 mod reconnect;
+
+#[path = "claude_structured_runtime_hmux/provider_exit.rs"]
+mod provider_exit;

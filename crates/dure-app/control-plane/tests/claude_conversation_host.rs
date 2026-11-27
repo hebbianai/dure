@@ -15,7 +15,9 @@ use dure_app::{
     DomainStore, ProjectIdV1, ProjectRecordV1, ProviderIdV1, WorkspaceIdV1, WorkspaceRecordV1,
 };
 use dure_app_sqlite::SqliteDomainStore;
-use dure_control_plane::agent_conversation::AgentConversationService;
+use dure_control_plane::agent_conversation::{
+    AgentConversationNotificationKindV1, AgentConversationService,
+};
 use dure_control_plane::agent_conversation_api::{
     AgentConversationApi, AgentConversationRuntimeRegistry, START_TURN_OPERATION,
 };
@@ -127,6 +129,173 @@ async fn wait_for_assistant(
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+}
+
+fn start_turn_intent(index: usize, suffix: &str, input: &str) -> serde_json::Value {
+    serde_json::to_value(AgentStartTurnIntentV1 {
+        schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+        interaction_session_id: binding(index).interaction_session_id,
+        runtime: binding(index).runtime,
+        turn_id: AgentTurnIdV1::new(format!("turn-claude-shared-{index}-{suffix}")).unwrap(),
+        client_message_id: AgentClientMessageIdV1::new(format!(
+            "message-claude-shared-{index}-{suffix}"
+        ))
+        .unwrap(),
+        input: input.into(),
+        requested_at_ms: 20 + index as i64,
+    })
+    .unwrap()
+}
+
+/// hebbianai/dure#777: the Claude process behind a Chat ends by itself. The
+/// host must stop offering the exited Query to input, tell readers its
+/// runtime changed, and let a successor retire it, so the next input
+/// relaunches the conversation instead of failing against the dead Query.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires the channel-pinned Node executable and Claude driver dependencies"]
+async fn a_query_that_ends_by_itself_leaves_input_to_a_relaunch() {
+    let node = PathBuf::from(std::env::var_os("DURE_NODE_BIN").expect("DURE_NODE_BIN"))
+        .canonicalize()
+        .unwrap();
+    let entrypoint = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/claude-conversation-host-fixture.mjs")
+        .canonicalize()
+        .unwrap();
+    let temporary = tempfile::Builder::new()
+        .prefix("dure-claude-exit-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let state_root = temporary.path().join("host-state");
+    let runtime_root = temporary.path().join("runtime");
+    for directory in [&state_root, &runtime_root] {
+        fs::create_dir(directory).unwrap();
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let store = Arc::new(
+        SqliteDomainStore::open(temporary.path().join("timeline.sqlite3"))
+            .await
+            .unwrap(),
+    );
+    seed(&store, temporary.path()).await;
+    let service = Arc::new(AgentConversationService::new(Arc::clone(&store)));
+    let registry = Arc::new(AgentConversationRuntimeRegistry::default());
+    let host = Arc::new(
+        ClaudeConversationHost::new(
+            ClaudeSdkHostSupervisorConfiguration::new(
+                node,
+                entrypoint,
+                &state_root,
+                &runtime_root,
+                "host-claude-exit-1",
+                Vec::new(),
+            )
+            .unwrap(),
+            "control-plane-claude-exit-1",
+            Arc::clone(&service),
+            Arc::clone(&registry),
+        )
+        .unwrap(),
+    );
+    let attached = host
+        .attach(ClaudeConversationAttachmentV1 {
+            binding: binding(2),
+            cwd: temporary.path().to_path_buf(),
+            environment: BTreeMap::new(),
+            permission_mode: dure_app::ProviderPermissionModeV1::Default,
+            model: None,
+            effort: None,
+            process: None,
+            relay_id: "relay-claude-shared-2".into(),
+            replacement_authority: None,
+        })
+        .await
+        .unwrap();
+    let mut notifications = service.subscribe();
+    let api = AgentConversationApi::new(Arc::clone(&service), Arc::clone(&registry));
+    let response = api
+        .dispatch(
+            START_TURN_OPERATION,
+            &start_turn_intent(2, "last", "end-after-turn"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response["receipt"]["state"], "accepted");
+
+    // The exit is committed, and then the runtime is announced as changed.
+    let mut exited = false;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let notification = tokio::time::timeout(remaining, notifications.recv())
+            .await
+            .expect("the exited Query's runtime was never announced as changed")
+            .unwrap();
+        if notification.interaction_session_id != binding(2).interaction_session_id {
+            continue;
+        }
+        if !exited {
+            let AgentTimelineReadV1::Page { page } = service
+                .read(&AgentTimelineReadRequestV1 {
+                    schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+                    interaction_session_id: binding(2).interaction_session_id,
+                    direction: AgentTimelineReadDirectionV1::Tail,
+                    cursor: None,
+                    limit: 32,
+                })
+                .await
+                .unwrap()
+            else {
+                panic!("timeline unexpectedly reset");
+            };
+            exited = page.rows.iter().any(|row| {
+                matches!(
+                    row.item.body,
+                    dure_app::AgentTimelineItemBodyV1::Lifecycle {
+                        state: dure_app::AgentTimelineLifecycleStateV1::SessionExited,
+                        ..
+                    }
+                )
+            });
+        }
+        if exited
+            && notification
+                .kinds
+                .contains(&AgentConversationNotificationKindV1::Runtime)
+        {
+            break;
+        }
+    }
+
+    // Input no longer reaches the dead Query: it finds no runtime, which is
+    // what starts a relaunch.
+    let refused = api
+        .dispatch(
+            START_TURN_OPERATION,
+            &start_turn_intent(2, "after-exit", "must not reach the exited Query"),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refused.code(), "agent_conversation_runtime_unavailable");
+
+    // The relaunch retires the ended Query for its successor.
+    let successor = ClaudeDch1QueryIdentity {
+        runtime_generation: "runtime-claude-shared-2-successor".into(),
+        query_epoch: "query-claude-shared-2-successor".into(),
+        relay_id: "relay-claude-shared-2-successor".into(),
+    };
+    let retired = host
+        .retire(&binding(2), &attached.identity, Some(&successor))
+        .await
+        .unwrap();
+    assert_eq!(retired.source, attached.identity);
+    assert_eq!(retired.allowed_target.as_ref(), Some(&successor));
+
+    drop(api);
+    drop(host);
+    store.close().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
