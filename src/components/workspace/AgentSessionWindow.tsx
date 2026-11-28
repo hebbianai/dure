@@ -24,6 +24,7 @@ import {
   useSecondaryWindowBoot,
   windowChromeDragHandler,
 } from "@/components/workspace/SecondaryWindowShell";
+import { WindowKeepOnTopToggle } from "@/components/workspace/WindowKeepOnTopToggle";
 import { agentDisplayName } from "@/lib/agents/agentDisplayName";
 import type { AgentStructuredInteractionProfileV1 } from "@/lib/agents/chat/agentInteractionProfile";
 import { t } from "@/lib/i18n";
@@ -382,6 +383,7 @@ export function AgentSessionWindowRoot({
             {heading}
           </span>
         </Titled>
+        <WindowKeepOnTopToggle className="ml-2" />
       </header>
       {agent && target?.kind === "chat" && !closing ? (
         <AgentSessionWindowChat

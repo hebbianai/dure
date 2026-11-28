@@ -24,6 +24,10 @@ vi.mock("@/components/workspace/SecondaryWindowShell", () => ({
 	useSecondaryWindowBoot: mocks.boot,
 	windowChromeDragHandler: () => vi.fn(),
 }));
+// The toggle's native behavior has its own test; here it is a strip child.
+vi.mock("@/components/workspace/WindowKeepOnTopToggle", () => ({
+	WindowKeepOnTopToggle: () => <button type="button">keep-on-top</button>,
+}));
 vi.mock("@/lib/workspace/window/useDurableWindowClose", () => ({
 	useDurableWindowClose: mocks.useDurableWindowClose,
 }));
@@ -86,6 +90,7 @@ describe("FilePresentationWindowRoot", () => {
 		await act(async () => {});
 		expect(screen.getByText("panels.filePresentation.empty")).toBeTruthy();
 		expect(screen.queryByTestId("viewer")).toBeNull();
+		expect(screen.getByRole("button", { name: "keep-on-top" })).toBeTruthy();
 		expect(mocks.useDurableWindowClose).toHaveBeenCalled();
 	});
 

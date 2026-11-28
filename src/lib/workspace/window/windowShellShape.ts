@@ -225,7 +225,8 @@ export function chromeSidebarColumnWidth(sidebarWidth: number): number {
   return Math.max(CHROME_SIDEBAR_MIN_WIDTH, sidebarWidth);
 }
 
-export function useWindowShellShape(): boolean {
+/** Whether this window is in native full screen, re-read on every resize. */
+export function useCurrentWindowFullscreen(): boolean {
   const [fullscreen, setFullscreen] = useState(false);
 
   useEffect(() => {
@@ -250,6 +251,12 @@ export function useWindowShellShape(): boolean {
       stopResize();
     };
   }, []);
+
+  return fullscreen;
+}
+
+export function useWindowShellShape(): boolean {
+  const fullscreen = useCurrentWindowFullscreen();
 
   // 창 모드로 돌아올 때마다 시스템 반경을 다시 읽는다. 전체화면에는 창 모서리가
   // 없으므로 읽지 않는다.

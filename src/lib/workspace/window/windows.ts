@@ -50,6 +50,7 @@ import {
 } from "@/lib/workspace/window/secondaryWindowOperation";
 import { LEGACY_PRODUCT_COMPATIBILITY } from "@/lib/platform/legacyProductCompatibility";
 import { webviewStorageOptions } from "@/lib/ipc/core";
+import { keepOnTopWindowOptions } from "@/lib/workspace/window/windowKeepOnTop";
 import {
 	popoutWindowLabel,
 	SECONDARY_WINDOW_LABEL_PREFIX,
@@ -354,6 +355,7 @@ async function revealOrCreateSecondaryWindow({
       title,
       ...frame,
       ...GLASS_WINDOW_NATIVE_OPTIONS,
+      ...keepOnTopWindowOptions(label),
       focus: true,
       backgroundThrottling: "disabled" as BackgroundThrottlingPolicy,
     });
@@ -465,6 +467,7 @@ export async function openAgentSessionWindow(
       hiddenTitle: true,
       dragDropEnabled: false,
       ...GLASS_WINDOW_NATIVE_OPTIONS,
+      ...keepOnTopWindowOptions(label),
       focus: true,
       backgroundThrottling: "disabled" as BackgroundThrottlingPolicy,
     });

@@ -6,6 +6,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -375,6 +376,10 @@ vi.mock("@/lib/workspace/window/windowShortcutHooks", () => ({
 	useTerminalFontShortcut: vi.fn(),
 }));
 vi.mock("@/components/Toaster", () => ({ Toaster: () => null }));
+// The toggle's native behavior has its own test; here it is a strip child.
+vi.mock("@/components/workspace/WindowKeepOnTopToggle", () => ({
+	WindowKeepOnTopToggle: () => <button type="button">keep-on-top</button>,
+}));
 vi.mock("@/components/scm/useGitAvailability", () => ({
 	useGitAvailability: () => ({ state: { status: "available" } }),
 }));
@@ -722,6 +727,19 @@ describe("AgentSessionWindowRoot", () => {
 		registration.dispose();
 	});
 
+	it("keeps presses on the keep-on-top toggle out of the window drag", () => {
+		render(<AgentSessionWindowRoot agentId="agent-1" />);
+
+		const keepOnTop = within(screen.getByRole("banner")).getByRole("button", {
+			name: "keep-on-top",
+		});
+		fireEvent.mouseDown(keepOnTop, { button: 0, detail: 1 });
+		fireEvent.mouseDown(keepOnTop, { button: 0, detail: 2 });
+
+		expect(mocks.startDragging).not.toHaveBeenCalled();
+		expect(mocks.toggleWindowMaximizeAtomic).not.toHaveBeenCalled();
+	});
+
 	it("renders the persisted Hmux session without creating a pane", () => {
 		const rendered = render(<AgentSessionWindowRoot agentId="agent-1" />);
 
@@ -740,6 +758,11 @@ describe("AgentSessionWindowRoot", () => {
 			true,
 		);
 		expect(screen.getByText("src")).toBeTruthy();
+		expect(
+			within(screen.getByRole("banner")).getByRole("button", {
+				name: "keep-on-top",
+			}),
+		).toBeTruthy();
 		expect(mocks.startWebviewKeyboardFocus).toHaveBeenCalledOnce();
 		expect(mocks.startWindowSync).toHaveBeenCalledOnce();
 		expect(mocks.setTitle).toHaveBeenCalledWith("Dure — UI polish");

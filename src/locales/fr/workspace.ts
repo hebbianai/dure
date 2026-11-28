@@ -224,6 +224,7 @@ export const workspace: Record<string, string> = {
 	"workspace.health.notResponding": "Ne répond pas",
 	"workspace.paneRename.description": "Cela s’applique uniquement à ce volet. La session, le dossier de travail et le nom de l’agent restent inchangés.",
 	"workspace.agentWindow.unavailable": "Cette session ne peut pas être affichée dans une grande fenêtre",
+	"workspace.window.keepOnTop": "Garder au premier plan",
 	"workspace.statusCard.enlargeForTerminal": "Agrandissez ce volet pour voir son terminal",
 	"workspace.statusCard.enlargeForConversation": "Agrandissez ce volet pour voir sa conversation",
 	"workspace.desktopClose.terminatesSessions": "Termine {n} sessions de terminal/SSH ordinaires. Les sessions d'agent enregistrées sont conservées.",
