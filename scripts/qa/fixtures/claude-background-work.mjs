@@ -8,6 +8,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { observeProcessMembers, processMemberFromObservation } from "../../lib/process-identity.mjs";
 import { managedRuntimeOperation } from "../lib/managed-runtime-rpc.mjs";
+import { until } from "../lib/until.mjs";
 
 function reply(response, model, content, stopReason) {
   response.writeHead(200, { "content-type": "text/event-stream" });
@@ -23,16 +24,6 @@ function reply(response, model, content, stopReason) {
   send("message_delta", { delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: 12 } });
   send("message_stop", {});
   response.end();
-}
-
-async function until(read, message, timeoutMs = 20000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const value = await read();
-    if (value) return value;
-    await delay(50);
-  }
-  throw new Error(message);
 }
 
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`;

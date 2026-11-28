@@ -42,7 +42,13 @@ pub enum HookFailure {
     InputUnavailable,
     InvalidInput,
     InvalidFence,
+    /// No app has published a descriptor for this home.
+    AppNotFound,
+    /// The app answered the report with a refusal it named.
+    Rejected,
+    /// The app is published but did not answer: busy, restarting or closed.
     Unavailable,
+    /// The app has not confirmed the report within the budget.
     Timeout,
 }
 
@@ -52,9 +58,19 @@ impl HookFailure {
             Self::InputUnavailable => "managed_hook_input_unavailable",
             Self::InvalidInput => "managed_hook_input_invalid",
             Self::InvalidFence => "managed_hook_fence_invalid",
+            Self::AppNotFound => "managed_hook_app_not_found",
+            Self::Rejected => "managed_hook_report_rejected",
             Self::Unavailable => "managed_hook_report_unavailable",
             Self::Timeout => "managed_hook_report_timeout",
         }
+    }
+
+    /// A published app that is slow, busy or restarting is nothing the person
+    /// can act on, and the report is best effort. Only a misconfiguration
+    /// fails the hook: input or fence that cannot be reported, no app at all,
+    /// or an app that refuses the report.
+    pub fn degrades(self) -> bool {
+        matches!(self, Self::Unavailable | Self::Timeout)
     }
 }
 
@@ -306,7 +322,16 @@ enum Attempt {
     Delivered,
     /// The liveness check got no answer before its wait ended.
     Late,
+    /// The candidate is not the live app, or did not answer as one.
     Skipped,
+    /// The app refused, naming why.
+    Refused(String),
+}
+
+/// A non-success answer is the app's refusal only when it names one; any
+/// other is not an answer from the app.
+fn refusal(body: &[u8]) -> Attempt {
+    rejection_code(body).map_or(Attempt::Skipped, Attempt::Refused)
 }
 
 /// Checks that the candidate is the exact app generation it names, then
@@ -317,7 +342,6 @@ async fn attempt(
     descriptor: &descriptor::Descriptor,
     ping_wait: Duration,
     deadline: Instant,
-    rejection: &mut Option<String>,
 ) -> Result<Attempt, HookFailure> {
     let ping = match client
         .get(format!("http://127.0.0.1:{}/ping", descriptor.port))
@@ -326,15 +350,19 @@ async fn attempt(
         .send()
         .await
     {
-        Ok(ping) if ping.status().is_success() => bounded_response(ping).await,
-        Ok(_) => return Ok(Attempt::Skipped),
-        Err(error) => Err(transport_failure(&error)),
+        Ok(ping) => ping,
+        Err(error) if error.is_timeout() => return Ok(Attempt::Late),
+        Err(_) => return Ok(Attempt::Skipped),
     };
-    let ping = match ping {
+    let answered = ping.status().is_success();
+    let ping = match bounded_response(ping).await {
         Ok(ping) => ping,
         Err(HookFailure::Timeout) => return Ok(Attempt::Late),
         Err(_) => return Ok(Attempt::Skipped),
     };
+    if !answered {
+        return Ok(refusal(&ping));
+    }
     let Ok(ping) = serde_json::from_slice::<Value>(&ping) else {
         return Ok(Attempt::Skipped);
     };
@@ -377,16 +405,11 @@ async fn attempt(
     };
     let success = response.status().is_success();
     match bounded_response(response).await {
-        Ok(_) if success => return Ok(Attempt::Delivered),
-        Err(HookFailure::Timeout) => return Err(HookFailure::Timeout),
-        Ok(body) if !success => {
-            if let Some(code) = rejection_code(&body) {
-                *rejection = Some(code);
-            }
-        }
-        _ => {}
+        Ok(_) if success => Ok(Attempt::Delivered),
+        Ok(body) => Ok(refusal(&body)),
+        Err(HookFailure::Timeout) => Err(HookFailure::Timeout),
+        Err(_) => Ok(Attempt::Skipped),
     }
-    Ok(Attempt::Skipped)
 }
 
 /// Every candidate first gets a short liveness check, so a stale or foreign
@@ -399,12 +422,15 @@ async fn deliver_to_candidates(
     template: &reqwest::Request,
     descriptors: Vec<descriptor::Descriptor>,
     deadline: Instant,
-    rejection: &mut Option<String>,
 ) -> Result<(), HookFailure> {
+    if descriptors.is_empty() {
+        return Err(HookFailure::AppNotFound);
+    }
     let mut queue: VecDeque<_> = descriptors
         .into_iter()
         .map(|descriptor| (descriptor, false))
         .collect();
+    let mut refused = None;
     while let Some((descriptor, patient)) = queue.pop_front() {
         let budget = remaining(deadline)?;
         let wait = if patient {
@@ -412,11 +438,17 @@ async fn deliver_to_candidates(
         } else {
             PING_TIMEOUT.min(budget)
         };
-        match attempt(client, template, &descriptor, wait, deadline, rejection).await? {
+        match attempt(client, template, &descriptor, wait, deadline).await? {
             Attempt::Delivered => return Ok(()),
             Attempt::Late if !patient => queue.push_back((descriptor, true)),
+            Attempt::Refused(code) => refused = Some(code),
             Attempt::Late | Attempt::Skipped => {}
         }
+    }
+    if let Some(code) = refused {
+        // Name why the app refused the report; its message is never copied.
+        eprintln!("managed_hook_report_rejected: {code}");
+        return Err(HookFailure::Rejected);
     }
     // A patient check that went unanswered spent the rest of the budget.
     remaining(deadline).and(Err(HookFailure::Unavailable))
@@ -452,18 +484,9 @@ async fn deliver(
         .iter()
         .filter_map(|candidate| descriptor::read(&root.path, candidate))
         .collect();
-    let mut rejection = None;
-    let delivered =
-        deliver_to_candidates(&client, &template, descriptors, deadline, &mut rejection).await;
-    match (&delivered, rejection) {
-        (Ok(()), _) if root.writable => {
-            if let Some(stamp) = &stamp {
-                stamp.record();
-            }
-        }
-        // Name why the app refused the report; its message is never copied.
-        (Err(_), Some(code)) => eprintln!("managed_hook_report_rejected: {code}"),
-        _ => {}
+    let delivered = deliver_to_candidates(&client, &template, descriptors, deadline).await;
+    if let (Ok(()), Some(stamp), true) = (&delivered, &stamp, root.writable) {
+        stamp.record();
     }
     delivered
 }
@@ -504,13 +527,11 @@ async fn session_start_guidance(
 }
 
 /// Claude applies hook output only after a successful exit, so a failed report
-/// must not discard guidance that was already written. A report the app has
-/// not confirmed in time is best effort, never a failed hook: the app usually
-/// already holds it, and a slow app or Host is nothing the person can act on.
-/// Its code still goes to stderr for diagnostics.
+/// must not discard guidance that was already written, and a failure that
+/// degrades never fails the hook. Either way its code goes to stderr.
 fn completed(delivered: Result<(), HookFailure>, guided: bool) -> Result<(), HookFailure> {
     match delivered {
-        Err(failure) if guided || failure == HookFailure::Timeout => {
+        Err(failure) if guided || failure.degrades() => {
             eprintln!("{}", failure.code());
             Ok(())
         }
@@ -553,7 +574,7 @@ pub async fn run() -> Result<(), HookFailure> {
             .await
             .map_err(|_| HookFailure::Timeout)
             .and_then(|delivered| delivered),
-        None => Err(HookFailure::Unavailable),
+        None => Err(HookFailure::AppNotFound),
     };
     completed(delivered, guidance.is_some())
 }

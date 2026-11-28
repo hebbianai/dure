@@ -143,24 +143,27 @@ async fn an_expired_deadline_skips_the_query() {
 
 #[test]
 fn guidance_keeps_a_failed_report_from_hiding_it() {
-    assert_eq!(completed(Err(HookFailure::Unavailable), true), Ok(()));
+    assert_eq!(completed(Err(HookFailure::Rejected), true), Ok(()));
     assert_eq!(
-        completed(Err(HookFailure::Unavailable), false),
-        Err(HookFailure::Unavailable)
+        completed(Err(HookFailure::Rejected), false),
+        Err(HookFailure::Rejected)
     );
     assert_eq!(completed(Ok(()), false), Ok(()));
 }
 
 #[test]
-fn only_a_report_the_app_has_not_confirmed_in_time_degrades_without_guidance() {
-    assert_eq!(completed(Err(HookFailure::Timeout), false), Ok(()));
-    assert_eq!(completed(Err(HookFailure::Timeout), true), Ok(()));
-    for failure in [
-        HookFailure::InputUnavailable,
-        HookFailure::InvalidInput,
-        HookFailure::InvalidFence,
-        HookFailure::Unavailable,
+fn only_misconfiguration_fails_the_hook() {
+    for (failure, fails) in [
+        (HookFailure::InputUnavailable, true),
+        (HookFailure::InvalidInput, true),
+        (HookFailure::InvalidFence, true),
+        (HookFailure::AppNotFound, true),
+        (HookFailure::Rejected, true),
+        (HookFailure::Unavailable, false),
+        (HookFailure::Timeout, false),
     ] {
-        assert_eq!(completed(Err(failure), false), Err(failure));
+        let expected = if fails { Err(failure) } else { Ok(()) };
+        assert_eq!(completed(Err(failure), false), expected, "{failure:?}");
+        assert_eq!(completed(Err(failure), true), Ok(()), "{failure:?}");
     }
 }

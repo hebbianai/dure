@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { managedRuntimeOperation } from "../lib/managed-runtime-rpc.mjs";
+import { until } from "../lib/until.mjs";
 
 // Native app ingress + installed hook + native Host, with synthetic provider
 // events reproducing Claude's observed continued-in transcript transition.
@@ -50,13 +51,10 @@ export async function runClaudeConversationContinuation({ ownerRoot, discoveryRo
     const result = report(event, conversation);
     assert.equal(result.status, 0, result.stderr);
   };
-  const reaches = async (predicate, message) => {
-    for (const started = Date.now(); Date.now() - started < 10_000; await delay(250)) {
-      const value = snapshot();
-      if (predicate(value.agentRuntimeState)) return value;
-    }
-    assert.fail(message);
-  };
+  const reaches = (predicate, message) => until(() => {
+    const value = snapshot();
+    return predicate(value.agentRuntimeState) && value;
+  }, message, { intervalMs: 250 });
   reported("UserPromptSubmit", original);
   const before = await reaches(state => state.activity === "working", "The original prompt did not reach the Host");
   // An unrelated conversation cannot end the turn. A Stop shows its refusal;

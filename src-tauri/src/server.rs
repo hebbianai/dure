@@ -15,10 +15,10 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tiny_http::{Header, Method, Response};
 
-mod claude_hook_reports;
 mod frontend_receipt;
 mod listener;
 mod managed_claude;
+mod ordered_reports;
 mod replayable_request;
 mod request_broker;
 use frontend_receipt::{
@@ -1220,17 +1220,15 @@ pub fn start(
     });
 }
 
-/// Managed Claude hook reports, keyed by the Host session they report on.
-type ClaudeHookReportQueue = claude_hook_reports::SessionOrderedReports<
-    (Option<String>, String),
-    managed_claude::ClaudeHookReport,
->;
+type ClaudeHookReportQueue =
+    ordered_reports::OrderedReports<managed_claude::HostSession, managed_claude::ClaudeHookReport>;
 
 fn claude_hook_report_queue(app: &AppHandle) -> Arc<ClaudeHookReportQueue> {
     let app = app.clone();
-    claude_hook_reports::SessionOrderedReports::new(move |report| {
-        apply_claude_hook_report(&app, report);
-    })
+    ordered_reports::OrderedReports::new(
+        managed_claude::ClaudeHookReport::host_session,
+        move |report| apply_claude_hook_report(&app, report),
+    )
 }
 
 /// Managed Claude command hook. Only a bridge that confirmed the exact
@@ -1268,11 +1266,7 @@ fn serve_claude_hook(mut req: tiny_http::Request, reports: &Arc<ClaudeHookReport
             return;
         }
     };
-    let session = (
-        report.host_request.workspace_id.clone(),
-        report.host_request.session_id.clone(),
-    );
-    let response = match reports.push(session, report) {
+    let response = match reports.push(report) {
         Ok(()) => json_response(202, serde_json::json!({ "ok": true, "accepted": true })),
         Err(refusal) => json_response(
             503,
@@ -1280,7 +1274,7 @@ fn serve_claude_hook(mut req: tiny_http::Request, reports: &Arc<ClaudeHookReport
                 "ok": false,
                 "error": {
                     "code": refusal.code(),
-                    "message": "the session's earlier reports have not reached its Host"
+                    "message": "the report could not be queued for its Host"
                 }
             }),
         ),
@@ -2719,7 +2713,8 @@ mod tests {
         let (release, released) = mpsc::channel::<()>();
         let (applied, reached_host) = mpsc::channel();
         let (released, applied) = (Mutex::new(released), Mutex::new(applied));
-        let reports = claude_hook_reports::SessionOrderedReports::new(
+        let reports = ordered_reports::OrderedReports::new(
+            managed_claude::ClaudeHookReport::host_session,
             move |report: managed_claude::ClaudeHookReport| {
                 released.lock().unwrap().recv().unwrap();
                 let event = report.presentation["event"].as_str().map(str::to_owned);

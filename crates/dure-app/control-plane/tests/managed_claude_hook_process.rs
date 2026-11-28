@@ -19,6 +19,8 @@ const TOKEN: &str = "fixture-report-token";
 const GENERATION: &str = "fixture-generation";
 /// Claude's own limit for the managed hook (`"timeout": 3`).
 const CLAUDE_HOOK_TIMEOUT: Duration = Duration::from_secs(3);
+/// Longer than any hook budget: an answer that never comes in time.
+const NEVER: Duration = Duration::from_secs(30);
 const FENCE: [(&str, &str); 7] = [
     ("HMUX_SESSION_ID", "fixture-session"),
     ("HMUX_WORKSPACE_ID", "fixture-workspace"),
@@ -29,14 +31,29 @@ const FENCE: [(&str, &str); 7] = [
     ("HMUX_TERMINAL_EPOCH", "fixture-terminal"),
 ];
 
-/// Answers `/ping` at once. A report is recorded as it arrives, then answered
-/// with `status` and `body` after `delay`.
+/// How the fixture app answers: its liveness check after `ping_delay`, and a
+/// report, recorded as it arrives, with `status` and `body` after `delay`.
+#[derive(Clone, Copy)]
+struct Answers {
+    ping_delay: Duration,
+    status: u16,
+    delay: Duration,
+    body: &'static str,
+}
+
+const ACCEPTED: Answers = Answers {
+    ping_delay: Duration::ZERO,
+    status: 202,
+    delay: Duration::ZERO,
+    body: r#"{"ok":true,"accepted":true}"#,
+};
+
 struct App {
     port: u16,
     reports: Arc<Mutex<Vec<String>>>,
 }
 
-fn app(status: u16, delay: Duration, body: &'static str) -> App {
+fn app(answers: Answers) -> App {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let reports = Arc::new(Mutex::new(Vec::new()));
@@ -44,19 +61,22 @@ fn app(status: u16, delay: Duration, body: &'static str) -> App {
     thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let recorded = Arc::clone(&recorded);
-            thread::spawn(move || serve(stream, status, delay, body, &recorded));
+            thread::spawn(move || serve(stream, answers, &recorded));
         }
     });
     App { port, reports }
 }
 
-fn serve(
-    mut stream: TcpStream,
-    status: u16,
-    delay: Duration,
-    body: &str,
-    recorded: &Mutex<Vec<String>>,
-) {
+/// A port nothing listens on, as for an app that is restarting or closed.
+fn closed_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+fn serve(mut stream: TcpStream, answers: Answers, recorded: &Mutex<Vec<String>>) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut request = String::new();
     let mut length = 0;
@@ -79,6 +99,7 @@ fn serve(
         return;
     }
     let (status, answer) = if request.starts_with("GET /ping ") {
+        thread::sleep(answers.ping_delay);
         let ping = serde_json::json!({
             "ok": true, "channel": "stable", "generation": GENERATION,
             "processId": std::process::id(),
@@ -91,8 +112,8 @@ fn serve(
         let report: Value = serde_json::from_slice(&content).unwrap();
         let event = report["hook_event_name"].as_str().unwrap().to_owned();
         recorded.lock().unwrap().push(event);
-        thread::sleep(delay);
-        (status, body.to_owned())
+        thread::sleep(answers.delay);
+        (answers.status, answers.body.to_owned())
     };
     let _ = write!(
         stream,
@@ -101,9 +122,10 @@ fn serve(
     );
 }
 
-/// Runs the hook once for `event`. With `hold_input` its stdin is never
-/// closed, as if the caller never finished writing the event.
-fn run_hook(app: &App, event: &str, hold_input: bool) -> (Output, Duration) {
+/// Runs the hook once for a Stop. `published` is the port the app's
+/// descriptor names, if any app was ever published; with `hold_input` stdin
+/// is never closed, as if the caller never finished writing the event.
+fn run_hook(published: Option<u16>, hold_input: bool) -> (Output, Duration) {
     let scope = tempfile::tempdir().unwrap();
     let (home, dure) = (scope.path().join("home"), scope.path().join("dure"));
     for directory in [&home, &dure] {
@@ -112,13 +134,15 @@ fn run_hook(app: &App, event: &str, hold_input: bool) -> (Output, Duration) {
             .create(directory)
             .unwrap();
     }
-    let descriptor = dure.join("server.json");
-    let published = serde_json::json!({
-        "channel": "stable", "port": app.port, "processId": std::process::id(),
-        "generation": GENERATION, "reportToken": TOKEN,
-    });
-    std::fs::write(&descriptor, published.to_string()).unwrap();
-    std::fs::set_permissions(&descriptor, std::fs::Permissions::from_mode(0o600)).unwrap();
+    if let Some(port) = published {
+        let descriptor = dure.join("server.json");
+        let contents = serde_json::json!({
+            "channel": "stable", "port": port, "processId": std::process::id(),
+            "generation": GENERATION, "reportToken": TOKEN,
+        });
+        std::fs::write(&descriptor, contents.to_string()).unwrap();
+        std::fs::set_permissions(&descriptor, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
     let started = Instant::now();
     let mut child = Command::new(env!("CARGO_BIN_EXE_dure-control-plane"))
         .arg("managed-claude-hook")
@@ -139,7 +163,7 @@ fn run_hook(app: &App, event: &str, hold_input: bool) -> (Output, Duration) {
         Some(input)
     } else {
         let report = serde_json::json!({
-            "hook_event_name": event, "session_id": "fixture-conversation",
+            "hook_event_name": "Stop", "session_id": "fixture-conversation",
             "prompt_id": "fixture-prompt-0001", "background_tasks": [], "session_crons": [],
         });
         input.write_all(report.to_string().as_bytes()).unwrap();
@@ -156,49 +180,78 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+/// Claude sees no failed hook, and the stderr diagnostic names why.
+fn assert_degraded(output: &Output, elapsed: Duration, code: &str) {
+    assert!(output.status.success(), "{}", stderr(output));
+    assert!(stderr(output).contains(code), "{}", stderr(output));
+    assert!(output.stdout.is_empty());
+    assert!(elapsed < CLAUDE_HOOK_TIMEOUT, "{elapsed:?}");
+}
+
+/// Claude shows a failed hook naming the misconfiguration.
+fn assert_failed(output: &Output, elapsed: Duration, code: &str) {
+    assert!(!output.status.success(), "{}", stderr(output));
+    assert!(stderr(output).contains(code), "{}", stderr(output));
+    assert!(elapsed < CLAUDE_HOOK_TIMEOUT, "{elapsed:?}");
+}
+
 #[test]
 fn a_stop_the_app_confirms_too_late_is_not_a_failed_hook_and_the_app_holds_it() {
     // #822: a loaded app answered after the 2.4 s budget, and Claude showed
     // "Stop hook failed" for a report the app had already received.
-    let app = app(
-        202,
-        Duration::from_secs(30),
-        r#"{"ok":true,"accepted":true}"#,
-    );
-    let (output, elapsed) = run_hook(&app, "Stop", false);
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert!(stderr(&output).contains("managed_hook_report_timeout"));
-    assert!(output.stdout.is_empty());
-    assert!(elapsed < CLAUDE_HOOK_TIMEOUT, "{elapsed:?}");
+    let app = app(Answers {
+        delay: NEVER,
+        ..ACCEPTED
+    });
+    let (output, elapsed) = run_hook(Some(app.port), false);
+    assert_degraded(&output, elapsed, "managed_hook_report_timeout");
     assert_eq!(*app.reports.lock().unwrap(), ["Stop"]);
 }
 
 #[test]
+fn an_app_whose_ping_never_answers_in_time_is_not_a_failed_hook() {
+    // #822: on a machine at load ~500 the app was running but its liveness
+    // check did not answer within the budget, and every hook failed.
+    let app = app(Answers {
+        ping_delay: NEVER,
+        ..ACCEPTED
+    });
+    let (output, elapsed) = run_hook(Some(app.port), false);
+    assert_degraded(&output, elapsed, "managed_hook_report_");
+    assert!(app.reports.lock().unwrap().is_empty());
+}
+
+#[test]
+fn an_app_that_is_restarting_is_not_a_failed_hook() {
+    let (output, elapsed) = run_hook(Some(closed_port()), false);
+    assert_degraded(&output, elapsed, "managed_hook_report_unavailable");
+}
+
+#[test]
 fn a_report_the_app_refuses_is_still_a_failed_hook() {
-    let app = app(
-        400,
-        Duration::ZERO,
-        r#"{"ok":false,"error":{"code":"invalid_hook_report","message":"fixture"}}"#,
-    );
-    let (output, _) = run_hook(&app, "Stop", false);
-    assert!(!output.status.success());
-    assert!(
-        stderr(&output).contains("managed_hook_report_rejected: invalid_hook_report"),
-        "{}",
-        stderr(&output)
+    let app = app(Answers {
+        status: 400,
+        body: r#"{"ok":false,"error":{"code":"invalid_hook_report","message":"fixture"}}"#,
+        ..ACCEPTED
+    });
+    let (output, elapsed) = run_hook(Some(app.port), false);
+    assert_failed(
+        &output,
+        elapsed,
+        "managed_hook_report_rejected: invalid_hook_report",
     );
 }
 
 #[test]
+fn a_home_without_a_published_app_is_still_a_failed_hook() {
+    let (output, elapsed) = run_hook(None, false);
+    assert_failed(&output, elapsed, "managed_hook_app_not_found");
+}
+
+#[test]
 fn input_that_never_arrives_is_still_a_failed_hook() {
-    let app = app(202, Duration::ZERO, "{}");
-    let (output, elapsed) = run_hook(&app, "Stop", true);
-    assert!(!output.status.success());
-    assert!(
-        stderr(&output).contains("managed_hook_input_unavailable"),
-        "{}",
-        stderr(&output)
-    );
-    assert!(elapsed < CLAUDE_HOOK_TIMEOUT, "{elapsed:?}");
+    let app = app(ACCEPTED);
+    let (output, elapsed) = run_hook(Some(app.port), true);
+    assert_failed(&output, elapsed, "managed_hook_input_unavailable");
     assert!(app.reports.lock().unwrap().is_empty());
 }

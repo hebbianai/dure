@@ -202,6 +202,34 @@ async fn refused_delivery_and_legacy_read_only_discovery_do_not_suppress_the_nex
 }
 
 #[tokio::test]
+async fn only_a_refusal_the_app_names_is_rejected() {
+    // An unnamed non-success answer (see the 503 above) is not the app's.
+    let root = tempfile::tempdir().unwrap();
+    let refusing = server_replying(
+        ping(),
+        Duration::ZERO,
+        400,
+        Duration::ZERO,
+        r#"{"ok":false,"error":{"code":"invalid_hook_report","message":"fixture"}}"#,
+    )
+    .await;
+    publish(root.path(), refusing.port);
+    assert_eq!(
+        send(root.path(), "Stop", "epoch-1", true).await,
+        Err(HookFailure::Rejected)
+    );
+}
+
+#[tokio::test]
+async fn a_home_without_a_published_app_is_not_found() {
+    let root = tempfile::tempdir().unwrap();
+    assert_eq!(
+        send(root.path(), "Stop", "epoch-1", true).await,
+        Err(HookFailure::AppNotFound)
+    );
+}
+
+#[tokio::test]
 async fn authenticates_the_selected_generation_and_capability_before_posting() {
     for (field, wrong) in [
         ("generation", "stale".into()),
@@ -265,22 +293,6 @@ async fn a_report_the_app_never_answers_still_ends_within_the_hook_budget() {
         "{delivered:?}"
     );
     assert!(started.elapsed() < TOTAL_TIMEOUT + Duration::from_millis(250));
-}
-
-#[tokio::test]
-async fn a_stop_the_app_confirms_only_after_the_budget_is_not_a_failed_hook() {
-    // #822: on a loaded machine the app's answer arrived after the budget, and
-    // Claude printed "Stop hook failed" for a report the app already held.
-    let server = server_replying(ping(), Duration::ZERO, 202, Duration::from_secs(30), "{}").await;
-    let root = tempfile::tempdir().unwrap();
-    publish(root.path(), server.port);
-    let delivered = send(root.path(), "Stop", "epoch-1", true).await;
-    assert_eq!(delivered, Err(HookFailure::Timeout));
-    assert_eq!(completed(delivered, false), Ok(()));
-    let posts = server.posts.lock().unwrap();
-    assert_eq!(posts.len(), 1, "the app holds the report");
-    let report: Value = serde_json::from_slice(&posts[0].1).unwrap();
-    assert_eq!(report["hook_event_name"], "Stop");
 }
 
 #[tokio::test]
