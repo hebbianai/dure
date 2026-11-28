@@ -581,8 +581,8 @@ impl TerminalReplay {
     }
 
     /// Whether a quiescence-fenced managed stop may end the provider here:
-    /// it is semantically quiescent, or its turn settled on a typed API
-    /// failure that nobody has answered yet. Input pending at the prompt, an
+    /// it is semantically quiescent, or its turn settled on a provider error,
+    /// typed or not, that nobody has answered yet. Input pending at the prompt, an
     /// Escape, or key input since the failure was raised (a person may be
     /// answering it in the terminal) keeps the session. Never idle: semantic
     /// idle age and hibernation stay quiescence-only.

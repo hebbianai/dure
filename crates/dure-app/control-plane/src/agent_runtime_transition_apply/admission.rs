@@ -183,8 +183,9 @@ pub(super) async fn load_or_admit_with_activation(
             {
                 return Err("agent_runtime_provider_conversation_unavailable".into());
             }
-            // A turn that settled on a typed API failure (a usage limit) is a
-            // stop boundary too: nothing runs and the conversation resumes.
+            // A turn that settled on a provider error (a usage limit, or one
+            // its reporter did not name) is a stop boundary too: nothing runs
+            // and the conversation resumes.
             if body.source_stop_policy.requires_idle()
                 && !inspection.is_exited_exact()
                 && !inspection.is_stop_boundary()

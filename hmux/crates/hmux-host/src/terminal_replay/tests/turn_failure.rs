@@ -117,20 +117,39 @@ fn a_settled_turn_failure_is_a_stop_boundary_but_never_idle() {
     );
 }
 
+/// A turn that ended on an error its reporter did not name is settled too:
+/// the reason is only what recovery acts on. A turn that is still running is
+/// never a stop boundary.
 #[test]
-fn an_error_without_a_typed_failure_is_no_stop_boundary() {
+fn an_error_without_a_typed_failure_is_a_stop_boundary_but_a_running_turn_is_not() {
     let mut replay = replay_with_limits(TerminalReplayLimits::default());
+    let now = Instant::now();
     replay
         .apply_agent_state_report_at(
             state_report(
-                AgentRuntimeActivity::Waiting,
-                AgentRuntimeAttention::Error,
+                AgentRuntimeActivity::Working,
+                AgentRuntimeAttention::None,
                 false,
             ),
-            Instant::now(),
+            now,
         )
         .unwrap();
     assert!(!replay.is_stop_boundary());
+    let failed = applied(
+        replay
+            .apply_agent_state_report_at(
+                state_report(
+                    AgentRuntimeActivity::Waiting,
+                    AgentRuntimeAttention::Error,
+                    false,
+                ),
+                now,
+            )
+            .unwrap(),
+    );
+    assert_eq!(failed.turn_failure, None);
+    assert!(replay.is_stop_boundary());
+    assert!(!replay.is_semantically_quiescent());
 }
 
 /// Unsent input at the prompt is the person's, so no automatic stop may

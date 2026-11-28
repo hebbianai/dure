@@ -708,21 +708,21 @@ async fn native_preserve_switch_admits_a_settled_turn_failure_uses_real_hmux() {
     state_reporter::report_conversation(
         &hmux,
         &source,
-        AgentRuntimeActivity::Waiting,
+        AgentRuntimeActivity::Working,
         AgentRuntimeAttention::None,
-        true,
+        false,
         Some(CONVERSATION),
     );
-    // An error the provider did not type still waits for a person.
-    state_reporter::report_turn_failure(&hmux, &source, None);
-    let error = agent_runtime_transition_apply::apply(&state, "untyped-error-switch", body.clone())
+    // A turn that is still running keeps its session.
+    let error = agent_runtime_transition_apply::apply(&state, "running-turn-switch", body.clone())
         .await
         .unwrap_err();
     assert_eq!(error.code, "agent_runtime_source_busy", "{error:?}");
     assert_eq!(hmux.requests().len(), 1);
 
-    // The same switch at a settled limit failure keeps the conversation.
-    state_reporter::report_turn_failure(&hmux, &source, Some(AgentTurnFailure::RateLimit));
+    // Once it ended on an error, even one the provider did not name, the
+    // same switch keeps the conversation.
+    state_reporter::report_turn_failure(&hmux, &source, None);
     let original = hmux.session(&source);
     let receipt = agent_runtime_transition_apply::apply(&state, "failed-turn-switch", body)
         .await

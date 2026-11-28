@@ -2425,7 +2425,9 @@ mod tests {
             turn_failure: None,
             ..failed.clone()
         };
-        assert!(!untyped.is_settled_turn_failure());
+        // A turn that ended on an error its reporter did not name is just as
+        // settled; only the projected reason is absent.
+        assert!(untyped.is_settled_turn_failure());
         assert!(
             serde_json::to_value(&untyped)
                 .unwrap()
