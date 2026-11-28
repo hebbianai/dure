@@ -77,10 +77,6 @@ updates:
       - dependency-name: uuid
         versions:
           - ">= 1.27"
-      # The same baseline holds for dure-provider-transcript, which
-      # `hmux mobile-gateway` links: it pins ruzstd 0.8.1, since 0.8.2 and
-      # later require Rust 1.87.
-      - dependency-name: ruzstd
       # sha2 0.11 and hmac 0.13 move to digest 0.11, whose hash outputs no
       # longer format with `{:x}`; ~180 call sites need a hand migration.
       - dependency-name: sha2

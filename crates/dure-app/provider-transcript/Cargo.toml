@@ -2,7 +2,9 @@
 name = "dure-provider-transcript"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+# ruzstd 0.9 needs 1.87. Hmux links this crate only in hmux-cli, which russh
+# already holds above that, so no Rust 1.85 gate builds it.
+rust-version = "1.87"
 license = "Apache-2.0"
 publish = false
 description = "Provider-owned Claude Code, Codex and Pi transcript reads shared by Dure and Hmux"
@@ -14,9 +16,9 @@ description = "Provider-owned Claude Code, Codex and Pi transcript reads shared 
 [dependencies]
 # Decodes the compressed copies Codex keeps of rollouts it no longer writes.
 # Pure Rust and decode only, with no dependencies of its own without its
-# default features (checksum verification). Pinned: 0.8.2 and later require
-# Rust 1.87, above the rust-version declared here.
-ruzstd = { version = "=0.8.1", default-features = false, features = ["std"] }
+# default features (checksum verification). 0.9.1 bounds the window a frame
+# may ask for (RUSTSEC-2026-0344).
+ruzstd = { version = "0.9.1", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
