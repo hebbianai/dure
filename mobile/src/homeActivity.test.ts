@@ -61,32 +61,43 @@ function draw(
 	return renderHomeScreen(model, actions).querySelector(".session-row__lead")!;
 }
 
+const badge = (lead: Element) =>
+	lead.querySelector<HTMLElement>(".session-row__badge");
+
 describe("Home live activity", () => {
-	it("starts and stops the working indicator from catalog updates without an attach action", () => {
-		expect(draw("waiting").querySelector(".dure-loader")).toBeNull();
+	it("shows work as the green breathing badge from catalog updates without an attach action", () => {
+		expect(badge(draw("waiting"))).toBeNull();
 		const working = draw("working");
-		expect(
-			working.querySelector(".dure-loader")?.getAttribute("aria-label"),
-		).toBe(t("common.working"));
-		expect(working.querySelector(".session-row__provider")).toBeNull();
-		expect(draw("waiting").querySelector(".dure-loader")).toBeNull();
+		const mark = badge(working);
+		expect(mark?.dataset.agentTone).toBe("live");
+		expect(mark?.dataset.agentMotion).toBe("breathe");
+		expect(mark?.getAttribute("aria-label")).toBe(t("common.working"));
+		// The provider's mark keeps the slot; the state rides on its corner.
+		expect(working.querySelector(".dure-loader")).toBeNull();
+		expect(working.querySelector(".session-row__provider")).not.toBeNull();
+		expect(badge(draw("waiting"))).toBeNull();
 	});
 	it.each([
-		undefined,
-		"unknown",
-		"connecting",
-		"input",
-		"blocked",
-		"error",
-		"exited",
+		["input", "attention", "agents.status.awaitingInput"],
+		["blocked", "attention", "agents.status.approvalRequired"],
+		["error", "danger", "agents.status.error"],
+		["connecting", "neutral", "common.connecting"],
+		["exited", "neutral", "common.exited"],
+		["unknown", "neutral", "common.unknown"],
 	] as const)(
-		"does not infer work from a ready session whose activity is %s",
-		(state) => {
-			expect(draw(state).querySelector(".dure-loader")).toBeNull();
+		"reads the desktop's %s state for the badge, not the lifecycle",
+		(state, tone, label) => {
+			const mark = badge(draw(state));
+			expect(mark?.dataset.agentTone).toBe(tone);
+			expect(mark?.dataset.agentMotion).not.toBe("breathe");
+			expect(mark?.getAttribute("aria-label")).toBe(t(label));
 		},
 	);
+	it("rests a ready session the desktop says nothing about", () => {
+		expect(badge(draw(undefined))).toBeNull();
+	});
 	it("stops claiming cached work after the computer goes offline", () => {
-		expect(draw("working", false).querySelector(".dure-loader")).toBeNull();
+		expect(badge(draw("working", false))).toBeNull();
 	});
 	it.each(["working", "waiting"] as const)(
 		"preserves local opening feedback for a %s pane",

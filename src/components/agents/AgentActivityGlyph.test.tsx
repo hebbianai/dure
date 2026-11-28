@@ -10,9 +10,21 @@ const slotOf = (container: HTMLElement) =>
 describe("AgentActivityGlyph", () => {
 	afterEach(cleanup);
 
-	it("shows the loader in place of the logo while working, and no badge", () => {
+	it("keeps the logo while working and wears the green breathing badge", () => {
 		const { container } = render(
 			<AgentActivityGlyph provider="claude" activity="working" />,
+		);
+		const slot = slotOf(container);
+		expect(slot.querySelector(".dure-loader")).toBeNull();
+		expect(slot.querySelector("svg")).toBeTruthy();
+		const badge = slot.querySelector('[role="img"]') as HTMLElement;
+		expect(badge.dataset.agentTone).toBe("live");
+		expect(badge.dataset.agentMotion).toBe("breathe");
+	});
+
+	it("shows the loader in place of the logo while Dure opens the session", () => {
+		const { container } = render(
+			<AgentActivityGlyph provider="claude" loading />,
 		);
 		const slot = slotOf(container);
 		expect(slot.querySelector(".dure-loader")).toBeTruthy();
@@ -28,7 +40,7 @@ describe("AgentActivityGlyph", () => {
 		expect(slot.querySelector("svg")).toBeTruthy();
 		expect(slot.querySelector(".dure-loader")).toBeNull();
 		const badge = slot.querySelector('[role="img"]') as HTMLElement;
-		expect(badge.className).toContain("bg-status-blocked");
+		expect(badge.dataset.agentTone).toBe("attention");
 		expect(badge.className).toContain("ring-ring/50");
 		expect(badge.className).toContain("absolute");
 	});
@@ -49,7 +61,7 @@ describe("AgentActivityGlyph", () => {
 		const badge = slotOf(container).querySelector(
 			'[role="img"]',
 		) as HTMLElement;
-		expect(badge.className).toContain("bg-transparent");
+		expect(badge.dataset.agentFill).toBe("hollow");
 	});
 
 	it("draws a terminal glyph without a provider and no badge when idle", () => {

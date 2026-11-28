@@ -7,8 +7,15 @@
  */
 
 import { t } from "./i18n";
+import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
+import { agentStatusMarkData } from "@/lib/agents/agentStatusMark";
 import { DURE_LOADER_DOT_COUNT, dureLoaderGeometry } from "@/lib/ui/dureLoader";
-import { type AgentKind, RUN_STATE_LABEL, type RunState } from "./sessionRows";
+import {
+  type AgentKind,
+  RUN_STATE_DISPLAY,
+  RUN_STATE_LABEL,
+  type RunState,
+} from "./sessionRows";
 
 export function element<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -41,17 +48,24 @@ export function glyph(source: string, size: number, className?: string): HTMLEle
 }
 
 /**
- * 상태 점.
- *
- * `RunState`를 그대로 클래스 접미사로 쓴다 — 화면에서 다시 분기하지 않는다는
- * 뜻이다. `unknown`은 CSS에서 채우지 않고 테두리만 그린다: 회색으로 채운 점은
- * "종료됨"으로 읽히는데 이건 "모른다"이고, 두 상태가 같은 그림이면 안 된다.
+ * An agent's status mark, from the table and stylesheet the desktop draws its
+ * own with (`@/lib/agents/agentStatusMark`, `agent-status-mark.css`): working
+ * green and breathing, needs-you in the accent, a finished turn quiet, exited
+ * hollow. The same state is the same mark on both apps.
  */
-export function statusDot(state: RunState): HTMLElement {
-  const dot = element("span", `dot dot--${state}`);
+export function agentDot(state: AgentDisplayState, label: string): HTMLElement {
+  const dot = element("span", "agent-status-dot");
+  for (const [name, value] of Object.entries(agentStatusMarkData(state))) {
+    dot.setAttribute(name, value);
+  }
   dot.setAttribute("role", "img");
-  dot.setAttribute("aria-label", t(RUN_STATE_LABEL[state]));
+  dot.setAttribute("aria-label", label);
   return dot;
+}
+
+/** A session's lifecycle as a status mark, named by its lifecycle word. */
+export function statusDot(state: RunState): HTMLElement {
+  return agentDot(RUN_STATE_DISPLAY[state], t(RUN_STATE_LABEL[state]));
 }
 
 /**

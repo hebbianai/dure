@@ -2,6 +2,7 @@
 @import "@xyflow/react/dist/style.css";
 @import "tw-animate-css";
 @import "./components/ui/dure-loader.css";
+@import "./components/agents/agent-status-mark.css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
@@ -569,6 +570,7 @@
     --status-blocked: #f97316;
     --status-error: #ef4444;
     --status-done: #3b82f6;
+    --agent-status-breath: 0.3;
     --vcs-added: #10b981;
     --vcs-deleted: #ef4444;
     --vcs-modified: #eab308;
