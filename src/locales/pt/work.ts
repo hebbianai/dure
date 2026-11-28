@@ -3,6 +3,7 @@ export const work: Record<string, string> = {
 	"work.list.empty": "Ainda não há agentes. Os agentes que você iniciar em qualquer projeto aparecem aqui.",
 	"work.list.noProject": "Sem projeto",
 	"work.list.resultsToday": "Têm um resultado hoje",
+	"work.list.ended": "Encerrados",
 	"work.list.depth": "Agentes a mostrar",
 	"work.list.topLevel": "Nível superior",
 	"work.list.expandAll": "Expandir tudo",

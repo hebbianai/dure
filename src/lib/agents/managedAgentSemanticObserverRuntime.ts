@@ -1,3 +1,7 @@
+import {
+	censusProvesSessionEnded,
+	hasPositiveAgentRuntimeObservation,
+} from "@/lib/agents/agentRuntimeLiveness";
 import type { AgentRuntimeProjectionRefreshHintV1 } from "@/lib/agents/agentRuntimeProjectionReconciliationRuntime";
 import {
 	hmuxManagedAgentSemanticObserverClient,
@@ -7,9 +11,12 @@ import {
 } from "@/lib/agents/managedAgentSemanticObserverClient";
 import {
 	semanticObserverFailureEvidence,
+	semanticObserverFailureOutcome,
 	semanticObserverRetry,
 } from "@/lib/agents/managedAgentSemanticObserverRetry";
 import { isHmuxSessionFailureError } from "@/lib/hmux/failure/sessionFailure";
+import { nextHmuxControlPlaneCensus } from "@/lib/hmux/identity/hmuxControlPlaneCensusRuntime";
+import type { HmuxSessionSummary } from "@/lib/ipc";
 import { applyProjectedConversationIdentity } from "@/lib/sessions/managed/managedConversationIdentity";
 import type { SessionAgentRuntimeObservation } from "@/lib/sessions/runtime/sessionRuntimeStoreSlice";
 import { managedLocalRuntimeLiveness } from "@/lib/terminal/hmuxManagedAttachConcurrency";
@@ -31,6 +38,50 @@ interface ActiveSemanticObservation {
 export type ManagedAgentRuntimeProjectionRefresh = (
 	hint: AgentRuntimeProjectionRefreshHintV1,
 ) => void;
+
+/** Calls back once with the sessions of the first complete census requested
+ * from now on. Returns a cancel. */
+export type ManagedAgentNextCensus = (
+	listener: (sessions: readonly HmuxSessionSummary[]) => void,
+) => () => void;
+
+/** Whether this window holds a positive observation of the target's Agent:
+ * the spawn gap, or a live state it already saw. */
+function targetObservedAlive(target: SemanticObservationTarget): boolean {
+	const state = useStore.getState();
+	const agent = state.agents.find(
+		(candidate) => candidate.id === target.agentId,
+	);
+	return (
+		agent !== undefined &&
+		hasPositiveAgentRuntimeObservation({
+			agent,
+			agentActivity: state.agentActivity,
+			sessionAgentRuntimeState: state.sessionAgentRuntimeState,
+		})
+	);
+}
+
+/** Calls back whether the Host's answer that the target's session is gone
+ * proves it ended. A local answer needs a census taken after it that lacks
+ * the session or lists it exited in this generation. A remote answer
+ * already comes from that Host's own complete catalog. Returns a cancel. */
+function confirmSessionEnded(
+	target: SemanticObservationTarget,
+	nextCensus: ManagedAgentNextCensus,
+	decide: (ended: boolean) => void,
+): () => void {
+	const { binding } = target;
+	const stopFence = binding.stopFence;
+	// Without a published generation there is nothing to prove.
+	if (!stopFence || binding.source !== "local") {
+		decide(stopFence !== undefined && binding.source !== "local");
+		return () => undefined;
+	}
+	return nextCensus((sessions) =>
+		decide(censusProvesSessionEnded(sessions, { ...binding, stopFence })),
+	);
+}
 
 function targetForAgent(
 	agent: Agent,
@@ -74,6 +125,7 @@ function startSemanticObservation(
 	client: ManagedAgentSemanticObserverClient,
 	isCurrent: () => boolean,
 	refreshRuntimeProjection: ManagedAgentRuntimeProjectionRefresh,
+	nextCensus: ManagedAgentNextCensus,
 ): ActiveSemanticObservation {
 	let retired = false;
 	let failures = 0;
@@ -81,6 +133,7 @@ function startSemanticObservation(
 	let disconnectPending = false;
 	let terminalFailure = false;
 	let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+	let cancelConfirmation: (() => void) | undefined;
 	let connection: ManagedAgentSemanticObserverConnection | undefined;
 	let runtimeObservation: SessionAgentRuntimeObservation | undefined;
 	const refresh = (evidence: string) => {
@@ -200,10 +253,14 @@ function startSemanticObservation(
 					]),
 				);
 			}
-			terminalFailure =
-				isHmuxSessionFailureError(cause) ||
-				failure.retiredSource ||
-				failure.retryDirective === "never";
+			const outcome = semanticObserverFailureOutcome({
+				failure,
+				sessionFailure: isHmuxSessionFailureError(cause),
+				publishedGeneration: target.binding.stopFence !== undefined,
+				observedAlive: targetObservedAlive(target),
+			});
+			terminalFailure = outcome !== "retry";
+			if (outcome === "confirm_exit" && current()) confirmExit();
 			if (current() && !terminalFailure) scheduleReconnect();
 		} finally {
 			connectInFlight = false;
@@ -218,11 +275,30 @@ function startSemanticObservation(
 		}
 	};
 
+	// The Host says the session is gone. Proven, that is the Agent's exit,
+	// recorded as the same Host-exit fact a pane records, and observing stops.
+	// Unproven, the answer may have raced the session's publication: retry.
+	const confirmExit = () => {
+		cancelConfirmation?.();
+		cancelConfirmation = confirmSessionEnded(target, nextCensus, (ended) => {
+			cancelConfirmation = undefined;
+			if (!current()) return;
+			if (ended && !targetObservedAlive(target)) {
+				useStore.getState().setAgentActivity(target.agentId, "exited");
+				return;
+			}
+			terminalFailure = false;
+			scheduleReconnect();
+		});
+	};
+
 	const observation: ActiveSemanticObservation = {
 		key: target.key,
 		retire: () => {
 			if (retired) return;
 			retired = true;
+			cancelConfirmation?.();
+			cancelConfirmation = undefined;
 			runtimeObservation?.dispose();
 			runtimeObservation = undefined;
 			if (reconnectTimer !== undefined) {
@@ -246,6 +322,8 @@ export function installManagedAgentSemanticObserverRuntime(
 	client: ManagedAgentSemanticObserverClient = hmuxManagedAgentSemanticObserverClient,
 	refreshRuntimeProjection: ManagedAgentRuntimeProjectionRefresh = () =>
 		undefined,
+	nextCensus: ManagedAgentNextCensus = (listener) =>
+		nextHmuxControlPlaneCensus((census) => listener(census.sessions)),
 ): () => void {
 	const active = new Map<string, ActiveSemanticObservation>();
 	let disposed = false;
@@ -279,6 +357,7 @@ export function installManagedAgentSemanticObserverRuntime(
 				client,
 				() => active.get(agentId) === observation,
 				refreshRuntimeProjection,
+				nextCensus,
 			);
 			active.set(agentId, observation);
 		}

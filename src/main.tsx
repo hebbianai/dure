@@ -136,6 +136,11 @@ const renderAppRoot = () =>
 	);
 // Design Mode B단계 실기 프로브 — qa.autorun에 designmode가 있을 때만 돈다.
 if (import.meta.env.DEV) {
+	if (qaParams.has("qaWorkViewEnded")) {
+		void import("./qa/workViewEnded").then((probe) =>
+			probe.runWorkViewEndedProbe(),
+		);
+	}
 	if (qaParams.has("qaProgramStatusSpaces")) {
 		void import("./qa/programStatusSpaces").then((probe) =>
 			probe.runProgramStatusSpacesProbe(),

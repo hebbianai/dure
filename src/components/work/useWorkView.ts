@@ -1,8 +1,9 @@
 // Store wiring for the Work view's list. Who manages whom comes from the
 // relation owner, who needs a person and what has a result from the Next up
-// order (with the Work view's own window, the local day), and providers in
-// plain shell panes from the Spaces rows, which already find them. The list
-// arrangement itself is workViewList.
+// order (with the Work view's own window, the local day), what ended from the
+// display state each row's dot shows, and providers in plain shell panes from
+// the Spaces rows, which already find them. The list arrangement itself is
+// workViewList.
 import { useMemo } from "react";
 import { useAgentRelations } from "@/components/agents/useAgentRelations";
 import {
@@ -11,6 +12,7 @@ import {
 } from "@/components/agents/useNextUp";
 import { useLocalDayTick } from "@/components/spaces/useNowTick";
 import { type SpaceRow, useSpaces } from "@/components/spaces/useSpaces";
+import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
 import type { NeedsPersonReason } from "@/lib/agents/needsPerson";
 import { type WorkViewList, workViewList } from "@/lib/work/workViewList";
@@ -94,10 +96,21 @@ export function useWorkView(): WorkView {
 	const spaceRows = useSpaces();
 	const depth = useWorkViewStore((state) => state.depth);
 	const grouping = useWorkViewStore((state) => state.grouping);
+	const displayStates = useAgentAttention((state) => state.displayStates);
 
 	const shells = useMemo(() => shellEntries(spaceRows), [spaceRows]);
 	const agentIds = useMemo(() => agents.map((agent) => agent.id), [agents]);
 	const spaceNames = useAgentRevealSpaceNames(agentIds, "pane");
+	// Keyed on its content, so a dot that changes without ending an agent
+	// does not rebuild the list.
+	const endedKeys = [
+		...agentIds.filter((id) => displayStates[id] === "exited"),
+		...shells.flatMap((shell) => (shell.state === "exited" ? [shell.key] : [])),
+	].join("\n");
+	const ended = useMemo(
+		() => (endedKeys ? endedKeys.split("\n") : []),
+		[endedKeys],
+	);
 	const list = useMemo(
 		() =>
 			workViewList({
@@ -109,11 +122,12 @@ export function useWorkView(): WorkView {
 				relations,
 				needsYou: nextUp.needsYou.map((entry) => entry.agentId),
 				resultsToday: nextUp.results.map((entry) => entry.agentId),
+				ended,
 				projects,
 				depth,
 				grouping,
 			}),
-		[agents, shells, relations, nextUp, projects, depth, grouping],
+		[agents, shells, relations, nextUp, ended, projects, depth, grouping],
 	);
 	return useMemo(
 		() => ({

@@ -108,8 +108,9 @@ describe("structuredAgentTierInputs", () => {
 	it("reads unknown, never exited, without a reading or a pane, and keeps an open pane's presentation", () => {
 		const unobserved = structuredAgentTierInputs(chatAgent, {}, undefined);
 		expect(unobserved).toEqual({ hmuxObserved: false });
+		// The watch passes the lifecycle the store holds: none here.
 		expect(
-			resolveAgentDisplayFromTiers({ heuristic: "exited", ...unobserved }),
+			resolveAgentDisplayFromTiers({ heuristic: undefined, ...unobserved }),
 		).toBe("unknown");
 		// An older backend with a pane open: the pane's lifecycle shows as today.
 		const paned = structuredAgentTierInputs(chatAgent, {}, "working");

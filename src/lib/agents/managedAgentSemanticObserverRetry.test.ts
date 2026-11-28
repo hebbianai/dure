@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { HmuxStructuredTerminalAttachError } from "@/lib/hmux/failure/structuredTerminalAttachFailure";
 import {
+	type SemanticObserverFailureOutcome,
 	semanticObserverFailureEvidence,
+	semanticObserverFailureOutcome,
 	semanticObserverRetry,
 } from "./managedAgentSemanticObserverRetry";
 
@@ -74,6 +76,55 @@ describe("retired managed session failure classification", () => {
 			code: "hmux_session_not_found",
 			retryDirective: "never",
 			retiredSource: true,
+			sessionGone: true,
 		});
 	});
+
+	it("says the session is gone only for a not-found or exited answer", () => {
+		for (const code of [
+			"hmux_session_not_found",
+			"hmux_session_exited",
+			"remote_hmux_session_not_found",
+			"remote_hmux_session_exited",
+		]) {
+			expect(semanticObserverFailureEvidence(new Error(code)).sessionGone).toBe(
+				true,
+			);
+		}
+		// Another session holds the place: that is not this one's exit.
+		for (const code of [
+			"remote_hmux_session_class_mismatch",
+			"remote_hmux_managed_attach_generation_changed",
+			"managed_agent_semantic_attach_generation_changed",
+			"hmux_endpoint_unavailable",
+		]) {
+			expect(semanticObserverFailureEvidence(new Error(code)).sessionGone).toBe(
+				false,
+			);
+		}
+	});
+});
+
+describe("semantic observer failure outcome", () => {
+	const evidence = (code: string, retryDirective?: "never" | "retry_after_resync") => ({
+		...semanticObserverFailureEvidence(new Error(code)),
+		...(retryDirective ? { retryDirective } : {}),
+	});
+	const base = { sessionFailure: false, publishedGeneration: true, observedAlive: false };
+	const table: [string, Parameters<typeof semanticObserverFailureOutcome>[0], SemanticObserverFailureOutcome][] = [
+		["a gone session is confirmed against a later census", { ...base, failure: evidence("hmux_session_not_found", "never") }, "confirm_exit"],
+		["a remote exited session too", { ...base, failure: evidence("remote_hmux_session_exited") }, "confirm_exit"],
+		["no published generation proves nothing and stops", { ...base, publishedGeneration: false, failure: evidence("hmux_session_not_found") }, "stop"],
+		["a spawn this window saw may have raced publication", { ...base, observedAlive: true, failure: evidence("hmux_session_not_found", "never") }, "retry"],
+		["another generation in the place stops", { ...base, failure: evidence("managed_agent_semantic_attach_generation_changed") }, "stop"],
+		["a typed session failure stops", { ...base, sessionFailure: true, failure: evidence("provider_exited") }, "stop"],
+		["a never directive stops", { ...base, failure: evidence("hmux_backend_state_conflict", "never") }, "stop"],
+		["an unavailable endpoint retries", { ...base, failure: evidence("hmux_endpoint_unavailable") }, "retry"],
+		["a resync directive retries", { ...base, failure: evidence("hmux_descriptor_unavailable", "retry_after_resync") }, "retry"],
+	];
+	for (const [name, input, expected] of table) {
+		it(name, () => {
+			expect(semanticObserverFailureOutcome(input)).toBe(expected);
+		});
+	}
 });

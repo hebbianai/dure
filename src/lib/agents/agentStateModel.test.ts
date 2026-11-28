@@ -94,6 +94,33 @@ describe("resolveAgentState — 결정표", () => {
     // Host projection이 아직 없으면 presentation lifecycle만 사용한다.
     ["heuristic working", { heuristic: "working" }, "working"],
     ["heuristic waiting", { heuristic: "waiting" }, "waiting"],
+    // An unavailable observation is not proof of exit; an exit the Host
+    // already reported is, unless the census sees the generation alive.
+    [
+      "an unavailable observation with nothing recorded is unknown",
+      { hmuxObserved: false },
+      "unknown",
+    ],
+    [
+      "an unavailable observation of a working agent is unknown",
+      { heuristic: "working", hmuxObserved: false },
+      "unknown",
+    ],
+    [
+      "an unavailable observation keeps the Host's recorded exit",
+      { heuristic: "exited", hmuxObserved: false },
+      "exited",
+    ],
+    [
+      "a census that sees the generation alive fences a recorded exit",
+      { heuristic: "exited", hmuxObserved: false, hmuxLiveness: "alive" },
+      "unknown",
+    ],
+    [
+      "an agent nobody observes presents the unobserved default",
+      {},
+      UNOBSERVED_AGENT_ACTIVITY,
+    ],
   ];
 
   for (const [name, input, expected] of table) {
