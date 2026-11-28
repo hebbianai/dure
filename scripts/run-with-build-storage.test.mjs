@@ -133,10 +133,59 @@ process.stdout.write(JSON.stringify({
       kind: "mobile",
       command: "corepack",
       args: ["pnpm", "gate"],
+      waitMs: 0,
     });
     expect(() => parseBuildStorageCommand(["mobile", "cargo"])).toThrow(
       "usage:",
     );
+    expect(
+      parseBuildStorageCommand(["--wait-minutes", "25", "full", "--", "true"]),
+    ).toEqual({ kind: "full", command: "true", args: [], waitMs: 25 * 60_000 });
+    for (const minutes of ["-1", "1.5", "x", "1e3", undefined]) {
+      expect(() =>
+        parseBuildStorageCommand(["--wait-minutes", minutes, "full", "--", "true"]),
+      ).toThrow("--wait-minutes takes a whole number of minutes");
+    }
+    expect(() => parseBuildStorageCommand(["--wait-minutes", "25", "full"])).toThrow("usage:");
+  });
+
+  it("re-checks a refused admission until it is admitted within the wait", () => {
+    let clock = 0;
+    const refusal = { ok: false, message: "full build was not started — fixture shortfall", reservation: null };
+    const admit = vi.fn()
+      .mockReturnValueOnce(refusal)
+      .mockReturnValueOnce(refusal)
+      .mockReturnValue({ ok: true, reservation: null });
+    const sleep = vi.fn((ms) => { clock += ms; });
+    const log = vi.fn();
+    const run = vi.fn(() => ({ status: 0 }));
+    expect(runWithBuildStorage(["--wait-minutes", "25", "full", "--", "true"], {
+      admit, run, sleep, log, now: () => clock,
+    })).toBe(0);
+    expect(admit).toHaveBeenCalledTimes(3);
+    expect(sleep.mock.calls).toEqual([[60_000], [60_000]]);
+    expect(run).toHaveBeenCalledOnce();
+    expect(log.mock.calls.map(([line]) => line)).toEqual([
+      "full build was not started — fixture shortfall",
+      "full build: storage not admitted yet; checking again in 60 s (25 min left)",
+      "full build: storage not admitted yet; checking again in 60 s (24 min left)",
+    ]);
+  });
+
+  it("refuses with the last admission's reason once the wait ends", () => {
+    let clock = 0;
+    const admit = vi.fn(() => ({ ok: false, message: `fixture shortfall at ${clock / 1000} s`, reservation: null }));
+    const sleep = vi.fn((ms) => { clock += ms; });
+    const run = vi.fn();
+    expect(() => runWithBuildStorage(["--wait-minutes", "2", "full", "--", "true"], {
+      admit, run, sleep, log: () => {}, now: () => clock,
+    })).toThrow("fixture shortfall at 120 s");
+    expect(admit).toHaveBeenCalledTimes(3);
+    expect(run).not.toHaveBeenCalled();
+    // Without a wait the first refusal is final.
+    expect(() => runWithBuildStorage(["full", "--", "true"], { admit, run, sleep })).toThrow("fixture shortfall");
+    expect(admit).toHaveBeenCalledTimes(4);
+    expect(sleep).toHaveBeenCalledTimes(2);
   });
 
   it("advertises every supported budget and accepts the advertised commands", () => {
@@ -153,6 +202,7 @@ process.stdout.write(JSON.stringify({
         kind,
         command: "fixture",
         args: [],
+        waitMs: 0,
       });
     }
   });

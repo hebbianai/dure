@@ -7,10 +7,9 @@ import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import {
-  DEFAULT_HOST_RESOURCE_POLICY,
-  waitForHostResources,
-} from "./lib/host-resource-admission.mjs";
-import { RELEASE_HOST_MAX_LOAD_PER_CORE } from "./lib/release-host-admission.mjs";
+  RELEASE_HOST_MAX_LOAD_PER_CORE,
+  waitForReleaseHost,
+} from "./lib/release-host-admission.mjs";
 import {
   loadTauriConfig,
   releaseDmgSettings,
@@ -269,31 +268,6 @@ export async function createDiskImage({
   }
 }
 
-async function waitForLowLoad({ waitForHost, maxWaitMs, maxLoadPerCore, log }) {
-  const policy = Object.freeze({
-    ...DEFAULT_HOST_RESOURCE_POLICY,
-    enabled: true,
-    maxLoadPerCore,
-    memoryPressureCeiling: "warning",
-  });
-  const report = (receipt) => {
-    const observed = receipt.observation ?? {};
-    const load = Number.isFinite(observed.loadPerCore) ? observed.loadPerCore.toFixed(1) : "unknown";
-    log(`host ${receipt.state}: one-minute load per core ${load} (limit ${maxLoadPerCore}), memory pressure ${observed.memoryPressure ?? "unknown"}${receipt.reasonCodes?.length ? ` [${receipt.reasonCodes.join(", ")}]` : ""}`);
-  };
-  try {
-    await waitForHost({
-      policyPath: "bundle-release-dmg",
-      readPolicy: () => policy,
-      maxWaitMs,
-      label: "DMG Finder layout",
-      report,
-    });
-  } catch (error) {
-    log(`host still busy after ${Math.round(maxWaitMs / 1000)}s (${error.message}); attempting the layout anyway`);
-  }
-}
-
 /** Layout attempts, then the plain fallback. Each attempt gets a fresh work
  * directory, its own deadline and its own log file in logDir. */
 export async function bundleReleaseDmg({
@@ -308,7 +282,7 @@ export async function bundleReleaseDmg({
   workRoot = os.tmpdir(),
   layoutMountRoot = "/Volumes",
   create = createDiskImage,
-  waitForHost = waitForHostResources,
+  waitForHost,
   echo = (line) => process.stdout.write(`${line}\n`),
   now = Date.now,
 }) {
@@ -343,7 +317,10 @@ export async function bundleReleaseDmg({
     const started = now();
     try {
       if (mode === "layout" && layoutWaitMs > 0) {
-        await waitForLowLoad({ waitForHost, maxWaitMs: layoutWaitMs, maxLoadPerCore, log });
+        const admitted = await waitForReleaseHost({
+          label: "DMG Finder layout", maxWaitMs: layoutWaitMs, maxLoadPerCore, log, waitForHost,
+        });
+        if (!admitted) log("attempting the layout anyway");
       }
       const dmg = await create({
         settings,

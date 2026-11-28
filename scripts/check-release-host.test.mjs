@@ -1,10 +1,12 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runReleaseHostCheck } from "./check-release-host.mjs";
 import {
   RELEASE_HOST_MAX_LOAD_PER_CORE,
+  RELEASE_HOST_WAIT_MINUTES,
   assessReleaseHost,
+  releaseHostResourcePolicy,
 } from "./lib/release-host-admission.mjs";
 
 const observation = (patch = {}) => ({
@@ -52,6 +54,52 @@ describe("release host admission", () => {
     await expect(runReleaseHostCheck(["--bogus"], { observe })).rejects.toThrow();
     await expect(runReleaseHostCheck(["status"], { observe })).rejects.toThrow();
     expect((await runReleaseHostCheck(["--help"])).help).toContain("release_host_overloaded");
+  });
+
+  it("waits for the release limit first, then gives the same point-in-time verdict", async () => {
+    const waitForHost = vi.fn(async ({ report }) => {
+      report({ state: "waiting", observation: { loadPerCore: 30, memoryPressure: "normal" }, reasonCodes: ["host_load_above_limit"] });
+      report({ state: "ready", observation: { loadPerCore: 9.7, memoryPressure: "warning" }, reasonCodes: [] });
+      return { state: "ready" };
+    });
+    const log = vi.fn();
+    const observe = vi.fn(async () => observation());
+    await expect(runReleaseHostCheck(["--wait-minutes", String(RELEASE_HOST_WAIT_MINUTES)], { observe, waitForHost, log }))
+      .resolves.toMatchObject({ ok: true, maxLoadPerCore: 16 });
+    expect(waitForHost).toHaveBeenCalledOnce();
+    const [{ readPolicy, maxWaitMs, label }] = waitForHost.mock.calls[0];
+    expect({ maxWaitMs, label }).toEqual({ maxWaitMs: 25 * 60_000, label: "release host admission" });
+    expect(readPolicy()).toEqual(releaseHostResourcePolicy(16));
+    expect(readPolicy()).toMatchObject({ enabled: true, maxLoadPerCore: 16, memoryPressureCeiling: "warning" });
+    expect(log.mock.calls.map(([line]) => line)).toEqual([
+      "host waiting: one-minute load per core 30.0 (limit 16), memory pressure normal [host_load_above_limit]",
+      "host ready: one-minute load per core 9.7 (limit 16), memory pressure warning",
+    ]);
+    expect(observe).toHaveBeenCalledOnce();
+  });
+
+  it("still refuses a host that stays busy for the whole wait", async () => {
+    const waitForHost = vi.fn(async () => {
+      throw new Error("Host resource wait timed out; command was not started");
+    });
+    const log = vi.fn();
+    const observe = async () => observation({ oneMinuteLoad: 480, loadPerCore: 30 });
+    await expect(runReleaseHostCheck(["--wait-minutes", "25"], { observe, waitForHost, log }))
+      .resolves.toMatchObject({ ok: false, code: "release_host_overloaded" });
+    expect(log).toHaveBeenCalledWith("host still busy after 1500s (Host resource wait timed out; command was not started)");
+  });
+
+  it("waits only when asked, and never on an invalid request", async () => {
+    const waitForHost = vi.fn(async () => ({ state: "ready" }));
+    const observe = async () => observation();
+    await runReleaseHostCheck([], { observe, waitForHost });
+    await runReleaseHostCheck(["--wait-minutes", "0"], { observe, waitForHost });
+    for (const minutes of ["-1", "1.5", "abc", "", "1e3"]) {
+      await expect(runReleaseHostCheck([`--wait-minutes=${minutes}`], { observe, waitForHost })).rejects.toThrow("release_host_wait_invalid");
+    }
+    await expect(runReleaseHostCheck(["--wait-minutes", "5", "--max-load-per-core", "0"], { observe, waitForHost }))
+      .rejects.toThrow("release_host_load_limit_invalid");
+    expect(waitForHost).not.toHaveBeenCalled();
   });
 
   it.skipIf(process.platform === "win32")("reports the real host from the command line", () => {

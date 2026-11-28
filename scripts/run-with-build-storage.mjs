@@ -13,16 +13,49 @@ import {
   buildStorageBudget,
 } from "./lib/disk-space.mjs";
 
+// Storage frees when a peer build ends or lands, so a re-check needs no
+// tighter cadence; each refused attempt also runs the safe reclaim again.
+const STORAGE_RETRY_INTERVAL_MS = 60_000;
+
+function sleepSync(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
 export function parseBuildStorageCommand(arguments_) {
-  const separator = arguments_.indexOf("--");
-  if (separator !== 1 || arguments_.length < 3) {
+  let waitMs = 0;
+  let rest = arguments_;
+  if (rest[0] === "--wait-minutes") {
+    if (!/^\d{1,4}$/u.test(rest[1] ?? "")) {
+      throw new Error("--wait-minutes takes a whole number of minutes");
+    }
+    waitMs = Number(rest[1]) * 60_000;
+    rest = rest.slice(2);
+  }
+  const separator = rest.indexOf("--");
+  if (separator !== 1 || rest.length < 3) {
     throw new Error(
-      `usage: run-with-build-storage.mjs <${Object.keys(BUILD_STORAGE_BUDGETS).join("|")}> -- <command> [args...]`,
+      `usage: run-with-build-storage.mjs [--wait-minutes N] <${Object.keys(BUILD_STORAGE_BUDGETS).join("|")}> -- <command> [args...]`,
     );
   }
-  const kind = arguments_[0];
+  const kind = rest[0];
   buildStorageBudget(kind);
-  return { kind, command: arguments_[2], args: arguments_.slice(3) };
+  return { kind, command: rest[2], args: rest.slice(3), waitMs };
+}
+
+/** Admit once, or re-check the same admission until the wait ends. */
+function admitWithin(waitMs, attempt, { label, sleep, log, now }) {
+  const deadline = now() + waitMs;
+  for (let refusals = 0; ; refusals += 1) {
+    const headroom = attempt();
+    const remaining = deadline - now();
+    if (headroom.ok || remaining <= 0) return headroom;
+    if (refusals === 0) log(headroom.message);
+    log(
+      `${label}: storage not admitted yet; checking again in ${STORAGE_RETRY_INTERVAL_MS / 1000} s ` +
+        `(${Math.ceil(remaining / 60_000)} min left)`,
+    );
+    sleep(Math.min(STORAGE_RETRY_INTERVAL_MS, remaining));
+  }
 }
 
 export function runWithBuildStorage(
@@ -32,17 +65,25 @@ export function runWithBuildStorage(
     run = spawnSync,
     cwd = process.cwd(),
     environment = process.env,
+    sleep = sleepSync,
+    log = (line) => process.stderr.write(`${line}\n`),
+    now = Date.now,
   } = {},
 ) {
   const command = parseBuildStorageCommand(arguments_);
-  const headroom = admit({
-    cwd,
-    environment,
-    label: `${command.kind} build`,
-    buildClass: command.kind,
-    requestedBytes: buildStorageBudget(command.kind),
-    ...disposableRunnerAdmission(environment),
-  });
+  const label = `${command.kind} build`;
+  const headroom = admitWithin(
+    command.waitMs,
+    () => admit({
+      cwd,
+      environment,
+      label,
+      buildClass: command.kind,
+      requestedBytes: buildStorageBudget(command.kind),
+      ...disposableRunnerAdmission(environment),
+    }),
+    { label, sleep, log, now },
+  );
   if (!headroom.ok) throw new Error(headroom.message);
   const invocation =
     process.platform === "win32" && command.command === "corepack"
