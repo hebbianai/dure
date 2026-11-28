@@ -14,7 +14,7 @@ import { isDispatchedAgent } from "@/lib/agents/agentDispatchOrigin";
 import { pendingApproval } from "@/lib/agents/approvalRequest";
 import { agentDisplayName } from "@/lib/agents/agentDisplayName";
 import { agentNotificationsMuted } from "@/lib/agents/agentNotificationMute";
-import { agentRelationsOf } from "@/lib/agents/relations/agentRelationFacts";
+import { agentRelationsOfState } from "@/lib/agents/relations/agentRelationFacts";
 import { agentSeatKey, chatOwnedAgent } from "@/lib/hub/sidebarLayout";
 import { t } from "@/lib/i18n";
 import type { HmuxAgentRuntimeState } from "@/lib/ipc/hmuxContracts";
@@ -257,7 +257,7 @@ export async function notifyAgentEvent(
     agent &&
     policy.managedAgents &&
     !np[policy.managedAgents] &&
-    agentRelationsOf(useStore.getState().agents).managerOf(agent.id) !== undefined
+    agentRelationsOfState(useStore.getState()).managerOf(agent.id) !== undefined
   ) {
     return skippedAgentNotification(sender, "managed_agent");
   }

@@ -16,6 +16,7 @@ export const work: Record<string, string> = {
 	"work.detail.relationSource.runParentAgent": "inició su ejecución",
 	"work.detail.relationSource.runParentSession": "tiene la sesión principal de su ejecución",
 	"work.detail.relationSource.runParentRecorded": "tenía esa sesión cuando se abrió su ejecución",
+	"work.detail.relationSource.runParentShell": "el shell donde se inició su ejecución",
 	"work.detail.relationSource.computerReported": "según su ordenador",
 	"work.detail.pin": "Fijar como columna",
 	"work.detail.unpin": "Desfijar",

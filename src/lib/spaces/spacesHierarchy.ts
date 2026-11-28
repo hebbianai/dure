@@ -124,9 +124,12 @@ export function orderDesktopsWithPopouts<
 export interface LeadWorkerRow {
 	readonly key: string;
 	readonly desktopId?: string;
-	readonly agentId?: string;
-	/** The lead Agent this row's Agent was started from, when resolved. */
-	readonly leadAgentId?: string;
+	/** The row's node in the relation forest: its Agent, or the plain shell
+	 * row itself (`shellRowKey`). */
+	readonly relationKey?: string;
+	/** The node this row's Agent was started from, when resolved: its
+	 * display manager. */
+	readonly leadKey?: string;
 	/** Start order among the lead's workers. */
 	readonly workerOrder?: number;
 }
@@ -139,10 +142,11 @@ export interface LeadWorkerEntry<Row> {
 
 const NO_WORKERS: readonly never[] = [];
 
-/** The fold that hides a lead's workers. Keyed by the lead Agent, so the
- *  decision holds when its pane moves, closes or reopens. */
-export function leadWorkersFoldKey(leadAgentId: string): string {
-	return `lead-workers:${leadAgentId}`;
+/** The fold that hides a lead's workers. Keyed by the lead's relation node,
+ *  so for an Agent the decision holds when its pane moves, closes or
+ *  reopens. */
+export function leadWorkersFoldKey(leadKey: string): string {
+	return `lead-workers:${leadKey}`;
 }
 
 /** One list's rows with each lead's workers lifted under it, one step deep.
@@ -154,20 +158,20 @@ export function leadWorkersFoldKey(leadAgentId: string): string {
 export function nestLeadWorkers<Row extends LeadWorkerRow>(
 	rows: readonly Row[],
 ): readonly LeadWorkerEntry<Row>[] {
-	if (!rows.some((row) => row.leadAgentId !== undefined)) {
+	if (!rows.some((row) => row.leadKey !== undefined)) {
 		return rows.map((row) => ({ row, workers: NO_WORKERS }));
 	}
-	const rowByAgent = new Map<string, Row>();
+	const rowByNode = new Map<string, Row>();
 	for (const row of rows) {
-		if (row.agentId && !rowByAgent.has(row.agentId)) {
-			rowByAgent.set(row.agentId, row);
+		if (row.relationKey && !rowByNode.has(row.relationKey)) {
+			rowByNode.set(row.relationKey, row);
 		}
 	}
 	const leadRowOf = (row: Row): Row | undefined => {
-		if (row.leadAgentId === undefined || row.leadAgentId === row.agentId) {
+		if (row.leadKey === undefined || row.leadKey === row.relationKey) {
 			return undefined;
 		}
-		const lead = rowByAgent.get(row.leadAgentId);
+		const lead = rowByNode.get(row.leadKey);
 		return lead?.desktopId === row.desktopId ? lead : undefined;
 	};
 	const workersByLead = new Map<string, Row[]>();
@@ -210,7 +214,7 @@ export function leadWorkerRowKeys(
 ): string[] {
 	return nestLeadWorkers(rows).flatMap(({ row, workers }) => [
 		row.key,
-		...(row.agentId && collapsed[leadWorkersFoldKey(row.agentId)]
+		...(row.relationKey && collapsed[leadWorkersFoldKey(row.relationKey)]
 			? workers.filter((worker) => worker.key === focusedKey)
 			: workers
 		).map((worker) => worker.key),

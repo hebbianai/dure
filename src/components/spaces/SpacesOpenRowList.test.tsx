@@ -184,4 +184,37 @@ describe("lead and worker rows", () => {
 
 		expect(drawnRows()).toEqual(["agent:solo", "agent:lead", "agent:work-552"]);
 	});
+
+	it("nests the agents started from a plain shell pane under the shell's row", () => {
+		// `dure run` in the shell records the shell's Hmux Session.
+		const fromShell = { sessionId: "s-shell", workspaceId: "ws" };
+		useStore.setState({
+			spaces: [{ id: "desk-1", name: "Build" }],
+			activeSpaceId: "desk-1",
+			projects: [{ id: "repo", name: "Repo", path: "/repo", kind: "local", isRepo: true }],
+			agents: [agent("work-1", "s-1", fromShell), agent("work-2", "s-2", fromShell)],
+			layouts: {
+				"desk-1": {
+					panels: {
+						"agent:work-2": { contentComponent: "agent", params: {} },
+						"term:lead": {
+							contentComponent: "terminal",
+							params: {
+								sessionId: "term-lead",
+								cwd: "/repo",
+								binding: { runtime: "hmux_session_v1", ...fromShell },
+							},
+						},
+						"agent:work-1": { contentComponent: "agent", params: {} },
+					},
+				},
+			},
+		});
+		render(<Sidebar />);
+
+		expect(drawnRows()).toEqual(["term:lead", "agent:work-1", "agent:work-2"]);
+		const fold = document.querySelector('[data-slot="lead-workers"]');
+		expect(fold?.contains(document.querySelector('[data-space-key="agent:work-1"]'))).toBe(true);
+		expect(screen.getByText(t("spaces.workers.other", { n: 2 }))).toBeTruthy();
+	});
 });

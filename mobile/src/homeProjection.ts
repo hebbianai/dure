@@ -44,9 +44,11 @@ export interface HomeRow extends SpacesFacetSource {
 	readonly pinned?: boolean;
 	readonly detail?: string;
 	readonly git?: SessionPresentation["git"];
-	/** The computer's Agent this row shows, and its display manager. */
+	/** The computer's Agent this row shows, and its display manager: an
+	 * Agent, or the plain shell row by its session. */
 	readonly agentId?: string;
 	readonly managerAgentId?: string;
+	readonly managerSessionId?: string;
 	/** When the computer's backend continues the agent by itself after its
 	 * usage limit resets, while it waits for that. */
 	readonly continuesAtMs?: number;

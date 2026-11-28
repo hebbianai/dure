@@ -1,12 +1,13 @@
 // What the Work view lists, in which sections and order. Every registered
 // Agent appears, in every project and on every backend, with or without a
-// pane, and so does a provider found running in a plain shell pane. Who
-// manages whom comes only from the relation owner (agentRelations.ts), who
-// needs a person only from the needs-person order Next up keeps, and what has
-// a result only from agentResult; this module arranges what they say. Missing
-// facts never exclude an entry: without a manager it is a top-level row in
-// its project, without a project it is in the no-project group. The module
-// imports no store, i18n or React.
+// pane, and so does a plain shell pane that runs a provider or that agents
+// were started from. Who manages whom comes only from the relation owner
+// (agentRelations.ts), who needs a person only from the needs-person order
+// Next up keeps, and what has a result only from agentResult; this module
+// arranges what they say. Missing facts never exclude an entry: without a
+// manager this list shows it is a top-level row in its project, without a
+// project it is in the no-project group. The module imports no store, i18n
+// or React.
 import type { AgentRelations } from "@/lib/agents/relations/agentRelations";
 
 /** Top level lists only the agents with no manager, each summing up what it
@@ -25,8 +26,8 @@ interface WorkViewEntry {
 export interface WorkViewListFacts {
 	/** Registered Agents in start order, as the store holds them. */
 	readonly agents: readonly WorkViewEntry[];
-	/** Providers found in plain shell panes. They have no Agent record and so
-	 * no relation facts: each is a top-level row. */
+	/** Plain shell panes the list shows. A shell is started by no one, so
+	 * each is a top-level row, with the agents started from it below. */
 	readonly shells: readonly WorkViewEntry[];
 	readonly relations: AgentRelations;
 	/** Entries a person is needed for, at any depth, in Next up's order
@@ -103,11 +104,12 @@ export function workViewList(facts: WorkViewListFacts): WorkViewList {
 		const id = project.get(key);
 		return id !== undefined && known.has(id) ? id : undefined;
 	};
-	// The relation forest is built over the same Agents, in start order.
-	const roots = [
-		...facts.relations.roots.filter((key) => project.has(key)),
-		...facts.shells.map((entry) => entry.key),
-	];
+	// Agents in start order, then shells; an entry whose display manager this
+	// list does not show stands at the top level.
+	const roots = [...project.keys()].filter((key) => {
+		const manager = facts.relations.managerOf(key);
+		return manager === undefined || !project.has(manager);
+	});
 	const rowsFor = (keys: readonly string[]): WorkListRow[] =>
 		keys.flatMap((key) => [
 			{ key, level: 0 },

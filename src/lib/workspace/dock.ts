@@ -1,4 +1,5 @@
 import { withAgentChatDraftMoves } from "@/lib/agents/chat/agentChatDraftMoveCoordinator";
+import { agentRelationFactsOf } from "@/lib/agents/relations/agentRelationFacts";
 import { track } from "@/lib/ipc/telemetry";
 import { publishLayoutPush } from "@/lib/workspace/layout/layoutPushChannel";
 import type { DockviewApi } from "dockview-react";
@@ -726,7 +727,7 @@ export function openAgentPanel(
         agent,
         position,
         preferredPanelId,
-        agents: useStore.getState().agents,
+        relationFacts: agentRelationFactsOf(useStore.getState()),
       })
     : false;
 }

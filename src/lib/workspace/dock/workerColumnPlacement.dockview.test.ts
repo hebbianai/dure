@@ -5,6 +5,10 @@ import {
 	registerDockview,
 	unregisterDockview,
 } from "@/lib/workspace/dock/dockRegistry";
+import {
+	type ShellRelationNode,
+	shellRowKey,
+} from "@/lib/agents/relations/shellRelationNodes";
 import { openAgentPanelOnDockview } from "@/lib/workspace/dock/openAgentPanel";
 import { useStore } from "@/store";
 import { agentFixture, managedBindingFixture } from "@/test/agentFixtures";
@@ -57,6 +61,7 @@ function fixture(width = 1600, height = 900) {
 		element.remove();
 	});
 	const agents: Agent[] = [];
+	const shells: ShellRelationNode[] = [];
 	/** Project the Agent into the store order, then open its pane, as a Run
 	 * presentation does. */
 	const open = (agent: Agent, preferredPanelId?: string) => {
@@ -65,13 +70,30 @@ function fixture(width = 1600, height = 900) {
 			api,
 			desktopId,
 			agent,
-			agents,
+			relationFacts: { agents, shells },
 			preferredPanelId,
 		});
 		expect(panelId).not.toBe(false);
 		return api.getPanel(String(panelId))!;
 	};
-	return { api, open };
+	/** A plain shell pane holding the lead's Hmux Session. */
+	const openShell = (panelId: string, besidePanelId: string) => {
+		const panel = api.addPanel({
+			id: panelId,
+			component: "terminal",
+			title: panelId,
+			position: { referencePanel: besidePanelId, direction: "right" },
+		});
+		shells.push({
+			key: shellRowKey(desktopId, panelId),
+			desktopId,
+			panelId,
+			terminalSessionId: `term-${panelId}`,
+			session: leadSession,
+		});
+		return panel;
+	};
+	return { api, open, openShell };
 }
 
 type Tree = string[] | Tree[];
@@ -142,6 +164,21 @@ describe("worker column placement", () => {
 		leadPanel.api.setActive();
 		open(worker("work-3"));
 		expect(tree(api)).toEqual([[["work-2"], ["work-3"]], ["lead"], ["work-1"]]);
+	});
+
+	it("stacks the workers of a lead in a plain shell pane beside that pane", () => {
+		const { api, open, openShell } = fixture();
+		const other = open(agentFixture({ id: "other", name: "other" }));
+		openShell("shell", other.id);
+		other.api.setActive();
+		// `dure run` in the shell records its Session, which no Agent owns.
+		const shellWorker = (id: string) => ({
+			...worker(id),
+			runParent: { ...leadSession },
+		});
+		open(shellWorker("work-1"), other.id);
+		open(shellWorker("work-2"), other.id);
+		expect(tree(api)).toEqual([["other"], ["shell"], [["work-1"], ["work-2"]]]);
 	});
 
 	it("keeps ordinary placement for an Agent without a lead pane in this Space", () => {

@@ -187,7 +187,10 @@ describe("delegate-once intent", () => {
 			workspaceId: "workspace-1",
 			leadAgentId: coordinator.id,
 		});
-		const relations = agentRelationsOf([coordinator, first.agent]);
+		const relations = agentRelationsOf({
+			agents: [coordinator, first.agent],
+			shells: [],
+		});
 		expect(relations.managerOf(first.agent.id)).toBe(coordinator.id);
 		expect(relations.managersOf(first.agent.id)).toEqual([
 			{
@@ -206,7 +209,10 @@ describe("delegate-once intent", () => {
 			}),
 		};
 		expect(
-			agentRelationsOf([rehosted, first.agent]).managersOf(first.agent.id),
+			agentRelationsOf({
+				agents: [rehosted, first.agent],
+				shells: [],
+			}).managersOf(first.agent.id),
 		).toEqual([
 			{
 				child: first.agent.id,

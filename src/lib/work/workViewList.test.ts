@@ -194,4 +194,39 @@ describe("workViewList", () => {
 			[undefined, ["pane:space-2:shell"]],
 		]);
 	});
+
+	it("lists the agents started from a plain shell under its row", () => {
+		const shell = { key: "pane:space-1:shell", projectId: "p-app" };
+		const agents = [
+			{ key: "lead", projectId: "p-app" },
+			{ key: "worker", projectId: "p-api" },
+		];
+		const relations = buildAgentRelations(
+			[...agents.map((agent) => agent.key), shell.key],
+			[edge("lead", shell.key), edge("worker", "lead")],
+		);
+		const top = workViewList(facts(agents, [], { shells: [shell], relations }));
+		expect(top.groups.map((group) => [group.projectId, keys(group.rows)])).toEqual([
+			["p-app", [shell.key]],
+		]);
+		const all = workViewList(
+			facts(agents, [], { shells: [shell], relations, depth: "all" }),
+		);
+		expect(all.groups[0].rows).toEqual([
+			{ key: shell.key, level: 0 },
+			{ key: "lead", under: shell.key, level: 1 },
+			{ key: "worker", under: "lead", level: 2 },
+		]);
+	});
+
+	it("lists an agent at the top level when this list does not show its manager", () => {
+		const relations = buildAgentRelations(
+			["worker", "pane:space-1:closed"],
+			[edge("worker", "pane:space-1:closed")],
+		);
+		const list = workViewList(
+			facts([{ key: "worker", projectId: "p-app" }], [], { relations }),
+		);
+		expect(list.groups.map((group) => keys(group.rows))).toEqual([["worker"]]);
+	});
 });

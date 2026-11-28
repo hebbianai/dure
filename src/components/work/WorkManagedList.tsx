@@ -2,32 +2,39 @@ import { AgentManagedFold } from "@/components/agents/AgentManagedFold";
 import { useAgentRelations } from "@/components/agents/useAgentRelations";
 import { useAgentRevealSpaceNames } from "@/components/agents/useNextUp";
 import { WorkAgentRow } from "@/components/work/WorkList";
+import { cn } from "@/lib/utils";
 import { useWorkViewStore } from "@/lib/work/workViewStore";
 
-/** The rows' cap: a third of the agent detail (its size container), less
- * the fold line above them and the Conversation label below, two pane lines
- * of 31px and the 4px gap before the rows, so all three stay within that
- * third at any window size. The rows hang their own 8px inset into the
- * gutter, so each row's dot stands on the labels' edge. */
-const MANAGED_ROWS = "-ml-2 max-h-[calc(35cqh_-_4.125rem)]";
+/** The rows hang their own 8px inset into the gutter, so each row's dot
+ * stands on the labels' edge. */
+const MANAGED_ROWS = "-ml-2";
+
+/** The rows' default cap: a third of the agent detail (its size container),
+ * less the fold line above them and the Conversation label below, two pane
+ * lines of 31px and the 4px gap before the rows, so all three stay within
+ * that third at any window size. */
+const THIRD_OF_DETAIL = "max-h-[calc(35cqh_-_4.125rem)]";
 
 /** The agents this one manages directly, in start order, each with what it
  * manages in turn, under the fold line that sums up its whole team. Selecting
  * one drills into it, the same way at every depth. The fold is one setting
  * for every column, and unfolded the rows scroll within a third of the
- * detail so the conversation below stays in view. Absent when it manages
- * none. */
+ * detail by default, so a conversation below stays in view. Absent when it
+ * manages none. */
 export function WorkManagedList({
 	agentId,
 	dayStart,
 	selected,
 	onSelect,
+	rowsCap = THIRD_OF_DETAIL,
 }: {
 	agentId: string;
 	/** Start of the local day: the Work view's result window. */
 	dayStart: number;
 	selected: string | null;
 	onSelect: (agentId: string) => void;
+	/** The unfolded rows' cap within the nearest size container. */
+	rowsCap?: string;
 }) {
 	const open = useWorkViewStore((state) => state.managedOpen);
 	const setOpen = useWorkViewStore((state) => state.setManagedOpen);
@@ -37,7 +44,7 @@ export function WorkManagedList({
 			slot="work-managed"
 			open={open}
 			onOpenChange={setOpen}
-			rowsClassName={MANAGED_ROWS}
+			rowsClassName={cn(MANAGED_ROWS, rowsCap)}
 		>
 			<WorkManagedRows
 				agentId={agentId}

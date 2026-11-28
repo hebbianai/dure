@@ -16,6 +16,7 @@ export const work: Record<string, string> = {
 	"work.detail.relationSource.runParentAgent": "この Run を開始",
 	"work.detail.relationSource.runParentSession": "この Run の親セッションを持つ",
 	"work.detail.relationSource.runParentRecorded": "Run を開いたときにそのセッションを持っていた",
+	"work.detail.relationSource.runParentShell": "この Run を開始したシェル",
 	"work.detail.relationSource.computerReported": "コンピューターからの報告",
 	"work.detail.pin": "列として固定",
 	"work.detail.unpin": "固定を解除",

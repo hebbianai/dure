@@ -195,6 +195,73 @@ describe("providers in plain shell panes", () => {
 	});
 });
 
+describe("a lead in a plain shell pane", () => {
+	// A person ran `dure run` in a plain shell: the Run records the shell's
+	// Hmux Session, which no Agent owns, and no provider runs in it now.
+	const shellKey = "pane:space-a:term:lead";
+	beforeEach(() => {
+		useStore.setState({
+			agents: [
+				...agents,
+				managedAgentFixture({
+					id: "started",
+					name: "started",
+					displayName: "Agent started",
+					projectId: "p-app",
+					sessionId: "s-started",
+					runtimeBinding: managedBindingFixture({ sessionId: "s-started" }),
+					runParent: { sessionId: "hmux-shell", workspaceId: "workspace-1" },
+				}),
+			],
+			layouts: {
+				"space-a": {
+					grid: { width: 1200, height: 800 },
+					panels: {
+						"term:lead": {
+							contentComponent: "terminal",
+							params: {
+								sessionId: "shell-lead",
+								cwd: "/app",
+								binding: {
+									runtime: "hmux_session_v1",
+									sessionId: "hmux-shell",
+									workspaceId: "workspace-1",
+								},
+							},
+						},
+					},
+				},
+			},
+			sessionAgent: { "shell-lead": null },
+		});
+	});
+
+	it("lists the shell with what it started, under it when expanded", () => {
+		render(<WorkPane />);
+		expect(rowTitles()).toContain(shellKey);
+		expect(rowTitles()).not.toContain("started");
+		const shellRow = document.querySelector(`[data-agent-row-key="${shellKey}"]`);
+		expect(shellRow?.textContent).toContain(t("agents.row.manages", { n: 1 }));
+		act(() => useWorkViewStore.getState().setDepth("all"));
+		const order = rowTitles();
+		expect(order.indexOf("started")).toBe(order.indexOf(shellKey) + 1);
+	});
+
+	it("names the shell above the agent and the agent in the shell's detail", () => {
+		useWorkViewStore.getState().select("started");
+		render(<WorkMain />);
+		const crumbs = screen.getByRole("navigation", {
+			name: t("work.detail.managers"),
+		});
+		act(() => within(crumbs).getByRole("button", { name: "app" }).click());
+		expect(useWorkViewStore.getState().selected).toBe(shellKey);
+		const detail = screen.getByRole("region", { name: t("work.detail.label") });
+		expect(
+			detail.querySelector('[data-agent-row-key="started"]'),
+		).toBeTruthy();
+	});
+});
+
 describe("Work main area", () => {
 	it("shows the selected agent as its card, with a way to its Space", () => {
 		useWorkViewStore.getState().select("solo");

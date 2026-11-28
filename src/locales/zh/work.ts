@@ -16,6 +16,7 @@ export const work: Record<string, string> = {
 	"work.detail.relationSource.runParentAgent": "启动了它的 Run",
 	"work.detail.relationSource.runParentSession": "拥有它的 Run 的父会话",
 	"work.detail.relationSource.runParentRecorded": "Run 打开时拥有该会话",
+	"work.detail.relationSource.runParentShell": "启动它的 Run 的 shell",
 	"work.detail.relationSource.computerReported": "由它的电脑报告",
 	"work.detail.pin": "固定为一列",
 	"work.detail.unpin": "取消固定",

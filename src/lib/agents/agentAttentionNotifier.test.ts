@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
       { id: string; name: string; projectId: string } & Record<string, unknown>
     >,
     layouts: {},
+    spaces: [{ id: "desktop-a", name: "Desktop A" }],
     projects: [{ id: "project-a", name: "Workspace" }],
     sessionAgentRuntimeState: {} as Record<string, unknown>,
   },
@@ -470,6 +471,27 @@ describe("an agent another agent manages", () => {
       .toMatchObject({ desktop: { status: "shown" }, phone: { status: "queued" } });
     expect(mocks.pushAgentNotification.mock.calls.map(([event]) => event.kind))
       .toEqual(["approval", "input", "done"]);
+  });
+
+  it("treats an agent started from a plain shell pane as managed by that shell", async () => {
+    mocks.storeState.layouts = {
+      "desktop-a": {
+        panels: {
+          "term:lead": {
+            contentComponent: "terminal",
+            params: {
+              sessionId: "term-lead",
+              binding: { runtime: "hmux_session_v1", sessionId: "hmux-shell", workspaceId: "ws" },
+            },
+          },
+        },
+      },
+    };
+    mocks.storeState.agents = [
+      { ...worker, runParent: { sessionId: "hmux-shell", workspaceId: "ws" } },
+    ];
+    expect(await notifyAgentEvent("worker", "done", "Turn finished", { eventId: "turn-worker" }))
+      .toMatchObject({ desktop: { status: "not_sent", reason: "managed_agent" } });
   });
 
   it("notifies as before when the manager it names is not one of this computer's agents", async () => {

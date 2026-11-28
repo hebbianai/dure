@@ -8,7 +8,8 @@ const CRUMB_CLASS =
 	"min-w-0 truncate rounded-sm text-muted-foreground outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring";
 
 /** The agents above this one, outermost first, as the relation owner chains
- * them. Each crumb selects its agent. A top-level agent has no breadcrumb. */
+ * them — the outermost may be the plain shell its Run was started in. Each
+ * crumb selects its row. A top-level agent has no breadcrumb. */
 export function WorkBreadcrumb({
 	agentId,
 	onSelect,
@@ -48,6 +49,7 @@ const SOURCE_KEY: Record<AgentRelationSource, string> = {
 	run_parent_agent: "work.detail.relationSource.runParentAgent",
 	run_parent_session: "work.detail.relationSource.runParentSession",
 	run_parent_recorded: "work.detail.relationSource.runParentRecorded",
+	run_parent_shell: "work.detail.relationSource.runParentShell",
 	computer_reported: "work.detail.relationSource.computerReported",
 };
 

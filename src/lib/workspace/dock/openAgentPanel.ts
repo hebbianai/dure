@@ -1,5 +1,6 @@
 import type { DockviewApi } from "dockview-react";
 import { agentDisplayName } from "@/lib/agents/agentDisplayName";
+import type { AgentRelationFacts } from "@/lib/agents/relations/agentRelationFacts";
 import { track } from "@/lib/ipc/telemetry";
 import { findAgentPanel } from "@/lib/workspace/dock/dockPanelParameters";
 import { commitExplicitDockviewMutation } from "@/lib/workspace/dock/explicitDockviewCommit";
@@ -23,6 +24,8 @@ import type { Agent } from "@/types";
 
 const AGENT_PANE_MINIMUM_SIZE = { width: 480, height: 300 } as const;
 
+const NO_RELATION_FACTS: AgentRelationFacts = { agents: [], shells: [] };
+
 export function openAgentPanelOnDockview(
 	options: Parameters<typeof presentAgentPanelOnDockview>[0],
 ): string | false {
@@ -36,15 +39,16 @@ export function presentAgentPanelOnDockview({
 	agent,
 	position,
 	preferredPanelId,
-	agents = [],
+	relationFacts = NO_RELATION_FACTS,
 }: {
 	readonly desktopId: string;
 	readonly api: DockviewApi;
 	readonly agent: Agent;
 	readonly position?: PanelPosition;
 	readonly preferredPanelId?: string;
-	/** The client's Agents, so a worker's new pane joins its lead's column. */
-	readonly agents?: readonly Agent[];
+	/** The client's relation facts, so a worker's new pane joins its lead's
+	 * column. */
+	readonly relationFacts?: AgentRelationFacts;
 }): PanePresentation | false {
 	const existing = findAgentPanel(api, agent.id);
 	const record = useHiddenPanes.getState().hidden[agent.id];
@@ -83,8 +87,9 @@ export function presentAgentPanelOnDockview({
 						restoredPosition ??
 						workerColumnPosition(
 							api,
+							desktopId,
 							agent,
-							agents,
+							relationFacts,
 							AGENT_PANE_MINIMUM_SIZE.height,
 						) ??
 						autoSplitPosition(api, {

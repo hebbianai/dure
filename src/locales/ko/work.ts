@@ -16,6 +16,7 @@ export const work: Record<string, string> = {
 	"work.detail.relationSource.runParentAgent": "이 Run을 시작함",
 	"work.detail.relationSource.runParentSession": "이 Run의 부모 세션을 가짐",
 	"work.detail.relationSource.runParentRecorded": "Run이 열릴 때 그 세션을 가졌음",
+	"work.detail.relationSource.runParentShell": "이 Run을 시작한 셸",
 	"work.detail.relationSource.computerReported": "컴퓨터가 알려 줌",
 	"work.detail.pin": "열로 고정",
 	"work.detail.unpin": "고정 해제",

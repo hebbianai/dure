@@ -10,6 +10,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { SidebarScrollArea } from "@/components/ui/scroll-area";
 import { Disclosure } from "@/components/ui/disclosure";
 import {
+	useWorkShellRowFacts,
 	useWorkView,
 	type WorkShellEntry,
 	type WorkView,
@@ -284,32 +285,19 @@ export function WorkAgentRow({
 	);
 }
 
-/** A provider found in a plain shell pane, reported by the same row: its
- * state and, when the needs-person rule flags it, why. */
-export function WorkShellRow({
+/** A plain shell pane's row in the list. */
+function WorkShellRow({
 	shell,
-	selected = false,
-	variant = "list",
+	selected,
 	onSelect,
 }: {
 	shell: WorkShellEntry;
-	selected?: boolean;
-	variant?: AgentListRowVariant;
-	onSelect?: (key: string) => void;
+	selected: boolean;
+	onSelect: (key: string) => void;
 }) {
 	return (
 		<AgentRow
-			row={agentRowModel({
-				agentId: shell.key,
-				title: shell.title,
-				...(shell.state ? { state: shell.state } : {}),
-				...(shell.needsPerson
-					? { needsPerson: { reason: shell.needsPerson } }
-					: {}),
-				...(shell.projectName ? { projectName: shell.projectName } : {}),
-				...(shell.spaceName ? { spaceName: shell.spaceName } : {}),
-			})}
-			variant={variant}
+			row={agentRowModel(useWorkShellRowFacts(shell))}
 			selected={selected}
 			onSelect={onSelect}
 		/>
