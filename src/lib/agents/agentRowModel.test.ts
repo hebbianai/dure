@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { agentRowModel, agentRowStatus } from "@/lib/agents/agentRowModel";
+import {
+	agentRowManagedUrgency,
+	agentRowModel,
+	agentRowStatus,
+} from "@/lib/agents/agentRowModel";
 
 describe("agentRowModel", () => {
 	it("keeps only the facts it has: every agent still gets a row", () => {
@@ -104,6 +108,20 @@ describe("agentRowModel", () => {
 		});
 		expect(asked.status).toBe("input");
 		expect(asked).not.toHaveProperty("continuesAtMs");
+	});
+});
+
+describe("agentRowManagedUrgency", () => {
+	it("leads with someone who needs a person, then someone working", () => {
+		expect(
+			agentRowManagedUrgency({ count: 5, needsPerson: 1, working: 3 }),
+		).toBe("needs_person");
+		expect(
+			agentRowManagedUrgency({ count: 5, needsPerson: 0, working: 3 }),
+		).toBe("working");
+		expect(
+			agentRowManagedUrgency({ count: 5, needsPerson: 0, working: 0 }),
+		).toBe("quiet");
 	});
 });
 

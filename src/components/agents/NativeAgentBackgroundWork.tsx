@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Disclosure } from "@/components/ui/disclosure";
+import { FoldLine } from "@/components/ui/fold-line";
+import { StatusDot } from "@/components/ui/status-dot";
 import {
 	BACKGROUND_WORK_REFRESH_MS,
 	backgroundWorkHiddenCount,
@@ -60,49 +61,38 @@ export function NativeAgentBackgroundWork({
 	if (!list || !summary) return null;
 	const hidden = backgroundWorkHiddenCount(list);
 	return (
-		<section
+		<FoldLine
 			aria-label={t("agents.backgroundWork.label")}
-			className="shrink-0 border-t border-glass-hairline px-3 py-1.5 text-muted-foreground"
+			dot={<StatusDot tone="run" />}
+			summary={summary}
+			bodyClassName="max-h-48 overflow-y-auto"
 		>
-			<Disclosure
-				label={
-					<span className="inline-flex items-center gap-2 font-normal text-muted-foreground">
-						<span
-							aria-hidden
-							className="size-1.5 shrink-0 rounded-full bg-status-run"
-						/>
-						{summary}
-					</span>
-				}
-				bodyClassName="max-h-48 overflow-y-auto"
-			>
-				<ul className="space-y-0.5 font-mono text-[11px]">
-					{backgroundWorkRows(list, now()).map((row) => (
-						<li
-							key={`${row.kind}:${row.id}`}
-							className="grid grid-cols-[minmax(0,1fr)_4.5rem_2.5rem_3.5rem_3.5rem] items-center gap-2"
-						>
-							<span className="truncate text-foreground">{row.label}</span>
-							<span className="h-1 overflow-hidden rounded-full bg-muted">
-								{row.progress === null ? null : (
-									<span
-										className="block h-full bg-primary"
-										style={{
-											width: `${Math.round(row.progress * 100)}%`,
-										}}
-									/>
-								)}
-							</span>
-							<span className="text-right">{row.steps}</span>
-							<span className="text-right">{row.elapsed}</span>
-							<span className="text-right">{row.tokens}</span>
-						</li>
-					))}
-					{hidden > 0 ? (
-						<li>{t("agents.backgroundWork.more", { n: hidden })}</li>
-					) : null}
-				</ul>
-			</Disclosure>
-		</section>
+			<ul className="space-y-0.5 font-mono text-[11px]">
+				{backgroundWorkRows(list, now()).map((row) => (
+					<li
+						key={`${row.kind}:${row.id}`}
+						className="grid grid-cols-[minmax(0,1fr)_4.5rem_2.5rem_3.5rem_3.5rem] items-center gap-2"
+					>
+						<span className="truncate text-foreground">{row.label}</span>
+						<span className="h-1 overflow-hidden rounded-full bg-muted">
+							{row.progress === null ? null : (
+								<span
+									className="block h-full bg-primary"
+									style={{
+										width: `${Math.round(row.progress * 100)}%`,
+									}}
+								/>
+							)}
+						</span>
+						<span className="text-right">{row.steps}</span>
+						<span className="text-right">{row.elapsed}</span>
+						<span className="text-right">{row.tokens}</span>
+					</li>
+				))}
+				{hidden > 0 ? (
+					<li>{t("agents.backgroundWork.more", { n: hidden })}</li>
+				) : null}
+			</ul>
+		</FoldLine>
 	);
 }

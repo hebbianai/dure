@@ -1,6 +1,7 @@
 // The Work view's own presentation state: which row is selected, how deep
-// the list goes, whether it groups by project, whether today's results are
-// unfolded, and which agents are pinned as columns beside the selection. It
+// the list goes, whether it groups by project, whether today's results and
+// the details' managed agents are unfolded, and which agents are pinned as
+// columns beside the selection. It
 // belongs to one window; the main window keeps it across restarts. Nothing
 // here records an answer or an acknowledgement. The module imports no store,
 // i18n or React.
@@ -15,6 +16,9 @@ export interface WorkViewState {
 	readonly grouping: WorkGrouping;
 	/** Whether the Has a result today section is unfolded. */
 	readonly resultsOpen: boolean;
+	/** Whether a detail's agents it manages are unfolded: one setting for the
+	 * selection's column and every pinned one. */
+	readonly managedOpen: boolean;
 	/** Agent ids the person pinned as detail columns, left to right. A pin
 	 * stays until the person removes it, even after its agent is gone. */
 	readonly pinned: readonly string[];
@@ -25,6 +29,7 @@ export const WORK_VIEW_DEFAULT: WorkViewState = {
 	depth: "top",
 	grouping: "project",
 	resultsOpen: false,
+	managedOpen: true,
 	pinned: [],
 };
 
@@ -50,7 +55,9 @@ function normalizeWorkViewState(value: unknown): WorkViewState {
 		depth: state.depth === "all" ? "all" : "top",
 		grouping: state.grouping === "none" ? "none" : "project",
 		resultsOpen: state.resultsOpen === true,
-		// Absent in what builds before pins saved; older builds ignore it.
+		// Absent in what builds before pins and the managed fold saved; older
+		// builds ignore both.
+		managedOpen: state.managedOpen !== false,
 		pinned: normalizePinned(state.pinned),
 	};
 }

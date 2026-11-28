@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { type ComponentProps, type ReactNode, useMemo, useState } from "react";
 import { AgentRow, agentRowManagedText } from "@/components/agents/AgentRow";
 import {
 	useAgentManagedSummary,
@@ -12,9 +12,14 @@ import {
 	useAgentRevealSpaceNames,
 	useNextUp,
 } from "@/components/agents/useNextUp";
-import { Disclosure } from "@/components/ui/disclosure";
+import { FoldLine } from "@/components/ui/fold-line";
+import { StatusDot } from "@/components/ui/status-dot";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
-import { agentRowModel } from "@/lib/agents/agentRowModel";
+import {
+	type AgentRowManagedUrgency,
+	agentRowManagedUrgency,
+	agentRowModel,
+} from "@/lib/agents/agentRowModel";
 import {
 	type NextUpEntry,
 	nextUpEntries,
@@ -23,7 +28,6 @@ import {
 import { revealAgent } from "@/lib/agents/nextUpNavigation";
 import { agentTeamMembers } from "@/lib/agents/relations/agentTeam";
 import { t } from "@/lib/i18n";
-import { cn } from "@/lib/utils";
 import { isMainWindow } from "@/lib/workspace/window/windows";
 
 /** What an agent manages, folded to one line in its conversation. Unfolded,
@@ -38,39 +42,67 @@ export function AgentTeamLine({ agentId }: { agentId: string }) {
 }
 
 function MainWindowTeamLine({ agentId }: { agentId: string }) {
-	const managed = useAgentManagedSummary(agentId);
 	// The fold is this view's own; nothing is persisted or acknowledged.
 	const [open, setOpen] = useState(false);
+	return (
+		<AgentManagedFold
+			agentId={agentId}
+			slot="agent-team-line"
+			open={open}
+			onOpenChange={setOpen}
+			bodyClassName="max-h-48 overflow-y-auto"
+		>
+			<AgentTeamRows agentId={agentId} />
+		</AgentManagedFold>
+	);
+}
+
+/** The dot beside a team's summary, by its most urgent member. A quiet team
+ * is softer than a muted dot elsewhere: nothing below needs anything. */
+const MANAGED_DOT: Record<
+	AgentRowManagedUrgency,
+	Pick<ComponentProps<typeof StatusDot>, "tone" | "className">
+> = {
+	needs_person: { tone: "blocked" },
+	working: { tone: "warn" },
+	quiet: { tone: "muted", className: "bg-muted-foreground/60" },
+};
+
+/** What an agent manages, folded to one line under a hairline: a dot for the
+ * most urgent of them and the words every row uses for it. Unfolded, it holds
+ * the caller's rows, mounted only while open so a folded line subscribes to
+ * no row. Whether it is open is the caller's. Absent when it manages none. */
+export function AgentManagedFold({
+	agentId,
+	slot,
+	open,
+	onOpenChange,
+	bodyClassName,
+	children,
+}: {
+	agentId: string;
+	/** The `data-slot` that tells the surfaces holding the fold apart. */
+	slot: string;
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	/** Caps the unfolded rows, which scroll under the line. */
+	bodyClassName: string;
+	children: ReactNode;
+}) {
+	const managed = useAgentManagedSummary(agentId);
 	if (!managed) return null;
 	return (
-		<section
+		<FoldLine
 			aria-label={t("agents.team.label")}
-			data-slot="agent-team-line"
-			className="shrink-0 border-t border-glass-hairline px-3 py-1.5 text-muted-foreground"
+			data-slot={slot}
+			dot={<StatusDot {...MANAGED_DOT[agentRowManagedUrgency(managed)]} />}
+			summary={agentRowManagedText(managed)}
+			open={open}
+			onOpenChange={onOpenChange}
+			bodyClassName={bodyClassName}
 		>
-			<Disclosure
-				onToggle={(event) => setOpen(event.currentTarget.open)}
-				label={
-					<span className="inline-flex items-center gap-2 font-normal text-muted-foreground">
-						<span
-							aria-hidden
-							className={cn(
-								"size-1.5 shrink-0 rounded-full",
-								managed.needsPerson > 0
-									? "bg-status-blocked"
-									: managed.working > 0
-										? "bg-status-warn"
-										: "bg-muted-foreground/60",
-							)}
-						/>
-						{agentRowManagedText(managed)}
-					</span>
-				}
-				bodyClassName="max-h-48 overflow-y-auto"
-			>
-				{open && <AgentTeamRows agentId={agentId} />}
-			</Disclosure>
-		</section>
+			{open && children}
+		</FoldLine>
 	);
 }
 

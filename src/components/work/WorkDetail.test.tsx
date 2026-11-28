@@ -233,6 +233,20 @@ function column(key: string): HTMLElement {
 	) as HTMLElement;
 }
 
+/** A column's managed fold, when the agent manages any. */
+function managedOf(key: string): HTMLElement | null {
+	return within(column(key)).queryByRole("region", {
+		name: t("agents.team.label"),
+	});
+}
+
+function managedText(count: number, working: number): string {
+	return [
+		t("agents.row.manages", { n: count }),
+		t("agents.row.managedWorking", { n: working }),
+	].join(" · ");
+}
+
 function columnKeys(): string[] {
 	return Array.from(
 		document.querySelectorAll<HTMLElement>("[data-work-column]"),
@@ -361,6 +375,73 @@ describe("Work detail", () => {
 				name: t("agents.team.label"),
 			}),
 		).toBeNull();
+	});
+
+	it("labels the agents it manages and its conversation, each under a hairline, and shows no managed part for an agent that manages none", () => {
+		useWorkViewStore.getState().select("a");
+		render(<WorkMain />);
+		const managed = managedOf("a") as HTMLElement;
+		// The fold's line sums up the whole team below a.
+		expect(managed.querySelector("summary")?.textContent).toBe(managedText(3, 2));
+		expect(managed.className).toContain("border-t");
+		// Each row keeps to one line of what it was asked.
+		expect(
+			within(managed)
+				.getAllByRole("button")
+				.map((row) => row.getAttribute("data-variant")),
+		).toEqual(["compact"]);
+		const heading = within(column("a")).getByRole("heading", {
+			name: t("work.conversation.label"),
+		});
+		expect(heading.className).toContain("border-t");
+		const conversation = within(column("a")).getByRole("region", {
+			name: t("work.conversation.label"),
+		});
+		// Header, managed list, then the labelled conversation.
+		expect(
+			managed.compareDocumentPosition(heading) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+		expect(
+			heading.compareDocumentPosition(conversation) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+
+		act(() => useWorkViewStore.getState().select("solo"));
+		expect(managedOf("solo")).toBeNull();
+		expect(
+			within(column("solo")).getByRole("heading", {
+				name: t("work.conversation.label"),
+			}),
+		).toBeTruthy();
+	});
+
+	it("folds the agents it manages once for every column, open by default", async () => {
+		useWorkViewStore.setState({ pinned: ["a"], selected: "b" });
+		render(<WorkMain />);
+		const folds = () =>
+			["a", "b"].map((key) => managedOf(key)?.querySelector("details"));
+		expect(folds().map((fold) => fold?.open)).toEqual([true, true]);
+
+		// Folding one column folds them all; only the line stays.
+		fireEvent.click(managedOf("b")?.querySelector("summary") as HTMLElement);
+		await waitFor(() =>
+			expect(useWorkViewStore.getState().managedOpen).toBe(false),
+		);
+		expect(folds().map((fold) => fold?.open)).toEqual([false, false]);
+		expect(within(managedOf("a") as HTMLElement).queryAllByRole("button")).toEqual(
+			[],
+		);
+		expect(managedOf("b")?.textContent).toBe(managedText(2, 1));
+
+		fireEvent.click(managedOf("a")?.querySelector("summary") as HTMLElement);
+		await waitFor(() =>
+			expect(useWorkViewStore.getState().managedOpen).toBe(true),
+		);
+		expect(folds().map((fold) => fold?.open)).toEqual([true, true]);
+		expect(
+			within(managedOf("b") as HTMLElement).getByText("Agent c"),
+		).toBeTruthy();
 	});
 
 	it("lists the other agents that manage it with where each fact comes from", () => {

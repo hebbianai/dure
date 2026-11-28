@@ -15,6 +15,7 @@ describe("workViewState", () => {
 			depth: "all" as const,
 			grouping: "none" as const,
 			resultsOpen: true,
+			managedOpen: false,
 			pinned: ["lead-app", "lead-api"],
 		};
 		expect(parseWorkViewState(serializeWorkViewState(state))).toEqual(state);
@@ -31,11 +32,12 @@ describe("workViewState", () => {
 			depth: "top",
 			grouping: "project",
 			resultsOpen: false,
+			managedOpen: true,
 			pinned: [],
 		});
 	});
 
-	it("reads a state saved before pins existed with none pinned", () => {
+	it("reads a state saved before pins and the managed fold existed with none pinned and the fold open", () => {
 		expect(
 			parseWorkViewState(
 				JSON.stringify({
@@ -55,6 +57,7 @@ describe("workViewState", () => {
 						depth: "deep",
 						grouping: "none",
 						resultsOpen: "yes",
+						managedOpen: "no",
 						pinned: ["a", "", 7, "a", "b"],
 					},
 					version: 1,
@@ -69,11 +72,14 @@ describe("workViewState", () => {
 		store.getState().select("agent-1");
 		store.getState().select("agent-1");
 		store.getState().setDepth("all");
-		expect(save).toHaveBeenCalledTimes(2);
+		store.getState().setManagedOpen(false);
+		store.getState().setManagedOpen(false);
+		expect(save).toHaveBeenCalledTimes(3);
 		expect(save).toHaveBeenLastCalledWith({
 			...WORK_VIEW_DEFAULT,
 			selected: "agent-1",
 			depth: "all",
+			managedOpen: false,
 		});
 	});
 

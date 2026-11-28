@@ -20,6 +20,7 @@ import {
 	useAgentRevealTargets,
 } from "@/components/agents/useNextUp";
 import { Button } from "@/components/ui/button";
+import { PaneLine } from "@/components/ui/fold-line";
 import { IconButton } from "@/components/ui/icon-button";
 import { WorkAlsoManagedBy, WorkBreadcrumb } from "@/components/work/WorkBreadcrumb";
 import { WorkConversation } from "@/components/work/WorkConversation";
@@ -39,7 +40,7 @@ import type { Agent } from "@/types";
 
 /** One detail column: an agent with the agents above it, the other agents
  * that manage it, the agents it manages and its conversation with a
- * composer.
+ * composer, each part below the header under a hairline and its own label.
  * Every column is this same view, the selection's and each pinned one's.
  * Selecting any agent in it drills in by selecting that agent. */
 export function WorkDetailColumn({
@@ -171,6 +172,7 @@ function WorkAgentDetail({
 				selected={selected}
 				onSelect={select}
 			/>
+			<PaneLine as="h3">{t("work.conversation.label")}</PaneLine>
 			<WorkConversation agent={agent} onOpenLargeWindow={openLargeWindow} />
 		</section>
 	);
