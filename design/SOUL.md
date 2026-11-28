@@ -34,9 +34,10 @@ mode, not a dominant slab. Soft blur and tonal gradients can express material;
 dot patterns can express many small contributions. Avoid heavy card grids,
 stacked borders/shadows, and decoration that competes with work.
 
-Working UI spends color on intervention and danger. Rare, softly diffused,
-low-saturation color belongs to expressive brand surfaces such as onboarding,
-empty states, and marketing, not code or output. Avoid vivid bounded color blocks.
+Working UI spends color on intervention and danger, and on one status: an
+agent at work (§5). Rare, softly diffused, low-saturation color belongs to
+expressive brand surfaces such as onboarding, empty states, and marketing, not
+code or output. Avoid vivid bounded color blocks.
 
 Dark mode translates the same hierarchy: use dark gray rather than pure-black
 surface paint, reserve near-white for anchors, and express elevation through
@@ -65,11 +66,14 @@ to implementation. A canvas approximation is never a runtime material value.
   with a cause and next action. Do not steal focus, blink, or create a toast for
   every failure. If other work is affected, project the same event into its
   decision/briefing view with the same source and generation.
-- Running, idle, and completed work are visually quiet. Reserve one accent for
-  human intervention and danger color for failure or destructive actions.
-  Motion signals change and then stops. The sole ongoing exception is one line
-  of text shimmer per pane while actual streaming/tool work continues; stop it
-  on completion and use static text with reduced motion.
+- Idle and completed work are visually quiet. An agent that is working reads
+  green, so which agents are at work is clear at a glance. Reserve the one
+  accent for human intervention and danger color for failure or destructive
+  actions. Motion signals change and then stops. Working is the one state that
+  carries a quiet continuous motion: a soft breathing ring on its status mark,
+  alongside one line of text shimmer per pane while actual streaming/tool work
+  continues. Both stop the moment work stops and stay static with reduced
+  motion.
 - A report explains change, significance, needed judgment, recommendation and
   options, remaining risk, and next action. Evidence is immediately available
   below it. Tool calls and heartbeats are inspectable records, not reports.

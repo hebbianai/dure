@@ -113,8 +113,8 @@ import {
 } from "@/components/workspace/usePaneChromeState";
 import { sessionRuntimeDisplayState } from "@/lib/sessions/runtime/sessionRuntimeDisplayState";
 
-/** The agent's glyph slot — AgentActivityGlyph: the provider logo, the
- * loader while it works, and every other display state as the corner badge.
+/** The agent's glyph slot — AgentActivityGlyph: the provider logo with its
+ * display state as the corner badge.
  * The header draws no separate dot after the label any more (owner decision
  * 2026-09-03: it spent room on what the slot already says). */
 function PaneAgentIcon({ agent }: { agent: Agent }) {

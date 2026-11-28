@@ -1,4 +1,5 @@
 @import "../../src/components/ui/dure-loader.css";
+@import "../../src/components/agents/agent-status-mark.css";
 
 /* Tokens copied from the desktop app's `src/index.css` dark theme, by value.
  *
@@ -44,12 +45,16 @@
   --motion-slow: 300ms;
   --ease-decelerate: cubic-bezier(0, 0, 0, 1);
 
-  /* Agent run state. Distinct from the VCS axis on the desktop for the same
-     reason it is distinct here: "blocked" and "deleted file" are not one idea. */
+  /* Agent run state, read by the status mark both apps share
+     (agent-status-mark.css): `run` is an agent at work, `blocked` what waits
+     on the person and `error` failure. `blocked` is the phone's own accent
+     for that, the ink of the Needs you cards (--warn-ink below), so a row's
+     dot and the card above it are one colour; the rest are the desktop's dark
+     values. */
   --status-run: #22c55e;
   --status-warn: #f59e0b;
-  --status-blocked: #ef4444;
-  --status-done: #3b82f6;
+  --status-blocked: var(--warn-ink);
+  --status-error: #ef4444;
 
   --agent-claude-icon: #e08769;
   --agent-claude-fill: #e0876924;
@@ -788,37 +793,11 @@ body {
   font-size: 18px;
 }
 
-/* 상태 점. 색은 데스크탑의 --status-* 그대로이고, 모르는 상태는 회색이다 —
-   초록으로 떨어지면 화면이 "실행 중"이라고 주장하게 된다. */
-.dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--muted-foreground);
-}
-
-.dot--run {
-  background: var(--status-run);
-}
-
-.dot--warn {
-  background: var(--status-warn);
-}
-
-.dot--blocked {
-  background: var(--status-blocked);
-}
-
-.dot--done {
-  background: var(--status-done);
-}
-
-.dot--unknown {
-  /* 채우지 않고 테두리만. 회색 채운 점은 "종료됨"으로 읽히는데, 이건
-     "모른다"다. 두 상태가 같은 그림이면 안 된다. */
-  background: none;
-  box-shadow: inset 0 0 0 1.5px var(--muted-foreground);
+/* Status dots are the status mark both apps share (agent-status-mark.css),
+   a step larger at arm's length, breathing at the desktop dark theme's peak. */
+:root {
+  --agent-status-dot-size: 8px;
+  --agent-status-breath: 0.3;
 }
 
 /* 제공자 뱃지. 알려진 에이전트만 색을 갖고, 나머지는 회색으로 남는다. */
@@ -2276,22 +2255,13 @@ html[data-scan="on"] .view {
 .session-row__lead {
   position: relative;
 }
-.session-row__lead--warn::after,
-.session-row__lead--blocked::after,
-.session-row__lead--done::after {
-  content: "";
+.session-row__badge {
+  --agent-status-dot-size: 7px;
   position: absolute;
   right: -3px;
   bottom: -3px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
   box-shadow: 0 0 0 1.5px var(--glass-pane);
 }
-.session-row__lead--warn::after { background: var(--status-warn); }
-.session-row__lead--blocked::after { background: var(--status-blocked); }
-.session-row__lead--done::after { background: var(--status-done); }
-.session-row__lead--unknown { opacity: 0.6; }
 
 .session-row__body {
   display: flex;
@@ -3748,7 +3718,7 @@ html[data-keyboard="on"] .tray__toggle--keyboard::before {
 }
 
 .scm__file--d .scm__file-status {
-  color: var(--status-blocked);
+  color: var(--status-error);
 }
 
 /* Monospace, per 3042:80841 and 3051:81535. A path is read by its shape — the
@@ -3785,7 +3755,7 @@ html[data-keyboard="on"] .tray__toggle--keyboard::before {
 }
 
 .scm__file-deleted {
-  color: var(--status-blocked);
+  color: var(--status-error);
 }
 
 .scm__pending {
@@ -3883,12 +3853,12 @@ html[data-keyboard="on"] .tray__toggle--keyboard::before {
 }
 
 .diff__row--removed {
-  background: color-mix(in srgb, var(--status-blocked) 14%, transparent);
+  background: color-mix(in srgb, var(--status-error) 14%, transparent);
 }
 
 .diff__row--removed .diff__sign,
 .diff__row--removed .diff__body {
-  color: var(--status-blocked);
+  color: var(--status-error);
 }
 
 /* The `@@` header and git's own notes are not lines of the file, and they read
@@ -3944,7 +3914,7 @@ html[data-keyboard="on"] .tray__toggle--keyboard::before {
 }
 
 .diff__deleted {
-  color: var(--status-blocked);
+  color: var(--status-error);
 }
 
 /* The pull-request tab and its create form. Figma 3050:81530, 3051:81154,
@@ -3981,7 +3951,7 @@ html[data-keyboard="on"] .tray__toggle--keyboard::before {
   resize: none;
 }.prform__error {
   margin: 0;
-  color: var(--status-blocked);
+  color: var(--status-error);
   font-family: var(--font-ui);
   font-size: 13px;
   line-height: 18px;

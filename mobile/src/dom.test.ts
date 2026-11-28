@@ -18,6 +18,22 @@ describe("localized status announcements", () => {
   });
 });
 
+describe("statusDot", () => {
+  it("draws a lifecycle with the shared status mark and never as work", () => {
+    const look = (state: Parameters<typeof statusDot>[0]) => {
+      const { agentTone, agentFill, agentMotion } = statusDot(state).dataset;
+      return [agentTone, agentFill, agentMotion];
+    };
+    // Green and breathing belong to an agent the desktop reports at work;
+    // a session the phone only knows as running rests.
+    expect(look("run")).toEqual(["rest", "solid", "still"]);
+    expect(look("warn")).toEqual(["neutral", "solid", "pulse"]);
+    expect(look("blocked")).toEqual(["danger", "solid", "still"]);
+    expect(look("done")).toEqual(["neutral", "hollow", "still"]);
+    expect(look("unknown")).toEqual(["neutral", "solid", "still"]);
+  });
+});
+
 /**
  * 터미널 표면은 자기 배경을 따로 칠하면 안 된다.
  *

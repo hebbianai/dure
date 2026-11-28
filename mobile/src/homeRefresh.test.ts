@@ -139,18 +139,21 @@ it.each(["startup", "automatic"])("publishes each Hub independently during %s, i
   expect(button('[data-session-id="slow-result"]').disabled).toBe(true);
 });
 
+// Work shows as the shared status mark's green breathing badge on the row.
+const WORKING_MARK = '.session-row__badge[data-agent-motion="breathe"]';
+
 it("reflects working and waiting transitions within two seconds on visible Home", async () => {
   const entry = session("existing");
   native.hubOpen.mockResolvedValue(probe([{ ...entry, presentation: { displayState: "waiting" } }]));
   await launch();
   const row = () => button('[data-session-id="existing"]');
-  expect(row().querySelector(".dure-loader")).toBeNull();
+  expect(row().querySelector(WORKING_MARK)).toBeNull();
   native.hubOpen.mockResolvedValue(probe([{ ...entry, presentation: { displayState: "working" } }]));
   await vi.advanceTimersByTimeAsync(2_000);
-  expect(row().querySelector(".dure-loader")).not.toBeNull();
+  expect(row().querySelector(WORKING_MARK)).not.toBeNull();
   native.hubOpen.mockResolvedValue(probe([{ ...entry, presentation: { displayState: "waiting" } }]));
   await vi.advanceTimersByTimeAsync(2_000);
-  expect(row().querySelector(".dure-loader")).toBeNull();
+  expect(row().querySelector(WORKING_MARK)).toBeNull();
   expect(native.takeSessionCensus).toHaveBeenCalledTimes(1);
 });
 

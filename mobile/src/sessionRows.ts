@@ -1,19 +1,17 @@
 /** 세션 목록을 화면 행으로 옮기는 순수 로직. Tauri/DOM 없이 테스트된다. */
 
+import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
 import type { RemoteSession } from "./sessions";
 import { t } from "./i18n";
 import { sessionTitle } from "./sessions";
 
 /**
- * 행 왼쪽 점의 색.
+ * The lifecycle axis: what filters, groups and counts read.
  *
- * `lifecycle` 문자열을 화면에서 다시 해석하는 게 아니라, 표시용 축으로 한 번만
- * 접는다. 데스크탑의 `--status-*`와 같은 네 값을 쓰는데, 두 앱이 나란히 놓였을
- * 때 같은 상태가 다른 색이면 그건 색이 아니라 정보가 어긋난 것이다.
- *
- * 모르는 `lifecycle`은 `unknown`이다 — 초록으로 떨어지지 않는다. 상태를 모르는
- * 세션을 "실행 중"으로 그리는 건 화면이 아는 척하는 것이고, 그 화면을 보고
- * 사람이 판단한다.
+ * `lifecycle` strings fold onto it once, here, rather than being re-read by
+ * each screen. An unknown `lifecycle` is `unknown` — never "running": a
+ * screen that claims a session it knows nothing about is running is one a
+ * person will act on.
  */
 export type RunState = "run" | "warn" | "blocked" | "done" | "unknown";
 
@@ -51,6 +49,21 @@ export const RUN_STATE_LABEL: Readonly<Record<RunState, string>> = {
   unknown: "session.status.unknown",
 };
 
+/**
+ * How a lifecycle draws when no desktop reports the agent's own state, in the
+ * status mark vocabulary the desktop shares (`@/lib/agents/agentStatusMark`).
+ * Green means an agent at work, so a running session the phone knows only as
+ * running rests; starting is a transition; blocked or failed is a failure;
+ * ended is gone.
+ */
+export const RUN_STATE_DISPLAY: Readonly<Record<RunState, AgentDisplayState>> = {
+  run: "waiting",
+  warn: "connecting",
+  blocked: "error",
+  done: "exited",
+  unknown: "unknown",
+};
+
 export function runState(session: RemoteSession): RunState {
   return lifecycleState(session.lifecycle);
 }
@@ -81,7 +94,7 @@ export interface SessionRow {
   session: RemoteSession;
   /** 굵은 제목 — 세션 이름, 없으면 세션 id. */
   title: string;
-  /** 점 색을 고르는 축. */
+  /** The lifecycle axis; the dot draws it through `RUN_STATE_DISPLAY`. */
   state: RunState;
   /** 제공자 뱃지 색을 고르는 축. */
   agent: AgentKind;

@@ -353,10 +353,11 @@ function RecentSessionHistoryCard({
 				    appearing under it are the state. Every other heading in this
 				    sidebar folds from its own click with no marker, and this was
 				    the last one left carrying one (owner request 2026-09-08). */}
-				{/* The leading slot is who the session is and whether it is busy —
-				    AgentActivityGlyph, the same rule as the spaces rows and the pane
-				    header. "Opening" is the one busy state a saved session has, so
-				    it spins here and the action button below keeps its label. */}
+				{/* The leading slot is who the session is — AgentActivityGlyph,
+				    the same rule as the spaces rows and the pane header. A saved
+				    session has no live state; opening it is Dure's own wait, so the
+				    loader stands in for the logo and the action button below keeps
+				    its label. */}
 				<span
 					role="img"
 					aria-label={providerLabel}
@@ -369,7 +370,7 @@ function RecentSessionHistoryCard({
 					<AgentActivityGlyph
 						size={14}
 						provider={item.provider}
-						activity={opening ? "working" : undefined}
+						loading={opening}
 					/>
 				</span>
 				{/* 6px between the lines (3419:88033). The title is 13px regular

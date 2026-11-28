@@ -632,9 +632,9 @@ export const UnopenedAgentRow = memo(function UnopenedAgentRow({
             aria-expanded={detailsOpen}
             onClick={toggleDetails}
           >
-            {/* Same leading slot as the open rows above — the provider glyph,
-                the loader while working, and the state (exited included, as
-                the hollow dot) as a corner badge. One slot shape keeps the two
+            {/* Same leading slot as the open rows above — the provider glyph
+                with the state (working's breathing dot, exited's hollow one)
+                as a corner badge. One slot shape keeps the two
                 lists reading as one list. The slot stays the glyph in every
                 state: the row folds from its own click with no disclosure
                 marker, the same as the sessions card (owner call: unify,

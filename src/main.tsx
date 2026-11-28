@@ -146,6 +146,11 @@ if (import.meta.env.DEV) {
 			probe.runWorkDetailLayoutProbe(),
 		);
 	}
+	if (qaParams.has("qaAgentStatusMarks")) {
+		void import("./qa/agentStatusMarks").then((probe) =>
+			probe.runAgentStatusMarksProbe(),
+		);
+	}
 	if (qaParams.has("qaFeedbackPanes")) {
 		void import("./qa/feedbackPanes").then(async (probe) => {
 			if (!(await cliServer))

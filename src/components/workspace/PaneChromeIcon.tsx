@@ -11,9 +11,8 @@ export function PaneChromeIcon({
 }: {
 	component: string;
 	nestedSsh: boolean;
-	/** Agent panes normally go through AgentActivityGlyph (logo, loader while
-	 * working, state badge); this is the plain logo for callers without a
-	 * display state. */
+	/** Agent panes normally go through AgentActivityGlyph (logo and state
+	 * badge); this is the plain logo for callers without a display state. */
 	agentProvider?: Provider;
 	terminalProvider?: Provider | null;
 }) {

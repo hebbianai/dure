@@ -1,0 +1,68 @@
+/* An agent's status mark — the look of every state in
+   lib/agents/agentStatusMark.ts, shared by the desktop and the phone (both
+   stylesheets import this file). Elements carry the table's data attributes;
+   colour comes from each app's own status tokens, so light and dark follow
+   the theme. Working is green and breathes: a soft ring swells out of the
+   dot and fades, the one ongoing motion besides the streaming shimmer
+   (SOUL §5). It is a compositor-only animation (transform and opacity on a
+   pseudo-element) that runs only while the state says working, and reduced
+   motion stills it. `--agent-status-breath` is the ring's peak opacity: a
+   dark theme raises it, where the same green halo reads fainter.
+   The rules sit in the components layer so a caller's size utilities
+   (`size-[5px]`) still win. */
+@layer components {
+.agent-status-dot {
+    --agent-mark: transparent;
+    position: relative;
+    display: inline-block;
+    flex: none;
+    box-sizing: border-box;
+    width: var(--agent-status-dot-size, 7px);
+    height: var(--agent-status-dot-size, 7px);
+    /* The border only draws the hollow fill; a solid fill paints through it,
+       so a translucent tone does not get a darker rim. */
+    border: 1px solid transparent;
+    border-radius: 9999px;
+    background: var(--agent-mark);
+}
+.agent-status-dot[data-agent-tone="live"] { --agent-mark: var(--status-run); }
+.agent-status-dot[data-agent-tone="attention"] { --agent-mark: var(--status-blocked); }
+.agent-status-dot[data-agent-tone="danger"] { --agent-mark: var(--status-error); }
+.agent-status-dot[data-agent-tone="rest"] {
+    --agent-mark: color-mix(in oklab, var(--muted-foreground) 55%, transparent);
+}
+.agent-status-dot[data-agent-tone="neutral"] { --agent-mark: var(--muted-foreground); }
+.agent-status-dot[data-agent-fill="hollow"] {
+    border-color: color-mix(in oklab, var(--agent-mark) 50%, transparent);
+    background: transparent;
+}
+.agent-status-dot[data-agent-motion="breathe"]::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    background: var(--agent-mark);
+    opacity: 0;
+    pointer-events: none;
+    animation: agent-status-breathe 2.8s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+}
+.agent-status-dot[data-agent-motion="pulse"] {
+    animation: agent-status-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+/* A hidden Space's panes keep their DOM; their marks stop moving. */
+[role="tabpanel"][aria-hidden="true"] .agent-status-dot,
+[role="tabpanel"][aria-hidden="true"] .agent-status-dot::after {
+    animation-play-state: paused;
+}
+}
+@keyframes agent-status-breathe {
+    0%, 100% { transform: scale(1); opacity: 0; }
+    50% { transform: scale(2.3); opacity: var(--agent-status-breath, 0.22); }
+}
+@keyframes agent-status-pulse {
+    50% { opacity: 0.5; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .agent-status-dot[data-agent-motion="pulse"] { animation: none; }
+    .agent-status-dot[data-agent-motion="breathe"]::after { animation: none; }
+}

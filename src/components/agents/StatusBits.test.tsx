@@ -7,34 +7,41 @@ import { ActivityDot } from "@/components/agents/StatusBits";
 describe("ActivityDot", () => {
   afterEach(cleanup);
 
-  it("상태가 있으면 status 토큰 색과 접근성 라벨을 함께 그린다", () => {
+  it("draws working as the green breathing mark with its accessible label", () => {
     render(<ActivityDot activity="working" />);
     const dot = screen.getByRole("img", { name: "작업 중" });
 
-    // 작업 중=주황, 완료·대기=초록 (2026-08-31 결정).
-    expect(dot.className).toContain("bg-status-warn");
+    expect(dot.className).toContain("agent-status-dot");
+    expect(dot.dataset.agentTone).toBe("live");
+    expect(dot.dataset.agentMotion).toBe("breathe");
     expect(dot.getAttribute("aria-label")).toBe("작업 중");
   });
 
-  it("keeps settled work static and reserves pulse for connecting", () => {
-    render(<ActivityDot activity="working" />);
-    expect(screen.getByRole("img", { name: "작업 중" }).className).not.toContain(
-      "animate-",
-    );
+  it("keeps a finished turn quiet and needs-you in the accent", () => {
+    render(<ActivityDot activity="waiting" />);
+    const waiting = screen.getByRole("img", { name: "응답 대기" });
+    expect(waiting.dataset.agentTone).toBe("rest");
+    expect(waiting.dataset.agentMotion).toBe("still");
 
     cleanup();
+    render(<ActivityDot activity="input" />);
+    expect(screen.getByRole("img", { name: "입력 대기" }).dataset.agentTone).toBe(
+      "attention",
+    );
+  });
+
+  it("reserves the passing pulse for connecting", () => {
     render(<ActivityDot activity="connecting" />);
     expect(
-      screen.getByRole("img", { name: "연결 중" }).className,
-    ).toContain("animate-pulse");
+      screen.getByRole("img", { name: "연결 중" }).dataset.agentMotion,
+    ).toBe("pulse");
   });
 
   it("종료는 속 빈 점으로 남고 unread 링을 받지 않는다", () => {
     render(<ActivityDot activity="exited" unread />);
     const dot = screen.getByRole("img", { name: "종료됨" });
 
-    expect(dot.className).toContain("bg-transparent");
-    expect(dot.className).toContain("border-muted-foreground/50");
+    expect(dot.dataset.agentFill).toBe("hollow");
     expect(dot.className).not.toContain("ring-2");
   });
 
@@ -55,9 +62,8 @@ describe("ActivityDot", () => {
     expect(dot.getAttribute("role")).toBeNull();
     expect(dot.getAttribute("title")).toBeNull();
     expect(dot.getAttribute("aria-label")).toBeNull();
-    expect(dot.className).not.toContain("border");
-    expect(dot.className).not.toContain("bg-");
+    expect(dot.dataset.agentTone).toBeUndefined();
     expect(dot.className).not.toContain("ring-2");
-    expect(dot.className).toContain("rounded-full");
+    expect(dot.className).toContain("agent-status-dot");
   });
 });

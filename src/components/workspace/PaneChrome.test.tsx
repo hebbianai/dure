@@ -33,6 +33,8 @@ vi.mock("@/lib/ipc", () => ({
   invoke: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+/** Working is the shared status mark's green breathing dot. */
+const WORKING_MARK = '[data-agent-tone="live"][data-agent-motion="breathe"]';
 const clipboardMocks = vi.hoisted(() => ({ writeText: vi.fn() }));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
   writeText: clipboardMocks.writeText,
@@ -691,8 +693,8 @@ describe("PaneChrome", () => {
 
     const { container } = renderAgentPane(agent);
 
-    expect(container.querySelector(".bg-status-blocked")).toBeTruthy();
-    expect(container.querySelector(".bg-status-run")).toBeNull();
+    expect(container.querySelector('[data-agent-tone="attention"]')).toBeTruthy();
+    expect(container.querySelector('[data-agent-tone="live"]')).toBeNull();
   });
 
   it("keeps an exact managed Host working state across hydration and a stale exit", () => {
@@ -739,14 +741,14 @@ describe("PaneChrome", () => {
     try {
       const { container } = renderAgentPane(agent, { binding });
 
-      // Working shows as the loader in the glyph slot, not as a dot after the
-      // label (owner decision 2026-09-03) — and the logo yields the slot.
-      expect(container.querySelector(".dure-loader")).toBeTruthy();
-      expect(container.querySelector(".bg-status-warn")).toBeNull();
+      // Working is the green breathing badge on the glyph slot, not a dot
+      // after the label (owner decision 2026-09-03); the logo keeps the slot.
+      expect(container.querySelector(WORKING_MARK)).toBeTruthy();
+      expect(container.querySelector(".dure-loader")).toBeNull();
 
       act(() => useStore.getState().setAgentActivity(agent.id, "working"));
       act(() => useStore.getState().setAgentActivity(agent.id, "exited"));
-      expect(container.querySelector(".dure-loader")).toBeTruthy();
+      expect(container.querySelector(WORKING_MARK)).toBeTruthy();
 
       act(() =>
         useStore.getState().setSessionAgentRuntimeState(sessionId, {
@@ -760,8 +762,7 @@ describe("PaneChrome", () => {
         }),
       );
       expect(screen.getAllByLabelText("종료됨")).not.toHaveLength(0);
-      expect(container.querySelector(".dure-loader")).toBeNull();
-      expect(container.querySelector(".bg-status-warn")).toBeNull();
+      expect(container.querySelector(WORKING_MARK)).toBeNull();
     } finally {
       stopWatch();
     }
@@ -816,17 +817,15 @@ describe("PaneChrome", () => {
     try {
       const { container } = renderAgentPane(agent, { binding });
 
-      // No working claim without semantic evidence: no loader in the slot,
-      // and waiting is the ordinary resting state, so no badge either
-      // (owner decision 2026-09-03).
-      expect(container.querySelector(".dure-loader")).toBeNull();
+      // No working claim without semantic evidence: no breathing badge, and
+      // waiting is the ordinary resting state, so no badge either (owner
+      // decision 2026-09-03).
+      expect(container.querySelector(WORKING_MARK)).toBeNull();
       expect(screen.queryByLabelText("응답 대기")).toBeNull();
-      expect(container.querySelector(".bg-status-warn")).toBeNull();
 
       act(() => useStore.getState().setAgentActivity(agent.id, "exited"));
-      expect(container.querySelector(".dure-loader")).toBeNull();
+      expect(container.querySelector(WORKING_MARK)).toBeNull();
       expect(screen.queryByLabelText("응답 대기")).toBeNull();
-      expect(container.querySelector(".bg-status-warn")).toBeNull();
 
       act(() =>
         useStore.getState().setHmuxSessionMetadata({
@@ -838,13 +837,13 @@ describe("PaneChrome", () => {
         }),
       );
       expect(screen.getAllByLabelText("종료됨")).not.toHaveLength(0);
-      expect(container.querySelector(".bg-status-warn")).toBeNull();
+      expect(container.querySelector(WORKING_MARK)).toBeNull();
     } finally {
       stopWatch();
     }
   });
 
-  it("renders ordinary input_required as blue input waiting, not red blocked", () => {
+  it("renders ordinary input_required as input waiting in the accent, named apart from approval", () => {
     const agent = makeAgent({ id: "task-tracking" });
     useStore.setState({
       agents: [agent],
@@ -861,8 +860,8 @@ describe("PaneChrome", () => {
     // The state badge on the glyph carries the title once; the former
     // wrapper span that repeated it went with the trailing dot (2026-09-03).
     expect(screen.getAllByLabelText("입력 대기")).toHaveLength(1);
-    expect(container.querySelector(".bg-status-done")).toBeTruthy();
-    expect(container.querySelector(".bg-status-blocked")).toBeNull();
+    expect(screen.queryByLabelText("승인 필요")).toBeNull();
+    expect(container.querySelector('[data-agent-tone="attention"]')).toBeTruthy();
   });
 
   it("offers agent deletion from an agent pane menu and opens its confirmation", async () => {

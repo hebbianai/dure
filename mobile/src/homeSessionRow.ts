@@ -1,14 +1,24 @@
+import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
+import { AGENT_STATUS_MARK } from "@/lib/agents/agentStatusMark";
 import { visibleSpacesRowMetadata } from "@/lib/spaces/spacesViewProjection";
 import type { SpacesViewOptions } from "@/lib/spaces/spacesViewOptions";
 import { agentPathText, continuesText, managedText } from "./agentRowText";
-import { element, loader } from "./dom";
+import { agentDot, element, loader } from "./dom";
 import type { CensusActions } from "./censusView";
 import type { HomeRow } from "./homeProjection";
-import { environmentLabel } from "./homeViewLabels";
+import { environmentLabel, statusLabel } from "./homeViewLabels";
 import { relativeTime } from "./relativeTime";
 import { bindPressHold } from "./pressHold";
-import { t } from "./i18n";
 import { providerGlyph } from "./providerGlyph";
+import { RUN_STATE_DISPLAY } from "./sessionRows";
+
+/** The state a row's mark shows: the desktop's own word for the agent while
+ * the row's computer answers, otherwise what its lifecycle alone can say. A
+ * computer that went quiet no longer vouches for cached work. */
+function rowDisplayState(view: HomeRow): AgentDisplayState {
+	const reported = view.row.source.reachable ? view.displayState : undefined;
+	return reported ?? RUN_STATE_DISPLAY[view.row.state];
+}
 
 /** Reachable computer, session that cannot be attached: the rows the list gathers under "연결할 수 없음". */
 export function isUnattachable(view: HomeRow): boolean {
@@ -29,20 +39,25 @@ export function renderHomeSessionRow(
 	const open = element("button", "list__open session-row__open");
 	open.type = "button";
 	open.dataset.sessionId = row.sessionId;
-	const lead = element(
-		"span",
-		`session-row__lead session-row__lead--${row.state}`,
+	const state = rowDisplayState(view);
+	const working = state === "working";
+	const lead = element("span", "session-row__lead");
+	// While this phone attaches, the loader answers the tap in the mark's
+	// place. 12 in the 16px slot: the loader's orbit fills its box where a
+	// glyph keeps an inset, so at 16 it read larger than the marks beside it
+	// (2026-09-15 승연: "스피너 아이콘이 … 크기감이 커보여").
+	lead.append(
+		opening
+			? loader(12)
+			: providerGlyph(view.provider ?? row.source.session.provider_id),
 	);
-	const working = row.source.reachable && view.displayState === "working";
-	if (opening || working) {
-		// 12 in the 16px slot: the loader's orbit fills its box where a glyph keeps
-		// an inset, so at 16 it read larger than the marks beside it (2026-09-15
-		// 승연: "스피너 아이콘이 … 크기감이 커보여").
-		const spinner = loader(12);
-		if (!opening) spinner.setAttribute("aria-label", t("common.working"));
-		lead.append(spinner);
-	} else
-		lead.append(providerGlyph(view.provider ?? row.source.session.provider_id));
+	// The state rides on the mark's corner, as on the desktop's glyph
+	// (AgentActivityGlyph): the same table says which states do.
+	if (AGENT_STATUS_MARK[state].onGlyph) {
+		const badge = agentDot(state, statusLabel(state));
+		badge.classList.add("session-row__badge");
+		lead.append(badge);
+	}
 	open.append(lead);
 	const body = element("span", "session-row__body");
 	// The shared agent row's lines: the agents above this one over its title,
@@ -123,8 +138,8 @@ export function renderHomeSessionRow(
 			git.append(element("span", undefined, `↓${view.git.behind}`));
 	}
 	if (git.childElementCount) stats.append(git);
-	// The desktop hides the age while the agent is working — the loader in
-	// the lead says "now" — and shows it once the session is waiting.
+	// The desktop hides the age while the agent is working — the breathing
+	// mark in the lead says "now" — and shows it once the session is waiting.
 	if (
 		options.visibleFields.includes("updated") &&
 		view.activityAt !== undefined &&

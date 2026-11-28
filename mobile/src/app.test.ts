@@ -1296,7 +1296,7 @@ describe("세션 출력 배선", () => {
     // 시안 스펙: 점 여섯 개, 12시부터 60°씩.
     expect(spinning?.querySelectorAll("i")).toHaveLength(6);
     // 로더는 상태 점을 **대신한다** — 둘 다 서면 한 줄이 두 가지를 주장한다.
-    expect(root.querySelector(".list__open .dot")).toBeNull();
+    expect(root.querySelector(".list__open .agent-status-dot")).toBeNull();
 
     releaseHeldWritableAttach?.("success");
     await settle();
@@ -3378,7 +3378,9 @@ describe("session header activity", () => {
     censusReports = [{ server_id: "lab", server_label: "Loopback lab",
       outcome: { state: "listed", sessions: [remoteSession()] } }];
   });
-  const spinner = (root: HTMLElement) => root.querySelector(".session__state.dure-loader");
+  // Working is the shared status mark's green breathing dot, as on the desktop.
+  const workingMark = (root: HTMLElement) =>
+    root.querySelector('.session__state.agent-status-dot[data-agent-motion="breathe"]');
   async function observe(payload: Record<string, unknown>, attachmentId = activeAttachmentId!) {
     const record = new TextEncoder().encode(JSON.stringify({
       kind: "control", body: { kind: "agent_runtime_state", payload: {
@@ -3393,9 +3395,9 @@ describe("session header activity", () => {
 
   it("does not animate a live session before work is observed or while waiting", async () => {
     const root = await openTerminal();
-    expect(spinner(root)).toBeNull();
+    expect(workingMark(root)).toBeNull();
     await observe({ activity: "waiting" });
-    expect(spinner(root)).toBeNull();
+    expect(workingMark(root)).toBeNull();
   });
 
   it("follows working and waiting without replacing the focused input or transcript", async () => {
@@ -3408,8 +3410,8 @@ describe("session header activity", () => {
     const value = field.value;
     for (const activity of ["working", "waiting", "working", "waiting"]) {
       await observe({ activity });
-      expect(spinner(root) !== null).toBe(activity === "working");
-      if (activity === "working") expect(spinner(root)?.getAttribute("aria-label")).toBe(t("common.working"));
+      expect(workingMark(root) !== null).toBe(activity === "working");
+      if (activity === "working") expect(workingMark(root)?.getAttribute("aria-label")).toBe(t("common.working"));
       expect(document.activeElement).toBe(field);
       expect(field.value).toBe(value);
       expect(root.querySelector(".structured-terminal__grid")).toBe(grid);
@@ -3425,37 +3427,37 @@ describe("session header activity", () => {
   ])("stops motion for %j even if activity still says working", async (payload) => {
     const root = await openTerminal();
     await observe({ activity: "working" });
-    expect(spinner(root)).not.toBeNull();
+    expect(workingMark(root)).not.toBeNull();
     await observe({ activity: "working", ...payload });
-    expect(spinner(root)).toBeNull();
+    expect(workingMark(root)).toBeNull();
   });
 
   it("retains the last runtime observation through drawer renders", async () => {
     const root = await openTerminal();
     await observe({ activity: "working" });
     pick(root, ".tray__toggle--history").click();
-    expect(spinner(root)).not.toBeNull();
+    expect(workingMark(root)).not.toBeNull();
     const drawer = root.querySelector(".tray__panel");
     expect(drawer).not.toBeNull();
     await observe({ activity: "waiting" });
-    expect(spinner(root)).toBeNull();
+    expect(workingMark(root)).toBeNull();
     expect(root.querySelector(".tray__panel")).toBe(drawer);
     pick(root, ".tray__toggle--history").click();
-    expect(spinner(root)).toBeNull();
+    expect(workingMark(root)).toBeNull();
   });
 
   it("stops motion on an unavailable attachment and does not inherit it on reconnect", async () => {
     const root = await openTerminal();
     await observe({ activity: "working" });
-    expect(spinner(root)).not.toBeNull();
+    expect(workingMark(root)).not.toBeNull();
     pendingTerminalReads.get(activeAttachmentId!)!.reject(new Error("Connection lost"));
     await settle();
-    expect(spinner(root)).toBeNull();
+    expect(workingMark(root)).toBeNull();
     pick(root, ".session__header .icon-tap").click();
     await settle();
     pick(root, ".list__open").click();
     await settle();
-    expect(spinner(root)).toBeNull();
+    expect(workingMark(root)).toBeNull();
   });
 
   it("ignores runtime records from a retired attachment", async () => {
@@ -3468,7 +3470,7 @@ describe("session header activity", () => {
     await settle();
     await observe({ activity: "waiting" });
     await observe({ activity: "working" }, retired);
-    expect(spinner(root)).toBeNull();
+    expect(workingMark(root)).toBeNull();
   });
 });
 

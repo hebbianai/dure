@@ -3,42 +3,38 @@ import { ProviderGlyph, TerminalGlyph } from "@/components/agents/ProviderLogo";
 import { ActivityDot } from "@/components/agents/StatusBits";
 import { DureLoader } from "@/components/ui/dure-loader";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
+import { AGENT_STATUS_MARK } from "@/lib/agents/agentStatusMark";
 import { cn } from "@/lib/utils";
 import type { Provider } from "@/types";
 
-/** States the slot says nothing extra about: working is the loader itself,
- * and waiting is the ordinary green resting state — "just normal, no
- * need to show it" (owner decision 2026-09-03). A badge is for what asks for
- * a person or marks a departure: input, blocked, error, connecting, exited. */
-const QUIET_STATES: ReadonlySet<AgentDisplayState> = new Set([
-	"working",
-	"waiting",
-]);
-
-/** The 12px slot that says who a session is and whether it is busy — the
- * one rule every session surface shares (owner decision 2026-09-03: the pane
+/** The 12px slot that says who a session is and what it is doing — the one
+ * rule every session surface shares (owner decision 2026-09-03: the pane
  * header and both Spaces rows used to spend a separate 5px dot on a state the
  * slot can carry).
  *
- * - working → DureLoader in place of the logo; nothing else moves. It sits
- *   on the same tone as the resting glyphs: muted by default, or the
- *   surrounding title's tone when the caller sets text-inherit.
- * - otherwise → the provider logo (TerminalGlyph for a plain terminal).
- * - the states that ask for a person or mark a departure — input, blocked,
- *   error, connecting, exited — stay visible as a 5px ActivityDot badge on
- *   the slot's lower-right corner, unread ring included: activity is not the
- *   information, the need to step in is (SOUL §5.1). The green resting
- *   waiting state and idle draw no badge. */
+ * - The provider logo (TerminalGlyph for a plain terminal) always holds the
+ *   slot. It sits on the muted tone by default, or the surrounding title's
+ *   tone when the caller sets text-inherit.
+ * - The state rides on the logo's lower-right corner as a 5px ActivityDot,
+ *   unread ring included, whenever the status mark table says it belongs on
+ *   a glyph: working's green breathing dot, the states that ask for a person
+ *   or mark a departure. A finished turn is the ordinary resting state and
+ *   draws nothing (owner decision 2026-09-03: "just normal, no need to show
+ *   it").
+ * - `loading` is Dure's own wait, not the agent's state — a saved session
+ *   being opened: the loader stands in for the logo until it opens. */
 export function AgentActivityGlyph({
 	provider,
 	activity,
 	unread,
+	loading = false,
 	size = 12,
 	className,
 }: {
 	provider?: Provider | null;
 	activity?: AgentDisplayState;
 	unread?: boolean;
+	loading?: boolean;
 	/** 12 is the pane header's size and the default; the sidebar's rows take
 	 *  14, the size every other glyph in the sidebar draws at — the Files
 	 *  tab's folders and files, the repository folder, the '+' — so a provider
@@ -55,14 +51,14 @@ export function AgentActivityGlyph({
 				className,
 			)}
 		>
-			{activity === "working" ? (
+			{loading ? (
 				<DureLoader decorative size={size} />
 			) : provider ? (
 				<ProviderGlyph provider={provider} className="size-full text-inherit" />
 			) : (
 				<TerminalGlyph className="size-full" />
 			)}
-			{activity && !QUIET_STATES.has(activity) && (
+			{activity && AGENT_STATUS_MARK[activity].onGlyph && (
 				<ActivityDot
 					activity={activity}
 					unread={unread}

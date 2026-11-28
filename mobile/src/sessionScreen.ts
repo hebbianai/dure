@@ -31,7 +31,7 @@ import iconChevronsLeft from "./assets/icon-chevrons-left.svg";
 import iconCommand from "./assets/icon-command.svg";
 import iconHistory from "./assets/icon-history.svg";
 import iconKeyboard from "./assets/icon-keyboard.svg";
-import { element, fadeWhileScrollable, glyph, loader, statusDot } from "./dom";
+import { agentDot, element, fadeWhileScrollable, glyph, statusDot } from "./dom";
 import type { AgentRuntimeState } from "./agentRuntimeState";
 import { keyTapFeedback } from "./haptics";
 import { t } from "./i18n";
@@ -238,8 +238,7 @@ function sessionStateMark(model: SessionStateModel): HTMLElement {
     : runtime ? lifecycleState(runtime.lifecycle) : runState(model.session);
   const working = unavailable === undefined && runtime?.lifecycle === "running" &&
     runtime.activity === "working" && runtime.attention === "none";
-  const mark = working ? loader(12) : statusDot(state);
-  if (working) mark.setAttribute("aria-label", t("common.working"));
+  const mark = working ? agentDot("working", t("common.working")) : statusDot(state);
   mark.classList.add("session__state");
   return mark;
 }
