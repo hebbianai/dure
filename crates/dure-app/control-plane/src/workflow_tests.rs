@@ -8750,6 +8750,111 @@ async fn a_wake_refused_by_a_busy_worker_is_delivered_once_the_worker_can_take_i
     assert_eq!(prompt_deliverer.requests().len(), 3);
 }
 
+/// A worker's acknowledgement also reads the Events after its cursor. A
+/// message that arrived while the worker was finishing that turn is then read
+/// but not handled, and nothing else wakes the idle worker for it.
+#[tokio::test]
+async fn a_deferred_wake_retries_until_the_worker_acknowledges_its_message() {
+    let (_root, state, _launcher, prompt_deliverer) = fixture_with_delivery(
+        Vec::new(),
+        vec![
+            DeliveryOutcome::Succeed,
+            DeliveryOutcome::Fail("hmux_agent_prompt_runtime_changed", false),
+            DeliveryOutcome::Succeed,
+            DeliveryOutcome::Fail("hmux_agent_prompt_runtime_changed", false),
+        ],
+    )
+    .await;
+    let (context, body) = prepare_exact_session_message(&state).await;
+    let opened_at = crate::now_ms().unwrap();
+    let open = |interaction_id: &'static str| {
+        let state = &state;
+        let mut body = body.clone();
+        body["idempotencyKey"] = json!(format!("open-{interaction_id}"));
+        body["interactionId"] = json!(interaction_id);
+        body["openedAtMs"] = json!(opened_at);
+        async move {
+            invoke_orchestration(
+                state,
+                interaction_id,
+                "interaction.message.open.exact-session",
+                body,
+            )
+            .await["receipt"]["deliveries"][0]
+                .clone()
+        }
+    };
+    let read = |label: &'static str, after: &Value, acknowledge: bool| {
+        let state = &state;
+        let mut request = json!({
+            "schemaVersion": 1,
+            "authority": context["target"]["authority"],
+            "target": context["target"],
+            "participant": context["participant"],
+            "deliveryCapability": context["deliveryCapability"],
+            "endpointFence": context["endpointFence"],
+            "after": after,
+            "limit": 10
+        });
+        if acknowledge {
+            request["acknowledgement"] = json!({
+                "through": after,
+                "idempotencyKey": label,
+                "acknowledgementCapability": context["acknowledgementCapability"]
+            });
+        }
+        async move {
+            invoke_orchestration(state, label, "events.read", request).await["receipt"].clone()
+        }
+    };
+
+    let handled = open("handled-message").await;
+    assert_eq!(handled["wake"]["state"], "triggered");
+    read("worker-turn-reads-inbox", &json!(0), false).await;
+    let arrived = open("arrived-while-turn-ends").await;
+    assert_eq!(arrived["wake"]["state"], "queued_until_next_turn");
+    let acknowledged = read("worker-acknowledges-handled", &handled["eventCursor"], true).await;
+    assert_eq!(
+        acknowledged["deliveries"][0]["receiptId"],
+        arrived["receiptId"]
+    );
+    assert_eq!(
+        acknowledged["deliveries"][0]["state"], "observed",
+        "the acknowledgement read the message that arrived during the turn"
+    );
+
+    let mut attempted = std::collections::HashMap::new();
+    crate::interaction_wake::retry_queued_wakes(&state, opened_at + 60 * 60_000, &mut attempted)
+        .await;
+    let requests = prompt_deliverer.requests();
+    assert_eq!(
+        requests.len(),
+        3,
+        "the idle worker is woken for the message"
+    );
+    assert_eq!(requests[2].handoff, requests[1].handoff);
+    assert_eq!(
+        open("arrived-while-turn-ends").await["wake"]["state"],
+        "triggered"
+    );
+
+    let ignored = open("acknowledged-before-retry").await;
+    assert_eq!(ignored["wake"]["state"], "queued_until_next_turn");
+    read("worker-reads-next", &arrived["eventCursor"], false).await;
+    read("worker-acknowledges-all", &ignored["eventCursor"], true).await;
+    crate::interaction_wake::retry_queued_wakes(
+        &state,
+        opened_at + 2 * 60 * 60_000,
+        &mut attempted,
+    )
+    .await;
+    assert_eq!(
+        prompt_deliverer.requests().len(),
+        4,
+        "an acknowledged message needs no wake"
+    );
+}
+
 /// Claude can continue a conversation under a new id, or start a new one with
 /// /clear, without leaving its exact Session generation. The Host then admits
 /// prompts only for that current conversation, so a wake aimed at the id the

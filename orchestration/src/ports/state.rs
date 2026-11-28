@@ -737,7 +737,11 @@ impl StoreState {
             &request.endpoint_fence,
             request.wake_capability.as_ref(),
         )?;
-        let unread = self.deliveries[delivery_index].receipt.state == DeliveryState::Queued;
+        // A read does not prove the recipient handled the Event: an
+        // acknowledgement also reads the Events after its cursor. Only an
+        // acknowledged delivery no longer needs its wake.
+        let unacknowledged =
+            self.deliveries[delivery_index].receipt.state != DeliveryState::Acknowledged;
         let current = self.deliveries[delivery_index].receipt.wake.as_ref();
         let replacement = match request.transition {
             DeliveryWakeTransition::Request if current.is_none() => Some(
@@ -759,12 +763,13 @@ impl StoreState {
                     },
                 ),
             ),
-            // A queued wake proved that nothing was written, so an unread
-            // delivery may claim it again once its target can take a prompt.
+            // A queued wake proved that nothing was written, so an
+            // unacknowledged delivery may claim it again once its target can
+            // take a prompt.
             DeliveryWakeTransition::Claim
                 if current.is_some_and(|wake| {
                     wake.state == DeliveryWakeState::Pending
-                        || (unread && wake.state == DeliveryWakeState::QueuedUntilNextTurn)
+                        || (unacknowledged && wake.state == DeliveryWakeState::QueuedUntilNextTurn)
                 }) =>
             {
                 Some(DeliveryWakeReceipt {
