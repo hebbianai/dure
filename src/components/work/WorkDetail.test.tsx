@@ -646,6 +646,73 @@ describe("Work detail", () => {
 		expect(mocks.send).not.toHaveBeenCalled();
 	});
 
+	it("shows an ended terminal agent's last conversation once, read only", async () => {
+		// The Host no longer has d's session, and d reads Exited.
+		act(() => {
+			useStore.setState({ sessionAgentRuntimeState: {} });
+			useAgentAttention.setState({
+				displayStates: {
+					...useAgentAttention.getState().displayStates,
+					d: "exited",
+				},
+			});
+		});
+		useWorkViewStore.getState().select("d");
+		const mounted = render(<WorkMain />);
+		const conversation = screen.getByRole("region", {
+			name: t("work.conversation.label"),
+		});
+		expect(
+			await within(conversation).findByText("Fix the flaky test"),
+		).toBeTruthy();
+		expect(mocks.read).toHaveBeenCalledWith("codex", "conversation-d", {
+			includeTools: true,
+		});
+		expect(within(conversation).queryByRole("textbox")).toBeNull();
+		// Nothing moves an ended conversation's cursor: what changes around it
+		// reads nothing new.
+		act(() =>
+			useStore.setState({
+				sessionAgentRuntimeState: {
+					"s-a": { ...idleRuntime, activity: "working" },
+				},
+			}),
+		);
+		mounted.rerender(<WorkMain />);
+		await within(conversation).findByText("Fix the flaky test");
+		expect(mocks.read).toHaveBeenCalledTimes(1);
+		expect(mocks.terminal).not.toHaveBeenCalled();
+	});
+
+	it("says there is no conversation record when an ended agent's history is gone", async () => {
+		mocks.read.mockRejectedValue(
+			new Error("provider conversation was not found"),
+		);
+		act(() => {
+			useStore.setState({ sessionAgentRuntimeState: {} });
+			useAgentAttention.setState({
+				displayStates: {
+					...useAgentAttention.getState().displayStates,
+					d: "exited",
+				},
+			});
+		});
+		useWorkViewStore.getState().select("d");
+		render(<WorkMain />);
+		const conversation = screen.getByRole("region", {
+			name: t("work.conversation.label"),
+		});
+		expect(
+			await within(conversation).findByText(t("work.conversation.none")),
+		).toBeTruthy();
+		expect(within(conversation).queryByRole("alert")).toBeNull();
+		expect(
+			within(conversation).getByRole("button", {
+				name: t("work.detail.openLargeWindow"),
+			}),
+		).toBeTruthy();
+	});
+
 	it("says when there is no conversation record and offers the large window", () => {
 		useWorkViewStore.getState().select("solo");
 		render(<WorkMain />);

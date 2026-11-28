@@ -1,5 +1,8 @@
 import { supportsStructuredChat } from "@/lib/agents/providers";
-import { sameHmuxManagedGeneration } from "@/lib/hmux/identity/hmuxManagedGeneration";
+import {
+	sameExactHmuxManagedSession,
+	sameHmuxManagedGeneration,
+} from "@/lib/hmux/identity/hmuxManagedGeneration";
 import type {
 	AgentRuntimeTransitionProjectionV1,
 	DureAgentRuntimeProjectionContextV1,
@@ -415,11 +418,26 @@ function applyNativeCliProjection(
 	if (!runtimeBinding) {
 		throw new Error("client_agent_runtime_transition_conflict");
 	}
+	// The same exact generation keeps the conversation its Host already
+	// projected; a successor has none until its own Host projects one.
+	const conversationIdentity = exactExistingBinding?.conversationIdentity;
+	const sameGenerationIdentity =
+		conversationIdentity &&
+		sameExactHmuxManagedSession(conversationIdentity, {
+			sessionId: transition.sessionId,
+			workspaceId: transition.workspaceId,
+			providerId: transition.providerId,
+			...transition.stopFence,
+		})
+			? conversationIdentity
+			: undefined;
 	return {
 		...agent,
 		sessionId: transition.sessionId,
 		sessionKind: project.kind === "local" ? "pty" : "ssh",
-		runtimeBinding,
+		runtimeBinding: sameGenerationIdentity
+			? { ...runtimeBinding, conversationIdentity: sameGenerationIdentity }
+			: runtimeBinding,
 		interactionProfile: undefined,
 		executionProfile: transition.executionProfile,
 		started: true,

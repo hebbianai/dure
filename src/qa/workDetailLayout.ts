@@ -8,12 +8,25 @@ import { useStore } from "@/store";
 import type { Agent } from "@/types";
 
 /** What work-detail-layout-home-setup.mjs wrote: the agents, the leads with
- * a few, five and many managed agents, and one that manages nobody. */
+ * a few, five and many managed agents, one that manages nobody, and ended
+ * agents whose provider keeps a short and a long last conversation. */
 interface Fixture {
 	agents: Agent[];
 	leads: [few: string, five: string, many: string];
 	solo: string;
+	ended: [few: string, many: string];
 }
+
+/** What each ended agent's last conversation shows: the short one from its
+ * first message to its last, the long one its last exchange, where a long
+ * history opens (its older rows are not rendered until scrolled to). */
+const ENDED_TEXT = {
+	few: ["Rename the billing feature flags", "After 0.4 ships"],
+	many: [
+		"Write up what changed for the team.",
+		"The note is in docs/testing.md",
+	],
+} as const;
 
 function check(condition: unknown, message: string): asserts condition {
 	if (!condition) throw new Error(message);
@@ -43,8 +56,9 @@ function column(key: string): HTMLElement | null {
 	);
 }
 
-/** What one column shows, measured the way a person sees it. */
-function columnFacts(key: string) {
+/** What one column shows, measured the way a person sees it, with whether
+ * its conversation shows `expected` texts, the last in view. */
+function columnFacts(key: string, expected: readonly string[] = []) {
 	const root = column(key);
 	check(root, `No Work column for ${key}`);
 	const managed = root.querySelector<HTMLElement>('[data-slot="work-managed"]');
@@ -104,7 +118,38 @@ function columnFacts(key: string) {
 		? scroller.getBoundingClientRect().top - scroller.scrollTop
 		: 0;
 	const card = root.querySelector("header");
+	const visible = (text: string) => {
+		const walker = document.createTreeWalker(
+			conversation ?? root,
+			NodeFilter.SHOW_TEXT,
+		);
+		for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+			if (!node.textContent?.includes(text)) continue;
+			const range = document.createRange();
+			range.selectNodeContents(node);
+			const { top, bottom } = range.getBoundingClientRect();
+			const shown = conversation?.getBoundingClientRect();
+			return Boolean(
+				shown && top >= shown.top - 0.5 && bottom <= shown.bottom + 0.5,
+			);
+		}
+		return false;
+	};
 	return {
+		/** Whether the conversation reads its transcript, and whether it
+		 * offers a composer or reports a failure. */
+		transcript: {
+			shows: expected.map(
+				(text) => conversation?.textContent?.includes(text) ?? false,
+			),
+			lastVisible:
+				expected.length > 0 && visible(expected[expected.length - 1]),
+			composer: Boolean(conversation?.querySelector("textarea")),
+			alert: Boolean(conversation?.querySelector('[role="alert"]')),
+			none: Boolean(
+				conversation?.textContent?.includes(t("work.conversation.none")),
+			),
+		},
 		managed: managed
 			? {
 					open: details?.open ?? false,
@@ -146,14 +191,14 @@ function columnFacts(key: string) {
 	};
 }
 
-function facts(key: string, beside: string) {
+function facts(key: string, beside: string, expected?: readonly string[]) {
 	return {
 		dark: document.documentElement.classList.contains("dark"),
 		viewport: { width: innerWidth, height: innerHeight },
 		columns: Array.from(
 			document.querySelectorAll<HTMLElement>("[data-work-column]"),
 		).map((element) => element.dataset.workColumn),
-		shown: columnFacts(key),
+		shown: columnFacts(key, expected),
 		beside: key !== beside && column(beside) ? columnFacts(beside) : undefined,
 		background: getComputedStyle(document.body).backgroundColor,
 	};
@@ -192,7 +237,8 @@ async function captured(home: string, phase: string) {
 
 /** Inside the real App in WKWebView: the Work view's detail for an agent
  * that manages a few, five and many agents and for one that manages nobody,
- * in light and dark, folded, and pinned beside another. */
+ * in light and dark, folded, and pinned beside another, and for ended agents
+ * with a short and a long last conversation. */
 async function run(report: (phase: string, facts?: object) => void) {
 	const home = await homeDir();
 	check(
@@ -212,6 +258,7 @@ async function run(report: (phase: string, facts?: object) => void) {
 	useWindowSidebarStore.getState().setTab("work");
 	const [few, five, many] = fixture.leads;
 	const { solo } = fixture;
+	const [endedFew, endedMany] = fixture.ended;
 	const show = (selected: string, theme: "light" | "dark") => () => {
 		useWorkViewStore.getState().select(selected);
 		useStore.getState().setUiPrefs({ theme });
@@ -235,7 +282,17 @@ async function run(report: (phase: string, facts?: object) => void) {
 		});
 	};
 
-	const phases: [string, string, () => void | Promise<void>][] = [
+	/** An ended agent's phase settles once its last message has rendered. */
+	const ended = (key: string, texts: readonly string[]) => ({
+		expected: texts,
+		settled: () => columnFacts(key, texts).transcript.shows.every(Boolean),
+	});
+	const phases: [
+		string,
+		string,
+		() => void | Promise<void>,
+		ReturnType<typeof ended>?,
+	][] = [
 		["five-light", five, show(five, "light")],
 		["five-dark", five, show(five, "dark")],
 		["few-light", few, show(few, "light")],
@@ -260,6 +317,30 @@ async function run(report: (phase: string, facts?: object) => void) {
 			},
 		],
 		[
+			"ended-few-light",
+			endedFew,
+			show(endedFew, "light"),
+			ended(endedFew, ENDED_TEXT.few),
+		],
+		[
+			"ended-few-dark",
+			endedFew,
+			show(endedFew, "dark"),
+			ended(endedFew, ENDED_TEXT.few),
+		],
+		[
+			"ended-many-light",
+			endedMany,
+			show(endedMany, "light"),
+			ended(endedMany, ENDED_TEXT.many),
+		],
+		[
+			"ended-many-dark",
+			endedMany,
+			show(endedMany, "dark"),
+			ended(endedMany, ENDED_TEXT.many),
+		],
+		[
 			"pinned-light",
 			five,
 			() => {
@@ -269,7 +350,7 @@ async function run(report: (phase: string, facts?: object) => void) {
 			},
 		],
 	];
-	for (const [phase, key, apply] of phases) {
+	for (const [phase, key, apply, transcript] of phases) {
 		await apply();
 		await holdTheme(phase);
 		// The app reads each worker's last prompt from its transcript on its
@@ -279,6 +360,7 @@ async function run(report: (phase: string, facts?: object) => void) {
 			() => {
 				const root = column(key);
 				if (!root) return false;
+				if (transcript && !transcript.settled()) return false;
 				const fold = root.querySelector("details");
 				if (!fold) return true;
 				if (fold.open !== useWorkViewStore.getState().managedOpen) return false;
@@ -294,7 +376,7 @@ async function run(report: (phase: string, facts?: object) => void) {
 			...(phase === "many-folded-dark"
 				? { headerBeforeFold, headerAfterFold: headerBottom(key) }
 				: {}),
-			...facts(key, solo),
+			...facts(key, solo, transcript?.expected),
 		});
 		await captured(home, phase);
 	}

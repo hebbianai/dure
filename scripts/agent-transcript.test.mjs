@@ -4,6 +4,7 @@ import {
   collectAgentTranscript,
   formatAgentTranscript,
   nativeAgentTranscriptSource,
+  recordedAgentTranscriptSource,
 } from "../cli/lib/agent-transcript.mjs";
 
 const binding = {
@@ -114,6 +115,47 @@ describe("agent transcript policy", () => {
         ...agent,
         runtimeBinding: { source: "local" },
       }),
+    ).toEqual({ kind: "identity_unavailable" });
+  });
+
+  it("reads an ended Agent's recorded conversation only where its binding records none", () => {
+    const agent = {
+      id: "agent-ended",
+      provider: "codex",
+      sessionKind: "pty",
+      conversationId: "recorded-thread",
+      runtimeBinding: { source: "local" },
+    };
+    // A live binding without a record has none to show.
+    expect(nativeAgentTranscriptSource(agent)).toEqual({
+      kind: "identity_unavailable",
+    });
+    expect(recordedAgentTranscriptSource(agent)).toEqual({
+      kind: "local",
+      agentId: "agent-ended",
+      provider: "codex",
+      conversationId: "recorded-thread",
+    });
+    // The binding's own record wins, and one for another provider means the
+    // Agent's recorded id may be that provider's: neither falls back.
+    const projected = (providerId) => ({
+      ...agent,
+      runtimeBinding: {
+        source: "local",
+        conversationIdentity: { providerId, conversationId: "host-thread" },
+      },
+    });
+    expect(recordedAgentTranscriptSource(projected("codex"))).toMatchObject({
+      conversationId: "host-thread",
+    });
+    expect(recordedAgentTranscriptSource(projected("claude"))).toEqual({
+      kind: "identity_unavailable",
+    });
+    expect(
+      recordedAgentTranscriptSource({ ...agent, runtimeBinding: { source: "ssh" } }),
+    ).toEqual({ kind: "remote" });
+    expect(
+      recordedAgentTranscriptSource({ ...agent, conversationId: "../escape" }),
     ).toEqual({ kind: "identity_unavailable" });
   });
 
