@@ -8,6 +8,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { observeProcessMembers, processMemberFromObservation } from "../../lib/process-identity.mjs";
 import { managedRuntimeOperation } from "../lib/managed-runtime-rpc.mjs";
+import { until } from "../lib/until.mjs";
 
 function reply(response, model, content, stopReason) {
   response.writeHead(200, { "content-type": "text/event-stream" });
@@ -23,16 +24,6 @@ function reply(response, model, content, stopReason) {
   send("message_delta", { delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: 12 } });
   send("message_stop", {});
   response.end();
-}
-
-async function until(read, message, timeoutMs = 20000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const value = await read();
-    if (value) return value;
-    await delay(50);
-  }
-  throw new Error(message);
 }
 
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
@@ -226,9 +217,11 @@ process.stdin.on("data",bytes=>child.stdin.write(bytes.toString().replaceAll("\\
         && record.at > lastStop.at), "New native UserPromptSubmit not observed");
       assert.equal(newPrompt.code, 0);
       assert.notEqual(newPrompt.body.prompt_id, lastStop.body.prompt_id);
-      const beforeDelivery = snapshot();
-      assert.equal(beforeDelivery.agentRuntimeState.activity, "working");
-      assert.equal(beforeDelivery.agentRuntimeState.background_work, undefined, "A new parent turn kept the ready prompt");
+      // The hook is answered once its report is queued; the Host applies it next.
+      const beforeDelivery = await until(() => {
+        const value = snapshot();
+        return value.agentRuntimeState.activity === "working" && value.agentRuntimeState.background_work === undefined && value;
+      }, "A new parent turn kept the ready prompt");
       const replayEnvironment = { ...environment, ...Object.fromEntries(Object.entries(fence)
         .map(([key, value]) => [`HMUX_${key.toUpperCase()}`, String(value)])) };
       execFileSync("/bin/sh", ["-c", hookCommand], { env: replayEnvironment, cwd: root,

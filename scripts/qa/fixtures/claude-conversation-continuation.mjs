@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { managedRuntimeOperation } from "../lib/managed-runtime-rpc.mjs";
+import { until } from "../lib/until.mjs";
 
 // Native app ingress + installed hook + native Host, with synthetic provider
 // events reproducing Claude's observed continued-in transcript transition.
@@ -43,21 +44,38 @@ export async function runClaudeConversationContinuation({ ownerRoot, discoveryRo
       prompt_id: "fixture-parent-turn", transcript_path: path.join(root, `${conversation}.jsonl`),
       background_tasks: [], session_crons: [] }),
   });
-  assert.equal(report("UserPromptSubmit", original).status, 0);
-  const before = snapshot();
-  assert.equal(before.agentRuntimeState.activity, "working");
-  assert.equal(report("PreToolUse", continued).status, 1, "An unrelated conversation must be refused");
+  // The app answers a hook once its report is queued for the Host, so every
+  // report exits 0 and the Host's decision shows in the session's state. One
+  // session's reports reach the Host in order.
+  const reported = (event, conversation) => {
+    const result = report(event, conversation);
+    assert.equal(result.status, 0, result.stderr);
+  };
+  const reaches = (predicate, message) => until(() => {
+    const value = snapshot();
+    return predicate(value.agentRuntimeState) && value;
+  }, message, { intervalMs: 250 });
+  reported("UserPromptSubmit", original);
+  const before = await reaches(state => state.activity === "working", "The original prompt did not reach the Host");
+  // An unrelated conversation cannot end the turn. A Stop shows its refusal;
+  // a refused PreToolUse changes nothing visible and would coalesce the next.
+  reported("Stop", continued);
+  await delay(2000);
+  const refused = snapshot();
+  assert.equal(refused.agentRuntimeState.activity, "working", "An unrelated conversation must be refused");
+  assert.equal(refused.agentRuntimeState.turn_completed_count, before.agentRuntimeState.turn_completed_count);
   fs.appendFileSync(path.join(root, `${original}.jsonl`), JSON.stringify({ type: "continued-in",
     sessionId: original, continuedInSessionId: continued }) + "\n");
-  const resumed = report("PreToolUse", continued);
-  assert.equal(resumed.status, 0, resumed.stderr);
-  assert.equal(report("Stop", continued).status, 0);
+  reported("PreToolUse", continued);
+  reported("Stop", continued);
+  await reaches(state => state.activity === "waiting", "The continued conversation did not end its turn");
   await delay(2000);
   const after = snapshot();
   assert.equal(after.agentRuntimeState.activity, "waiting");
   assert.equal(after.agentRuntimeState.turn_completed_count, "1");
-  assert.equal(report("UserPromptSubmit", original).status, 1, "The predecessor cannot replace its successor");
-  assert.equal(snapshot().agentRuntimeState.activity, "waiting");
+  reported("UserPromptSubmit", original);
+  await delay(2000);
+  assert.equal(snapshot().agentRuntimeState.activity, "waiting", "The predecessor cannot replace its successor");
   const stopped = await operation("stop", {
     schema: "hmux-managed-stop-v1", schemaVersion: 5, stopId: `${sessionId}-cleanup`, sessionId, workspaceId,
     expectedRunnerPrincipal: session.runner_principal, expectedRunnerInstance: session.runner_instance,

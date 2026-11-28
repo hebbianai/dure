@@ -202,6 +202,34 @@ async fn refused_delivery_and_legacy_read_only_discovery_do_not_suppress_the_nex
 }
 
 #[tokio::test]
+async fn only_a_refusal_the_app_names_is_rejected() {
+    // An unnamed non-success answer (see the 503 above) is not the app's.
+    let root = tempfile::tempdir().unwrap();
+    let refusing = server_replying(
+        ping(),
+        Duration::ZERO,
+        400,
+        Duration::ZERO,
+        r#"{"ok":false,"error":{"code":"invalid_hook_report","message":"fixture"}}"#,
+    )
+    .await;
+    publish(root.path(), refusing.port);
+    assert_eq!(
+        send(root.path(), "Stop", "epoch-1", true).await,
+        Err(HookFailure::Rejected)
+    );
+}
+
+#[tokio::test]
+async fn a_home_without_a_published_app_is_not_found() {
+    let root = tempfile::tempdir().unwrap();
+    assert_eq!(
+        send(root.path(), "Stop", "epoch-1", true).await,
+        Err(HookFailure::AppNotFound)
+    );
+}
+
+#[tokio::test]
 async fn authenticates_the_selected_generation_and_capability_before_posting() {
     for (field, wrong) in [
         ("generation", "stale".into()),
@@ -228,10 +256,10 @@ async fn authenticates_the_selected_generation_and_capability_before_posting() {
 }
 
 #[tokio::test]
-async fn waits_for_the_app_servers_accepted_reply_after_a_slow_host_report() {
-    // The app answers 202 once its Host report has not finished within 1.5 s
-    // (`dispatch_claude_hook_request`). A hook that stops waiting at that same
-    // instant reports a delivered prompt as unavailable.
+async fn waits_for_the_app_servers_accepted_reply_when_it_is_late() {
+    // The app answers 202 once the report is queued for its Host, but on a
+    // loaded machine that answer can still take seconds. A hook that stopped
+    // waiting early reported a delivered prompt as unavailable.
     let server = server_replying(
         ping(),
         Duration::ZERO,

@@ -18,6 +18,7 @@ use tiny_http::{Header, Method, Response};
 mod frontend_receipt;
 mod listener;
 mod managed_claude;
+mod ordered_reports;
 mod replayable_request;
 mod request_broker;
 use frontend_receipt::{
@@ -1061,6 +1062,7 @@ pub fn start(
         eprintln!("could not start the Dure CLI control thread: {error}");
         return;
     }
+    let claude_reports = claude_hook_report_queue(&app);
     std::thread::spawn(move || {
         // Report 라우트 rate limit — 폭주한 훅이 서버 스레드와 웹뷰 이벤트를
         // 도배하지 못하게 Rust 계층에서 자른다. 한도는 소켓·이벤트 채널
@@ -1198,7 +1200,7 @@ pub fn start(
             }
 
             if method == Method::Post && url == "/hooks/claude" {
-                serve_claude_hook(req, &app);
+                serve_claude_hook(req, &claude_reports);
                 continue;
             }
 
@@ -1218,17 +1220,22 @@ pub fn start(
     });
 }
 
+type ClaudeHookReportQueue =
+    ordered_reports::OrderedReports<managed_claude::HostSession, managed_claude::ClaudeHookReport>;
+
+fn claude_hook_report_queue(app: &AppHandle) -> Arc<ClaudeHookReportQueue> {
+    let app = app.clone();
+    ordered_reports::OrderedReports::new(
+        managed_claude::ClaudeHookReport::host_session,
+        move |report| apply_claude_hook_report(&app, report),
+    )
+}
+
 /// Managed Claude command hook. Only a bridge that confirmed the exact
-/// channel and generation with `/ping` arrives here, and the backend applies
-/// the report to the Host without the WebView; only the prompt text
-/// projection reaches the frontend, best effort.
-///
-/// The Host report and its bounded answer wait run on a blocking worker. On
-/// the accept loop each report held every later report and liveness check for
-/// up to that 1.5 s wait, so concurrent agents overran their hooks' budget. A
-/// report that missed the wait already went on after the 202 answer, so
-/// reports reached the Host concurrently before this change too.
-fn serve_claude_hook(mut req: tiny_http::Request, app: &AppHandle) {
+/// channel and generation with `/ping` arrives here. A report the app can
+/// read and normalize is answered `202 accepted` as soon as it is queued for
+/// the Host; a malformed one is still refused here, where the hook sees it.
+fn serve_claude_hook(mut req: tiny_http::Request, reports: &Arc<ClaudeHookReportQueue>) {
     let body = match read_json_body(&mut req) {
         Ok(body) => body,
         Err(error) => {
@@ -1259,22 +1266,47 @@ fn serve_claude_hook(mut req: tiny_http::Request, app: &AppHandle) {
             return;
         }
     };
-    let app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let presentation = report.presentation;
-        let (status, value) = dispatch_claude_hook_request(
-            &app,
-            report.host_request,
-            report.transcript_path,
-            report.session_start,
-        );
-        if (200..300).contains(&status) {
-            emit_claude_activity_projection(&app, &presentation);
-            let _ = req.respond(json_response(status, serde_json::json!({})));
-        } else {
-            let _ = req.respond(json_response(status, value));
+    let response = match reports.push(report) {
+        Ok(()) => json_response(202, serde_json::json!({ "ok": true, "accepted": true })),
+        Err(refusal) => json_response(
+            503,
+            serde_json::json!({
+                "ok": false,
+                "error": {
+                    "code": refusal.code(),
+                    "message": "the report could not be queued for its Host"
+                }
+            }),
+        ),
+    };
+    let _ = req.respond(response);
+}
+
+/// The backend applies the report to the Host without the WebView; only the
+/// prompt text projection reaches the frontend, best effort. The hook has
+/// already been answered, so a refusal is recorded here.
+fn apply_claude_hook_report(app: &AppHandle, report: managed_claude::ClaudeHookReport) {
+    let hmux = {
+        let state = app.state::<crate::AppState>();
+        Arc::clone(&state.hmux)
+    };
+    match hmux.report_claude_agent_state(
+        app,
+        report.host_request,
+        report.transcript_path.as_deref(),
+        report.session_start,
+    ) {
+        Ok(_receipt) => {
+            // dev 관측성 — 훅 ingress가 Host까지 닿았는지 콘솔로 확인 가능.
+            #[cfg(debug_assertions)]
+            eprintln!("managed Claude hook applied: outcome={}", _receipt.outcome);
+            emit_claude_activity_projection(app, &report.presentation);
         }
-    });
+        Err(failure) => eprintln!(
+            "managed Claude hook report was not applied: {}: {}",
+            failure.code, failure.message
+        ),
+    }
 }
 
 /// Delegates one route to the frontend, where DockView and the application
@@ -1770,47 +1802,6 @@ fn emit_claude_activity_projection(app: &AppHandle, presentation: &Value) {
             "params": presentation,
         }),
     );
-}
-
-fn dispatch_claude_hook_request(
-    app: &AppHandle,
-    request: crate::hmux::AgentStateReportRequest,
-    transcript_path: Option<std::path::PathBuf>,
-    session_start: Option<crate::hmux::ClaudeSessionStart>,
-) -> (u16, Value) {
-    let hmux = {
-        let state = app.state::<crate::AppState>();
-        Arc::clone(&state.hmux)
-    };
-    let (sender, receiver) = mpsc::sync_channel(1);
-    let dispatch_app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let _ = sender.send(hmux.report_claude_agent_state(
-            &dispatch_app,
-            request,
-            transcript_path.as_deref(),
-            session_start,
-        ));
-    });
-    match receiver.recv_timeout(Duration::from_millis(1500)) {
-        Ok(Ok(receipt)) => {
-            // dev 관측성 — 훅 ingress가 Host까지 닿았는지 콘솔로 확인 가능.
-            #[cfg(debug_assertions)]
-            eprintln!("managed Claude hook applied: outcome={}", receipt.outcome);
-            (
-                200,
-                serde_json::json!({ "ok": true, "outcome": receipt.outcome }),
-            )
-        }
-        Ok(Err(failure)) => (
-            502,
-            serde_json::json!({
-                "ok": false,
-                "error": { "code": failure.code, "message": failure.message }
-            }),
-        ),
-        Err(_) => (202, serde_json::json!({ "ok": true, "accepted": true })),
-    }
 }
 
 fn json_response(status: u16, value: Value) -> Response<std::io::Cursor<Vec<u8>>> {
@@ -2708,6 +2699,72 @@ mod tests {
         assert_eq!(
             found, declared,
             "route-like string literals in server.rs must match the declared allowlist — classify new routes in FRONTEND_ROUTES or required_scope, then add them here"
+        );
+    }
+
+    /// A slow Host never spends the hook's budget: the report is answered
+    /// while the Host still holds it, and it reaches the Host afterwards.
+    #[test]
+    fn a_claude_hook_report_is_answered_once_queued_and_reaches_the_host_later() {
+        use std::sync::Mutex;
+
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        let (release, released) = mpsc::channel::<()>();
+        let (applied, reached_host) = mpsc::channel();
+        let (released, applied) = (Mutex::new(released), Mutex::new(applied));
+        let reports = ordered_reports::OrderedReports::new(
+            managed_claude::ClaudeHookReport::host_session,
+            move |report: managed_claude::ClaudeHookReport| {
+                released.lock().unwrap().recv().unwrap();
+                let event = report.presentation["event"].as_str().map(str::to_owned);
+                applied.lock().unwrap().send(event).unwrap();
+            },
+        );
+        let serving = std::thread::spawn(move || {
+            serve_claude_hook(server.recv().unwrap(), &reports);
+            reports
+        });
+
+        let body = r#"{"hook_event_name":"Stop","session_id":"fixture-conversation","prompt_id":"fixture-prompt-0001","background_tasks":[],"session_crons":[]}"#;
+        let fence = [
+            ("Session-Id", "fixture-session"),
+            ("Workspace-Id", "fixture-workspace"),
+            ("Runner-Principal", "fixture-principal"),
+            ("Runner-Instance", "fixture-runner"),
+            ("Channel-Epoch", "1"),
+            ("Host-Instance-Id", "fixture-host"),
+            ("Terminal-Epoch", "fixture-terminal"),
+            ("Source-Sequence", "42"),
+        ]
+        .iter()
+        .map(|(name, value)| format!("X-Hebbian-Hmux-{name}: {value}\r\n"))
+        .collect::<String>();
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        write!(
+            stream,
+            "POST /hooks/claude HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n{fence}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        let mut answer = String::new();
+        stream.read_to_string(&mut answer).unwrap();
+        assert!(answer.starts_with("HTTP/1.1 202"), "{answer}");
+        let (_, answered) = answer.split_once("\r\n\r\n").unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(answered).unwrap(),
+            serde_json::json!({ "ok": true, "accepted": true })
+        );
+        let _reports = serving.join().unwrap();
+        assert!(reached_host.try_recv().is_err(), "the Host still holds it");
+
+        release.send(()).unwrap();
+        assert_eq!(
+            reached_host.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Some("Stop".to_owned())
         );
     }
 

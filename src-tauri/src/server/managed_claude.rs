@@ -12,6 +12,18 @@ pub(super) struct ClaudeHookReport {
     pub(super) session_start: Option<crate::hmux::ClaudeSessionStart>,
 }
 
+/// The workspace and session a report's Host serves.
+pub(super) type HostSession = (Option<String>, String);
+
+impl ClaudeHookReport {
+    pub(super) fn host_session(&self) -> HostSession {
+        (
+            self.host_request.workspace_id.clone(),
+            self.host_request.session_id.clone(),
+        )
+    }
+}
+
 /// The Claude process that ran the hook, as the app-owned hook companion
 /// names it. Older companions and the script hook name none.
 fn hook_parent_process(header: Option<String>) -> Option<u32> {

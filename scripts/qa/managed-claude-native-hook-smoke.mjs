@@ -138,7 +138,8 @@ export async function runNativeHookProbe(root, runtime, claude, publishedSetting
     console.log(JSON.stringify(receipt));
   }
   // Keep stdin open: the invocation must finish at its own deadline, including
-  // runtime teardown, without relying on the supervisor to kill it.
+  // runtime teardown, without relying on the supervisor to kill it. Input that
+  // never arrives is a failed hook; only a late app answer degrades.
   const scope = path.join(root, "held-stdin");
   await prepare(scope);
   const start = performance.now();
@@ -151,7 +152,7 @@ export async function runNativeHookProbe(root, runtime, claude, publishedSetting
   const elapsedMs = Math.round(performance.now() - start);
   assert.equal(code, 1);
   assert.equal(signal, null);
-  assert(error.includes("managed_hook_report_timeout"));
+  assert(error.includes("managed_hook_input_unavailable"));
   assert(elapsedMs < 4_000, "Held stdin prevented bounded runtime teardown");
   receipts.push({ heldStdin: true, code, signal, elapsedMs });
   await writeFile(path.join(root, "receipt.json"), JSON.stringify(receipts, null, 2), { mode: 0o600 });
