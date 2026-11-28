@@ -23,7 +23,7 @@ const row = agentRowModel({
 
 describe("AgentRow", () => {
 	it("reads the same in every variant: status, place, path, team and activity", () => {
-		for (const variant of ["list", "card"] as const) {
+		for (const variant of ["list", "compact", "card"] as const) {
 			render(<AgentRow row={row} variant={variant} />);
 			const button = screen.getByRole("button");
 			expect(button.getAttribute("data-variant")).toBe(variant);

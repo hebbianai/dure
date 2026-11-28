@@ -72,12 +72,24 @@ export function agentRowManagedText(managed: AgentRowManagedSummary): string {
 		.join(" · ");
 }
 
-export type AgentRowVariant = "list" | "card" | "line";
+export type AgentRowVariant = "list" | "compact" | "card" | "line";
+
+/** The variants that lay a row out over several lines. */
+export type AgentListRowVariant = Exclude<AgentRowVariant, "line">;
+
+/** How many lines the activity takes in each variant that shows it. */
+const ACTIVITY_CLAMP: Record<AgentListRowVariant, string> = {
+	list: "line-clamp-2",
+	compact: "line-clamp-1",
+	card: "line-clamp-3",
+};
 
 /** One agent, the same way in every list. `list` is a row in a menu or side
- * list, `card` stands in for a pane too small for its terminal, and `line`
- * is a single line inside another agent's conversation. Selecting is the
- * caller's: the row itself mounts nothing and acknowledges nothing. */
+ * list, `compact` is a list row that shares its column with more below it
+ * (a Work detail's managed agents), so its activity keeps to one line, `card`
+ * stands in for a pane too small for its terminal, and `line` is a single
+ * line inside another agent's conversation. Selecting is the caller's: the
+ * row itself mounts nothing and acknowledges nothing. */
 export function AgentRow({
 	row,
 	variant = "list",
@@ -189,7 +201,7 @@ export function AgentRow({
 					<span
 						className={cn(
 							"text-meta leading-4 [overflow-wrap:anywhere] text-muted-foreground",
-							card ? "line-clamp-3" : "line-clamp-2",
+							ACTIVITY_CLAMP[variant],
 						)}
 					>
 						{activity}

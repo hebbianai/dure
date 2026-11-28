@@ -27,6 +27,7 @@ export interface WorkViewStore extends WorkViewState {
 	setDepth: (depth: WorkDepth) => void;
 	setGrouping: (grouping: WorkGrouping) => void;
 	setResultsOpen: (open: boolean) => void;
+	setManagedOpen: (open: boolean) => void;
 	pin: (agentId: string) => void;
 	unpin: (agentId: string) => void;
 	movePin: (agentId: string, offset: -1 | 1) => void;
@@ -42,6 +43,7 @@ export function createWorkViewStore(
 		setDepth: (depth) => set({ depth }),
 		setGrouping: (grouping) => set({ grouping }),
 		setResultsOpen: (resultsOpen) => set({ resultsOpen }),
+		setManagedOpen: (managedOpen) => set({ managedOpen }),
 		pin: (agentId) =>
 			set((current) => ({ pinned: withPin(current.pinned, agentId) })),
 		unpin: (agentId) =>
@@ -58,6 +60,7 @@ export function createWorkViewStore(
 				current.depth === previous.depth &&
 				current.grouping === previous.grouping &&
 				current.resultsOpen === previous.resultsOpen &&
+				current.managedOpen === previous.managedOpen &&
 				current.pinned === previous.pinned
 			) {
 				return;
@@ -67,6 +70,7 @@ export function createWorkViewStore(
 				depth: current.depth,
 				grouping: current.grouping,
 				resultsOpen: current.resultsOpen,
+				managedOpen: current.managedOpen,
 				pinned: current.pinned,
 			});
 		});

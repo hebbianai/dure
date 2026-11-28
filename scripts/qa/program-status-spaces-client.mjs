@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
-import { findQaLogReceipt, resolveQaLogPath } from "./lib/qa-log-receipt.mjs";
+import { appWindowId, captureAppWindow } from "./lib/app-window-capture.mjs";
+import { waitForQaLogReceipt } from "./lib/qa-log-receipt.mjs";
 
 const proof = process.env.DURE_QA_PROGRAM_STATUS_PROOF;
 const evidence = process.env.DURE_QA_EVIDENCE_DIR;
@@ -12,45 +11,16 @@ const home = process.env.HOME;
 assert.ok(proof && evidence && stateRoot && home, "Run through program-status-spaces-smoke.sh");
 assert.ok(home.startsWith(`${stateRoot}/`), "QA HOME must stay inside its state root");
 
-async function receipt(phase, timeoutMs = 240_000) {
-  const logPath = resolveQaLogPath();
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    let log = "";
-    try {
-      log = readFileSync(logPath, "utf8");
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
-    const failed = findQaLogReceipt(log, "program-status-spaces-failed", proof);
-    if (failed) throw new Error(`In-app probe failed: ${JSON.stringify(failed)}`);
-    const found = findQaLogReceipt(log, `program-status-spaces-${phase}`, proof);
-    if (found) return found;
-    await delay(100);
-  }
-  throw new Error(`No ${phase} receipt for ${proof}`);
+function receipt(phase, timeoutMs = 240_000) {
+  return waitForQaLogReceipt(`program-status-spaces-${phase}`, proof, {
+    timeoutMs, failedName: "program-status-spaces-failed",
+  });
 }
 
-/** Pixels are supporting evidence; the DOM receipts are the proof. Capturing by
- * window id never raises the app, so the background layer's focus guard holds. */
+/** Pixels are supporting evidence; the DOM receipts are the proof. */
 function capture(name) {
   try {
-    const { processId } = JSON.parse(readFileSync(process.env.DURE_QA_SERVER_DESCRIPTOR, "utf8"));
-    const source = join(stateRoot, "window-id.swift");
-    writeFileSync(source, `import CoreGraphics
-let pid = Int(CommandLine.arguments[1])!
-let windows = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as! [[String: Any]]
-let owned = windows.filter { ($0[kCGWindowOwnerPID as String] as? Int) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }
-let area = { (window: [String: Any]) -> Double in
-  let bounds = window[kCGWindowBounds as String] as! [String: Double]
-  return bounds["Width"]! * bounds["Height"]!
-}
-print(owned.max { area($0) < area($1) }![kCGWindowNumber as String]!)
-`);
-    const windowId = execFileSync("/usr/bin/swift", [source, String(processId)], {
-      encoding: "utf8", timeout: 90_000,
-    }).trim();
-    execFileSync("/usr/sbin/screencapture", ["-x", "-o", "-l", windowId, join(evidence, name)]);
+    captureAppWindow(appWindowId(), join(evidence, name));
     return { name, captured: true };
   } catch (error) {
     return { name, captured: false, error: String(error.message ?? error) };

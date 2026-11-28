@@ -1,9 +1,7 @@
 import { useMemo, useState } from "react";
-import { AgentRow, agentRowManagedText } from "@/components/agents/AgentRow";
-import {
-	useAgentManagedSummary,
-	useAgentRelations,
-} from "@/components/agents/useAgentRelations";
+import { AgentManagedFold } from "@/components/agents/AgentManagedFold";
+import { AgentRow } from "@/components/agents/AgentRow";
+import { useAgentRelations } from "@/components/agents/useAgentRelations";
 import {
 	type AgentRowPlacement,
 	useAgentRowFacts,
@@ -12,7 +10,6 @@ import {
 	useAgentRevealSpaceNames,
 	useNextUp,
 } from "@/components/agents/useNextUp";
-import { Disclosure } from "@/components/ui/disclosure";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
 import { agentRowModel } from "@/lib/agents/agentRowModel";
 import {
@@ -22,8 +19,6 @@ import {
 } from "@/lib/agents/nextUp";
 import { revealAgent } from "@/lib/agents/nextUpNavigation";
 import { agentTeamMembers } from "@/lib/agents/relations/agentTeam";
-import { t } from "@/lib/i18n";
-import { cn } from "@/lib/utils";
 import { isMainWindow } from "@/lib/workspace/window/windows";
 
 /** What an agent manages, folded to one line in its conversation. Unfolded,
@@ -38,39 +33,17 @@ export function AgentTeamLine({ agentId }: { agentId: string }) {
 }
 
 function MainWindowTeamLine({ agentId }: { agentId: string }) {
-	const managed = useAgentManagedSummary(agentId);
 	// The fold is this view's own; nothing is persisted or acknowledged.
 	const [open, setOpen] = useState(false);
-	if (!managed) return null;
 	return (
-		<section
-			aria-label={t("agents.team.label")}
-			data-slot="agent-team-line"
-			className="shrink-0 border-t border-glass-hairline px-3 py-1.5 text-muted-foreground"
+		<AgentManagedFold
+			agentId={agentId}
+			slot="agent-team-line"
+			open={open}
+			onOpenChange={setOpen}
 		>
-			<Disclosure
-				onToggle={(event) => setOpen(event.currentTarget.open)}
-				label={
-					<span className="inline-flex items-center gap-2 font-normal text-muted-foreground">
-						<span
-							aria-hidden
-							className={cn(
-								"size-1.5 shrink-0 rounded-full",
-								managed.needsPerson > 0
-									? "bg-status-blocked"
-									: managed.working > 0
-										? "bg-status-warn"
-										: "bg-muted-foreground/60",
-							)}
-						/>
-						{agentRowManagedText(managed)}
-					</span>
-				}
-				bodyClassName="max-h-48 overflow-y-auto"
-			>
-				{open && <AgentTeamRows agentId={agentId} />}
-			</Disclosure>
-		</section>
+			<AgentTeamRows agentId={agentId} />
+		</AgentManagedFold>
 	);
 }
 

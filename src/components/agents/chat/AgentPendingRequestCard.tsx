@@ -335,7 +335,7 @@ export function AgentPendingRequestCard({
 				className="mt-3"
 				label={t("agents.chat.requestDetails")}
 				bodyClassName="mt-2"
-				onToggle={(event) => setDetailsExpanded(event.currentTarget.open)}
+				onOpenChange={setDetailsExpanded}
 			>
 				{detailsExpanded && (
 					<CodeBlock maxHeightClass="max-h-56">

@@ -20,6 +20,19 @@ export type AgentRowStatus =
  * relation owner counts them. */
 export type AgentRowManagedSummary = AgentRelationSummary;
 
+/** The most urgent of the agents a row's agent manages, for the dot beside
+ * their summary: someone who needs a person, then someone working, otherwise
+ * quiet. */
+export type AgentRowManagedUrgency = "needs_person" | "working" | "quiet";
+
+export function agentRowManagedUrgency(
+	managed: AgentRowManagedSummary,
+): AgentRowManagedUrgency {
+	if (managed.needsPerson > 0) return "needs_person";
+	if (managed.working > 0) return "working";
+	return "quiet";
+}
+
 /** The row's one-line activity. It comes only from structured facts: a
  * pending approval the Host projected, a program's own attributed report,
  * or the last prompt from hooks or the Chat timeline. Never terminal text. */

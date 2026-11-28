@@ -141,6 +141,11 @@ if (import.meta.env.DEV) {
 			probe.runProgramStatusSpacesProbe(),
 		);
 	}
+	if (qaParams.has("qaWorkDetailLayout")) {
+		void import("./qa/workDetailLayout").then((probe) =>
+			probe.runWorkDetailLayoutProbe(),
+		);
+	}
 	if (qaParams.has("qaFeedbackPanes")) {
 		void import("./qa/feedbackPanes").then(async (probe) => {
 			if (!(await cliServer))

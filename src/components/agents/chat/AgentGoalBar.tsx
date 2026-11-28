@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { PaneLine } from "@/components/ui/pane-line";
 import { Textarea } from "@/components/ui/textarea";
 import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
 import type { AgentChatSessionView } from "@/lib/agents/chat/agentChatSessionView";
@@ -28,10 +29,7 @@ export function AgentGoalBar({
 		if (await session.putGoal(update)) setDraft(undefined);
 	}
 	return (
-		<section
-			aria-label={t("agents.goal.label")}
-			className="shrink-0 border-t border-glass-hairline px-3 py-2 text-xs"
-		>
+		<PaneLine aria-label={t("agents.goal.label")}>
 			<div className="flex items-center gap-2">
 				{goal ? (
 					<>
@@ -151,6 +149,6 @@ export function AgentGoalBar({
 					{session.goalError}
 				</p>
 			)}
-		</section>
+		</PaneLine>
 	);
 }

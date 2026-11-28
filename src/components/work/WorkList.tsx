@@ -1,5 +1,8 @@
 import { type KeyboardEvent, type ReactNode, useId, useRef } from "react";
-import { AgentRow } from "@/components/agents/AgentRow";
+import {
+	type AgentListRowVariant,
+	AgentRow,
+} from "@/components/agents/AgentRow";
 import { useAgentRowFacts } from "@/components/agents/useAgentRowFacts";
 import { useAgentAttentionPlacement } from "@/components/agents/useNextUp";
 import { SectionHeaderRow } from "@/components/sidebar/SidebarItems";
@@ -126,9 +129,7 @@ export function WorkList({ className }: { className?: string }) {
 								className="px-2 pt-2"
 								bodyClassName="pl-0"
 								open={resultsOpen}
-								onToggle={(event) =>
-									setResultsOpen(event.currentTarget.open)
-								}
+								onOpenChange={setResultsOpen}
 								label={`${t("work.list.resultsToday")} · ${list.resultsToday.length}`}
 							>
 								<ul>
@@ -263,7 +264,7 @@ export function WorkAgentRow({
 	spaceName: string | undefined;
 	dayStart: number;
 	selected?: boolean;
-	variant?: "list" | "card";
+	variant?: AgentListRowVariant;
 	onSelect?: (key: string) => void;
 }) {
 	const placement = useAgentAttentionPlacement(agentId, dayStart);
@@ -293,7 +294,7 @@ export function WorkShellRow({
 }: {
 	shell: WorkShellEntry;
 	selected?: boolean;
-	variant?: "list" | "card";
+	variant?: AgentListRowVariant;
 	onSelect?: (key: string) => void;
 }) {
 	return (
