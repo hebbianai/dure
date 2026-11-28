@@ -2,6 +2,7 @@ import type { AgentChatDraftIdentity } from "@/lib/agents/chat/agentChatDraftSto
 import type { AgentChatActiveTurnV1 } from "@/lib/agents/chat/agentChatProjection";
 import type {
 	AgentGoalUpdateV1,
+	AgentProviderRuntimeFenceV1,
 	AgentQueuedInputV1,
 	AgentTimelinePageV1,
 } from "@/lib/agents/chat/agentConversationContract";
@@ -9,16 +10,22 @@ import type { ProviderConversationActivity } from "@/lib/ipc/conversations";
 
 type AgentChatSessionPhase = "detached" | "connecting" | "ready" | "error";
 
+/** A refusal from the backend, as it said it: its code and its message. */
+export interface AgentChatRefusal {
+	readonly code: string;
+	readonly message: string;
+}
+
 /** The person's Resume of the provider behind an exited conversation, for
  * the exit it answers (`ObservedProviderExit.itemId`). A later exit is a new
- * episode that this one says nothing about. */
-export interface AgentChatProviderResume {
-	readonly exitItemId: string;
-	/** `not_restarted`: the backend answered, and the exit is still current. */
-	readonly state: "resuming" | "not_restarted" | "failed";
-	/** The backend's refusal token, when it refused. */
-	readonly failure?: string;
-}
+ * episode that this one says nothing about. The backend's receipt decides
+ * the outcome: `relaunched` names the runtime it started, `not_restarted`
+ * means it kept the same one, and `failed` carries its refusal. */
+export type AgentChatProviderResume = { readonly exitItemId: string } & (
+	| { readonly state: "resuming" | "not_restarted" }
+	| { readonly state: "relaunched"; readonly runtime: AgentProviderRuntimeFenceV1 }
+	| { readonly state: "failed"; readonly refusal: AgentChatRefusal }
+);
 
 export interface AgentChatSessionSnapshot {
 	phase: AgentChatSessionPhase;

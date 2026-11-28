@@ -4,7 +4,7 @@ import {
 } from "./agentChatActionRequests";
 import { agentChatErrorMessage } from "./agentChatConnectionError";
 import type { AgentChatSessionSnapshot } from "./agentChatSessionView";
-import { observedProviderExit } from "./observedRuntimeFacts";
+import { currentProviderExit } from "./agentChatRuntimeRecovery";
 import {
 	type AgentChatDeliverySubmission,
 	type AgentChatSubmission,
@@ -86,11 +86,11 @@ export class AgentChatSubmissionController {
 		);
 	}
 
-	/** Input for a provider the conversation shows has exited cannot be
-	 * delivered or confirmed, so it is refused before any intent exists; the
-	 * caller keeps its text. */
+	/** Input for a provider the conversation shows has exited, and no Resume
+	 * has relaunched, cannot be delivered or confirmed, so it is refused
+	 * before any intent exists; the caller keeps its text. */
 	private refuseWhileProviderExited(): void {
-		if (observedProviderExit(this.snapshot.page))
+		if (currentProviderExit(this.snapshot))
 			throw new Error("agent_chat_provider_exited");
 	}
 

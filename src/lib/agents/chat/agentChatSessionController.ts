@@ -1,8 +1,8 @@
 import { AgentChatSubmissionController } from "./agentChatSubmissionController";
 import {
+	type AgentChatSessionPort,
 	recoverConversationRuntime,
 	resumeExitedProvider,
-	routeChanged,
 	runtimeUnavailable,
 } from "./agentChatRuntimeRecovery";
 import {
@@ -39,12 +39,15 @@ import type {
 	AgentConversationSubscriptionV1,
 	DureAgentConversationClient,
 } from "@/lib/ipc/dureAgentConversation";
-import { DureBackendRequestError } from "@/lib/ipc/dureBackend";
-import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
 import {
-	type AgentChatDeliverySubmission,
-	type AgentChatSubmission,
-	type AgentChatSubmissionStore,
+	dureBackendAuthorityChanged,
+	dureBackendRefused,
+} from "@/lib/ipc/dureBackend";
+import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
+import type {
+	AgentChatDeliverySubmission,
+	AgentChatSubmission,
+	AgentChatSubmissionStore,
 } from "./agentChatSubmission";
 import { agentChatSubmissionStore } from "./agentChatSubmissionStore";
 
@@ -110,6 +113,7 @@ export class AgentChatSessionController {
 	private loadingOlder?: Promise<void>;
 	private retainExpandedHistory = false;
 	private readonly submissions: AgentChatSubmissionController;
+	private readonly port: AgentChatSessionPort;
 	private get pendingSubmissions(): AgentChatSubmission[] {
 		return this.submissions.pendingSubmissions;
 	}
@@ -151,6 +155,13 @@ export class AgentChatSessionController {
 			reconnectAfterActionFailure: (error) =>
 				this.reconnectAfterActionFailure(error),
 		});
+		this.port = {
+			client: this.client,
+			snapshot: this.getSnapshot,
+			update: (patch) => this.update(patch),
+			authority: () => this.requireConversationAuthority(),
+			reobserve: () => this.connect(false),
+		};
 	}
 
 	async putGoal(update: AgentGoalUpdateV1): Promise<boolean> {
@@ -176,11 +187,9 @@ export class AgentChatSessionController {
 		} catch (error) {
 			if (this.active && attempt === this.connectionAttempt) {
 				this.update({
-					goalError:
-						error instanceof DureBackendRequestError &&
-						error.code === "agent_goal_conflict"
-							? t("agents.goal.conflict")
-							: agentChatErrorMessage(error),
+					goalError: dureBackendRefused(error, "agent_goal_conflict")
+						? t("agents.goal.conflict")
+						: agentChatErrorMessage(error),
 				});
 				// Reobserve the actual result/conflict; never repeat the write.
 				await this.refresh();
@@ -339,13 +348,7 @@ export class AgentChatSessionController {
 	}
 
 	resumeProvider(): Promise<void> {
-		return resumeExitedProvider({
-			client: this.client,
-			snapshot: this.getSnapshot,
-			update: (patch) => this.update(patch),
-			authority: () => this.requireConversationAuthority(),
-			reobserve: () => this.connect(false),
-		});
+		return resumeExitedProvider(this.port);
 	}
 
 	/** Queue only an explicit unsupported-channel refusal. Other errors may
@@ -366,10 +369,7 @@ export class AgentChatSessionController {
 			void this.refresh();
 			return "steered";
 		} catch (error) {
-			if (
-				error instanceof DureBackendRequestError &&
-				error.code === "agent_conversation_steer_unsupported"
-			) {
+			if (dureBackendRefused(error, "agent_conversation_steer_unsupported")) {
 				this.steerUnsupported = true;
 				await this.queueMessage(parsedInput);
 				return "queued";
@@ -537,7 +537,7 @@ export class AgentChatSessionController {
 	private reconnectAfterActionFailure(error: unknown): void {
 		if (runtimeUnavailable(error))
 			void this.disconnectAndReconnect(error, "recover_runtime");
-		else if (routeChanged(error))
+		else if (dureBackendAuthorityChanged(error))
 			void this.disconnectAndReconnect(error, "reobserve");
 	}
 

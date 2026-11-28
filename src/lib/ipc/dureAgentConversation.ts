@@ -22,6 +22,7 @@ import {
 	parseAgentStartTurnIntentV1,
 	parseAgentTimelineCursorV1,
 	parseAgentTimelineReadV1,
+	sameAgentRuntimeFence,
 } from "@/lib/agents/chat/agentConversationContract";
 import { t } from "@/lib/i18n";
 import type { ProviderConversationActivity } from "@/lib/ipc/conversations";
@@ -269,16 +270,6 @@ function parseProviderHistoryPage(
 	return activity as unknown as ProviderConversationActivity;
 }
 
-function sameRuntime(
-	left: AgentProviderRuntimeFenceV1 | undefined,
-	right: AgentProviderRuntimeFenceV1,
-): boolean {
-	return (
-		left?.runtimeGeneration === right.runtimeGeneration &&
-		left.providerEpoch === right.providerEpoch
-	);
-}
-
 function parseSubscriptionEvent(
 	value: unknown,
 	expected: {
@@ -438,7 +429,7 @@ function assertMutationReceipt(
 		!intent ||
 		intent.interactionSessionId !== expected.interactionSessionId ||
 		intent.clientMessageId !== expected.clientMessageId ||
-		!sameRuntime(runtime, expected.runtime)
+		!sameAgentRuntimeFence(runtime, expected.runtime)
 	) {
 		throw contractError("agent_conversation_receipt_invalid");
 	}
@@ -647,7 +638,7 @@ export function createDureAgentConversationClient(options?: {
 				!receipt ||
 				receipt.intent.interactionSessionId !== turn.interactionSessionId ||
 				receipt.intent.clientMessageId !== turn.clientMessageId ||
-				!sameRuntime(receipt.intent.runtime, turn.runtime) ||
+				!sameAgentRuntimeFence(receipt.intent.runtime, turn.runtime) ||
 				receipt.intent.turnId !== turn.turnId ||
 				receipt.intent.input !== turn.input ||
 				receipt.intent.requestedAtMs !== turn.requestedAtMs

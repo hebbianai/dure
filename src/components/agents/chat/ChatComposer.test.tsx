@@ -11,10 +11,7 @@ import { useSyncExternalStore } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "@/components/agents/chat/ChatComposer";
 import { AgentChatSessionController } from "@/lib/agents/chat/agentChatSessionController";
-import {
-	type AgentChatSubmission,
-	agentChatSubmissionKey,
-} from "@/lib/agents/chat/agentChatSubmission";
+import type { AgentChatSubmission } from "@/lib/agents/chat/agentChatSubmission";
 import type { AgentChatSessionView } from "@/lib/agents/chat/agentChatSessionView";
 import type {
 	AgentTimelinePageV1,
@@ -23,16 +20,17 @@ import type {
 import { chatInputLatency } from "@/lib/agents/chat/chatInputLatency";
 import { continuationTimeLabel } from "@/lib/agents/chat/turnFailureReason";
 import { currentLang, t } from "@/lib/i18n";
-import type {
-	AgentConversationInvalidationV1,
-	DureAgentConversationClient,
-} from "@/lib/ipc/dureAgentConversation";
+import type { AgentConversationInvalidationV1 } from "@/lib/ipc/dureAgentConversation";
 import { DureBackendRequestError } from "@/lib/ipc/dureBackend";
 import type { DureAgentRuntimeLaunchSelectionV1 } from "@/lib/ipc/dureAgentRuntime";
 import { getForegroundInteractionBudget } from "@/lib/scheduling/foregroundInteractionBudget";
 import { getWorkspacePerformanceSnapshot } from "@/lib/workspace/performance/workspacePerformance";
 import { useStore } from "@/store";
 import { chatComposerSessionFixture as session } from "@/test/chatComposerSessionFixture";
+import {
+	conversationClientFixture,
+	memorySubmissionStore,
+} from "@/test/agentConversationClientFixture";
 import { testDureBackendRouteAuthority } from "@/test/dureBackendRouteFixtures";
 import { openSelect } from "@/test/select";
 
@@ -381,67 +379,33 @@ describe("ChatComposer queueing", () => {
 			release = resolve;
 		});
 		let canceled = false;
-		const client: DureAgentConversationClient = {
-			inspectInput: async () => ({
-				kind: "queued",
-				intent,
-				state: canceled ? "canceled" : "queued",
-			}),
-			readQueue: vi.fn(),
-			readProviderHistory: vi.fn(),
-			enqueueTurn: vi.fn(),
-			cancelQueuedTurn: vi.fn(async () => {
-				canceled = true;
-				page.queuedInputs!.inputs = [];
-				await response;
-				return {
+		const client = conversationClientFixture(
+			() => page,
+			{
+				inspectInput: async () => ({
+					kind: "queued",
 					intent,
-					state: "canceled" as const,
-					timelineCursor: { epoch: page.binding.timelineEpoch, sequence: 2 },
-				};
-			}),
-			inspect: async () => ({
-				backend: routeAuthority.backend,
-				routeAuthority,
-				binding: page.binding,
-			}),
-			recover: async (binding) => binding,
-			read: async () => ({
-				backend: routeAuthority.backend,
-				routeAuthority,
-				read: { type: "page", page },
-			}),
-			subscribe: async () => ({
-				backend: routeAuthority.backend,
-				routeAuthority,
-				initial: { type: "page", page },
-				subscriptionId: "test",
-				close: async () => {},
-			}),
-			continueTurn: async () => {
-				throw new Error("Unexpected automatic continuation in this fixture");
+					state: canceled ? "canceled" : "queued",
+				}),
+				cancelQueuedTurn: vi.fn(async () => {
+					canceled = true;
+					page.queuedInputs!.inputs = [];
+					await response;
+					return {
+						intent,
+						state: "canceled" as const,
+						timelineCursor: { epoch: page.binding.timelineEpoch, sequence: 2 },
+					};
+				}),
 			},
-			startTurn: vi.fn(),
-			steerTurn: vi.fn(),
-			answerPending: vi.fn(),
-			interruptTurn: vi.fn(),
-			putGoal: vi.fn(),
-		};
-		const stored = new Map<string, AgentChatSubmission>();
+			routeAuthority,
+		);
+		const { store, stored } = memorySubmissionStore();
 		const controller = new AgentChatSessionController({
 			agentId: page.binding.agentId,
 			interactionSessionId: intent.interactionSessionId,
 			client,
-			submissionStore: {
-				subscribe: () => () => {},
-				list: async () => [...stored.values()],
-				put: async (input) => {
-					stored.set(input.request.clientMessageId, input);
-				},
-				remove: async (input) => {
-					stored.delete(input.request.clientMessageId);
-				},
-			},
+			submissionStore: store,
 		});
 		controller.start();
 		await vi.waitFor(() =>
@@ -499,41 +463,12 @@ describe("ChatComposer queueing", () => {
 		const page = value.page;
 		if (!page) throw new Error("expected page fixture");
 		page.activeTurn = { turnId: "turn-1", clientMessageId: "message-1" };
-		const backend = { id: "backend", generation: "one" };
-		const routeAuthority = testDureBackendRouteAuthority(
-			backend.id,
-			backend.generation,
-		);
-		const initial = { type: "page" as const, page };
-		const client: DureAgentConversationClient = {
-			inspectInput: vi.fn(async () => null),
-			readQueue: vi.fn(),
-			readProviderHistory: vi.fn(),
-			enqueueTurn: vi.fn(),
-			cancelQueuedTurn: vi.fn(),
-			inspect: async () => ({ backend, routeAuthority, binding: page.binding }),
-			recover: async (binding) => binding,
-			read: async () => ({ backend, routeAuthority, read: initial }),
-			subscribe: async () => ({
-				backend,
-				routeAuthority,
-				initial,
-				subscriptionId: "test",
-				close: async () => {},
-			}),
-			continueTurn: async () => {
-				throw new Error("Unexpected automatic continuation in this fixture");
-			},
+		const client = conversationClientFixture(() => page, {
 			startTurn: vi.fn(async () => "accepted" as const),
 			steerTurn: vi.fn(async () => {
 				throw new Error("Delivery response lost");
 			}),
-			answerPending: async () => {},
-			interruptTurn: async () => {},
-			putGoal: async () => {
-				throw new Error("unused");
-			},
-		};
+		});
 		const controller = new AgentChatSessionController({
 			agentId: page.binding.agentId,
 			interactionSessionId: page.binding.interactionSessionId,
@@ -655,39 +590,7 @@ describe("ChatComposer uncertain send recovery", () => {
 				requestedAtMs: 10,
 			},
 		};
-		const client: DureAgentConversationClient = {
-			inspectInput: async () => null,
-			readQueue: vi.fn(),
-			readProviderHistory: vi.fn(),
-			enqueueTurn: vi.fn(),
-			cancelQueuedTurn: vi.fn(),
-			inspect: async () => ({
-				backend: routeAuthority.backend,
-				routeAuthority,
-				binding: page.binding,
-			}),
-			recover: async (binding) => binding,
-			read: async () => ({
-				backend: routeAuthority.backend,
-				routeAuthority,
-				read: { type: "page", page },
-			}),
-			subscribe: async () => ({
-				backend: routeAuthority.backend,
-				routeAuthority,
-				initial: { type: "page", page },
-				subscriptionId: "test",
-				close: async () => {},
-			}),
-			continueTurn: async () => {
-				throw new Error("Unexpected automatic continuation in this fixture");
-			},
-			startTurn: vi.fn(),
-			steerTurn: vi.fn(),
-			answerPending: vi.fn(),
-			interruptTurn: vi.fn(),
-			putGoal: vi.fn(),
-		};
+		const client = conversationClientFixture(() => page, {}, routeAuthority);
 		let release!: () => void;
 		const removing = new Promise<void>((resolve) => {
 			release = resolve;
@@ -903,12 +806,12 @@ describe("ChatComposer after its provider exited", () => {
 	it("says the session ended and keeps what is typed as the draft", async () => {
 		const value = exitedSession('{"code":143,"signal":null}');
 		render(<ChatComposer session={value} disabled={false} />);
-		expect(
-			screen.getByText(
-				t("agents.chat.providerExitedWithReason", { reason: "exit 143" }),
-			),
-		).toBeTruthy();
+		const ended = screen.getByText(t("agents.chat.providerExited"));
+		expect(screen.getByText("exit 143")).toBeTruthy();
 		const composer = screen.getByRole("textbox") as HTMLTextAreaElement;
+		// The notice heads the composer's own box, above the input.
+		const strip = ended.closest("[data-slot=alert]")!;
+		expect(strip.parentElement!.contains(composer)).toBe(true);
 		expect(composer.disabled).toBe(false);
 		fireEvent.change(composer, { target: { value: "still here" } });
 		await act(async () => {
@@ -928,11 +831,12 @@ describe("ChatComposer after its provider exited", () => {
 
 	it("says a clean exit ended the session without a reason", () => {
 		const value = exitedSession('{"code":0,"signal":null}');
-		render(<ChatComposer session={value} disabled={false} />);
+		const { container } = render(<ChatComposer session={value} disabled={false} />);
 		expect(screen.getByText(t("agents.chat.providerExited"))).toBeTruthy();
+		expect(container.querySelector("[data-slot=alert] code")).toBeNull();
 	});
 
-	it("shows a running Resume and one that did not restart the session", () => {
+	it("shows a running Resume, one that did not restart and one the backend refused", () => {
 		const value = exitedSession('{"code":143,"signal":null}');
 		value.providerResume = { exitItemId: "lifecycle-2", state: "resuming" };
 		const { rerender } = render(<ChatComposer session={value} disabled={false} />);
@@ -948,6 +852,24 @@ describe("ChatComposer after its provider exited", () => {
 			screen.getByRole("button", { name: t("agents.chat.resumeSession") }),
 		);
 		expect(value.resumeProvider).toHaveBeenCalledOnce();
+
+		value.providerResume = {
+			exitItemId: "lifecycle-2",
+			state: "failed",
+			refusal: {
+				code: "agent_conversation_provider_failed",
+				message: "launch_failed: Claude needs to sign in again",
+			},
+		};
+		rerender(<ChatComposer session={{ ...value }} disabled={false} />);
+		expect(
+			screen.getByText(
+				t("agents.chat.resumeFailed", {
+					reason: "launch_failed: Claude needs to sign in again",
+				}),
+			),
+		).toBeTruthy();
+		expect(screen.getByText("agent_conversation_provider_failed")).toBeTruthy();
 	});
 
 	it("still runs Dure's own commands", async () => {
@@ -1000,18 +922,7 @@ describe("ChatComposer after its provider exited", () => {
 			finalCursor: { epoch: "timeline-1", sequence: 1 },
 		};
 		let invalidate: (event: AgentConversationInvalidationV1) => void = () => {};
-		const client: DureAgentConversationClient = {
-			inspectInput: async () => null,
-			readQueue: vi.fn(),
-			readProviderHistory: vi.fn(),
-			enqueueTurn: vi.fn(),
-			cancelQueuedTurn: vi.fn(),
-			inspect: async () => ({
-				backend: routeAuthority.backend,
-				routeAuthority,
-				binding: page.binding,
-			}),
-			recover: async (binding) => binding,
+		const client = conversationClientFixture(() => page, {
 			read: async (request) => ({
 				backend: routeAuthority.backend,
 				routeAuthority,
@@ -1035,9 +946,6 @@ describe("ChatComposer after its provider exited", () => {
 					close: async () => {},
 				};
 			},
-			continueTurn: async () => {
-				throw new Error("Unexpected automatic continuation in this fixture");
-			},
 			// The provider process is gone; the host refuses the turn.
 			startTurn: vi.fn(async () => {
 				throw new DureBackendRequestError(
@@ -1046,26 +954,13 @@ describe("ChatComposer after its provider exited", () => {
 					{ kind: "operation", disposition: "terminal" },
 				);
 			}),
-			steerTurn: vi.fn(),
-			answerPending: vi.fn(),
-			interruptTurn: vi.fn(),
-			putGoal: vi.fn(),
-		};
-		const stored = new Map<string, AgentChatSubmission>();
+		});
+		const { store, stored } = memorySubmissionStore();
 		const controller = new AgentChatSessionController({
 			agentId: "agent-1",
 			interactionSessionId: "interaction-1",
 			client,
-			submissionStore: {
-				subscribe: () => () => {},
-				list: async () => [...stored.values()],
-				put: async (input) => {
-					stored.set(agentChatSubmissionKey(input), input);
-				},
-				remove: async (input) => {
-					stored.delete(agentChatSubmissionKey(input));
-				},
-			},
+			submissionStore: store,
 		});
 		controller.start();
 		try {
@@ -1102,11 +997,7 @@ describe("ChatComposer after its provider exited", () => {
 				expect(controller.getSnapshot().retryTurnAvailable).toBe(false),
 			);
 			expect(stored.size).toBe(0);
-			expect(
-				screen.getByText(
-					t("agents.chat.providerExitedWithReason", { reason: "exit 143" }),
-				),
-			).toBeTruthy();
+			expect(screen.getByText(t("agents.chat.providerExited"))).toBeTruthy();
 			expect(
 				screen.queryByText(t("ipc.agentConversation.deliveryUnconfirmed")),
 			).toBeNull();
@@ -1123,110 +1014,87 @@ describe("ChatComposer after its provider exited", () => {
 		}
 	});
 
-	it("resumes the session and then sends the kept draft to the relaunched provider (#807)", async () => {
-		const routeAuthority = testDureBackendRouteAuthority("backend", "one");
-		const base = session("claude");
-		let page: AgentTimelinePageV1 = {
-			...base.page!,
-			rows: [
-				sessionLifecycleRow(1, "session_ready", null),
-				sessionLifecycleRow(2, "session_exited", '{"code":143,"signal":null}'),
-			],
-			finalCursor: { epoch: "timeline-1", sequence: 2 },
-		};
-		const relaunched = {
-			...page.binding,
-			runtime: { runtimeGeneration: "runtime-2", providerEpoch: "query-2" },
-			bindingRevision: 2,
-		};
-		const client: DureAgentConversationClient = {
-			inspectInput: async () => null,
-			readQueue: vi.fn(),
-			readProviderHistory: vi.fn(),
-			enqueueTurn: vi.fn(),
-			cancelQueuedTurn: vi.fn(),
-			inspect: async () => ({
-				backend: routeAuthority.backend,
-				routeAuthority,
-				binding: page.binding,
-			}),
-			// The backend relaunches Claude; the bound Query records that the
-			// session is ready before recover answers.
-			recover: vi.fn(async () => {
-				page = {
-					...page,
-					binding: relaunched,
-					rows: [...page.rows, sessionLifecycleRow(3, "session_ready", null)],
-					finalCursor: { epoch: "timeline-1", sequence: 3 },
-				};
-				return relaunched;
-			}),
-			read: async () => ({
-				backend: routeAuthority.backend,
-				routeAuthority,
-				read: { type: "page", page: { ...page, rows: [] } },
-			}),
-			subscribe: async () => ({
-				backend: routeAuthority.backend,
-				routeAuthority,
-				initial: { type: "page", page },
-				subscriptionId: "test",
-				close: async () => {},
-			}),
-			continueTurn: async () => {
-				throw new Error("Unexpected automatic continuation in this fixture");
-			},
-			startTurn: vi.fn(async () => "accepted" as const),
-			steerTurn: vi.fn(),
-			answerPending: vi.fn(),
-			interruptTurn: vi.fn(),
-			putGoal: vi.fn(),
-		};
-		const controller = new AgentChatSessionController({
-			agentId: "agent-1",
-			interactionSessionId: "interaction-1",
-			client,
-			submissionStore: {
-				subscribe: () => () => {},
-				list: async () => [],
-				put: async () => {},
-				remove: async () => {},
-			},
-		});
-		controller.start();
-		try {
-			await vi.waitFor(() =>
-				expect(controller.getSnapshot().phase).toBe("ready"),
-			);
-			render(<ControlledComposer controller={controller} base={base} />);
-			const composer = screen.getByRole("textbox") as HTMLTextAreaElement;
-			fireEvent.change(composer, { target: { value: "hello" } });
-			const exited = t("agents.chat.providerExitedWithReason", {
-				reason: "exit 143",
+	it.each([
+		["records the relaunched session's start", true],
+		["is older and records it only at the first input", false],
+	])(
+		"resumes the session and sends the kept draft to the relaunched provider when the backend %s (#807)",
+		async (_name, recordsStart) => {
+			const routeAuthority = testDureBackendRouteAuthority("backend", "one");
+			const base = session("claude");
+			let page: AgentTimelinePageV1 = {
+				...base.page!,
+				rows: [
+					sessionLifecycleRow(1, "session_ready", null),
+					sessionLifecycleRow(2, "session_exited", '{"code":143,"signal":null}'),
+				],
+				finalCursor: { epoch: "timeline-1", sequence: 2 },
+			};
+			const relaunched = {
+				...page.binding,
+				runtime: { runtimeGeneration: "runtime-2", providerEpoch: "query-2" },
+				bindingRevision: 2,
+			};
+			const client = conversationClientFixture(() => page, {
+				// The backend relaunches Claude. A current one has recorded the
+				// bound Query's start before recover answers.
+				recover: vi.fn(async () => {
+					page = {
+						...page,
+						binding: relaunched,
+						...(recordsStart && {
+							rows: [...page.rows, sessionLifecycleRow(3, "session_ready", null)],
+							finalCursor: { epoch: "timeline-1", sequence: 3 },
+						}),
+					};
+					return relaunched;
+				}),
+				read: async () => ({
+					backend: routeAuthority.backend,
+					routeAuthority,
+					read: { type: "page", page: { ...page, rows: [] } },
+				}),
+				startTurn: vi.fn(async () => "accepted" as const),
 			});
-			expect(screen.getByText(exited)).toBeTruthy();
-
-			await act(async () => {
-				fireEvent.click(
-					screen.getByRole("button", { name: t("agents.chat.resumeSession") }),
+			const controller = new AgentChatSessionController({
+				agentId: "agent-1",
+				interactionSessionId: "interaction-1",
+				client,
+				submissionStore: memorySubmissionStore().store,
+			});
+			controller.start();
+			try {
+				await vi.waitFor(() =>
+					expect(controller.getSnapshot().phase).toBe("ready"),
 				);
-			});
-			await vi.waitFor(() => expect(screen.queryByText(exited)).toBeNull());
-			expect(client.recover).toHaveBeenCalledOnce();
-			expect(composer.value).toBe("hello");
+				render(<ControlledComposer controller={controller} base={base} />);
+				const composer = screen.getByRole("textbox") as HTMLTextAreaElement;
+				fireEvent.change(composer, { target: { value: "hello" } });
+				const ended = t("agents.chat.providerExited");
+				expect(screen.getByText(ended)).toBeTruthy();
 
-			await act(async () => {
-				fireEvent.keyDown(composer, { key: "Enter" });
-			});
-			expect(client.startTurn).toHaveBeenCalledOnce();
-			expect(vi.mocked(client.startTurn).mock.calls[0]![0]).toMatchObject({
-				runtime: relaunched.runtime,
-				input: "hello",
-			});
-		} finally {
-			controller.stop();
-		}
-	});
+				await act(async () => {
+					fireEvent.click(
+						screen.getByRole("button", { name: t("agents.chat.resumeSession") }),
+					);
+				});
+				await vi.waitFor(() => expect(screen.queryByText(ended)).toBeNull());
+				expect(client.recover).toHaveBeenCalledOnce();
+				expect(composer.value).toBe("hello");
+
+				await act(async () => {
+					fireEvent.keyDown(composer, { key: "Enter" });
+				});
+				expect(client.startTurn).toHaveBeenCalledOnce();
+				expect(vi.mocked(client.startTurn).mock.calls[0]![0]).toMatchObject({
+					runtime: relaunched.runtime,
+					input: "hello",
+				});
+			} finally {
+				controller.stop();
+			}
+		},
+	);
 });
 
 describe("ChatComposer launch-selection controls", () => {

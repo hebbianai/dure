@@ -1,8 +1,9 @@
-import type {
-	AgentInteractionBindingV1,
-	AgentTimelineActiveTurnV1,
-	AgentTimelinePageV1,
-	AgentTimelineRowV1,
+import {
+	type AgentInteractionBindingV1,
+	type AgentTimelineActiveTurnV1,
+	type AgentTimelinePageV1,
+	type AgentTimelineRowV1,
+	sameAgentRuntimeFence,
 } from "@/lib/agents/chat/agentConversationContract";
 import { presentLifecycleRow } from "@/lib/agents/chat/lifecycleRowPresentation";
 import {
@@ -489,8 +490,7 @@ function sameRuntimeAuthority(
 		(left.providerConversationRef === null ||
 			right.providerConversationRef === null ||
 			left.providerConversationRef === right.providerConversationRef) &&
-		left.runtime.runtimeGeneration === right.runtime.runtimeGeneration &&
-		left.runtime.providerEpoch === right.runtime.providerEpoch &&
+		sameAgentRuntimeFence(left.runtime, right.runtime) &&
 		left.timelineEpoch === right.timelineEpoch &&
 		left.createdAtMs === right.createdAtMs
 	);

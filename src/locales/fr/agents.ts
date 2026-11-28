@@ -232,7 +232,6 @@ export const agents: Record<string, string> = {
 	"agents.chat.requestDetails": "Détails de la demande",
 	"agents.chat.editUncertainSend": "Modifier le message d’origine",
 	"agents.chat.providerExited": "Cette session est terminée. Ce que vous écrivez reste ici en brouillon jusqu’à sa reprise.",
-	"agents.chat.providerExitedWithReason": "Cette session est terminée ({reason}). Ce que vous écrivez reste ici en brouillon jusqu’à sa reprise.",
 	"agents.chat.resumeSession": "Reprendre",
 	"agents.chat.resumingSession": "Reprise…",
 	"agents.chat.resumeNotRestarted": "Elle n’a pas redémarré. Mettez à jour Dure sur l’hôte du backend, puis reprenez-la.",

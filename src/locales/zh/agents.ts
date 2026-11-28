@@ -233,7 +233,6 @@ export const agents: Record<string, string> = {
 	"agents.chat.requestDetails": "请求详情",
 	"agents.chat.editUncertainSend": "编辑原始消息",
 	"agents.chat.providerExited": "此会话已结束。在你恢复它之前，你输入的内容会作为草稿保留在这里。",
-	"agents.chat.providerExitedWithReason": "此会话已结束（{reason}）。在你恢复它之前，你输入的内容会作为草稿保留在这里。",
 	"agents.chat.resumeSession": "恢复",
 	"agents.chat.resumingSession": "正在恢复…",
 	"agents.chat.resumeNotRestarted": "它没有重新启动。请在后端主机上更新 Dure，然后再次恢复。",

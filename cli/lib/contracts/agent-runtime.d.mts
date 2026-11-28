@@ -162,6 +162,16 @@ export function agentRuntimeRestartableClosedSource(
   value: unknown,
 ): { readonly selectionRevision: number; readonly interactionProfile: RuntimeInteractionProfile } | undefined;
 
+export interface AgentRuntimeFence {
+  readonly runtimeGeneration: string;
+  readonly providerEpoch: string;
+}
+
+export function sameAgentRuntimeFence(
+  left: AgentRuntimeFence | undefined,
+  right: AgentRuntimeFence | undefined,
+): boolean;
+
 export function agentRuntimeChatBinding(
   value: unknown,
 ): (Record<string, unknown> & {

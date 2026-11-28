@@ -232,7 +232,6 @@ export const agents: Record<string, string> = {
 	"agents.chat.requestDetails": "요청 세부 정보",
 	"agents.chat.editUncertainSend": "원래 메시지 편집",
 	"agents.chat.providerExited": "이 세션은 종료되었습니다. 다시 시작할 때까지 작성한 내용은 초안으로 여기에 남습니다.",
-	"agents.chat.providerExitedWithReason": "이 세션은 종료되었습니다({reason}). 다시 시작할 때까지 작성한 내용은 초안으로 여기에 남습니다.",
 	"agents.chat.resumeSession": "다시 시작",
 	"agents.chat.resumingSession": "다시 시작하는 중…",
 	"agents.chat.resumeNotRestarted": "다시 시작되지 않았습니다. 백엔드 호스트의 Dure를 업데이트한 뒤 다시 시도하세요.",

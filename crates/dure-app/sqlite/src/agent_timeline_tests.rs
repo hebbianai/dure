@@ -582,6 +582,82 @@ async fn active_turn_ends_at_the_runtime_session_boundary() {
     assert_eq!(tail(&warm).await.active_turn, None);
 }
 
+/// hebbianai/dure#807: a launch can learn it is up from more than one event.
+/// The first one starts the session; while the timeline reads as running, a
+/// later one adds nothing, which an open turn would read as its runtime being
+/// replaced. After an exit, the next start counts again.
+#[tokio::test]
+async fn a_session_starts_once_while_the_timeline_reads_as_running() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = provision(&temp_dir.path().join("domain.sqlite")).await;
+    let start = |item_id: &str, created_at_ms| {
+        let AgentTimelineMutationV1::Append { item } = session_lifecycle(
+            item_id,
+            AgentTimelineLifecycleStateV1::SessionReady,
+            created_at_ms,
+        ) else {
+            unreachable!()
+        };
+        AgentTimelineMutationV1::StartSession { item }
+    };
+    let session_states = |page: dure_app::AgentTimelinePageV1| {
+        page.rows
+            .into_iter()
+            .filter_map(|row| match row.item.body {
+                AgentTimelineItemBodyV1::Lifecycle { state, .. } => Some(state),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let first = store
+        .apply_agent_provider_event(&provider_event(1, vec![start("bound", 121)]))
+        .await
+        .unwrap();
+    assert!(first.timeline_changed);
+    let second = store
+        .apply_agent_provider_event(&provider_event(2, vec![start("initialized", 122)]))
+        .await
+        .unwrap();
+    assert!(!second.timeline_changed);
+    store
+        .apply_agent_provider_event(&provider_event(
+            3,
+            vec![session_lifecycle(
+                "exited",
+                AgentTimelineLifecycleStateV1::SessionExited,
+                123,
+            )],
+        ))
+        .await
+        .unwrap();
+    store
+        .apply_agent_provider_event(&provider_event(4, vec![start("relaunched", 124)]))
+        .await
+        .unwrap();
+    assert_eq!(
+        session_states(tail(&store).await),
+        [
+            AgentTimelineLifecycleStateV1::SessionReady,
+            AgentTimelineLifecycleStateV1::SessionExited,
+            AgentTimelineLifecycleStateV1::SessionReady,
+        ]
+    );
+
+    let mut not_a_start = provider_event(5, vec![start("not-a-start", 125)]);
+    let AgentTimelineMutationV1::StartSession { item } = &mut not_a_start.mutations[0] else {
+        unreachable!()
+    };
+    item.body = AgentTimelineItemBodyV1::Lifecycle {
+        state: AgentTimelineLifecycleStateV1::TurnStarted,
+        detail: None,
+    };
+    assert!(matches!(
+        store.apply_agent_provider_event(&not_a_start).await,
+        Err(DomainStoreErrorV1::InvalidRecord { .. })
+    ));
+}
+
 #[tokio::test]
 async fn history_reconciliation_atomically_extends_and_finishes_live_assistant_text() {
     let temp_dir = TempDir::new().unwrap();

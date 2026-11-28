@@ -233,7 +233,6 @@ export const agents: Record<string, string> = {
 	"agents.chat.requestDetails": "リクエストの詳細",
 	"agents.chat.editUncertainSend": "元のメッセージを編集",
 	"agents.chat.providerExited": "このセッションは終了しました。再開するまで、入力した内容は下書きとしてここに残ります。",
-	"agents.chat.providerExitedWithReason": "このセッションは終了しました（{reason}）。再開するまで、入力した内容は下書きとしてここに残ります。",
 	"agents.chat.resumeSession": "再開",
 	"agents.chat.resumingSession": "再開中…",
 	"agents.chat.resumeNotRestarted": "再起動されませんでした。バックエンドのホストで Dure を更新してから、もう一度再開してください。",

@@ -6,6 +6,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentChatSurface } from "@/components/agents/chat/AgentChatSurface";
@@ -963,10 +964,10 @@ describe("AgentChatSurface", () => {
 			],
 		};
 		view.rerender(<AgentChatSurface session={value} />);
-		expect(
-			screen.getByText(t("agents.chat.lifecycle.session_exited")),
-		).toBeTruthy();
-		expect(screen.getByText("exit 1")).toBeTruthy();
+		const exitRow = screen.getByText(
+			t("agents.chat.lifecycle.session_exited"),
+		).parentElement!;
+		expect(within(exitRow).getByText("exit 1")).toBeTruthy();
 	});
 
 	it("shows a live streaming indicator only while a turn is active", () => {

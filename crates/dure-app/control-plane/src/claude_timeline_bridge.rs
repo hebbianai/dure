@@ -969,27 +969,14 @@ fn map_event(
     let payload = object(&event.payload, "event_payload_invalid")?;
     let mut mutations = Vec::new();
     match event.kind.as_str() {
-        // The SDK Host has bound the Query and it waits for input: the
-        // session is ready, as the other providers record when their session
-        // starts. Claude's own `system:init` (`provider_session_initialized`)
-        // can arrive only after the first input, so a relaunched Query would
-        // otherwise read as still ended until something reached it.
-        "initialized" => {
-            mutations.push(AgentTimelineMutationV1::Append {
-                item: item(
-                    identity,
-                    event.sequence,
-                    "session-ready",
-                    AgentTimelineItemBodyV1::Lifecycle {
-                        state: AgentTimelineLifecycleStateV1::SessionReady,
-                        detail: None,
-                    },
-                    None,
-                    None,
-                    observed_at_ms,
-                )?,
-            });
-        }
+        // A launch is up from the first of two events: the SDK Host bound
+        // the Query and it waits for input (`initialized`), or Claude reported
+        // its `system:init` (`provider_session_initialized`). The real CLI
+        // sends that init only after the first input, so a relaunched Query
+        // would otherwise read as ended until something reached it, while a
+        // launch whose bind an older backend committed without a start still
+        // starts at its init. The store keeps one start per launch.
+        "initialized" => mutations.push(start_session(identity, event, observed_at_ms)?),
         "user_message_accepted" | "provider_turn_result" => {}
         "provider_session_initialized" => {
             mutations.push(AgentTimelineMutationV1::EstablishProviderConversation {
@@ -1001,6 +988,7 @@ fn map_event(
                 .into(),
                 established_at_ms: observed_at_ms,
             });
+            mutations.push(start_session(identity, event, observed_at_ms)?);
             mutations.push(provider_evidence(
                 identity,
                 event,
@@ -1259,6 +1247,29 @@ fn map_event(
         source_fingerprint: format!("sha256:{}", digest(event)?),
         mutations,
         recorded_at_ms: observed_at_ms,
+    })
+}
+
+/// The launch's session start, unless the conversation already reads as
+/// running ([`AgentTimelineMutationV1::StartSession`]).
+fn start_session(
+    identity: &ClaudeDch1QueryIdentity,
+    event: &ClaudeDch1ProviderEvent,
+    observed_at_ms: i64,
+) -> Result<AgentTimelineMutationV1, ClaudeTimelineBridgeError> {
+    Ok(AgentTimelineMutationV1::StartSession {
+        item: item(
+            identity,
+            event.sequence,
+            "session-ready",
+            AgentTimelineItemBodyV1::Lifecycle {
+                state: AgentTimelineLifecycleStateV1::SessionReady,
+                detail: None,
+            },
+            None,
+            None,
+            observed_at_ms,
+        )?,
     })
 }
 

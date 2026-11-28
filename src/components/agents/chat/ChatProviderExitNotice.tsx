@@ -1,12 +1,13 @@
+import { ActionErrorText } from "@/components/agents/chat/ActionErrorText";
 import { ChatAlert } from "@/components/agents/chat/ChatAlert";
 import { Button } from "@/components/ui/button";
 import type { AgentChatSessionView } from "@/lib/agents/chat/agentChatSessionView";
-import { presentProviderExit } from "@/lib/agents/chat/agentChatRuntimeRecovery";
 import type { ObservedProviderExit } from "@/lib/agents/chat/observedRuntimeFacts";
+import { presentProviderExit } from "@/lib/agents/chat/providerExitPresentation";
 
-/** The composer's notice for a conversation whose provider exited: what
- * ended, that the draft stays, and Resume, which restarts the provider on
- * the same conversation. */
+/** The strip that heads the composer while its provider has exited: what
+ * ended and how, that the draft stays, what became of the last Resume, and
+ * Resume, which restarts the provider on the same conversation. */
 export function ChatProviderExitNotice({
 	exit,
 	session,
@@ -21,13 +22,13 @@ export function ChatProviderExitNotice({
 	return (
 		<ChatAlert
 			tone="warn"
+			surface="strip"
 			role="status"
-			className="mb-2"
 			action={
 				<Button
 					type="button"
 					size="xs"
-					variant="outline"
+					variant="attention"
 					disabled={disabled || notice.pending}
 					onClick={() => void session.resumeProvider().catch(() => {})}
 				>
@@ -35,16 +36,12 @@ export function ChatProviderExitNotice({
 				</Button>
 			}
 		>
-			{notice.message}
+			<ActionErrorText className="block" presentation={notice.ended} />
 			{notice.outcome && (
-				<span className="mt-1 block">
-					{notice.outcome.text}
-					{notice.outcome.detail && (
-						<code className="ml-1.5 text-[0.85em] opacity-70">
-							{notice.outcome.detail}
-						</code>
-					)}
-				</span>
+				<ActionErrorText
+					className="block text-muted-foreground"
+					presentation={notice.outcome}
+				/>
 			)}
 		</ChatAlert>
 	);

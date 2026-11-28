@@ -853,6 +853,9 @@ async fn apply_provider_event_on(
             AgentTimelineMutationV1::Append { item } => {
                 timeline_changed |= append_item_on(connection, &binding, item).await?;
             }
+            AgentTimelineMutationV1::StartSession { item } => {
+                timeline_changed |= start_session_on(connection, &binding, item).await?;
+            }
             AgentTimelineMutationV1::AppendText { fragment } => {
                 live_text_changed |=
                     append_text_on(connection, &event.interaction_session_id, fragment).await?;
@@ -1771,6 +1774,40 @@ async fn record_provider_gap_on(
     .await
     .map_err(|error| map_sqlx("record_agent_provider_gap", error))?;
     Ok(receipt)
+}
+
+/// Appends a session start unless the current timeline already reads as
+/// running, the way the active-turn read and the clients' projections read
+/// it: its newest session lifecycle row is `session_ready`.
+async fn start_session_on(
+    connection: &mut SqliteConnection,
+    binding: &AgentInteractionBindingV1,
+    item: &AgentTimelineItemDraftV1,
+) -> Result<bool, DomainStoreErrorV1> {
+    let newest: Option<String> = sqlx::query_scalar(
+        r#"
+        SELECT json_extract(body_json, '$.state')
+        FROM agent_timeline_rows
+        WHERE interaction_session_id = ?1
+          AND timeline_epoch = ?2
+          AND json_valid(body_json) = 1
+          AND json_extract(body_json, '$.type') = 'lifecycle'
+          AND json_extract(body_json, '$.state') IN (
+              'session_ready', 'session_failed', 'session_exited'
+          )
+        ORDER BY sequence DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(binding.interaction_session_id.as_str())
+    .bind(binding.timeline_epoch.as_str())
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| map_sqlx("read_agent_session_lifecycle", error))?;
+    if newest.as_deref() == Some("session_ready") {
+        return Ok(false);
+    }
+    append_item_on(connection, binding, item).await
 }
 
 pub(crate) async fn append_item_on(

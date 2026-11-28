@@ -232,7 +232,6 @@ export const agents: Record<string, string> = {
 	"agents.chat.requestDetails": "Detalhes da solicitação",
 	"agents.chat.editUncertainSend": "Editar mensagem original",
 	"agents.chat.providerExited": "Esta sessão terminou. O que você escrever fica aqui como rascunho até você retomá-la.",
-	"agents.chat.providerExitedWithReason": "Esta sessão terminou ({reason}). O que você escrever fica aqui como rascunho até você retomá-la.",
 	"agents.chat.resumeSession": "Retomar",
 	"agents.chat.resumingSession": "Retomando…",
 	"agents.chat.resumeNotRestarted": "Ela não reiniciou. Atualize o Dure no host do backend e retome-a novamente.",

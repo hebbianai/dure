@@ -54,6 +54,14 @@ import { cn } from "@/lib/utils";
  * unrelated to. Its neutral tone is the brief toast's plain report ("Copied
  * to clipboard"): foreground copy, no glyph.
  *
+ * `surface="strip"` heads the surface it belongs to, such as the chat
+ * composer's glass box: no ring or fill of its own and a hairline below,
+ * like the composer's queue rows. The tone is on the glyph alone and the
+ * copy stays in the foreground. A sentence inside the input's surface reads
+ * as part of it, so its colour is spent on the glyph and the one action the
+ * notice asks for (design review 2026-11-28, SOUL §3). Its size is the
+ * surface's own.
+ *
  * This is the one notice component. The icon-led ErrorBanner, the page
  * Callout and the dialog chip it replaced each drew the same thing a little
  * differently, and three of them were on screen at once (owner, 2026-09-09).
@@ -103,6 +111,47 @@ const TONE_GLYPH: Record<AlertTone, typeof CircleAlert | undefined> = {
 	neutral: undefined,
 };
 
+type AlertSurface = "card" | "outline" | "toast" | "dock" | "strip";
+
+/** Each surface's frame, and whether its tone colours the copy (shadcn's
+ * form) or only the glyph. */
+const SURFACES: Record<
+	AlertSurface,
+	{ frame: (tone: AlertTone) => string; toneOn: "copy" | "glyph" }
+> = {
+	card: {
+		frame: () => "gap-3 rounded-lg border border-border bg-card px-4 py-3 text-xs",
+		toneOn: "copy",
+	},
+	// The search field's anatomy (search-field.tsx: icon size-3 at left-3,
+	// text at pl-7, pr-3, rounded-md): 12px padding, a 12px glyph, 4px gap →
+	// copy at 28px. Callers put the band's edge at the pane inset (12px),
+	// where the field sits. No blend-mode "vibrancy": the glass is native,
+	// composited by the window server beneath a transparent page, so a CSS
+	// mix-blend-mode only ever sees the DOM's own tint layer (checked
+	// 2026-09-09).
+	outline: {
+		frame: () => "gap-1 rounded-md border border-glass-hairline px-3 py-2 text-meta",
+		toneOn: "copy",
+	},
+	dock: {
+		frame: (tone) =>
+			cn(
+				"gap-1 rounded-md border bg-glass-pane px-3 py-2 text-meta shadow-card",
+				TONE_BORDER[tone],
+			),
+		toneOn: "copy",
+	},
+	toast: {
+		frame: () => cn("gap-1 px-3 py-2 text-meta", FLOATING_SURFACE),
+		toneOn: "copy",
+	},
+	strip: {
+		frame: () => "gap-2 border-b border-glass-hairline px-1 pt-0.5 pb-1.5",
+		toneOn: "glyph",
+	},
+};
+
 function Alert({
 	tone = "destructive",
 	surface = "card",
@@ -118,8 +167,9 @@ function Alert({
 	tone?: AlertTone;
 	/** `card` is the comp; `outline` is the sidebar's hairline band; `toast`
 	 * is the band's anatomy on the floating menu material; `dock` is that
-	 * anatomy pinned to a pane's edge, on the pane's fill with a tone line. */
-	surface?: "card" | "outline" | "toast" | "dock";
+	 * anatomy pinned to a pane's edge, on the pane's fill with a tone line;
+	 * `strip` heads another surface, separated from it by a hairline. */
+	surface?: AlertSurface;
 	/** The comp's glyph slot; `false` draws none. The neutral tone has none. */
 	icon?: boolean;
 	/** Title line (13px medium, one line). Omit for a description-only alert. */
@@ -132,6 +182,7 @@ function Alert({
 	children?: ReactNode;
 }) {
 	const Glyph = TONE_GLYPH[tone];
+	const { frame, toneOn } = SURFACES[surface];
 	return (
 		<div
 			data-slot="alert"
@@ -140,25 +191,8 @@ function Alert({
 			role={role ?? (tone === "destructive" ? "alert" : undefined)}
 			className={cn(
 				"flex items-start",
-				surface === "card"
-					? "gap-3 rounded-lg border border-border bg-card px-4 py-3 text-xs"
-					: // The search field's anatomy (search-field.tsx: icon size-3 at
-						// left-3, text at pl-7, pr-3, rounded-md): 12px padding, a 12px
-						// glyph, 4px gap → copy at 28px. Callers put the band's edge at
-						// the pane inset (12px), where the field sits.
-						// No blend-mode "vibrancy": the glass is native, composited by
-						// the window server beneath a transparent page, so a CSS
-						// mix-blend-mode only ever sees the DOM's own tint layer
-						// (checked 2026-09-09).
-						surface === "outline"
-						? "gap-1 rounded-md border border-glass-hairline px-3 py-2 text-meta"
-						: surface === "dock"
-							? cn(
-									"gap-1 rounded-md border bg-glass-pane px-3 py-2 text-meta shadow-card",
-									TONE_BORDER[tone],
-								)
-							: cn("gap-1 px-3 py-2 text-meta", FLOATING_SURFACE),
-				TONE_CLASSES[tone],
+				frame(tone),
+				toneOn === "copy" ? TONE_CLASSES[tone] : "text-foreground",
 				className,
 			)}
 			{...props}
@@ -172,6 +206,7 @@ function Alert({
 							? "items-start pt-0.5"
 							: // 12px glyph on the 15px first line: 2px down centres it.
 								"mt-0.5 size-3 items-center justify-center",
+						toneOn === "glyph" && TONE_CLASSES[tone],
 					)}
 					aria-hidden="true"
 				>

@@ -232,7 +232,6 @@ export const agentsEnglishTranslations: Record<string, string> = {
 	"agents.chat.requestDetails": "Request details",
 	"agents.chat.editUncertainSend": "Edit original message",
 	"agents.chat.providerExited": "This session ended. What you write stays here as a draft until you resume it.",
-	"agents.chat.providerExitedWithReason": "This session ended ({reason}). What you write stays here as a draft until you resume it.",
 	"agents.chat.resumeSession": "Resume",
 	"agents.chat.resumingSession": "Resuming…",
 	"agents.chat.resumeNotRestarted": "It did not restart. Update Dure on the backend's host, then resume it again.",

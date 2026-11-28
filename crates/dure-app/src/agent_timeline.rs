@@ -769,6 +769,14 @@ pub enum AgentTimelineMutationV1 {
     Append {
         item: AgentTimelineItemDraftV1,
     },
+    /// The provider session behind the runtime is up. The store appends
+    /// `item`, a `SessionReady` lifecycle row, unless the timeline already
+    /// reads as running: its newest session lifecycle row is `SessionReady`.
+    /// A runtime that learns it is up from more than one event then starts
+    /// the session once per launch, from whichever event comes first.
+    StartSession {
+        item: AgentTimelineItemDraftV1,
+    },
     AppendText {
         fragment: AgentTimelineTextFragmentV1,
     },
@@ -811,6 +819,16 @@ impl AgentTimelineMutationV1 {
                 timestamp("establishedAtMs", *established_at_ms)
             }
             Self::Append { item } => item.validate(),
+            Self::StartSession { item } => {
+                item.validate()?;
+                match item.body {
+                    AgentTimelineItemBodyV1::Lifecycle {
+                        state: AgentTimelineLifecycleStateV1::SessionReady,
+                        ..
+                    } => Ok(()),
+                    _ => invalid("startSession.item", "must be a session_ready lifecycle row"),
+                }
+            }
             Self::AppendText { fragment } => fragment.validate(),
             Self::FinishTextForProviderMessage { finished_at_ms, .. } => {
                 timestamp("finishedAtMs", *finished_at_ms)
