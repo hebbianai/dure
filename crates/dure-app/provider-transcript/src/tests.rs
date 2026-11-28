@@ -1,5 +1,6 @@
 use super::*;
-use std::io::Write;
+use crate::transcript_file::BACKWARD_READ_BYTES;
+use std::io::{Seek, SeekFrom, Write};
 
 /// The roots of a Claude and a Codex fixture; Pi's are never looked in.
 fn roots(claude_projects: &Path, codex_sessions: &Path) -> TranscriptRoots {

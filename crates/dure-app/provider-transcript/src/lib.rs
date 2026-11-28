@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::{
     collections::VecDeque,
     fs,
-    io::{BufRead, Read, Seek, SeekFrom},
+    io::{BufRead, Read},
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
@@ -17,6 +17,7 @@ mod backend_page;
 mod claude_local_command;
 mod pi;
 mod tools;
+mod transcript_file;
 pub use accounts::{
     ProviderStateRoots, account_profile_directories, newest_conversation_file, read_newest,
 };
@@ -28,6 +29,10 @@ pub use tools::{
     ProviderToolCall, ProviderToolState, ToolEvent, ToolEventParser, bounded_input,
     claude_tool_events, codex_tool_events, pi_tool_events, tool_events_for,
 };
+pub use transcript_file::{
+    MAX_WINDOWS_DECODED_BYTES, TranscriptWindows, bounded_windows, transcript_name,
+};
+use transcript_file::{Tail, TranscriptFile, seek_tail};
 
 const MAX_SESSION_BYTES: u64 = 1024 * 1024;
 pub const MAX_TRANSCRIPT_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
@@ -88,18 +93,20 @@ pub fn mtime(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
+/// The first `max_bytes` of a transcript's records, plain or compressed.
+/// `None` when it cannot be read or holds nothing.
 pub fn bounded_prefix(path: &Path, max_bytes: u64) -> Option<String> {
-    let metadata = fs::metadata(path).ok()?;
-    if !metadata.is_file() || metadata.len() == 0 {
+    let mut file = TranscriptFile::open(path).ok()?;
+    if !file.metadata().is_file() {
         return None;
     }
-    let mut bytes = Vec::with_capacity(metadata.len().min(max_bytes) as usize);
-    fs::File::open(path)
+    let mut bytes = Vec::new();
+    file.records_from(0)
         .ok()?
         .take(max_bytes)
         .read_to_end(&mut bytes)
         .ok()?;
-    Some(String::from_utf8_lossy(&bytes).into_owned())
+    (!bytes.is_empty()).then(|| String::from_utf8_lossy(&bytes).into_owned())
 }
 
 pub fn text_content(value: &Value) -> Option<String> {
@@ -257,6 +264,8 @@ pub fn codex_file_has_identity(path: &Path, conversation_id: &str) -> bool {
     })
 }
 
+/// The newest written rollout of Codex conversation `conversation_id` under
+/// `directory`, plain or compressed, whose header names the conversation.
 pub fn find_codex_conversation(
     directory: &Path,
     conversation_id: &str,
@@ -283,7 +292,7 @@ pub fn find_codex_conversation(
         let candidate = if kind.is_dir() {
             find_codex_conversation(&entry.path(), conversation_id, depth + 1, inspected)
         } else if kind.is_file()
-            && entry.file_name().to_string_lossy().ends_with(&suffix)
+            && transcript_name(&entry.path()).is_some_and(|name| name.ends_with(&suffix))
             && codex_file_has_identity(&entry.path(), conversation_id)
         {
             Some((mtime(&entry.path()), entry.path()))
@@ -533,28 +542,22 @@ fn read_window(
 ) -> Result<TranscriptWindow, String> {
     let read_error = |error| format!("read provider transcript: {error}");
     let changed = || "provider transcript changed since the newer page was read".to_string();
-    let mut file = fs::File::open(path).map_err(read_error)?;
-    let metadata = file.metadata().map_err(read_error)?;
+    let mut file = TranscriptFile::open(path).map_err(read_error)?;
+    let metadata = file.metadata().clone();
     if !metadata.is_file() {
         return Err("provider transcript is not a regular file".to_string());
     }
-    let end = before.unwrap_or(metadata.len());
-    if end > metadata.len() {
-        return Err(changed());
-    }
+    // Snapshot a bounded range, even while the provider continues appending.
+    // It holds the byte before its start, so a record exactly on the boundary
+    // is retained.
+    let tail = file
+        .tail(before, after, source_limit, u64::MAX)
+        .map_err(read_error)?
+        .ok_or_else(changed)?;
+    let (start, end, bytes) = (tail.start, tail.end, tail.bytes);
     if after > end {
         return Err("provider transcript range is invalid".to_string());
     }
-    // Snapshot a bounded range, even while the provider continues appending.
-    // Start one byte earlier so a record exactly on the boundary is retained.
-    let start = end.saturating_sub(source_limit).max(after);
-    file.seek(SeekFrom::Start(start.saturating_sub(1)))
-        .map_err(read_error)?;
-    let mut bytes = Vec::new();
-    file.by_ref()
-        .take(end - start + u64::from(start > 0))
-        .read_to_end(&mut bytes)
-        .map_err(read_error)?;
     // A floor inside the range is where a record starts: right after a line
     // break. Anywhere else the transcript is not the one it was measured in.
     if start == after && after > 0 && bytes.first() != Some(&b'\n') {
@@ -763,7 +766,7 @@ fn read_window(
 /// those records; they stay the newer page's. A call left open in an earlier
 /// turn was cut off, so nothing is read for it.
 fn settle_last_turn(
-    file: &mut fs::File,
+    file: &mut TranscriptFile,
     end: u64,
     source_limit: u64,
     tool_events: ToolEventParser,
@@ -785,8 +788,7 @@ fn settle_last_turn(
     if open.is_empty() {
         return Ok(());
     }
-    file.seek(SeekFrom::Start(end))?;
-    let mut records = std::io::BufReader::new(file.take(source_limit));
+    let mut records = file.records_from(end)?.take(source_limit);
     let mut raw = Vec::new();
     while !open.is_empty() {
         raw.clear();
@@ -938,13 +940,14 @@ pub fn codex_turn_start_cursor(
     let path = codex_rollout(codex_sessions, conversation_id)
         .ok_or_else(|| "provider conversation was not found".to_string())?;
     let read_error = |error| format!("read provider transcript: {error}");
-    let mut file = fs::File::open(path).map_err(read_error)?;
-    let end = file.metadata().map_err(read_error)?.len();
-    last_record(&mut file, end, turn_id.as_bytes(), |_, value| {
-        codex_opened_turn(value) == Some(turn_id)
-    })
-    .map(|record| record.map(|(offset, _)| offset))
-    .map_err(read_error)
+    TranscriptFile::open(&path)
+        .and_then(|mut file| {
+            file.last_record(None, turn_id.as_bytes(), |_, value| {
+                codex_opened_turn(value) == Some(turn_id)
+            })
+        })
+        .map(|record| record.map(|(offset, _)| offset))
+        .map_err(read_error)
 }
 
 /// Where the records of turn `turn_id` of a Codex conversation end, looking
@@ -968,17 +971,16 @@ pub fn codex_turn_end_cursor(
     let path = codex_rollout(codex_sessions, conversation_id)
         .ok_or_else(|| "provider conversation was not found".to_string())?;
     let read_error = |error| format!("read provider transcript: {error}");
-    let mut file = fs::File::open(path).map_err(read_error)?;
-    if before > file.metadata().map_err(read_error)?.len() {
+    let mut file = TranscriptFile::open(&path).map_err(read_error)?;
+    if before > file.len().map_err(read_error)? {
         return Err("provider transcript changed since the newer page was read".to_string());
     }
     // Reading back from `before`, the earliest turn found so far starts where
     // the turn before it ends.
     let mut next_turn_start = before;
-    let turn =
-        last_record(
-            &mut file,
-            before,
+    let turn = file
+        .last_record(
+            Some(before),
             b"task_started",
             |offset, value| match codex_opened_turn(value) {
                 Some(opened) if opened == turn_id => true,
@@ -1030,85 +1032,19 @@ pub fn claude_message_end_cursor(
         .map(|(_, path)| path)
         .ok_or_else(|| "provider conversation was not found".to_string())?;
     let read_error = |error| format!("read provider transcript: {error}");
-    let mut file = fs::File::open(path).map_err(read_error)?;
-    if before > file.metadata().map_err(read_error)?.len() {
+    let mut file = TranscriptFile::open(&path).map_err(read_error)?;
+    if before > file.len().map_err(read_error)? {
         return Err("provider transcript changed since the newer page was read".to_string());
     }
     let carries_message = |value: &Value| {
         value.get("uuid").and_then(Value::as_str) == Some(provider_message_id)
             || value.pointer("/message/id").and_then(Value::as_str) == Some(provider_message_id)
     };
-    last_record(
-        &mut file,
-        before,
-        provider_message_id.as_bytes(),
-        |_, value| carries_message(value),
-    )
+    file.last_record(Some(before), provider_message_id.as_bytes(), |_, value| {
+        carries_message(value)
+    })
     .map(|record| record.map(|(offset, length)| offset + length))
     .map_err(read_error)
-}
-
-/// How much of a transcript one step of [`last_record`] reads.
-const BACKWARD_READ_BYTES: u64 = 1024 * 1024;
-
-/// The offset and length of the last whole record that ends by `end` in
-/// `file` and `matches`, reading back from `end`. Only records that contain
-/// `needle` are decoded, and `matches` sees them newest first, each with its
-/// offset.
-fn last_record(
-    file: &mut fs::File,
-    mut end: u64,
-    needle: &[u8],
-    mut matches: impl FnMut(u64, &Value) -> bool,
-) -> std::io::Result<Option<(u64, u64)>> {
-    let metadata = file.metadata()?;
-    if !metadata.is_file() {
-        return Err(std::io::Error::other(
-            "provider transcript is not a regular file",
-        ));
-    }
-    end = end.min(metadata.len());
-    // The start of the earliest record read so far, whose line began before
-    // `end`: it is decoded once the step before it completes it.
-    let mut carried = Vec::new();
-    while end > 0 {
-        let start = end.saturating_sub(BACKWARD_READ_BYTES);
-        let mut bytes = vec![0; (end - start) as usize];
-        file.seek(SeekFrom::Start(start))?;
-        file.read_exact(&mut bytes)?;
-        bytes.append(&mut carried);
-        // Every line after the first line break is whole; before it, at the
-        // file's start, so is the first.
-        let whole_from = if start == 0 {
-            0
-        } else {
-            match bytes.iter().position(|byte| *byte == b'\n') {
-                Some(index) => index + 1,
-                None => {
-                    carried = bytes;
-                    end = start;
-                    continue;
-                }
-            }
-        };
-        let mut lines = Vec::new();
-        let mut offset = start + whole_from as u64;
-        for line in bytes[whole_from..].split_inclusive(|byte| *byte == b'\n') {
-            lines.push((offset, line));
-            offset += line.len() as u64;
-        }
-        for (offset, line) in lines.into_iter().rev() {
-            if line.windows(needle.len()).any(|window| window == needle)
-                && serde_json::from_slice::<Value>(line).is_ok_and(|value| matches(offset, &value))
-            {
-                return Ok(Some((offset, line.len() as u64)));
-            }
-        }
-        bytes.truncate(whole_from);
-        carried = bytes;
-        end = start;
-    }
-    Ok(None)
 }
 
 /// The model and reasoning effort a conversation's latest main-thread turn
@@ -1148,13 +1084,17 @@ pub fn read_session_settings_roots(
         .unwrap_or_default())
 }
 
+/// The whole records in the last `max_bytes` of a transcript, plain or
+/// compressed. A compressed one is decoded from its start to read them.
 pub fn bounded_suffix(path: &Path, max_bytes: u64) -> Option<String> {
-    let mut file = fs::File::open(path).ok()?;
-    let metadata = file.metadata().ok()?;
-    if !metadata.is_file() {
+    let mut file = TranscriptFile::open(path).ok()?;
+    if !file.metadata().is_file() {
         return None;
     }
-    let (_, bytes) = bounded_suffix_records(&mut file, metadata.len(), max_bytes).ok()?;
+    let (_, bytes) = file
+        .tail(None, 0, max_bytes, u64::MAX)
+        .ok()??
+        .whole_records();
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
@@ -1166,22 +1106,10 @@ pub fn bounded_suffix_records(
     len: u64,
     max_bytes: u64,
 ) -> std::io::Result<(u64, Vec<u8>)> {
-    // Start one byte earlier so a record exactly on the boundary is retained.
-    let start = len.saturating_sub(max_bytes);
-    file.seek(SeekFrom::Start(start.saturating_sub(1)))?;
-    let mut bytes = Vec::new();
-    file.take(len - start + u64::from(start > 0))
-        .read_to_end(&mut bytes)?;
-    if start == 0 {
-        return Ok((0, bytes));
-    }
-    // Never decode a partial JSON record or split UTF-8 code point.
-    let boundary = bytes
-        .iter()
-        .position(|byte| *byte == b'\n')
-        .map_or(bytes.len(), |index| index + 1);
-    bytes.drain(..boundary);
-    Ok((start - 1 + boundary as u64, bytes))
+    // The tail holds the byte before its start, so a record exactly on the
+    // boundary is retained; one the boundary cuts is left out.
+    Ok(seek_tail(file, len, None, 0, max_bytes, u64::MAX)?
+        .map_or((len, Vec::new()), Tail::whole_records))
 }
 
 fn recorded_setting(value: Option<&Value>) -> Option<String> {
