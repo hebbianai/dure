@@ -9,6 +9,17 @@ import type { ProviderConversationActivity } from "@/lib/ipc/conversations";
 
 type AgentChatSessionPhase = "detached" | "connecting" | "ready" | "error";
 
+/** The person's Resume of the provider behind an exited conversation, for
+ * the exit it answers (`ObservedProviderExit.itemId`). A later exit is a new
+ * episode that this one says nothing about. */
+export interface AgentChatProviderResume {
+	readonly exitItemId: string;
+	/** `not_restarted`: the backend answered, and the exit is still current. */
+	readonly state: "resuming" | "not_restarted" | "failed";
+	/** The backend's refusal token, when it refused. */
+	readonly failure?: string;
+}
+
 export interface AgentChatSessionSnapshot {
 	phase: AgentChatSessionPhase;
 	page?: AgentTimelinePageV1;
@@ -33,6 +44,7 @@ export interface AgentChatSessionSnapshot {
 	>[];
 	queuedMoreAfter?: number | null;
 	loadingQueued?: boolean;
+	providerResume?: AgentChatProviderResume;
 }
 
 interface AgentChatSessionActions {
@@ -58,6 +70,8 @@ interface AgentChatSessionActions {
 	editRetryableTurn(restore: (input: string) => void): Promise<void>;
 	answerPending(requestId: string, answer: unknown): Promise<void>;
 	interrupt(): Promise<void>;
+	/** Restarts the exited provider on the same conversation. */
+	resumeProvider(): Promise<void>;
 	dismissActionError(): void;
 }
 

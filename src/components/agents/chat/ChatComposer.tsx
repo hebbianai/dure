@@ -1,6 +1,7 @@
 import type { IDockviewPanelProps } from "dockview-react";
 import { CornerUpLeft, ImageIcon, Square, X, Zap } from "lucide-react";
 import { ChatAlert } from "@/components/agents/chat/ChatAlert";
+import { ChatProviderExitNotice } from "@/components/agents/chat/ChatProviderExitNotice";
 import {
 	ChatComposerSendButton,
 	ChatComposerShell,
@@ -221,7 +222,8 @@ export function ChatComposer({
 	const submissionInFlight =
 		authority !== null && submittingAuthority === authority;
 	// The conversation shows its provider exited: nothing is running to
-	// receive input, so the composer says so and keeps what is written.
+	// receive input, so the composer says so, keeps what is written and
+	// offers Resume.
 	const providerExit = historyFacts.exit;
 	const [returnedExitedSendFor, setReturnedExitedSendFor] = useState<
 		string | null
@@ -478,15 +480,16 @@ export function ChatComposer({
 			notices={
 				<>
 					{providerExit && (
-						<ChatAlert tone="warn" role="status" className="mb-2 items-center">
-							<span className="min-w-0 flex-1">
-								{providerExit.reason
-									? t("agents.chat.providerExitedWithReason", {
-											reason: providerExit.reason,
-										})
-									: t("agents.chat.providerExited")}
-							</span>
-						</ChatAlert>
+						<ChatProviderExitNotice
+							exit={providerExit}
+							session={session}
+							disabled={
+								disabled ||
+								replacementInFlight ||
+								session.phase !== "ready" ||
+								session.reconnecting
+							}
+						/>
 					)}
 					{session.error && !session.reconnecting && (
 						<ChatAlert className="mb-2 items-center">

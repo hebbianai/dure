@@ -758,6 +758,93 @@ async fn provider_session_initialization_establishes_the_durable_resume_referenc
     assert_eq!(binding.binding_revision, 2);
 }
 
+fn session_ready_rows(page: &dure_app::AgentTimelinePageV1) -> usize {
+    page.rows
+        .iter()
+        .filter(|row| {
+            matches!(
+                row.item.body,
+                AgentTimelineItemBodyV1::Lifecycle {
+                    state: AgentTimelineLifecycleStateV1::SessionReady,
+                    ..
+                }
+            )
+        })
+        .count()
+}
+
+/// hebbianai/dure#807: Claude reports `system:init` only after the first
+/// input, so a relaunched Query that nothing has written to yet must still
+/// read as ready. The Host's `initialized` (the Query is bound and waits for
+/// input) records it; the later init establishes the resume reference
+/// without a second session start, which turn projection would read as the
+/// runtime under the turn being replaced.
+#[tokio::test]
+async fn a_bound_query_is_ready_before_its_first_input() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = fixture_with_provider_ref(&temp_dir.path().join("domain.sqlite"), None).await;
+    let transport = FakeTransport::new(Arc::clone(&store), [], []);
+    let bridge = ClaudeTimelineBridge::new(
+        Arc::new(AgentConversationService::new(Arc::clone(&store))),
+        transport,
+        AgentInteractionSessionIdV1::new("interaction-claude").unwrap(),
+        identity(),
+    )
+    .unwrap();
+    let push = |sequence, kind: &str, payload| ClaudeDch1EventFrame {
+        identity: identity(),
+        event: ClaudeDch1ProviderEvent {
+            sequence,
+            kind: kind.into(),
+            payload,
+        },
+    };
+
+    bridge
+        .ingest_pushed(&push(
+            1,
+            "initialized",
+            json!({ "providerSessionId": null }),
+        ))
+        .await
+        .unwrap();
+    let bound = tail(&store).await;
+    assert_eq!(session_ready_rows(&bound), 1);
+    assert!(matches!(
+        bound.rows.last().unwrap().item.body,
+        AgentTimelineItemBodyV1::Lifecycle {
+            state: AgentTimelineLifecycleStateV1::SessionReady,
+            detail: None,
+        }
+    ));
+
+    bridge
+        .ingest_pushed(&push(
+            2,
+            "provider_session_initialized",
+            json!({
+                "apiKeySource": "none",
+                "claudeCodeVersion": "2.1.234",
+                "cwd": "/workspace/claude/.worktrees/agent",
+                "model": "claude-sonnet-4-6",
+                "permissionMode": "default",
+                "providerSessionId": "session-claude-1"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(session_ready_rows(&tail(&store).await), 1);
+    let binding = store
+        .agent_interaction(&AgentInteractionSessionIdV1::new("interaction-claude").unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        binding.provider_conversation_ref.as_deref(),
+        Some("session-claude-1")
+    );
+}
+
 fn permission() -> Value {
     json!({
         "clientMessageId": "client-claude-1",

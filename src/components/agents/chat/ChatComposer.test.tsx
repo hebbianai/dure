@@ -887,6 +887,7 @@ function ControlledComposer({
 				queueMessage: (input) => controller.queueMessage(input),
 				retryTurn: () => controller.retryTurn(),
 				editRetryableTurn: (restore) => controller.editRetryableTurn(restore),
+				resumeProvider: () => controller.resumeProvider(),
 				dismissActionError: () => controller.dismissActionError(),
 			}}
 		/>
@@ -929,6 +930,24 @@ describe("ChatComposer after its provider exited", () => {
 		const value = exitedSession('{"code":0,"signal":null}');
 		render(<ChatComposer session={value} disabled={false} />);
 		expect(screen.getByText(t("agents.chat.providerExited"))).toBeTruthy();
+	});
+
+	it("shows a running Resume and one that did not restart the session", () => {
+		const value = exitedSession('{"code":143,"signal":null}');
+		value.providerResume = { exitItemId: "lifecycle-2", state: "resuming" };
+		const { rerender } = render(<ChatComposer session={value} disabled={false} />);
+		const pending = screen.getByRole("button", {
+			name: t("agents.chat.resumingSession"),
+		}) as HTMLButtonElement;
+		expect(pending.disabled).toBe(true);
+
+		value.providerResume = { exitItemId: "lifecycle-2", state: "not_restarted" };
+		rerender(<ChatComposer session={{ ...value }} disabled={false} />);
+		expect(screen.getByText(t("agents.chat.resumeNotRestarted"))).toBeTruthy();
+		fireEvent.click(
+			screen.getByRole("button", { name: t("agents.chat.resumeSession") }),
+		);
+		expect(value.resumeProvider).toHaveBeenCalledOnce();
 	});
 
 	it("still runs Dure's own commands", async () => {
@@ -1099,6 +1118,111 @@ describe("ChatComposer after its provider exited", () => {
 			});
 			expect(client.startTurn).toHaveBeenCalledTimes(1);
 			expect(composer.value).toBe("hello");
+		} finally {
+			controller.stop();
+		}
+	});
+
+	it("resumes the session and then sends the kept draft to the relaunched provider (#807)", async () => {
+		const routeAuthority = testDureBackendRouteAuthority("backend", "one");
+		const base = session("claude");
+		let page: AgentTimelinePageV1 = {
+			...base.page!,
+			rows: [
+				sessionLifecycleRow(1, "session_ready", null),
+				sessionLifecycleRow(2, "session_exited", '{"code":143,"signal":null}'),
+			],
+			finalCursor: { epoch: "timeline-1", sequence: 2 },
+		};
+		const relaunched = {
+			...page.binding,
+			runtime: { runtimeGeneration: "runtime-2", providerEpoch: "query-2" },
+			bindingRevision: 2,
+		};
+		const client: DureAgentConversationClient = {
+			inspectInput: async () => null,
+			readQueue: vi.fn(),
+			readProviderHistory: vi.fn(),
+			enqueueTurn: vi.fn(),
+			cancelQueuedTurn: vi.fn(),
+			inspect: async () => ({
+				backend: routeAuthority.backend,
+				routeAuthority,
+				binding: page.binding,
+			}),
+			// The backend relaunches Claude; the bound Query records that the
+			// session is ready before recover answers.
+			recover: vi.fn(async () => {
+				page = {
+					...page,
+					binding: relaunched,
+					rows: [...page.rows, sessionLifecycleRow(3, "session_ready", null)],
+					finalCursor: { epoch: "timeline-1", sequence: 3 },
+				};
+				return relaunched;
+			}),
+			read: async () => ({
+				backend: routeAuthority.backend,
+				routeAuthority,
+				read: { type: "page", page: { ...page, rows: [] } },
+			}),
+			subscribe: async () => ({
+				backend: routeAuthority.backend,
+				routeAuthority,
+				initial: { type: "page", page },
+				subscriptionId: "test",
+				close: async () => {},
+			}),
+			continueTurn: async () => {
+				throw new Error("Unexpected automatic continuation in this fixture");
+			},
+			startTurn: vi.fn(async () => "accepted" as const),
+			steerTurn: vi.fn(),
+			answerPending: vi.fn(),
+			interruptTurn: vi.fn(),
+			putGoal: vi.fn(),
+		};
+		const controller = new AgentChatSessionController({
+			agentId: "agent-1",
+			interactionSessionId: "interaction-1",
+			client,
+			submissionStore: {
+				subscribe: () => () => {},
+				list: async () => [],
+				put: async () => {},
+				remove: async () => {},
+			},
+		});
+		controller.start();
+		try {
+			await vi.waitFor(() =>
+				expect(controller.getSnapshot().phase).toBe("ready"),
+			);
+			render(<ControlledComposer controller={controller} base={base} />);
+			const composer = screen.getByRole("textbox") as HTMLTextAreaElement;
+			fireEvent.change(composer, { target: { value: "hello" } });
+			const exited = t("agents.chat.providerExitedWithReason", {
+				reason: "exit 143",
+			});
+			expect(screen.getByText(exited)).toBeTruthy();
+
+			await act(async () => {
+				fireEvent.click(
+					screen.getByRole("button", { name: t("agents.chat.resumeSession") }),
+				);
+			});
+			await vi.waitFor(() => expect(screen.queryByText(exited)).toBeNull());
+			expect(client.recover).toHaveBeenCalledOnce();
+			expect(composer.value).toBe("hello");
+
+			await act(async () => {
+				fireEvent.keyDown(composer, { key: "Enter" });
+			});
+			expect(client.startTurn).toHaveBeenCalledOnce();
+			expect(vi.mocked(client.startTurn).mock.calls[0]![0]).toMatchObject({
+				runtime: relaunched.runtime,
+				input: "hello",
+			});
 		} finally {
 			controller.stop();
 		}

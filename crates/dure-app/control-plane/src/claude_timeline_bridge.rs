@@ -969,17 +969,12 @@ fn map_event(
     let payload = object(&event.payload, "event_payload_invalid")?;
     let mut mutations = Vec::new();
     match event.kind.as_str() {
-        "initialized" | "user_message_accepted" | "provider_turn_result" => {}
-        "provider_session_initialized" => {
-            mutations.push(AgentTimelineMutationV1::EstablishProviderConversation {
-                provider_conversation_ref: string(
-                    payload,
-                    "providerSessionId",
-                    "provider_session_initialized_invalid",
-                )?
-                .into(),
-                established_at_ms: observed_at_ms,
-            });
+        // The SDK Host has bound the Query and it waits for input: the
+        // session is ready, as the other providers record when their session
+        // starts. Claude's own `system:init` (`provider_session_initialized`)
+        // can arrive only after the first input, so a relaunched Query would
+        // otherwise read as still ended until something reached it.
+        "initialized" => {
             mutations.push(AgentTimelineMutationV1::Append {
                 item: item(
                     identity,
@@ -993,6 +988,18 @@ fn map_event(
                     None,
                     observed_at_ms,
                 )?,
+            });
+        }
+        "user_message_accepted" | "provider_turn_result" => {}
+        "provider_session_initialized" => {
+            mutations.push(AgentTimelineMutationV1::EstablishProviderConversation {
+                provider_conversation_ref: string(
+                    payload,
+                    "providerSessionId",
+                    "provider_session_initialized_invalid",
+                )?
+                .into(),
+                established_at_ms: observed_at_ms,
             });
             mutations.push(provider_evidence(
                 identity,

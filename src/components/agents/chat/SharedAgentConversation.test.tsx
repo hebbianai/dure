@@ -117,6 +117,7 @@ beforeEach(() => {
 		editRetryableTurn: vi.fn(),
 		answerPending: vi.fn(),
 		interrupt: vi.fn(),
+		resumeProvider: vi.fn(),
 		dismissActionError: vi.fn(),
 	};
 });

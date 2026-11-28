@@ -137,6 +137,10 @@ export function useAgentChatSession(
 			controller
 				? controller.interrupt()
 				: Promise.reject(new Error("agent_chat_controller_unavailable")),
+		resumeProvider: () =>
+			controller
+				? controller.resumeProvider()
+				: Promise.reject(new Error("agent_chat_controller_unavailable")),
 		dismissActionError: () => controller?.dismissActionError(),
 	};
 }
