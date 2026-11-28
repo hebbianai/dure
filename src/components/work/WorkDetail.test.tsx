@@ -30,6 +30,7 @@ import type { Agent, Project, Space } from "@/types";
 
 const mocks = vi.hoisted(() => ({
 	read: vi.fn(),
+	follow: vi.fn(),
 	chatSession: vi.fn(),
 	terminal: vi.fn(),
 	open: vi.fn(),
@@ -44,6 +45,8 @@ vi.mock("@/lib/ipc/dureAgentNativeInput", () => ({
 vi.mock("@/lib/ipc/conversations", () => ({
 	readProviderConversationTranscript: (...args: unknown[]) =>
 		mocks.read(...args),
+	followProviderConversationTranscript: (...args: unknown[]) =>
+		mocks.follow(...args),
 	readAgentBackgroundWork: async () => ({
 		items: [],
 		counts: { subagents: 0, workflows: 0, shells: 0, monitors: 0 },
@@ -282,6 +285,8 @@ beforeEach(() => {
 	useWindowSidebarStore.getState().setTab("work");
 	mocks.read.mockReset();
 	mocks.read.mockResolvedValue(transcript);
+	mocks.follow.mockReset();
+	mocks.follow.mockResolvedValue(() => {});
 	mocks.chatSession.mockReset();
 	mocks.chatSession.mockReturnValue({
 		draftIdentity: {
@@ -549,6 +554,61 @@ describe("Work detail", () => {
 		runtimeOfD({ turnCompletedCount: "2" });
 		await waitFor(() => expect(sendOf(conversation).disabled).toBe(false));
 		expect(composerOf(conversation).value).toBe("Next step");
+	});
+
+	it("follows a working terminal agent's transcript as the provider writes it", async () => {
+		const unfollow = vi.fn();
+		let changed: () => void = () => {};
+		mocks.follow.mockImplementation(
+			async (_provider: string, _id: string, onChange: () => void) => {
+				changed = onChange;
+				return unfollow;
+			},
+		);
+		mocks.read.mockImplementation(
+			async (_provider: string, _id: string, options: { after?: number }) =>
+				options.after === undefined
+					? { ...transcript, finalResponse: null, newerCursor: 100 }
+					: options.after === 100
+						? {
+								...transcript,
+								entries: [{ role: "agent", text: "Running the suite" }],
+								newerCursor: 160,
+							}
+						: { ...transcript, entries: [], newerCursor: options.after },
+		);
+		runtimeOfD({ activity: "working" }, "working");
+		useWorkViewStore.getState().select("d");
+		render(<WorkMain />);
+		const conversation = screen.getByRole("region", {
+			name: t("work.conversation.label"),
+		});
+		await within(conversation).findByText("Fix the flaky test");
+		await waitFor(() =>
+			expect(mocks.follow).toHaveBeenCalledWith(
+				"codex",
+				"conversation-d",
+				expect.any(Function),
+			),
+		);
+		act(() => changed());
+		expect(
+			await within(conversation).findByText("Running the suite"),
+		).toBeTruthy();
+		// Only what was appended is read again, never the whole transcript.
+		expect(mocks.read).toHaveBeenCalledWith("codex", "conversation-d", {
+			includeTools: true,
+			after: 100,
+		});
+		expect(
+			mocks.read.mock.calls.filter(
+				([, , options]) => (options as { after?: number }).after === undefined,
+			),
+		).toHaveLength(1);
+
+		// An idle agent is not followed.
+		runtimeOfD({ turnCompletedCount: "2" });
+		await waitFor(() => expect(unfollow).toHaveBeenCalled());
 	});
 
 	it("answers a terminal agent's approval from the column", async () => {

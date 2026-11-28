@@ -1,13 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+	followProviderConversationTranscript,
 	listConversations,
 	providerConversationMetadata,
 	readProviderConversationTranscript,
 	sshListConversations,
 } from "./conversations";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({
+	invoke: vi.fn(),
+	Channel: class {
+		onmessage: (message: unknown) => void = () => {};
+	},
+}));
 
 const invokeMock = vi.mocked(invoke);
 const credentialProfile = {
@@ -84,6 +90,56 @@ describe("conversation credential profile IPC", () => {
 				before: 4096,
 			},
 		);
+	});
+
+	it("asks for what was appended since an earlier read's newer cursor", async () => {
+		await readProviderConversationTranscript("claude", "conversation-1", {
+			includeTools: true,
+			after: 8192,
+		});
+
+		expect(invokeMock).toHaveBeenCalledWith(
+			"read_provider_conversation_transcript",
+			{
+				provider: "claude",
+				conversationId: "conversation-1",
+				includeTools: true,
+				after: 8192,
+			},
+		);
+	});
+
+	it("follows a transcript's changes until the follow ends", async () => {
+		invokeMock.mockResolvedValueOnce(7);
+		const onChange = vi.fn();
+		const end = await followProviderConversationTranscript(
+			"claude",
+			"conversation-1",
+			onChange,
+		);
+		const [, request] = invokeMock.mock.calls[0] as [
+			string,
+			{ onChange: { onmessage(message: unknown): void } },
+		];
+		expect(invokeMock).toHaveBeenCalledWith(
+			"follow_provider_conversation_transcript",
+			{
+				provider: "claude",
+				conversationId: "conversation-1",
+				onChange: request.onChange,
+			},
+		);
+		request.onChange.onmessage(null);
+		expect(onChange).toHaveBeenCalledTimes(1);
+
+		invokeMock.mockResolvedValueOnce(undefined);
+		end();
+		expect(invokeMock).toHaveBeenLastCalledWith(
+			"unfollow_provider_conversation_transcript",
+			{ followId: 7 },
+		);
+		request.onChange.onmessage(null);
+		expect(onChange).toHaveBeenCalledTimes(1);
 	});
 
 	it("passes the selected local profile as one typed value", async () => {

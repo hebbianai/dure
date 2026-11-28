@@ -143,6 +143,8 @@ impl BackendActivityPage {
             },
             tools: window.finish(0),
             older_cursor,
+            newer_cursor: None,
+            results: Vec::new(),
         }
     }
 }

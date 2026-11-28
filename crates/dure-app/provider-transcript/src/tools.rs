@@ -94,6 +94,26 @@ pub struct ProviderConversationActivity {
     /// read reaches the transcript's start.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub older_cursor: Option<u64>,
+    /// Where newer records begin: the offset just past the last whole record
+    /// of a read that reaches the transcript's end, where the next read of
+    /// what the provider appends starts (`after`). Absent on older pages and
+    /// on a transcript read as a tree (Pi's), whose newer records may extend
+    /// any branch, so only a whole read follows it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub newer_cursor: Option<u64>,
+    /// How calls made before a newer read's first record ended, by the
+    /// results it holds: the calls themselves are in the read before it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub results: Vec<ProviderToolResult>,
+}
+
+/// How a call that an earlier read holds ended, by a result a newer read
+/// holds.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderToolResult {
+    pub call_id: String,
+    pub state: ProviderToolState,
 }
 
 /// What one transcript record says about tool calls.
@@ -367,6 +387,9 @@ pub(crate) struct ToolWindow {
     /// Every call seen, by id, as its index counted from the first call.
     seen: std::collections::HashMap<String, usize>,
     bytes: usize,
+    /// Results for calls made before the first record applied, by call id,
+    /// in the order first seen; the newer result wins.
+    earlier: Vec<ProviderToolResult>,
 }
 
 fn call_bytes(call: &ProviderToolCall) -> usize {
@@ -439,11 +462,31 @@ impl ToolWindow {
                 ToolEvent::Result { call_id, state } => {
                     if let Some(index) = self.live_index(&call_id) {
                         self.calls[index].state = state;
+                    } else if !self.seen.contains_key(&call_id) {
+                        self.settle_earlier(call_id, state);
                     }
                 }
             }
         }
         complete
+    }
+
+    fn settle_earlier(&mut self, call_id: String, state: ProviderToolState) {
+        if let Some(result) = self
+            .earlier
+            .iter_mut()
+            .find(|result| result.call_id == call_id)
+        {
+            result.state = state;
+        } else if self.earlier.len() < MAX_TOOL_CALLS {
+            self.earlier.push(ProviderToolResult { call_id, state });
+        }
+    }
+
+    /// The results for calls made before the first record applied (see
+    /// [`ProviderConversationActivity::results`]).
+    pub(crate) fn take_earlier(&mut self) -> Vec<ProviderToolResult> {
+        std::mem::take(&mut self.earlier)
     }
 
     fn live_index(&self, call_id: &str) -> Option<usize> {

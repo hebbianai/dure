@@ -26,8 +26,8 @@ use claude_local_command::{ClaudeLocalCommand, claude_local_command};
 pub use pi::{find_pi_conversation, pi_turn};
 pub use tools::{
     MAX_TOOL_CALLS, MAX_TOOL_INPUT_BYTES, MAX_TOOL_OUTPUT_BYTES, ProviderConversationActivity,
-    ProviderToolCall, ProviderToolState, ToolEvent, ToolEventParser, bounded_input,
-    claude_tool_events, codex_tool_events, pi_tool_events, tool_events_for,
+    ProviderToolCall, ProviderToolResult, ProviderToolState, ToolEvent, ToolEventParser,
+    bounded_input, claude_tool_events, codex_tool_events, pi_tool_events, tool_events_for,
 };
 pub use transcript_file::{
     MAX_WINDOWS_DECODED_BYTES, TranscriptWindows, bounded_windows, transcript_name,
@@ -365,26 +365,61 @@ pub fn activity_from_file(
     provider: &str,
     conversation_id: &str,
 ) -> Result<ProviderConversationActivity, String> {
-    activity_page_from_file(path, provider, conversation_id, None)
+    activity_page_from_file(path, provider, conversation_id, ActivityPage::Newest)
 }
 
-/// One page of [`activity_from_file`]: the newest records, or with `before`
-/// the records that end just before an earlier page's `older_cursor`. Pages
-/// are whole records and never overlap, so an older page joins the newer one
-/// exactly where it stopped. An older page's calls still say how they ended
-/// when their results fall just past its end.
+/// Which records of a transcript one read of [`activity_page_from_file`]
+/// answers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActivityPage {
+    /// The newest records, to the transcript's end.
+    Newest,
+    /// The records that end just before an earlier page's `older_cursor`.
+    /// Pages are whole records and never overlap, so an older page joins the
+    /// newer one exactly where it stopped. An older page's calls still say
+    /// how they ended when their results fall just past its end.
+    Before(u64),
+    /// What the provider appended since a read whose `newer_cursor` this is:
+    /// the records from there to the end, with how that read's calls ended
+    /// (`results`), within the newest read's bounds. A read that cannot reach
+    /// back to the cursor names an `older_cursor`, and the records between
+    /// are only in a whole read. A transcript with no record starting at the
+    /// cursor was replaced or rewritten, and the read fails; so does a tree
+    /// (Pi's), which is only read whole.
+    After(u64),
+}
+
+/// One page of [`activity_from_file`].
 pub fn activity_page_from_file(
     path: &Path,
     provider: &str,
     conversation_id: &str,
-    before: Option<u64>,
+    page: ActivityPage,
 ) -> Result<ProviderConversationActivity, String> {
-    let limits = if before.is_some() {
-        Limits::PAGE
-    } else {
-        Limits::DEFAULT
-    };
-    activity_window(path, provider, conversation_id, limits, before, 0)
+    match page {
+        ActivityPage::Newest => {
+            activity_window(path, provider, conversation_id, Limits::DEFAULT, None, 0)
+        }
+        ActivityPage::Before(before) => activity_window(
+            path,
+            provider,
+            conversation_id,
+            Limits::PAGE,
+            Some(before),
+            0,
+        ),
+        ActivityPage::After(_) if follows_branch(provider) => {
+            Err("provider transcript is only read whole".to_string())
+        }
+        ActivityPage::After(after) => activity_window(
+            path,
+            provider,
+            conversation_id,
+            Limits::DEFAULT,
+            None,
+            after,
+        ),
+    }
 }
 
 fn activity_window(
@@ -410,6 +445,8 @@ fn activity_window(
         transcript: window.transcript,
         tools: window.tools,
         older_cursor: window.older_cursor,
+        newer_cursor: window.newer_cursor,
+        results: window.results,
     })
 }
 
@@ -517,6 +554,8 @@ struct TranscriptWindow {
     transcript: ProviderConversationTranscript,
     tools: Vec<ProviderToolCall>,
     older_cursor: Option<u64>,
+    newer_cursor: Option<u64>,
+    results: Vec<ProviderToolResult>,
 }
 
 /// The records of `path` that end by `before` (by default, its end) and start
@@ -574,6 +613,12 @@ fn read_window(
         (0, &bytes[..])
     };
     let records_start = offset;
+    // Just past the last record with its line break: a record the provider
+    // is still writing has none yet, and the next read starts with it. A last
+    // record whole without one is read here, and no newer read can tell
+    // where it ends, so only a whole read follows it.
+    let mut whole_through = records_start;
+    let mut unterminated_tail = false;
     // In a tree, only the conversation's branch: a branch left behind is no
     // part of what the conversation says.
     let branch = follows_branch(provider)
@@ -591,6 +636,10 @@ fn read_window(
     for raw in bytes.split_inclusive(|byte| *byte == b'\n') {
         let record_offset = offset;
         offset += raw.len() as u64;
+        let terminated = raw.last() == Some(&b'\n');
+        if terminated {
+            whole_through = offset;
+        }
         if branch
             .as_ref()
             .is_some_and(|branch| !branch.records.contains(&record_offset))
@@ -616,6 +665,7 @@ fn read_window(
                 continue;
             }
         };
+        unterminated_tail = !terminated;
         if let Some(text) =
             provider_final_response(provider, &value).filter(|text| !text.trim().is_empty())
         {
@@ -732,6 +782,13 @@ fn read_window(
             lossless = false;
         }
     }
+    // A read from a floor to the end continues the read that ended there,
+    // which holds the calls these results end.
+    let results = if before.is_none() && after > 0 {
+        window.take_earlier()
+    } else {
+        Vec::new()
+    };
     let mut tools = window.finish(0);
     if let (Some(end), Some(tool_events)) = (before, tool_events) {
         settle_last_turn(
@@ -755,6 +812,9 @@ fn read_window(
         },
         tools,
         older_cursor,
+        newer_cursor: (before.is_none() && !follows_branch(provider) && !unterminated_tail)
+            .then_some(whole_through),
+        results,
     })
 }
 

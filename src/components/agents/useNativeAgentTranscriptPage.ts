@@ -1,13 +1,21 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useOlderProviderHistory } from "@/components/agents/chat/useOlderProviderHistory";
+import { useDocumentVisible } from "@/components/common/useDocumentVisible";
+import type { AgentTimelinePageV1 } from "@/lib/agents/chat/agentConversationContract";
 import {
 	type NativeAgentChatPendingPrompt,
 	type NativeAgentChatSnapshot,
 	nativeAgentChatPage,
 	nativeAgentChatRefreshCursor,
 } from "@/lib/agents/chat/nativeAgentChat";
-import type { AgentTimelinePageV1 } from "@/lib/agents/chat/agentConversationContract";
-import { readProviderConversationTranscript } from "@/lib/ipc/conversations";
+import {
+	followNativeTranscript,
+	readFollowedTranscript,
+} from "@/lib/agents/chat/nativeTranscriptFollow";
+import {
+	followProviderConversationTranscript,
+	readProviderConversationTranscript,
+} from "@/lib/ipc/conversations";
 import type { NativeAgentTranscriptSource } from "../../../cli/lib/agent-transcript.mjs";
 
 /** Where the newest transcript read lives. The pane keeps it in its runtime
@@ -21,11 +29,14 @@ export interface NativeAgentTranscriptRead {
 }
 
 /** A native terminal Agent's provider transcript as the shared chat page,
- * with older history loading on request. The transcript is read again only
- * when the refresh cursor moves (a new conversation or terminal generation,
- * a turn the Host completed, work starting or stopping), never on a timer.
- * `page` is undefined before the first read and null when the transcript
- * cannot be projected. */
+ * with older history loading on request. The transcript is read whole when
+ * the refresh cursor moves (a new conversation or terminal generation, a
+ * turn the Host completed, work starting or stopping). While the Agent works
+ * and the view is on screen it also follows what the provider writes: each
+ * change the desktop reports on the transcript's file reads what was
+ * appended since the newest read, at most once a second. Neither runs on a
+ * timer. `page` is undefined before the first read and null when the
+ * transcript cannot be projected. */
 export function useNativeAgentTranscriptPage({
 	source,
 	terminalEpoch,
@@ -74,6 +85,39 @@ export function useNativeAgentTranscriptPage({
 			current = false;
 		};
 	}, [cursor, setSnapshot, setReadFailed]);
+
+	// The follow continues the newest read; the cursor's read starts it, and a
+	// read that answers after a newer whole read is dropped.
+	const snapshotRef = useRef(snapshot);
+	snapshotRef.current = snapshot;
+	const onScreen = useDocumentVisible();
+	const following = working && onScreen;
+	useEffect(() => {
+		if (!following) return;
+		return followNativeTranscript({
+			follow: (onChange) =>
+				followProviderConversationTranscript(
+					provider,
+					conversationId,
+					onChange,
+				),
+			read: async () => {
+				const base = snapshotRef.current;
+				if (!base) return;
+				const transcript = await readFollowedTranscript(
+					base.transcript,
+					(after) =>
+						readProviderConversationTranscript(provider, conversationId, {
+							includeTools: true,
+							after,
+						}),
+				);
+				if (transcript !== base.transcript && snapshotRef.current === base) {
+					setSnapshot({ ...base, transcript });
+				}
+			},
+		});
+	}, [following, provider, conversationId, setSnapshot]);
 
 	// Older history loads on request above the newest read, from where that
 	// read starts; a newer read that starts elsewhere starts the pages again.

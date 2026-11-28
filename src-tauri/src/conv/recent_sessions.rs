@@ -2,7 +2,8 @@
 use dure_provider_profile::transcript::{provider_final_response, ProviderTranscriptEntry};
 use dure_provider_profile::background_work::{read_claude_background_work, BackgroundWorkList};
 pub use dure_provider_profile::transcript::{
-    ConversationTurnRole, ProviderConversationActivity, ProviderConversationTranscript,
+    ActivityPage, ConversationTurnRole, ProviderConversationActivity,
+    ProviderConversationTranscript,
 };
 use dure_provider_profile::transcript::{
     bounded_prefix, bounded_suffix, bounded_windows, claude_turn, codex_content_text, codex_turn,
@@ -1607,32 +1608,46 @@ pub fn transcript_global(
 pub fn transcript_activity_any_account(
     provider: &str,
     conversation_id: &str,
-    before: Option<u64>,
+    page: ActivityPage,
 ) -> Result<ProviderConversationActivity, String> {
     activity_for_roots_and_profiles(
         &DiscoveryRoots::from_environment(),
         &home_account_profiles(provider),
         provider,
         conversation_id,
-        before,
+        page,
     )
 }
 
-/// The newest page, or with `before` the older page that ends where a newer
-/// page's `older_cursor` points.
+/// The file [`transcript_activity_any_account`] reads now, for a view that
+/// follows its changes.
+pub fn transcript_file_any_account(
+    provider: &str,
+    conversation_id: &str,
+) -> Result<PathBuf, String> {
+    newest_conversation_file(
+        &DiscoveryRoots::from_environment(),
+        &home_account_profiles(provider),
+        provider,
+        conversation_id,
+    )
+}
+
+/// One page of the newest written copy of the transcript (see
+/// [`ActivityPage`]).
 fn activity_for_roots_and_profiles(
     roots: &DiscoveryRoots,
     profiles: &[PathBuf],
     provider: &str,
     conversation_id: &str,
-    before: Option<u64>,
+    page: ActivityPage,
 ) -> Result<ProviderConversationActivity, String> {
     let path = newest_conversation_file(roots, profiles, provider, conversation_id)?;
     dure_provider_profile::transcript::activity_page_from_file(
         &path,
         provider,
         conversation_id,
-        before,
+        page,
     )
 }
 
@@ -3641,22 +3656,38 @@ mod tests {
         );
 
         assert!(
-            activity_for_roots_and_profiles(&roots, &[], "claude", conversation_id, None).is_err(),
+            activity_for_roots_and_profiles(
+                &roots,
+                &[],
+                "claude",
+                conversation_id,
+                ActivityPage::Newest
+            )
+            .is_err(),
             "the default state root alone misses the profile"
         );
         let profiles = account_profile_directories(temporary.path(), "claude");
-        let activity =
-            activity_for_roots_and_profiles(&roots, &profiles, "claude", conversation_id, None)
-                .unwrap();
+        let activity = activity_for_roots_and_profiles(
+            &roots,
+            &profiles,
+            "claude",
+            conversation_id,
+            ActivityPage::Newest,
+        )
+        .unwrap();
         assert_eq!(activity.transcript.entries.len(), 2);
         assert_eq!(
             activity.transcript.final_response.as_deref(),
             Some("Earlier answer")
         );
-        assert!(
-            activity_for_roots_and_profiles(&roots, &profiles, "claude", "../escape", None)
-                .is_err()
-        );
+        assert!(activity_for_roots_and_profiles(
+            &roots,
+            &profiles,
+            "claude",
+            "../escape",
+            ActivityPage::Newest
+        )
+        .is_err());
         // An older page reads the same profile copy up to the cursor a newer
         // read named; the whole small transcript names none.
         assert_eq!(activity.older_cursor, None);
@@ -3669,12 +3700,36 @@ mod tests {
             &profiles,
             "claude",
             conversation_id,
-            Some(second_record),
+            ActivityPage::Before(second_record),
         )
         .unwrap();
         assert_eq!(older.transcript.entries.len(), 1);
         assert_eq!(older.transcript.entries[0].text, "Earlier request");
         assert_eq!(older.older_cursor, None);
+        // A live view reads what was appended to the same copy since then.
+        // The fixture's last record has no line break, so only a whole read
+        // follows it until the provider writes one.
+        assert_eq!(activity.newer_cursor, None);
+        let path = profile.join(format!("projects/-repo/{conversation_id}.jsonl"));
+        fs::write(&path, format!("{source}\n")).unwrap();
+        let activity = activity_for_roots_and_profiles(
+            &roots,
+            &profiles,
+            "claude",
+            conversation_id,
+            ActivityPage::Newest,
+        )
+        .unwrap();
+        let newer = activity_for_roots_and_profiles(
+            &roots,
+            &profiles,
+            "claude",
+            conversation_id,
+            ActivityPage::After(activity.newer_cursor.unwrap()),
+        )
+        .unwrap();
+        assert!(newer.transcript.entries.is_empty());
+        assert_eq!(newer.newer_cursor, activity.newer_cursor);
     }
 
     /// A Pi Terminal Agent's conversation view reads Pi's own session file
@@ -3713,8 +3768,14 @@ mod tests {
         )
         .unwrap();
 
-        let activity =
-            activity_for_roots_and_profiles(&roots, &[], "pi", conversation_id, None).unwrap();
+        let activity = activity_for_roots_and_profiles(
+            &roots,
+            &[],
+            "pi",
+            conversation_id,
+            ActivityPage::Newest,
+        )
+        .unwrap();
         assert_eq!(
             activity
                 .transcript
@@ -3728,7 +3789,14 @@ mod tests {
         assert_eq!(activity.older_cursor, None);
         let transcript = transcript_for_roots(&roots, "pi", conversation_id).unwrap();
         assert_eq!(transcript.entries, activity.transcript.entries);
-        assert!(activity_for_roots_and_profiles(&roots, &[], "pi", "missing", None).is_err());
+        assert!(activity_for_roots_and_profiles(
+            &roots,
+            &[],
+            "pi",
+            "missing",
+            ActivityPage::Newest
+        )
+        .is_err());
     }
 
     /// A conversation moved between accounts can leave an older copy behind;
