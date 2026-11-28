@@ -59,7 +59,15 @@ The header marks input that an agent or script sent through dure send. It is not
 security control: a missing header does not prove that a person typed the text. Approvals
 for money, limits or credentials must come from the person in the app, not relayed text.
 Tracked messages require a managed Session and support 'dure wait --message <receiptPath>'.
-Tracked send cannot be combined with --no-enter or --idempotency-key.
+Tracked send cannot be combined with --no-enter, --idempotency-key, --window-label,
+--draft-wait or --ignore-draft, which apply only to terminal input.
+An Agent whose Run was started with 'dure run --send-delivery inbox' takes dure send only
+through its durable inbox: every send to it is a tracked message, as with --track. Those
+terminal-only options and provider commands such as /compact are refused for it, a target
+without an inbox refuses, and nothing falls back to terminal input. Before each send without
+--track, the CLI reads the target's Run records from its backend; if it cannot, nothing is
+sent. The choice belongs to the Run and nothing changes it later. dure send-keys still
+writes keys to a terminal.
 When the target's wake is held (unsubmitted input or a turn in progress), the output says
 why; --json reports it as diagnostic. The message stays in the inbox; do not resend.
 When the backend refuses a tracked message, the send reads it back once: a message it
@@ -167,9 +175,27 @@ function extractDraftGuard(args) {
   if (ignore && waitSeconds !== undefined) throw new Error("Choose either --draft-wait or --ignore-draft");
   return {
     remaining,
-    explicit: ignore || waitSeconds !== undefined,
+    flag: ignore ? "--ignore-draft" : waitSeconds !== undefined ? "--draft-wait" : undefined,
     draftGuard: ignore ? null : { waitMs: (waitSeconds ?? DEFAULT_DRAFT_WAIT_SECONDS) * 1000 },
   };
+}
+
+/** Options only terminal and chat input have. An inbox message is always
+ * submitted, is tracked by its receipt file instead of an input key, and has
+ * no draft or app window. */
+const TERMINAL_ONLY_OPTIONS = [
+  ["--no-enter", (opts) => !opts.enter],
+  ["--idempotency-key", (opts) => opts.idempotencyKey !== undefined],
+  ["--window-label", (opts) => opts.windowLabel !== undefined],
+];
+
+function terminalOnlyOptions(opts, guard) {
+  return [...TERMINAL_ONLY_OPTIONS.filter(([, used]) => used(opts)).map(([flag]) => flag),
+    ...(guard.flag ? [guard.flag] : [])];
+}
+
+function inboxRefusal(reason, flags) {
+  return `${reason}; ${flags.join(", ")} ${flags.length === 1 ? "applies" : "apply"} only to terminal input. Nothing was sent.`;
 }
 
 const UNGUARDED_CAUSE = {
@@ -241,6 +267,30 @@ export function trackedSendFailureMessage(error, registry, agent) {
   ].join("\n");
 }
 
+/** Whether a send goes through the durable inbox: an explicit --track, or a
+ * target whose Run chose inbox delivery when it started (send-delivery.mjs).
+ * That choice never falls back to terminal input: what has no inbox form is
+ * refused, and so is a send whose target's choice cannot be read. */
+async function deliveryRoute({ track, agent, text, terminalOnly, sendDelivery }) {
+  if (track) return { inbox: true };
+  const name = typeof agent === "string" ? agent : agentDisplayName(agent);
+  let delivery;
+  try {
+    delivery = await sendDelivery(agent);
+  } catch (error) {
+    return { refusal: `Could not read how ${name} takes dure send input: ${error.message}. Nothing was sent. ` +
+      "Retry, or send with --track." };
+  }
+  if (delivery !== "inbox") return { inbox: false };
+  const reason = `${name} takes dure send only through its durable inbox, as chosen when its Run started`;
+  if (terminalOnly.length) return { refusal: inboxRefusal(reason, terminalOnly) };
+  if (parseSlashCommandDraft(text)?.name) {
+    return { refusal: `${reason}; a provider command such as /compact runs only as terminal input. Nothing was sent.` };
+  }
+  process.stderr.write(`${name} takes dure send only through its durable inbox; sending a tracked message.\n`);
+  return { inbox: true };
+}
+
 const SESSION_EXITED = "dure_send_session_exited";
 
 /** After a restart or account switch the app-written registry can still name
@@ -272,7 +322,7 @@ async function successorAfterExit(error, agent, opts, findSuccessor) {
 export async function runSendCommand(
   args,
   {
-    parseOptions, loadRegistry, resolveAgent, send, sendExactSession, sendTracked, findSuccessor, fail,
+    parseOptions, loadRegistry, resolveAgent, send, sendExactSession, sendTracked, sendDelivery, findSuccessor, fail,
     environment = process.env,
   },
 ) {
@@ -297,8 +347,8 @@ export async function runSendCommand(
   const track = remaining.some((arg, index) => arg === "--track" && (terminator < 0 || index < terminator));
   const opts = parseOptions(remaining.filter((arg, index) => !(arg === "--track" && (terminator < 0 || index < terminator))));
   opts.draftGuard = guard.draftGuard;
-  if (track && (!opts.enter || opts.idempotencyKey)) return fail("--track requires submission without --idempotency-key; reuse its tracking file after uncertainty.");
-  if (track && guard.explicit) return fail("--track delivers through the durable inbox; --draft-wait and --ignore-draft apply only to terminal input.");
+  const terminalOnly = terminalOnlyOptions(opts, guard);
+  if (track && terminalOnly.length) return fail(inboxRefusal("--track delivers through the durable inbox", terminalOnly));
   if (source !== undefined && opts.rest.length > 1) {
     return fail("Choose exactly one input source: argv text, --file, or --stdin");
   }
@@ -328,13 +378,16 @@ export async function runSendCommand(
     agentName: senders.length === 1 ? agentDisplayName(senders[0]) : undefined,
     label: sender,
   });
+  const route = await deliveryRoute({ track, agent, text, terminalOnly, sendDelivery });
+  if (route.refusal) return fail(route.refusal);
+  const { inbox } = route;
   // A provider command must start the input, as the chat composer reads it.
-  const command = !track && Boolean(parseSlashCommandDraft(text)?.name);
+  const command = !inbox && Boolean(parseSlashCommandDraft(text)?.name);
   if (command && sender !== undefined) {
     return fail("--from cannot label a provider command such as /compact; it is sent exactly as written. Nothing was sent.");
   }
   opts.messageTitle = header;
-  if (track) {
+  if (inbox) {
     let input;
     try {
       input = await sendTracked(agent, text, opts);

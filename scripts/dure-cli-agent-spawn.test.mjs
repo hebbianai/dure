@@ -44,6 +44,7 @@ import {
 import {
   presentAgentRunRuntime,
   resolveRunPresentationTarget,
+  runReceiptSummary,
 } from "../cli/lib/run-presentation.mjs";
 
 const cliPath = fileURLToPath(new URL("../cli/dure.mjs", import.meta.url));
@@ -592,6 +593,41 @@ describe("agent spawn query contract", () => {
     expect(JSON.stringify(report)).not.toContain(prompt);
     expect(agentSpawnQueryExitCode(report)).toBe(0);
     expect(formatAgentSpawnQuery(report)).toContain("state\tapplying");
+  });
+
+  it("records an inbox-only send delivery on a terminal Run and reports it", async () => {
+    const calls = [];
+    const options = {
+      action: "preview",
+      projectId: "dure",
+      providerId: "codex",
+      agentName: "codex-1",
+      worktree: worktree(),
+      idempotencyKey: "spawn-request-1",
+      prompt,
+      interactionPreference: "native_cli",
+      sendDelivery: "inbox",
+      backend: { profile: profile() },
+      requestBackend: async (_profile, backendRequest) => {
+        calls.push(backendRequest);
+        return backendResult({ schemaVersion: 1, receipt: receipt(backendRequest.body) });
+      },
+    };
+    const report = await collectAgentSpawnQuery(options);
+
+    expect(calls[0].body).toMatchObject({ sendDelivery: "inbox", interactionPreference: "native_cli" });
+    expect(calls[0].requiredCapabilities).toContain("agent_spawn.send_delivery.v1");
+    expect(report.receipt.plan.request.sendDelivery).toBe("inbox");
+    expect(formatAgentSpawnQuery(report)).toContain("send_delivery\tinbox");
+    expect(runReceiptSummary(report).sendDelivery).toBe("inbox");
+    expect(runReceiptSummary({ receipt: receipt() }).sendDelivery).toBeNull();
+
+    // An inbox lives in a terminal Session, and only known deliveries exist.
+    for (const overrides of [{ interactionPreference: undefined }, { sendDelivery: "terminal" }]) {
+      expect((await collectAgentSpawnQuery({ ...options, ...overrides })).error.code)
+        .toBe("agent_spawn_request_invalid");
+    }
+    expect(calls).toHaveLength(1);
   });
 
   it.each(["codex", "claude"])(
@@ -1160,6 +1196,7 @@ function installRunRemoteFixture(root) {
   profiles.profiles[0].expected.capabilities.push(
     "agent_spawn.apply",
     "agent_spawn.presentation_project.v1",
+    "agent_spawn.send_delivery.v1",
   );
   writeFileSync(profilesPath, JSON.stringify(profiles), { mode: 0o600 });
   const ssh = join(remote.bin, "ssh");
@@ -1332,6 +1369,7 @@ process.stdout.write(JSON.stringify({
       "agent_spawn.apply",
       "agent_spawn.presentation_project.v1",
       "agent_spawn.preview.v2",
+      "agent_spawn.send_delivery.v1",
       "agent_spawn.status"
     ],
     observedAtMs: Date.now()
@@ -2134,6 +2172,48 @@ describe("dure run and spawn CLI", () => {
         plan: { request: { permissionMode } },
       },
     });
+  });
+
+  it("starts an inbox-only Run in a terminal session and reports the choice", () => {
+    const root = temporaryRoot();
+    const remote = installRunRemoteFixture(root);
+    const run = (extra) => runCli(
+      root,
+      ["run", prompt, "--project", "dure", "--provider", "codex", ...extra,
+        "--idempotency-key", "run-inbox-1", "--backend", "remote-a", "--json"],
+      { DURE_AGENT_SPAWN_LOG: remote.log, PATH: `${remote.bin}:${process.env.PATH}` },
+    );
+
+    const result = run(["--send-delivery", "inbox"]);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const [preview] = JSON.parse(readFileSync(remote.log, "utf8"));
+    expect(preview.request.body).toMatchObject({ sendDelivery: "inbox", interactionPreference: "native_cli" });
+    expect(preview.request.expected.requiredCapabilities).toContain("agent_spawn.send_delivery.v1");
+    expect(JSON.parse(result.stdout).summary).toMatchObject({ sendDelivery: "inbox", interactionProfile: "native_cli" });
+
+    // An inbox needs a terminal session, and only known deliveries exist.
+    rmSync(remote.log);
+    for (const extra of [["--send-delivery", "inbox", "--runtime", "chat"], ["--send-delivery", "terminal"],
+      ["--send-delivery", ""]]) {
+      const refused = run(extra);
+      expect(refused.status).not.toBe(0);
+      expect(refused.stderr).toContain("dure run — backend-owned Run");
+    }
+    expect(existsSync(remote.log)).toBe(false);
+  });
+
+  it("leaves the send delivery to dure run, never a lower-level spawn command", () => {
+    const root = temporaryRoot();
+    for (const args of [
+      ["spawn", "preview", "--project", "dure", "--provider", "codex", "--name", "codex-1",
+        "--idempotency-key", "spawn-request-1", "--no-worktree", "--send-delivery", "inbox"],
+      ["spawn", "status", "--operation-id", "spawn-0123456789abcdef0123456789abcdef", "--send-delivery", "inbox"],
+      ["spawn", "--reuse", "--project", "dure", "--name", "codex-1", "--send-delivery", "inbox"],
+    ]) {
+      const result = runCli(root, args);
+      expect(result.status, args.join(" ")).not.toBe(0);
+      expect(result.stderr).toMatch(/Usage: dure spawn preview|dure run — backend-owned Run/);
+    }
   });
 
   it("rejects empty dedicated overrides before contacting the backend", () => {

@@ -376,6 +376,8 @@ otherwise, and its body stays exact. `--from NAME` adds a self-chosen
 ` · label NAME`. The header marks a message an agent or a script sent; it is not
 an authenticated identity. Approvals for money, limits or credentials must come
 from the person in the app, not from a message.
+An agent started with `dure run --send-delivery inbox` receives every `dure send`
+this way, with or without `--track`; its terminal stays the person's channel.
 
 `dure wait --message <receiptPath> --json` waits for an authenticated inbox read.
 Use `--until acknowledged` for cursor acknowledgement, or `--until turn_started`

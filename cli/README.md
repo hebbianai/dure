@@ -182,6 +182,11 @@ such as `/compact` (input whose first word is `/name`) is sent without the heade
 agent or script sent; a missing header does not prove that a person typed the
 text, so approvals for money, limits or credentials must come from the person in
 the app.
+An agent started with `dure run --send-delivery inbox` takes `dure send` only
+through its durable inbox: every send to it becomes a tracked message, options
+that only terminal input has and provider commands are refused for it, and
+nothing falls back to terminal input. The Run records the choice
+(`sendDelivery`), and nothing changes it later.
 See `dure send --help` and `dure wait --help` for evidence limits. Native Codex
 progress also appears in `dure inspect --json`, `dure ls`, and pane headers after
 five quiet minutes of thinking. This is an observation, never an automatic stop.

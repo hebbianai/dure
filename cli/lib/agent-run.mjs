@@ -166,6 +166,7 @@ export async function collectAgentRun({
   runtime,
   chatFallback = false,
   parent,
+  sendDelivery,
   verbose = false,
 } = {}) {
   const startedAt = Date.now();
@@ -182,6 +183,7 @@ export async function collectAgentRun({
     executionProfile,
     interactionPreference: selectedPreference,
     parent,
+    sendDelivery,
     setupCommand,
     includePresentationProject,
     prompt,

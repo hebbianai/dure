@@ -294,6 +294,26 @@ impl AgentSpawnInteractionPreferenceV1 {
     }
 }
 
+/// How `dure send` reaches the Agent a Run starts, as whoever starts the Run
+/// chooses it. Absent keeps terminal input. `inbox` makes the durable inbox
+/// the only path: `dure send` opens a tracked message and never writes
+/// terminal input. The choice is bound into the plan token, so neither the
+/// agent nor a prompt can change it after the Run starts. An inbox needs a
+/// terminal Session, so it requires the `native_cli` interaction preference.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSpawnSendDeliveryV1 {
+    Inbox,
+}
+
+impl AgentSpawnSendDeliveryV1 {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AgentSpawnSendDeliveryV1::Inbox => "inbox",
+        }
+    }
+}
+
 /// The agent Session that started a Run, as the caller reports it. The link
 /// is a Run fact other commands read (waiting for a parent's children); it
 /// grants no authority over either Run.
@@ -340,6 +360,8 @@ pub struct AgentSpawnPreviewRequestV1 {
     pub parent: Option<AgentSpawnParentV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_agent: Option<AgentSpawnParentAgentV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub send_delivery: Option<AgentSpawnSendDeliveryV1>,
 }
 
 /// Caller-owned preview intent. An omitted permission override inherits from
@@ -372,6 +394,8 @@ pub struct AgentSpawnPreviewIntentV1 {
     pub parent: Option<AgentSpawnParentV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_agent: Option<AgentSpawnParentAgentV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub send_delivery: Option<AgentSpawnSendDeliveryV1>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -599,6 +623,7 @@ pub fn create_agent_spawn_plan_from_defaults_v1(
             interaction_preference: draft.request.interaction_preference,
             parent: draft.request.parent,
             parent_agent: draft.request.parent_agent,
+            send_delivery: draft.request.send_delivery,
         },
         agent_id: draft.agent_id,
         workspace_id: draft.workspace_id,
@@ -638,6 +663,7 @@ pub fn validate_agent_spawn_plan_intent_v1(
             interaction_preference: draft.request.interaction_preference,
             parent: draft.request.parent.clone(),
             parent_agent: draft.request.parent_agent.clone(),
+            send_delivery: draft.request.send_delivery,
         },
         agent_id: draft.agent_id.clone(),
         workspace_id: draft.workspace_id.clone(),
@@ -1413,6 +1439,15 @@ fn validate_draft(draft: &AgentSpawnPlanDraftV1) -> Result<(), AgentSpawnContrac
         validate_token("parentSessionId", &parent.session_id)?;
         validate_token("parentWorkspaceId", &parent.workspace_id)?;
     }
+    if draft.request.send_delivery.is_some()
+        && draft.request.interaction_preference
+            != Some(AgentSpawnInteractionPreferenceV1::NativeCli)
+    {
+        return Err(invalid_plan(
+            "sendDelivery",
+            "requires the native_cli interaction preference",
+        ));
+    }
     if let AgentSpawnWorktreePolicyV1::ExistingWorkspace { source } = &draft.request.worktree {
         source.validate()?;
         if source.workspace_id != draft.workspace_id
@@ -1856,6 +1891,9 @@ fn plan_token(draft: &AgentSpawnPlanDraftV1) -> AgentSpawnPlanTokenV1 {
     if let Some(parent_agent) = draft.request.parent_agent.as_ref() {
         hash_field(&mut hash, "parent_agent", parent_agent.agent_id.as_str());
     }
+    if let Some(delivery) = draft.request.send_delivery.as_ref() {
+        hash_field(&mut hash, "send_delivery", delivery.as_str());
+    }
     hash_field(&mut hash, "agent", draft.agent_id.as_str());
     hash_field(&mut hash, "workspace", draft.workspace_id.as_str());
     match &draft.launch {
@@ -2073,6 +2111,7 @@ mod tests {
                 interaction_preference: None,
                 parent: None,
                 parent_agent: None,
+                send_delivery: None,
             },
             agent_id: AgentIdV1::new("agent-1").unwrap(),
             workspace_id: WorkspaceIdV1::new("workspace-1").unwrap(),
@@ -2511,6 +2550,54 @@ mod tests {
             }))
             .is_err()
         );
+    }
+
+    #[test]
+    fn send_delivery_binds_the_plan_token_and_leaves_existing_tokens_unchanged() {
+        let mut terminal = draft();
+        terminal.request.interaction_preference =
+            Some(AgentSpawnInteractionPreferenceV1::NativeCli);
+        let mut inbox = terminal.clone();
+        inbox.request.send_delivery = Some(AgentSpawnSendDeliveryV1::Inbox);
+        let absent = create_agent_spawn_plan_v1(draft()).unwrap();
+        let terminal = create_agent_spawn_plan_v1(terminal).unwrap();
+        let inbox = create_agent_spawn_plan_v1(inbox).unwrap();
+
+        // An absent delivery stays out of the hash, so every plan drafted
+        // before the field existed keeps its token.
+        assert_eq!(
+            absent.plan_token.as_str(),
+            "sha256:86c1d20b95b068995c144845e8412f718a18493528b6d140ede705e6ae681b08"
+        );
+        assert_ne!(inbox.plan_token, terminal.plan_token);
+
+        let document = serde_json::to_value(&terminal).unwrap();
+        assert!(document["request"].get("sendDelivery").is_none());
+        let document = serde_json::to_value(&inbox).unwrap();
+        assert_eq!(document["request"]["sendDelivery"], json!("inbox"));
+        assert_eq!(
+            serde_json::from_value::<AgentSpawnPlanV1>(document.clone()).unwrap(),
+            inbox
+        );
+
+        // The choice is bound into the token, so a stored plan can't drop it.
+        let mut reopened = document;
+        reopened["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("sendDelivery");
+        assert!(serde_json::from_value::<AgentSpawnPlanV1>(reopened).is_err());
+    }
+
+    #[test]
+    fn send_delivery_requires_a_terminal_session_and_a_known_value() {
+        let mut unpinned = draft();
+        unpinned.request.send_delivery = Some(AgentSpawnSendDeliveryV1::Inbox);
+        assert!(matches!(
+            create_agent_spawn_plan_v1(unpinned),
+            Err(AgentSpawnContractErrorV1::InvalidPlan { field, .. }) if field == "sendDelivery"
+        ));
+        assert!(serde_json::from_value::<AgentSpawnSendDeliveryV1>(json!("terminal")).is_err());
     }
 
     #[test]

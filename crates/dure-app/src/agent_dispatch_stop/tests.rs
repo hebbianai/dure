@@ -58,6 +58,7 @@ fn fixture() -> Fixture {
             interaction_preference: None,
             parent: None,
             parent_agent: None,
+            send_delivery: None,
         },
         agent_id: agent_id.clone(),
         workspace_id: workspace_id.clone(),

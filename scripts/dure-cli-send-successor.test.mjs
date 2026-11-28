@@ -177,6 +177,7 @@ function collaborators({ agent, sendTracked, send, findSuccessor = vi.fn(async (
     send: send ?? vi.fn(),
     sendExactSession: vi.fn(async (sessionId, _text, opts) => ({ sessionId, workspaceId: opts.workspace, receipt: {} })),
     sendTracked,
+    sendDelivery: vi.fn(async () => null),
     findSuccessor,
     fail: (message) => { failures.push(message); },
     failures,

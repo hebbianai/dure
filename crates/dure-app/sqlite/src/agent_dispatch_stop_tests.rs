@@ -351,6 +351,7 @@ async fn fixture_with_event_limit(path: &std::path::Path, event_limit: usize) ->
             interaction_preference: None,
             parent: None,
             parent_agent: None,
+            send_delivery: None,
         },
         agent_id: agent_id.clone(),
         workspace_id: workspace_id.clone(),

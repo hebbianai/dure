@@ -55,6 +55,7 @@
       "agent_spawn.parent_link.v1",
       "agent_spawn.presentation_project.v1",
       "agent_spawn.preview.v2",
+      "agent_spawn.send_delivery.v1",
       "agent_spawn.status",
       "backend.connection.persistent",
       "backend.transport.ssh_gateway",

@@ -40,6 +40,16 @@ A child settles when it has finished a turn and is idle, needs input or approval
 
 The parent doesn't have to wait to hear back. Each time a terminal child finishes a turn, needs input or approval, exits or is stopped, Dure sends one message to the parent's inbox and wakes it. A finished turn or exit includes the child's final response and any GitHub pull request links in it. Each result is sent once, even if Dure restarts. If the parent's own session has ended, nothing is sent.
 
+## Keep automated messages out of an agent's terminal
+
+By default, `dure send` types its text into the agent's terminal, with a `[dure send · …]` header in front, so the agent reads it like something you typed. To keep messages from scripts and other agents out of the terminal, start the agent with `--send-delivery inbox`:
+
+```sh
+dure run --provider claude --worktree review --send-delivery inbox "Review the open pull requests."
+```
+
+Every `dure send` to that agent then goes to its durable inbox, as `dure send --track` does. The agent reads the message with its Dure tools, as tool output rather than typed input; its terminal only gets a short line saying a message is waiting. Options that only terminal input has, such as `--no-enter`, and provider commands such as `/compact` are refused for it, and nothing falls back to typing. An inbox needs a terminal session, so the Run starts one. The Run records the choice when it starts, and the agent can't turn it off. You can still type in its terminal yourself. `dure runs show <agent>` shows the setting.
+
 ## Get a message from an agent
 
 An agent, or any command you run, can send you a desktop notification:

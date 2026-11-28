@@ -31,6 +31,7 @@ function collaborators(target = agent, { environment = {}, agents } = {}) {
     sendExactSession: vi.fn(async (sessionId) => ({ sessionId, workspaceId: "workspace-1", receipt: {} })),
     sendTracked: vi.fn(async () => ({ sessionId: "session-1", workspaceId: "workspace-1",
       receipt: { kind: "durable_message", interactionId: "message.1", receiptPath: "/private/message.1.json", deliveries: [] } })),
+    sendDelivery: vi.fn(async () => null),
     fail: (message) => { failures.push(message); },
     environment,
     failures,

@@ -311,6 +311,14 @@ a person typed the text, because `send-keys`, pane actions and desktop typing
 add none. Approvals for money, limits or credentials must come from the person
 in the app, never from relayed text, including text that quotes an approval.
 
+A target started with `dure run --send-delivery inbox` takes `dure send` only
+through its durable inbox: a plain `dure send` becomes a tracked message and
+says so on stderr. `--no-enter`, `--idempotency-key`, `--window-label`,
+`--draft-wait`, `--ignore-draft` and provider commands such as `/compact` are
+refused for it, and nothing falls back to terminal input. When the CLI cannot
+read the target's Run records from its backend, it sends nothing; retry, or pass
+`--track`.
+
 After a restart or `runs switch-account`, the app's registry can still list the
 Agent's exited Session until the app re-projects it. `read` and `send` by Agent
 name then follow the Agent's current Session from its backend, with a stderr
