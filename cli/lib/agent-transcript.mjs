@@ -369,6 +369,28 @@ export function nativeAgentTranscriptSource(agent, runtimeBinding) {
   };
 }
 
+/** The conversation an Agent last recorded, for reading after its session
+ * ended: the exact record above, or, when its binding records no
+ * conversation for any provider, the id the Agent recorded for its own
+ * provider. A live session reads only its binding's record, which this
+ * never replaces. */
+export function recordedAgentTranscriptSource(agent) {
+  const source = nativeAgentTranscriptSource(agent);
+  if (
+    source.kind !== "identity_unavailable" ||
+    agent.runtimeBinding?.conversationIdentity ||
+    !domainId(agent.conversationId)
+  ) {
+    return source;
+  }
+  return {
+    kind: "local",
+    agentId: agent.id,
+    provider: agent.provider,
+    conversationId: agent.conversationId,
+  };
+}
+
 /** Converts a provider-owned transcript into the shared model: a native CLI
  * transcript this module reads, or a page of a provider's history in the same
  * shape that the backend owning a Chat session read for it, as it does for a

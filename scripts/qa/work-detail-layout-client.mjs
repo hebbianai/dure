@@ -14,7 +14,8 @@ assert.ok(home.startsWith(`${stateRoot}/`), "QA HOME must stay inside its state 
 
 const PHASES = [
   "five-light", "five-dark", "few-light", "few-dark", "many-light", "many-dark",
-  "empty-light", "empty-dark", "many-folded-dark", "pinned-light",
+  "empty-light", "empty-dark", "many-folded-dark", "ended-few-light",
+  "ended-few-dark", "ended-many-light", "ended-many-dark", "pinned-light",
 ];
 
 function receipt(phase, timeoutMs = 240_000) {
@@ -39,8 +40,9 @@ function verifyLayout(phase, facts) {
   assert.ok(shown.conversation.bottom <= facts.viewport.height + 0.5 && shown.conversation.height > 200,
     `${phase}: the conversation is pushed off screen`);
   assert.equal(shown.cardSaysManaged, false, `${phase}: the card repeats what it manages`);
-  if (phase.startsWith("empty")) {
+  if (phase.startsWith("empty") || phase.startsWith("ended")) {
     assert.equal(shown.managed, null, `${phase}: an agent that manages nobody shows a managed part`);
+    verifyEnded(phase, shown.transcript);
     return;
   }
   const managed = shown.managed;
@@ -70,6 +72,22 @@ function verifyLayout(phase, facts) {
     assert.ok(managed.rowBottoms.some((bottom) => near(bottom, managed.scroller.clientHeight)),
       `${phase}: the capped rows end inside a row (${managed.scroller.clientHeight} of ${managed.rowBottoms})`);
   }
+}
+
+/** An ended agent shows its last conversation, from its first message to its
+ * last in view, with no composer and nothing reported failed; one whose
+ * history is gone (the solo agent) says it has no record, as before. */
+function verifyEnded(phase, transcript) {
+  assert.equal(transcript.composer, false, `${phase}: an ended agent offers a composer`);
+  assert.equal(transcript.alert, false, `${phase}: the conversation reports a failure`);
+  if (phase.startsWith("empty")) {
+    assert.equal(transcript.none, true, `${phase}: a gone history does not say there is no record`);
+    return;
+  }
+  assert.equal(transcript.none, false, `${phase}: the ended conversation says there is no record`);
+  assert.ok(transcript.shows.length > 0 && transcript.shows.every(Boolean),
+    `${phase}: the conversation misses a message (${transcript.shows})`);
+  assert.equal(transcript.lastVisible, true, `${phase}: the last message is out of view`);
 }
 
 // A cold worktree spends minutes in Vite dependency reloads; the window
@@ -125,4 +143,4 @@ const report = { result: failures.length === 0 ? "passed" : "failed", failures, 
 writeFileSync(join(evidence, "work-detail-layout.json"), JSON.stringify(report, null, 2));
 writeFileSync(join(imageDir, "work-detail-layout.json"), JSON.stringify(report, null, 2));
 assert.deepEqual(failures, [], JSON.stringify(failures));
-console.log("PASS: Work detail shows the managed agents, a hairline and the labelled conversation in light and dark, folded and pinned", { imageDir });
+console.log("PASS: Work detail shows the managed agents, a hairline and the labelled conversation in light and dark, folded and pinned, and an ended agent's last conversation read only", { imageDir });

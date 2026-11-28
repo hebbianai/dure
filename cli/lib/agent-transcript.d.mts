@@ -113,6 +113,10 @@ export function nativeAgentTranscriptSource(
   runtimeBinding?: unknown,
 ): NativeAgentTranscriptSourceResolution;
 
+export function recordedAgentTranscriptSource(
+  agent: unknown,
+): NativeAgentTranscriptSourceResolution;
+
 export function collectAgentTranscript(input: {
   agentId: string;
   providerId: string;

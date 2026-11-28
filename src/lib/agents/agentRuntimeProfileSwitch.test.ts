@@ -792,6 +792,81 @@ describe("agent runtime profile switch", () => {
 		});
 	});
 
+	it("keeps the conversation its Host projected for the same exact generation only", () => {
+		const stopFence = {
+			runnerPrincipal: "runner-1",
+			runnerInstance: "instance-1",
+			channelEpoch: "2",
+			hostInstanceId: "host-1",
+			terminalEpoch: "terminal-2",
+		};
+		const conversationIdentity = {
+			schemaVersion: 1 as const,
+			sessionId: "runtime-native-2",
+			workspaceId: "workspace-1",
+			providerId: "claude" as const,
+			conversationId: "conversation-1",
+			revision: "4",
+			observedThroughOutputSeq: "12",
+			source: "provider_event" as const,
+			...stopFence,
+		};
+		const source = {
+			...nativeClaude(),
+			sessionId: "runtime-native-2",
+			runtimeBinding: {
+				schemaVersion: 1 as const,
+				runtime: "hmux_managed_v1" as const,
+				source: "local" as const,
+				hostId: "local" as const,
+				sessionId: "runtime-native-2",
+				workspaceId: "workspace-1",
+				createIdempotencyKey: "launch-exact-2",
+				stopFence,
+				conversationIdentity,
+			},
+		};
+		const project_ = (fence: typeof stopFence, agent: Agent = source) =>
+			projectRuntimeTransition(
+				agent,
+				{
+					agentId: "agent-1",
+					providerId: "claude",
+					interactionProfile: "native_cli",
+					launchSelection: defaultLaunchSelection,
+					executionProfile: { kind: "provider_default" },
+					providerConversationRef: "conversation-1",
+					sessionId: "runtime-native-2",
+					workspaceId: "workspace-1",
+					launchIdempotencyKey: "launch-exact-2",
+					stopFence: fence,
+				},
+				"local",
+				project,
+				localRecoveryOptions(),
+			).runtimeBinding;
+
+		expect(project_(stopFence)).toMatchObject({ conversationIdentity });
+		// A successor generation starts without one until its Host projects it.
+		expect(
+			project_({ ...stopFence, terminalEpoch: "terminal-3" }),
+		).not.toHaveProperty("conversationIdentity");
+		// An identity recorded for another generation of the same binding is
+		// not this one's.
+		expect(
+			project_(stopFence, {
+				...source,
+				runtimeBinding: {
+					...source.runtimeBinding,
+					conversationIdentity: {
+						...conversationIdentity,
+						terminalEpoch: "terminal-1",
+					},
+				},
+			}),
+		).not.toHaveProperty("conversationIdentity");
+	});
+
 	it("preserves the exact SSH bridge and credential profile during checkpoint adoption", () => {
 		const remoteProject: Project = {
 			...project,

@@ -1,10 +1,12 @@
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { zstdCompressSync } from "node:zlib";
 
 // The Work detail QA's agents and their provider records, written into the
 // disposable HOME before the app starts. The app reads each worker's last
 // prompt from its Claude transcript through its own metadata reader, so the
-// rows' "Asked" lines are the product's, not the probe's.
+// rows' "Asked" lines are the product's, not the probe's, and an ended
+// agent's conversation through its own transcript reader.
 
 const required = (name) => {
   const value = process.env[name]?.trim();
@@ -82,10 +84,85 @@ for (const lead of LEADS) {
     );
   }
 }
+// The solo agent recorded a conversation whose history is gone: an ended
+// agent with nothing left to read.
 agents.push(agent(SOLO.id, SOLO.title, "codex"));
+
+// Ended agents whose provider still keeps their last conversation: a short
+// Claude one, and a long Codex one Codex has since compressed.
+const ENDED_FEW = agent("qa-ended-few", "Rename the billing flags", "claude");
+const ENDED_MANY = agent("qa-ended-many", "Speed up the test suite", "codex", {
+  conversationId: "019f0000-0000-7000-8000-000000000820",
+});
+agents.push(ENDED_FEW, ENDED_MANY);
+
+const claudeRecord = (type, content, extra = {}) =>
+  JSON.stringify({
+    type,
+    sessionId: ENDED_FEW.conversationId,
+    timestamp: "2026-11-27T16:00:00Z",
+    message: { role: type, content, ...extra },
+  });
+const fewProject = path.join(home, ".claude", "projects", claudeProject(ENDED_FEW.worktreePath));
+mkdirSync(fewProject, { recursive: true, mode: 0o700 });
+writeFileSync(
+  path.join(fewProject, `${ENDED_FEW.conversationId}.jsonl`),
+  [
+    claudeRecord("user", "Rename the billing feature flags to the billing.* namespace and keep the old names working for one release."),
+    claudeRecord("assistant", [
+      { type: "text", text: "I'll find every flag first." },
+      { type: "tool_use", id: "toolu_grep", name: "Grep", input: { pattern: "BILLING_", path: "src" } },
+    ]),
+    claudeRecord("user", [{ type: "tool_result", tool_use_id: "toolu_grep", content: "src/flags.ts\nsrc/billing/invoice.ts" }]),
+    claudeRecord("assistant", [{
+      type: "text",
+      text: "Renamed the three billing flags to `billing.invoices`, `billing.refunds` and `billing.trials`. The old names still resolve through an alias that logs once, and `flags.test.ts` covers both spellings.",
+    }], { stop_reason: "end_turn" }),
+    claudeRecord("user", "Good. When can the aliases go?"),
+    claudeRecord("assistant", [{
+      type: "text",
+      text: "After 0.4 ships: nothing outside this repository reads the old names, and the alias logs tell us if that changes.",
+    }], { stop_reason: "end_turn" }),
+  ].join("\n") + "\n",
+  { mode: 0o600 },
+);
+
+const MANY_TURNS = [
+  ["Find out why the test suite takes eleven minutes.", "Most of it is three integration suites that each start their own database. Together they take eight of the eleven minutes."],
+  ["Can they share one database?", "Yes: each suite only needs its own schema. I moved them onto one container with a schema per suite."],
+  ["How long does it take now?", "Six minutes on this machine, down from eleven. The integration suites take three minutes together."],
+  ["What else is slow?", "The snapshot tests rebuild the fixtures for every file. Building them once per run saves another ninety seconds."],
+  ["Do that.", "Done. The fixtures build once, in a global setup, and every file reads them."],
+  ["Run the whole suite twice to check nothing is flaky.", "Both runs passed: 1,284 tests each, four minutes thirty and four minutes twenty-two."],
+  ["Is CI faster too?", "CI went from fourteen minutes to seven. The cache now keeps the fixture build between jobs."],
+  ["Write up what changed for the team.", "The note is in docs/testing.md: one database with a schema per suite, fixtures built once, and how to run a single suite on its own."],
+];
+const rollout = [{ type: "session_meta", payload: { id: ENDED_MANY.conversationId, cwd: ENDED_MANY.worktreePath } }];
+MANY_TURNS.forEach(([prompt, answer], index) => {
+  const turn = `turn-${index}`;
+  rollout.push(
+    { type: "event_msg", payload: { type: "task_started", turn_id: turn } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: prompt }] } },
+    { type: "event_msg", payload: { type: "item_completed", turn_id: turn, item: { type: "CommandExecution", id: `command-${index}`, command: "pnpm test --reporter=summary", status: "completed" } } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: answer }] } },
+    { type: "event_msg", payload: { type: "task_complete", turn_id: turn, last_agent_message: answer } },
+  );
+});
+const day = path.join(home, ".codex", "sessions", "2026", "11", "20");
+mkdirSync(day, { recursive: true, mode: 0o700 });
+writeFileSync(
+  path.join(day, `rollout-2026-11-20T09-00-00-${ENDED_MANY.conversationId}.jsonl.zst`),
+  zstdCompressSync(rollout.map((record) => `${JSON.stringify(record)}\n`).join("")),
+  { mode: 0o600 },
+);
 
 writeFileSync(
   path.join(home, "work-detail-fixture.json"),
-  JSON.stringify({ agents, leads: LEADS.map(({ id }) => id), solo: SOLO.id }),
+  JSON.stringify({
+    agents,
+    leads: LEADS.map(({ id }) => id),
+    solo: SOLO.id,
+    ended: [ENDED_FEW.id, ENDED_MANY.id],
+  }),
   { mode: 0o600 },
 );

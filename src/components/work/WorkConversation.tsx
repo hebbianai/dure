@@ -25,21 +25,20 @@ import {
 	nativeAgentChatIdle,
 	nativeAgentChatOwnerKey,
 } from "@/lib/agents/chat/nativeAgentChat";
-import { nativeConversationViewAvailability } from "@/lib/agents/nativeConversationView";
+import {
+	type NativeConversationRecordV1,
+	nativeConversationRecord,
+} from "@/lib/agents/nativeConversationView";
 import { t } from "@/lib/i18n";
-import type { HmuxAgentRuntimeState } from "@/lib/ipc/hmuxContracts";
 import { agentSessionWindowTarget } from "@/lib/workspace/window/agentSessionWindowTarget";
 import type { Agent } from "@/types";
-import {
-	type NativeAgentTranscriptSource,
-	nativeAgentTranscriptSource,
-} from "../../../cli/lib/agent-transcript.mjs";
 
 /** The agent's conversation in a Work column with the composer each agent
  * has elsewhere: a Chat Agent's committed timeline, goal and composer
  * through the window's shared session, and a local terminal's provider
- * transcript with the native composer on the Host's idle prompt path when
- * the pane's Conversation view could show it; otherwise a note that there
+ * transcript (`nativeConversationRecord`): while it runs, with the native
+ * composer on the Host's idle prompt path, and once its session has ended,
+ * the last conversation it recorded, read only. Otherwise a note that there
  * is none. It never mounts a terminal, so showing it or sending from it
  * never changes a terminal's size, and it never takes focus on its own:
  * what the composer cannot answer goes to the large window. */
@@ -117,7 +116,6 @@ function WorkNativeConversation({
 	// The Host's runtime and display state, as the pane's own Conversation
 	// view reads them.
 	const { runtime, state } = useNativeAgentResponseState(agent);
-	const source = nativeAgentTranscriptSource(agent, agent.runtimeBinding);
 	// The column keeps the conversation's runtime-owned state for as long as
 	// it shows the agent, under the pane's owner key, so a momentary drop of
 	// the runtime projection does not forget a sent prompt.
@@ -125,25 +123,17 @@ function WorkNativeConversation({
 		nativeAgentChatOwnerKey(agent),
 		nativeAgentChatIdle({ runtime, state }),
 	);
-	// The same authority as the pane's View menu decides whether there is a
-	// conversation to show.
-	const shown =
-		nativeConversationViewAvailability(agent, runtime).available &&
-		source.kind === "local" &&
-		runtime
-			? { source, runtime }
-			: undefined;
+	const record = nativeConversationRecord(agent, runtime, state);
 	// Background work is read for the agent's own managed session only, and
 	// only while its Host reports it working.
 	const backgroundWork = backgroundWorkSession(agent.runtimeBinding);
 	return (
 		<>
-			{shown ? (
+			{record ? (
 				<WorkNativeTranscript
-					key={`${shown.source.conversationId}:${shown.runtime.terminalEpoch}`}
+					key={`${record.source.conversationId}:${record.terminalEpoch}`}
 					agent={agent}
-					source={shown.source}
-					runtime={shown.runtime}
+					record={record}
 					state={state}
 					chat={chat}
 					onOpenLargeWindow={onOpenLargeWindow}
@@ -166,38 +156,39 @@ function WorkNativeConversation({
 
 function WorkNativeTranscript({
 	agent,
-	source,
-	runtime,
+	record,
 	state,
 	chat,
 	onOpenLargeWindow,
 }: {
 	agent: Agent;
-	source: NativeAgentTranscriptSource;
-	runtime: HmuxAgentRuntimeState;
+	record: NativeConversationRecordV1;
 	state: AgentDisplayState;
 	chat: NativeAgentChatState;
 	onOpenLargeWindow?: () => void;
 }) {
 	const { snapshot, setSnapshot, readFailed, setReadFailed, livePending } =
 		chat;
+	const { runtime } = record;
 	const { page, older } = useNativeAgentTranscriptPage({
-		source,
-		terminalEpoch: runtime.terminalEpoch,
-		turnCompletedCount: runtime.turnCompletedCount,
-		working: state === "working",
+		...record,
 		read: { snapshot, setSnapshot, setReadFailed },
-		pending: livePending,
+		// Only a running session has a sent prompt still to show.
+		pending: runtime ? livePending : undefined,
 	});
 	const { fontSize, lineHeight } = useChatContentTypography();
 	if (page === undefined && !readFailed) {
 		return <PanelStatus role="status">{t("common.loading")}</PanelStatus>;
 	}
 	if (!page) {
-		return (
+		// A provider may have deleted an ended session's history: there is then
+		// no record to show, which is not a failure to report.
+		return runtime ? (
 			<PanelStatus role="alert">
 				{t("agents.nativeChat.transcriptUnavailable")}
 			</PanelStatus>
+		) : (
+			<WorkNoConversation onOpenLargeWindow={onOpenLargeWindow} />
 		);
 	}
 	return (
@@ -213,7 +204,7 @@ function WorkNativeTranscript({
 				}
 				onLoadOlder={older.loadOlder}
 			/>
-			{readFailed && (
+			{runtime && readFailed && (
 				<ChatAlert className="m-2 items-center">
 					<span className="min-w-0 flex-1">
 						{t("agents.nativeChat.transcriptUnavailable")}
@@ -221,14 +212,16 @@ function WorkNativeTranscript({
 				</ChatAlert>
 			)}
 			{/* The terminal lives in the large window: what the composer cannot
-			    answer continues there. */}
-			<NativeAgentChatComposer
-				agent={agent}
-				runtime={runtime}
-				state={state}
-				chat={chat}
-				onContinueInTerminal={onOpenLargeWindow}
-			/>
+			    answer continues there. An ended session takes no input. */}
+			{runtime && (
+				<NativeAgentChatComposer
+					agent={agent}
+					runtime={runtime}
+					state={state}
+					chat={chat}
+					onContinueInTerminal={onOpenLargeWindow}
+				/>
+			)}
 		</div>
 	);
 }
