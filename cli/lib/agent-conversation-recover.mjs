@@ -1,5 +1,6 @@
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
+import { sameAgentRuntimeFence } from "./contracts/agent-runtime.mjs";
 
 export const AGENT_CONVERSATION_RECOVER = "agent_conversation.recover";
 /** The backend's recover relaunches a provider whose process ended. Before it
@@ -7,9 +8,6 @@ export const AGENT_CONVERSATION_RECOVER = "agent_conversation.recover";
 export const AGENT_CONVERSATION_RECOVER_PROVIDER_EXIT = "agent_conversation.recover.provider_exit.v1";
 
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-
-const sameRuntime = (left, right) =>
-  left.runtimeGeneration === right.runtimeGeneration && left.providerEpoch === right.providerEpoch;
 
 /** The backend's refusal codes carry no guidance; this command owns it. */
 const REFUSAL_GUIDANCE = {
@@ -58,5 +56,5 @@ export async function recoverAgentConversation({
       message: "The backend did not confirm this Agent's conversation after recovery. Inspect it with the Status command before running Recover again." } };
   }
   return { ok: true, backend: response.backend, binding,
-    relaunched: !sameRuntime(binding.runtime, expectedBinding.runtime) };
+    relaunched: !sameAgentRuntimeFence(binding.runtime, expectedBinding.runtime) };
 }

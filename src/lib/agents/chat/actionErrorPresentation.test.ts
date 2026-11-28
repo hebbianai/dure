@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { presentActionError } from "@/lib/agents/chat/actionErrorPresentation";
+import {
+	presentActionError,
+	presentBackendRefusal,
+} from "@/lib/agents/chat/actionErrorPresentation";
 import { t } from "@/lib/i18n";
 
 describe("presentActionError", () => {
@@ -18,5 +21,28 @@ describe("presentActionError", () => {
 		expect(presentActionError("something_novel_went_wrong")).toEqual({
 			message: "something_novel_went_wrong",
 		});
+	});
+});
+
+describe("presentBackendRefusal", () => {
+	it("keeps a refusal's own words verbatim with its code as the detail", () => {
+		expect(
+			presentBackendRefusal({
+				code: "agent_conversation_provider_failed",
+				message: "launch_failed: Claude needs to sign in again",
+			}),
+		).toEqual({
+			message: "launch_failed: Claude needs to sign in again",
+			detail: "agent_conversation_provider_failed",
+		});
+	});
+
+	it("humanizes a refusal that carries only its code", () => {
+		expect(
+			presentBackendRefusal({
+				code: "agent_conversation_conflict",
+				message: "agent_conversation_conflict",
+			}),
+		).toEqual(presentActionError("agent_conversation_conflict"));
 	});
 });

@@ -185,6 +185,9 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 		editRetryableTurn: async () => undefined,
 		answerPending: async () => {},
 		interrupt: async () => {},
+		resumeProvider: async () => {
+			throw new Error("Native draft QA must not restart a provider");
+		},
 		dismissActionError() {},
 	};
 	function snapshot(phase: string, receipt?: unknown): Report {

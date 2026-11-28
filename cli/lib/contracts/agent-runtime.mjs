@@ -182,6 +182,14 @@ export function agentRuntimeChatBinding(value) {
     : undefined;
 }
 
+/** Whether two provider runtime fences name the same launch. A recover
+ * receipt whose fence differs from the one it was asked about relaunched
+ * the provider; the same fence means nothing was started. */
+export function sameAgentRuntimeFence(left, right) {
+  return record(left) && record(right) && left.runtimeGeneration === right.runtimeGeneration &&
+    left.providerEpoch === right.providerEpoch;
+}
+
 /** Explain why an observation offers no actionable source, without guessing liveness. */
 export function agentRuntimeSourceUnavailableReason(value) {
   switch (value?.state) {

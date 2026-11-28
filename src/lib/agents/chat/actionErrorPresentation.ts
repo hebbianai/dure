@@ -31,3 +31,15 @@ export function presentActionError(raw: string): ActionErrorPresentation {
 	if (!key) return { message: raw };
 	return { message: t(key), detail: raw };
 }
+
+/** A backend refusal in its own words when it carries them (a provider's
+ * message, kept verbatim), otherwise the catalogued sentence for its code.
+ * The code stays as the detail either way. */
+export function presentBackendRefusal(refusal: {
+	readonly code: string;
+	readonly message: string;
+}): ActionErrorPresentation {
+	if (!refusal.message || refusal.message === refusal.code)
+		return presentActionError(refusal.code);
+	return { message: refusal.message, detail: refusal.code };
+}

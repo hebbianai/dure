@@ -278,6 +278,10 @@ function boundedJson(value: unknown): boolean {
 	}
 }
 
+/** Whether two runtime fences name the same provider launch. The CLI's
+ * recover classifies its receipt with the same comparison. */
+export { sameAgentRuntimeFence } from "../../../../cli/lib/contracts/agent-runtime.mjs";
+
 export function parseAgentRuntimeFenceV1(
 	value: unknown,
 ): AgentProviderRuntimeFenceV1 | undefined {

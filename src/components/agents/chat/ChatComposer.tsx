@@ -1,6 +1,8 @@
 import type { IDockviewPanelProps } from "dockview-react";
 import { CornerUpLeft, ImageIcon, Square, X, Zap } from "lucide-react";
+import { ActionErrorText } from "@/components/agents/chat/ActionErrorText";
 import { ChatAlert } from "@/components/agents/chat/ChatAlert";
+import { ChatProviderExitNotice } from "@/components/agents/chat/ChatProviderExitNotice";
 import {
 	ChatComposerSendButton,
 	ChatComposerShell,
@@ -34,9 +36,9 @@ import {
 import {
 	observedProviderCatalog,
 	observedProviderCommands,
-	observedProviderExit,
 	observedSessionInit,
 } from "@/lib/agents/chat/observedRuntimeFacts";
+import { currentProviderExit } from "@/lib/agents/chat/agentChatRuntimeRecovery";
 import {
 	type ChatSlashCommand,
 	chatSlashCommands,
@@ -86,21 +88,6 @@ const EMPTY_LAUNCH_SELECTION_VIEW: AgentRuntimeLaunchSelectionView = {
 	retryHydration: () => {},
 	dismissError: () => {},
 };
-
-/** Banner text for a failed session action: catalogued backend tokens read
- * as words with the raw token kept as quiet diagnostic detail; anything
- * unrecognized renders verbatim. */
-function ActionErrorText({ raw }: { raw: string }) {
-	const { message, detail } = presentActionError(raw);
-	return (
-		<span className="min-w-0 flex-1">
-			{message}
-			{detail && (
-				<code className="ml-1.5 text-[0.85em] opacity-70">{detail}</code>
-			)}
-		</span>
-	);
-}
 
 /** Credential recoveries the owning pane can perform. Rendered only for a
  * turn whose provider-reported failure reason justifies them; never inferred
@@ -171,7 +158,6 @@ export function ChatComposer({
 			model: observedSessionInit(page).model,
 			catalog: observedProviderCatalog(page),
 			commands: observedProviderCommands(page),
-			exit: observedProviderExit(page),
 		};
 	}, [rows]);
 	const turnFailure = session.activeTurn
@@ -220,9 +206,18 @@ export function ChatComposer({
 	const replacementInFlight = runtimeLaunch.switching;
 	const submissionInFlight =
 		authority !== null && submittingAuthority === authority;
-	// The conversation shows its provider exited: nothing is running to
-	// receive input, so the composer says so and keeps what is written.
-	const providerExit = historyFacts.exit;
+	// The conversation shows its provider exited and no Resume relaunched it:
+	// nothing is running to receive input, so the composer says so, keeps
+	// what is written and offers Resume.
+	const runtime = binding?.runtime;
+	const providerExit = useMemo(
+		() =>
+			currentProviderExit({
+				page: rows && runtime && { rows, binding: { runtime } },
+				providerResume: session.providerResume,
+			}),
+		[rows, runtime, session.providerResume],
+	);
 	const [returnedExitedSendFor, setReturnedExitedSendFor] = useState<
 		string | null
 	>(null);
@@ -368,7 +363,7 @@ export function ChatComposer({
 				!activeSession ||
 				activeSession.phase !== "ready" ||
 				activeSession.retryTurnAvailable ||
-				observedProviderExit(activeSession.page)
+				currentProviderExit(activeSession)
 			) {
 				return;
 			}
@@ -477,17 +472,6 @@ export function ChatComposer({
 			onSubmit={() => void submit()}
 			notices={
 				<>
-					{providerExit && (
-						<ChatAlert tone="warn" role="status" className="mb-2 items-center">
-							<span className="min-w-0 flex-1">
-								{providerExit.reason
-									? t("agents.chat.providerExitedWithReason", {
-											reason: providerExit.reason,
-										})
-									: t("agents.chat.providerExited")}
-							</span>
-						</ChatAlert>
-					)}
 					{session.error && !session.reconnecting && (
 						<ChatAlert className="mb-2 items-center">
 							<span className="min-w-0 flex-1">{session.error}</span>
@@ -610,7 +594,7 @@ export function ChatComposer({
 					)}
 					{session.actionError && !exitedSendReturning && (
 						<ChatAlert className="mb-2 flex-wrap items-center">
-							<ActionErrorText raw={session.actionError} />
+							<ActionErrorText presentation={presentActionError(session.actionError)} />
 							{!session.retryTurnAvailable && (
 								<IconButton
 									title={t("common.close")}
@@ -649,6 +633,18 @@ export function ChatComposer({
 			}
 			header={
 				<>
+					{providerExit && (
+						<ChatProviderExitNotice
+							exit={providerExit}
+							session={session}
+							disabled={
+								disabled ||
+								replacementInFlight ||
+								session.phase !== "ready" ||
+								session.reconnecting
+							}
+						/>
+					)}
 					{queueRows.length > 0 && (
 						<div className="flex flex-col gap-1 border-b border-glass-hairline px-1 pt-0.5 pb-1.5">
 							{queueRows.map((input) => (

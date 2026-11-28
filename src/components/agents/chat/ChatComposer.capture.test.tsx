@@ -115,6 +115,7 @@ function session(): AgentChatSessionView {
 		editRetryableTurn: vi.fn(),
 		answerPending: vi.fn(async () => {}),
 		interrupt: vi.fn(async () => {}),
+		resumeProvider: vi.fn(async () => {}),
 		dismissActionError: vi.fn(),
 	};
 }

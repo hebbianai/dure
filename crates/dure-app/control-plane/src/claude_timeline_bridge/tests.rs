@@ -758,6 +758,167 @@ async fn provider_session_initialization_establishes_the_durable_resume_referenc
     assert_eq!(binding.binding_revision, 2);
 }
 
+fn session_ready_rows(page: &dure_app::AgentTimelinePageV1) -> usize {
+    page.rows
+        .iter()
+        .filter(|row| {
+            matches!(
+                row.item.body,
+                AgentTimelineItemBodyV1::Lifecycle {
+                    state: AgentTimelineLifecycleStateV1::SessionReady,
+                    ..
+                }
+            )
+        })
+        .count()
+}
+
+fn claude_event(sequence: i64, kind: &str, payload: Value) -> ClaudeDch1EventFrame {
+    ClaudeDch1EventFrame {
+        identity: identity(),
+        event: ClaudeDch1ProviderEvent {
+            sequence,
+            kind: kind.into(),
+            payload,
+        },
+    }
+}
+
+fn claude_session_initialized(sequence: i64) -> ClaudeDch1EventFrame {
+    claude_event(
+        sequence,
+        "provider_session_initialized",
+        json!({
+            "apiKeySource": "none",
+            "claudeCodeVersion": "2.1.234",
+            "cwd": "/workspace/claude/.worktrees/agent",
+            "model": "claude-sonnet-4-6",
+            "permissionMode": "default",
+            "providerSessionId": "session-claude-1"
+        }),
+    )
+}
+
+fn bridge_over(
+    store: &Arc<SqliteDomainStore>,
+) -> ClaudeTimelineBridge<SqliteDomainStore, FakeTransport> {
+    ClaudeTimelineBridge::new(
+        Arc::new(AgentConversationService::new(Arc::clone(store))),
+        FakeTransport::new(Arc::clone(store), [], []),
+        AgentInteractionSessionIdV1::new("interaction-claude").unwrap(),
+        identity(),
+    )
+    .unwrap()
+}
+
+/// hebbianai/dure#807: Claude reports `system:init` only after the first
+/// input, so a relaunched Query that nothing has written to yet must still
+/// read as ready. The Host's `initialized` (the Query is bound and waits for
+/// input) starts the session; the later init establishes the resume
+/// reference without a second start, which turn projection would read as
+/// the runtime under the turn being replaced.
+#[tokio::test]
+async fn a_bound_query_is_ready_before_its_first_input() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = fixture_with_provider_ref(&temp_dir.path().join("domain.sqlite"), None).await;
+    let bridge = bridge_over(&store);
+
+    bridge
+        .ingest_pushed(&claude_event(
+            1,
+            "initialized",
+            json!({ "providerSessionId": null }),
+        ))
+        .await
+        .unwrap();
+    let bound = tail(&store).await;
+    assert_eq!(session_ready_rows(&bound), 1);
+    assert!(matches!(
+        bound.rows.last().unwrap().item.body,
+        AgentTimelineItemBodyV1::Lifecycle {
+            state: AgentTimelineLifecycleStateV1::SessionReady,
+            detail: None,
+        }
+    ));
+
+    bridge
+        .ingest_pushed(&claude_session_initialized(2))
+        .await
+        .unwrap();
+    assert_eq!(session_ready_rows(&tail(&store).await), 1);
+    let binding = store
+        .agent_interaction(&AgentInteractionSessionIdV1::new("interaction-claude").unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        binding.provider_conversation_ref.as_deref(),
+        Some("session-claude-1")
+    );
+}
+
+/// A backend before #807 committed a relaunched Query's `initialized` with
+/// no start, so the conversation still reads as ended after it. That launch
+/// starts its session at Claude's init, once input reaches it.
+#[tokio::test]
+async fn a_launch_bound_without_a_start_starts_at_its_init() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = fixture_with_provider_ref(&temp_dir.path().join("domain.sqlite"), None).await;
+    let exited = AgentTimelineMutationV1::Append {
+        item: AgentTimelineItemDraftV1 {
+            item_id: AgentTimelineItemIdV1::new("earlier-launch-exited").unwrap(),
+            turn_id: None,
+            client_message_id: None,
+            provider_message_id: None,
+            body: AgentTimelineItemBodyV1::Lifecycle {
+                state: AgentTimelineLifecycleStateV1::SessionExited,
+                detail: Some(r#"{"code":143,"signal":null}"#.into()),
+            },
+            created_at_ms: 1,
+        },
+    };
+    for (sequence, mutations) in [(1, vec![exited]), (2, Vec::new())] {
+        store
+            .apply_agent_provider_event(&AgentProviderEventCommitV1 {
+                schema_version: AGENT_TIMELINE_SCHEMA_VERSION_V1,
+                interaction_session_id: AgentInteractionSessionIdV1::new("interaction-claude")
+                    .unwrap(),
+                event: AgentProviderEventIdentityV1 {
+                    runtime: runtime(),
+                    sequence,
+                },
+                source_fingerprint: format!("sha256:older-backend-{sequence}"),
+                mutations,
+                recorded_at_ms: sequence,
+            })
+            .await
+            .unwrap();
+    }
+    assert_eq!(session_ready_rows(&tail(&store).await), 0);
+
+    bridge_over(&store)
+        .ingest_pushed(&claude_session_initialized(3))
+        .await
+        .unwrap();
+    let started = tail(&store).await;
+    assert_eq!(session_ready_rows(&started), 1);
+    let lifecycle = started
+        .rows
+        .iter()
+        .filter_map(|row| match &row.item.body {
+            AgentTimelineItemBodyV1::Lifecycle { state, .. } => Some(state.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lifecycle,
+        [
+            AgentTimelineLifecycleStateV1::SessionExited,
+            AgentTimelineLifecycleStateV1::SessionReady,
+        ]
+    );
+}
+
 fn permission() -> Value {
     json!({
         "clientMessageId": "client-claude-1",

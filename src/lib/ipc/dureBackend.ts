@@ -129,6 +129,20 @@ export class DureBackendRequestError extends Error {
 	}
 }
 
+/** The backend refused the request with `code`. */
+export function dureBackendRefused(error: unknown, code: string): boolean {
+	return error instanceof DureBackendRequestError && error.code === code;
+}
+
+/** The route the request was fenced to changed before it ran: read the
+ * target again instead of retrying the same request. */
+export function dureBackendAuthorityChanged(error: unknown): boolean {
+	return (
+		error instanceof DureBackendRequestError &&
+		error.failure.kind === "authority_changed"
+	);
+}
+
 /** The transport refused a request, before sending anything, because the
  * backend does not declare `capability`: it predates what was asked. */
 export function dureBackendCapabilityMissing(

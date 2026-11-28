@@ -34,6 +34,11 @@ const buttonVariants = cva(
           "bg-glass-tray text-foreground shadow-tray hover:[background:linear-gradient(var(--glass-tint-hover),var(--glass-tint-hover)),var(--glass-tray)]",
         destructive:
           "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
+        // The one intervention a notice asks for, such as resuming an ended
+        // session: the attention accent the Work signal pill wears, on a
+        // control. Working UI spends colour only here and on danger (SOUL §5).
+        attention:
+          "border-status-warn/35 bg-status-warn/8 text-status-warn hover:bg-status-warn/15 focus-visible:border-status-warn/50 focus-visible:ring-status-warn/20",
         link: "text-primary underline-offset-4 hover:underline",
       },
       // Every size pins its own line-height. Left to the metric default a

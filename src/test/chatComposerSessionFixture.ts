@@ -78,6 +78,7 @@ export function chatComposerSessionFixture(
 		editRetryableTurn: vi.fn(async () => undefined),
 		answerPending: vi.fn(async () => {}),
 		interrupt: vi.fn(async () => {}),
+		resumeProvider: vi.fn(async () => {}),
 		dismissActionError: vi.fn(),
 		loadMoreQueued: vi.fn(async () => {}),
 		queueMessage: vi.fn(),
