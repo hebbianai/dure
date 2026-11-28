@@ -1556,7 +1556,7 @@ async fn provider_wake_is_a_separate_fenced_and_idempotent_delivery_transition()
 }
 
 #[tokio::test]
-async fn a_queued_wake_is_claimed_again_only_while_its_delivery_is_unread() {
+async fn a_queued_wake_is_claimed_again_until_its_delivery_is_acknowledged() {
     let target = target();
     let wake_capability = capability("capability.wake.worker");
     let mut request = decision_request(&target);
@@ -1632,30 +1632,55 @@ async fn a_queued_wake_is_claimed_again_only_while_its_delivery_is_unread() {
             .applied
     );
 
-    service
-        .read_events(ReadEventsRequest {
-            schema_version: INTERACTION_SCHEMA_VERSION,
-            authority: target.authority.clone(),
-            target: Some(target.clone()),
-            participant: participant("participant.worker.reviewer"),
-            delivery_capability: capability("capability.inbox.worker"),
-            endpoint_fence: Some(endpoint_fence(&target)),
-            after: EventCursor::BEGINNING,
-            acknowledgement: None,
-            limit: 10,
-        })
-        .await
-        .unwrap();
+    let read = ReadEventsRequest {
+        schema_version: INTERACTION_SCHEMA_VERSION,
+        authority: target.authority.clone(),
+        target: Some(target.clone()),
+        participant: participant("participant.worker.reviewer"),
+        delivery_capability: capability("capability.inbox.worker"),
+        endpoint_fence: Some(endpoint_fence(&target)),
+        after: EventCursor::BEGINNING,
+        acknowledgement: None,
+        limit: 10,
+    };
+    service.read_events(read.clone()).await.unwrap();
     let observed = service
         .transition_delivery_wake(transition(DeliveryWakeTransition::Claim, 1_600))
         .await
         .unwrap();
     assert!(
-        !observed.applied,
-        "a delivery the worker read needs no wake"
+        observed.applied,
+        "a read without an acknowledgement does not prove the worker handled it"
+    );
+    assert!(
+        service
+            .transition_delivery_wake(transition(busy(), 1_700))
+            .await
+            .unwrap()
+            .applied
+    );
+
+    service
+        .read_events(ReadEventsRequest {
+            acknowledgement: Some(EventAcknowledgement {
+                through: opened.deliveries[0].event_cursor,
+                idempotency_key: "ack-requeued-wake-message".into(),
+                acknowledgement_capability: capability("capability.ack.worker"),
+            }),
+            ..read
+        })
+        .await
+        .unwrap();
+    let acknowledged = service
+        .transition_delivery_wake(transition(DeliveryWakeTransition::Claim, 1_800))
+        .await
+        .unwrap();
+    assert!(
+        !acknowledged.applied,
+        "a delivery the worker acknowledged needs no wake"
     );
     assert_eq!(
-        observed.delivery.wake.unwrap().state,
+        acknowledged.delivery.wake.unwrap().state,
         DeliveryWakeState::QueuedUntilNextTurn
     );
 }

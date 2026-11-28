@@ -3,8 +3,8 @@ use sqlx::AssertSqlSafe;
 
 use super::*;
 
-/// An unread delivery whose last wake proved that nothing was written, with
-/// the exact worker Session currently bound to its Dispatch.
+/// An unacknowledged delivery whose last wake proved that nothing was written,
+/// with the exact worker Session currently bound to its Dispatch.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QueuedOrchestrationWakeV1 {
     pub session: WorkflowSessionGenerationV1,
@@ -15,7 +15,9 @@ pub struct QueuedOrchestrationWakeV1 {
 /// Rediscover queued wakes from SQLite on every call, including after a
 /// restart. A completed Dispatch still qualifies: its worker can receive
 /// updates. Only the listed refusal reasons qualify: they name a target that
-/// was not ready yet, not one that can never take a prompt.
+/// was not ready yet, not one that can never take a prompt. A delivery that
+/// was read but not acknowledged still qualifies, as it does for the wake
+/// claim: an acknowledgement also reads the Events after its cursor.
 pub(crate) async fn queued(
     pool: &SqlitePool,
     reason_codes: &[&str],
@@ -36,7 +38,7 @@ pub(crate) async fn queued(
            ON authority.authority_key = delivery.authority_key
          JOIN workflow_interaction_events AS event
            ON event.authority_key = delivery.authority_key AND event.cursor = delivery.event_cursor
-         WHERE json_extract(delivery.delivery_json, '$.receipt.state') = 'queued'
+         WHERE json_extract(delivery.delivery_json, '$.receipt.state') <> 'acknowledged'
            AND json_extract(delivery.delivery_json, '$.receipt.wake.state') = 'queued_until_next_turn'
            AND json_extract(delivery.delivery_json, '$.receipt.wake.reasonCode') IN ({reasons})
            AND json_extract(delivery.delivery_json, '$.receipt.wake.updatedAtMs') <= ?

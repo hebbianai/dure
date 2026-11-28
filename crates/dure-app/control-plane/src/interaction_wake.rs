@@ -302,8 +302,8 @@ fn retry_interval_ms(age_ms: i64) -> i64 {
 }
 
 /// A queued wake used to wait for the worker's next turn, but nothing starts
-/// that turn for an idle worker. Retry each unread delivery until its Session
-/// admits the inbox prompt or the retry window closes.
+/// that turn for an idle worker. Retry each unacknowledged delivery until its
+/// Session admits the inbox prompt or the retry window closes.
 pub(crate) async fn retry_loop(state: Arc<ServiceState>) {
     let mut interval = tokio::time::interval(WAKE_RETRY_TICK);
     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
