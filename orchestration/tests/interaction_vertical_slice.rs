@@ -1660,10 +1660,12 @@ async fn a_queued_wake_is_claimed_again_until_its_delivery_is_acknowledged() {
             .applied
     );
 
+    let cursor = opened.deliveries[0].event_cursor;
     service
         .read_events(ReadEventsRequest {
+            after: cursor,
             acknowledgement: Some(EventAcknowledgement {
-                through: opened.deliveries[0].event_cursor,
+                through: cursor,
                 idempotency_key: "ack-requeued-wake-message".into(),
                 acknowledgement_capability: capability("capability.ack.worker"),
             }),
