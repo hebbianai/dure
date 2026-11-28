@@ -7,6 +7,7 @@ import { appRootDirectory } from "./app-control-location.mjs";
 import { runBoundedCommand } from "./bounded-command.mjs";
 import { PROVIDERS } from "./contracts/provider-catalog.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
+import { formatPaceRate, windowPace } from "./usage-pace.mjs";
 
 // The backend keeps profile directory locators private, so names, sign-in and
 // usage are joined on this computer: each local profile directory carries the
@@ -87,14 +88,19 @@ function readLocalProfileNames({ providerId, accountsRoot }) {
   return names;
 }
 
-/** One provider-reported limit window; a window that has reset since the
+function secondsToMs(seconds) {
+  return Number.isSafeInteger(seconds) ? seconds * 1000 : null;
+}
+
+/** One provider-reported limit window of the given kind, from the reading
+ * taken at observedAtMs, with its pace; a window that has reset since the
  * capture no longer describes current use. */
-function usageWindow(usedPercent, resetsAtSeconds, nowMs) {
+function usageWindow(kind, usedPercent, resetsAtSeconds, { nowMs, observedAtMs }) {
   if (typeof usedPercent !== "number" || !Number.isFinite(usedPercent)) return null;
-  if (resetsAtSeconds == null) return { usedPercent, resetsAtMs: null };
-  if (!Number.isSafeInteger(resetsAtSeconds)) return null;
-  const resetsAtMs = resetsAtSeconds * 1000;
-  return resetsAtMs > nowMs ? { usedPercent, resetsAtMs } : null;
+  if (resetsAtSeconds != null && !Number.isSafeInteger(resetsAtSeconds)) return null;
+  const resetsAtMs = resetsAtSeconds == null ? null : resetsAtSeconds * 1000;
+  if (resetsAtMs !== null && resetsAtMs <= nowMs) return null;
+  return { usedPercent, resetsAtMs, pace: windowPace({ usedPercent, resetsAtMs }, { kind, observedAtMs }) };
 }
 
 /** A window is null when the provider did not report it or it reset after
@@ -106,8 +112,7 @@ function usageSummary({ fiveHour = null, weekly = null, modelWeekly = [], otherW
   capturedAtSeconds, credits = null, usageResetsAvailable = null, lastCheck = null }) {
   if (!fiveHour && !weekly && !modelWeekly.length && !otherWindows.length && !credits &&
       usageResetsAvailable === null && !lastCheck) return null;
-  return { fiveHour, weekly, modelWeekly, otherWindows,
-    observedAtMs: Number.isSafeInteger(capturedAtSeconds) ? capturedAtSeconds * 1000 : null,
+  return { fiveHour, weekly, modelWeekly, otherWindows, observedAtMs: secondsToMs(capturedAtSeconds),
     credits, usageResetsAvailable, lastCheck };
 }
 
@@ -151,11 +156,13 @@ function claudeUsageReader({ appRoot, homeDirectory, nowMs }) {
     const { snapshot, lastCheck } = loginCheck(snapshots, referenceIds);
     const windows = Array.isArray(snapshot?.windows)
       ? snapshot.windows.filter((window) => window && typeof window === "object") : [];
-    const checked = (window) => usageWindow(window?.usedPercent, window?.resetsAt, nowMs);
+    const checkReading = { nowMs, observedAtMs: secondsToMs(snapshot?.capturedAt) };
+    const checked = (window) => usageWindow(window?.kind, window?.usedPercent, window?.resetsAt, checkReading);
     const limits = profileName
       ? readJson(join(root, `${profileName}.json`), MAX_CLAUDE_USAGE_CACHE_BYTES) : null;
-    const line = (value) => Number.isSafeInteger(value?.resets_at)
-      ? usageWindow(value.used_percentage, value.resets_at, nowMs) : null;
+    const lineReading = { nowMs, observedAtMs: secondsToMs(limits?.captured_at) };
+    const line = (kind, value) => Number.isSafeInteger(value?.resets_at)
+      ? usageWindow(kind, value.used_percentage, value.resets_at, lineReading) : null;
     const fromLine = Number.isSafeInteger(limits?.captured_at) &&
       !(Number.isSafeInteger(snapshot?.capturedAt) && snapshot.capturedAt >= limits.captured_at);
     const general = (kind) => checked(windows.find((window) => window.kind === kind));
@@ -166,8 +173,8 @@ function claudeUsageReader({ appRoot, homeDirectory, nowMs }) {
         return current ? [{ [key === "id" ? "name" : key]: window[key], ...current }] : [];
       });
     return usageSummary({
-      fiveHour: fromLine ? line(limits.rate_limits?.five_hour) : general("fiveHour"),
-      weekly: fromLine ? line(limits.rate_limits?.seven_day) : general("weekly"),
+      fiveHour: fromLine ? line("fiveHour", limits.rate_limits?.five_hour) : general("fiveHour"),
+      weekly: fromLine ? line("weekly", limits.rate_limits?.seven_day) : general("weekly"),
       modelWeekly: scoped("modelWeekly", CLAUDE_MODEL_NAME, "model"),
       otherWindows: scoped("other", CLAUDE_WINDOW_NAME, "id"),
       capturedAtSeconds: fromLine ? limits.captured_at : snapshot?.capturedAt,
@@ -296,9 +303,10 @@ function codexUsageReader({ appRoot, nowMs }) {
     const general = Array.isArray(snapshot?.rateLimits)
       ? snapshot.rateLimits.find((limit) => limit?.limitId === "codex") : undefined;
     const resets = snapshot?.rateLimitResetsAvailable;
+    const reading = { nowMs, observedAtMs: secondsToMs(snapshot?.capturedAt) };
     return usageSummary({
-      fiveHour: usageWindow(general?.usedPercent, general?.resetsAt, nowMs),
-      weekly: usageWindow(general?.usedPercentWeekly, general?.weeklyResetsAt, nowMs),
+      fiveHour: usageWindow("fiveHour", general?.usedPercent, general?.resetsAt, reading),
+      weekly: usageWindow("weekly", general?.usedPercentWeekly, general?.weeklyResetsAt, reading),
       capturedAtSeconds: snapshot?.capturedAt,
       credits: codexCredits(general?.credits),
       usageResetsAvailable: Number.isSafeInteger(resets) && resets >= 0 ? resets : null,
@@ -376,19 +384,27 @@ function formatCheckFailure({ checkedAtMs, error }, nowMs) {
   return `check failed ${duration(nowMs - checkedAtMs)} ago (${reason})`;
 }
 
+/** The window's rate and, when that rate fills it before it resets, when. */
+function formatPace(pace, kind, nowMs) {
+  if (!pace) return [];
+  const fill = pace.fillsAtMs === null ? []
+    : [pace.fillsAtMs > nowMs ? `full in ${duration(pace.fillsAtMs - nowMs)}` : "full by now"];
+  return [formatPaceRate(pace, kind), ...fill];
+}
+
 /** Lists only the windows the provider currently describes; a provider that
  * reports a weekly window alone has no 5h limit to show. */
 function formatUsage(usage, nowMs) {
   if (!usage) return "usage unknown";
-  const window = (label, value) => {
+  const window = (label, kind, value) => {
     const reset = value.resetsAtMs === null ? "reset time unknown"
       : `resets in ${duration(value.resetsAtMs - nowMs)}`;
-    return `${label} ${Math.round(value.usedPercent)}% (${reset})`;
+    return `${label} ${Math.round(value.usedPercent)}% (${[reset, ...formatPace(value.pace, kind, nowMs)].join(", ")})`;
   };
-  const windows = [["5h", usage.fiveHour], ["weekly", usage.weekly],
-    ...(usage.modelWeekly ?? []).map((value) => [`weekly ${value.model}`, value]),
-    ...(usage.otherWindows ?? []).map((value) => [value.name, value])]
-    .filter(([, value]) => value).map(([label, value]) => window(label, value));
+  const windows = [["5h", "fiveHour", usage.fiveHour], ["weekly", "weekly", usage.weekly],
+    ...(usage.modelWeekly ?? []).map((value) => [`weekly ${value.model}`, "modelWeekly", value]),
+    ...(usage.otherWindows ?? []).map((value) => [value.name, "other", value])]
+    .filter(([, , value]) => value).map(([label, kind, value]) => window(label, kind, value));
   const { credits, usageResetsAvailable, lastCheck } = usage;
   return [...(windows.length ? windows : ["usage unknown"]),
     ...(credits?.unlimited ? ["unlimited credits"] : credits?.balance > 0

@@ -201,7 +201,8 @@ test("get lists each login once with its local profile name, usage windows and r
   assert.equal(human.output.join("\n"), [
     "claude accounts on backend local (automatic recovery: not configured)",
     "  acc-personal   claude-personal  usage unknown",
-    "  acc-work-a     claude-work      5h 42% (resets in 2h 10m) · weekly 61% (resets in 4d 3h) · observed 12m ago",
+    "  acc-work-a     claude-work      5h 42% (resets in 2h 10m, 16%/h) · weekly 61% (resets in 4d 3h, 21%/day, " +
+      "full in 1d 19h) · observed 12m ago",
     "                 same login, also registered as acc-work-b",
     "  acc-unmatched  name unknown     usage unknown",
     "Switch with: dure runs switch-account RUN --account ID. Any ID of one login selects the same credential.",
@@ -218,8 +219,13 @@ test("get lists each login once with its local profile name, usage windows and r
       name: null, profileName: "claude-personal", signedIn: true, usage: null },
     { referenceId: "acc-work-a", aliasReferenceIds: ["acc-work-b"], credentialGeneration: "credential-v2-work",
       name: null, profileName: "claude-work", signedIn: true, usage: {
-        fiveHour: { usedPercent: 42, resetsAtMs: NOW + 2 * HOUR + 10 * MINUTE },
-        weekly: { usedPercent: 61.4, resetsAtMs: NOW + 99 * HOUR }, modelWeekly: [], otherWindows: [],
+        fiveHour: { usedPercent: 42, resetsAtMs: NOW + 2 * HOUR + 10 * MINUTE,
+          // 2h 38m of the 5h window had passed at the reading 12 minutes ago.
+          pace: { percentPerHour: (42 * HOUR) / (158 * MINUTE), fillsAtMs: null } },
+        weekly: { usedPercent: 61.4, resetsAtMs: NOW + 99 * HOUR,
+          pace: { percentPerHour: (61.4 * HOUR) / (4128 * MINUTE),
+            fillsAtMs: NOW - 12 * MINUTE + Math.round((38.6 / ((61.4 * HOUR) / (4128 * MINUTE))) * HOUR) } },
+        modelWeekly: [], otherWindows: [],
         observedAtMs: NOW - 12 * MINUTE, credits: null, usageResetsAvailable: null, lastCheck: null } },
     { referenceId: "acc-unmatched", aliasReferenceIds: [], credentialGeneration: "credential-v2-elsewhere",
       name: null, profileName: null, signedIn: null, usage: null },
@@ -269,26 +275,70 @@ test("claude usage lists each model's weekly window from the app's account check
   const human = accountsCommand({ result, home, environment });
   assert.equal(await human.run(), true);
   assert.deepEqual(human.output.join("\n").split("\n").slice(1, 4), [
-    "  acc-fable  claude-fable  weekly 41% (resets in 2d 2h) · weekly Fable 5.1 100% (resets in 1d 2h) · " +
+    "  acc-fable  claude-fable  weekly 41% (resets in 2d 2h, 8.4%/day) · weekly Fable 5.1 100% (resets in 1d 2h) · " +
       "weekly Opus 7% (reset time unknown) · seven_day_lantern 3% (resets in 2h) · observed 20m ago · " +
       "check failed 5m ago (login expired)",
-    "  acc-busy   claude-busy   5h 64% (resets in 1h) · weekly 33% (resets in 4d 3h) · " +
-      "weekly Fable 80% (resets in 4d 3h) · observed 1m ago",
-    "  acc-line   claude-line   weekly 12% (resets in 1d 6h) · observed 2m ago",
+    // Each window's pace is measured from its own reading: Fable's from the
+    // check ten minutes ago, the 5h and weekly windows from the newer statusLine.
+    "  acc-busy   claude-busy   5h 64% (resets in 1h, 16%/h) · weekly 33% (resets in 4d 3h, 11%/day) · " +
+      "weekly Fable 80% (resets in 4d 3h, 28%/day, full in 17h 2m) · observed 1m ago",
+    "  acc-line   claude-line   weekly 12% (resets in 1d 6h, 2.1%/day) · observed 2m ago",
   ]);
   const json = accountsCommand({ result, home, environment, args: ["--json"] });
   assert.equal(await json.run(), true);
   assert.deepEqual(JSON.parse(json.output[0]).registeredAccounts[0].usage, {
     fiveHour: null,
-    weekly: { usedPercent: 41, resetsAtMs: seconds(NOW + 50 * HOUR) * 1000 },
+    weekly: { usedPercent: 41, resetsAtMs: seconds(NOW + 50 * HOUR) * 1000,
+      pace: { percentPerHour: (41 * HOUR) / (7060 * MINUTE), fillsAtMs: null } },
     modelWeekly: [
-      { model: "Fable 5.1", usedPercent: 100, resetsAtMs: seconds(NOW + 26 * HOUR) * 1000 },
-      { model: "Opus", usedPercent: 7, resetsAtMs: null },
+      { model: "Fable 5.1", usedPercent: 100, resetsAtMs: seconds(NOW + 26 * HOUR) * 1000, pace: null },
+      { model: "Opus", usedPercent: 7, resetsAtMs: null, pace: null },
     ],
-    otherWindows: [{ name: "seven_day_lantern", usedPercent: 3, resetsAtMs: seconds(NOW + 2 * HOUR) * 1000 }],
+    otherWindows: [{ name: "seven_day_lantern", usedPercent: 3, resetsAtMs: seconds(NOW + 2 * HOUR) * 1000,
+      pace: null }],
     observedAtMs: seconds(NOW - 20 * MINUTE) * 1000, credits: null, usageResetsAvailable: null,
     lastCheck: { checkedAtMs: seconds(NOW - 5 * MINUTE) * 1000, error: "claude_usage_login_expired" },
   });
+});
+
+test("get shows how fast each window fills and when it fills before it resets", async () => {
+  const DAY = 24 * HOUR;
+  const { home, environment } = localAccountsFixture({
+    profiles: { "claude-busy": "credential-v2-busy", "claude-stale": "credential-v2-stale" },
+    credentials: { "claude-busy": "{}", "claude-stale": "{}" },
+  });
+  const window = (kind, used, resetsAt, extra = {}) => ({ id: "w", kind, model: null, usedPercent: used,
+    resetsAt: seconds(resetsAt), ...extra });
+  writeFileSync(join(home, ".dure", "claude-usage-snapshots.json"), JSON.stringify({ schemaVersion: 1, snapshots: [
+    // 43% one day into the week: at that rate the week fills in about a day and a third.
+    { credentialId: "acc-busy", capturedAt: seconds(NOW), attemptedAt: seconds(NOW), error: null, windows: [
+      window("fiveHour", 10, NOW + 4 * HOUR),
+      window("weekly", 43, NOW + 6 * DAY),
+      window("modelWeekly", 90, NOW + 5 * DAY, { model: "Fable" }),
+      window("other", 3, NOW + 2 * HOUR, { id: "seven_day_lantern" }),
+    ] },
+    // Three days ago this login was on pace to fill within the hour.
+    { credentialId: "acc-stale", capturedAt: seconds(NOW - 3 * DAY), attemptedAt: seconds(NOW - 3 * DAY),
+      error: null, windows: [window("weekly", 99, NOW + DAY)] },
+  ] }));
+  const result = { schemaVersion: 1, policy: null, profiles: [
+    claudeProfile("acc-busy", "credential-v2-busy"), claudeProfile("acc-stale", "credential-v2-stale")] };
+  const human = accountsCommand({ result, home, environment });
+  assert.equal(await human.run(), true);
+  assert.deepEqual(human.output.join("\n").split("\n").slice(1, 3), [
+    "  acc-busy   claude-busy   5h 10% (resets in 4h, 10%/h) · weekly 43% (resets in 6d, 43%/day, full in 1d 7h) · " +
+      "weekly Fable 90% (resets in 5d, 45%/day, full in 5h 20m) · seven_day_lantern 3% (resets in 2h) · " +
+      "observed <1m ago",
+    "  acc-stale  claude-stale  weekly 99% (resets in 1d, 33%/day, full by now) · observed 3d ago",
+  ]);
+  const json = accountsCommand({ result, home, environment, args: ["--json"] });
+  assert.equal(await json.run(), true);
+  const usage = JSON.parse(json.output[0]).registeredAccounts[0].usage;
+  assert.deepEqual(usage.weekly, { usedPercent: 43, resetsAtMs: NOW + 6 * DAY,
+    pace: { percentPerHour: 43 / 24, fillsAtMs: NOW + Math.round((57 / 43) * DAY) } });
+  assert.deepEqual(usage.fiveHour.pace, { percentPerHour: 10, fillsAtMs: null });
+  assert.deepEqual(usage.otherWindows, [{ name: "seven_day_lantern", usedPercent: 3, resetsAtMs: NOW + 2 * HOUR,
+    pace: null }]);
 });
 
 test("a policy name labels its login and its ID is offered first", async () => {
@@ -375,7 +425,7 @@ test("a Claude login without credentials is listed as signed out with how to sig
     "claude accounts on backend local (automatic recovery: not configured)",
     "  acc-file       claude-file      usage unknown",
     "  acc-keychain   claude-keychain  usage unknown",
-    "  acc-out        claude-out       signed out · weekly 12% (resets in 1d 6h) · observed 3h ago",
+    "  acc-out        claude-out       signed out · weekly 12% (resets in 1d 6h, 2.1%/day) · observed 3h ago",
     "  acc-locked     claude-locked    usage unknown",
     "  acc-empty      claude-empty     usage unknown",
     "  acc-unmatched  name unknown     usage unknown",
@@ -606,7 +656,7 @@ test("codex usage comes from the app's snapshot for any of the login's account I
     environment, homeDirectory: home, now: () => NOW,
   }), true);
   assert.equal(output.join("\n").split("\n")[1],
-    "  acc-codex-new  codex-work  weekly 28% (resets in 1d 2h) · observed 5m ago · " +
+    "  acc-codex-new  codex-work  weekly 28% (resets in 1d 2h, 4.7%/day) · observed 5m ago · " +
     "check failed <1m ago (codex_usage_probe_failed)");
 });
 
@@ -660,7 +710,8 @@ test("codex usage explains a full weekly window that keeps working and a failed 
   ]);
   const usage = JSON.parse(await run(["--json"])).registeredAccounts.map((account) => account.usage);
   assert.deepEqual(usage[0], { fiveHour: null,
-    weekly: { usedPercent: 100, resetsAtMs: seconds(NOW + 110 * HOUR) * 1000 }, modelWeekly: [], otherWindows: [],
+    weekly: { usedPercent: 100, resetsAtMs: seconds(NOW + 110 * HOUR) * 1000, pace: null },
+    modelWeekly: [], otherWindows: [],
     observedAtMs: seconds(NOW - 3 * MINUTE) * 1000, credits: { unlimited: false, balance: 40147.943681 },
     usageResetsAvailable: 2, lastCheck: { checkedAtMs: seconds(NOW - 3 * MINUTE) * 1000, error: null } });
   assert.deepEqual(usage[2], { fiveHour: null, weekly: null, modelWeekly: [], otherWindows: [],

@@ -34,16 +34,21 @@ in again, and the usage the app last observed: each limit window the provider
 reports, with its reset time (unknown until observed), and a failed latest
 check. For Claude that includes each model's own weekly window (such as
 "weekly Fable"); for Codex it adds the credit balance and available usage
-resets. The app checks each Claude and Codex account about every 15 minutes
-while it runs, so a reading can trail recent work, and a Codex account past
-its window can keep working while it has credits. A Claude check reads the
-account's stored login and never renews it: past the login's expiry the check
-fails until Claude Code next uses that account, and the last reading stays.
+resets. A 5h or weekly window also shows its pace once a tenth of it has
+passed: the average rate since it began ("43%/day") and, when that rate fills
+it before it resets, when ("full in 1d 7h"). The app checks each Claude and
+Codex account about every 15 minutes while it runs, so a reading can trail
+recent work, and a Codex account past its window can keep working while it
+has credits. A Claude check reads the account's stored login and never renews
+it: past the login's expiry the check fails until Claude Code next uses that
+account, and the last reading stays.
 IDs registered for the same login select the same credential. get --json
 returns the policy, the registered profile handles and this summary as
 registeredAccounts, where signedIn is true, false (signed out) or null (not
 known), and usage holds fiveHour, weekly, modelWeekly ({model, usedPercent,
-resetsAtMs}) and otherWindows ({name, usedPercent, resetsAtMs}).
+resetsAtMs, pace}) and otherWindows ({name, usedPercent, resetsAtMs, pace}),
+where pace is {percentPerHour, fillsAtMs} (fillsAtMs null when the window
+resets first) or null.
 Other results are JSON. accounts is an ordered array of {profile, name}; copy
 exact profiles from get --json.
 Use revision 0 for a new policy. Only explicitly allowed accounts are used.
