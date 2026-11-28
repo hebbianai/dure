@@ -5,14 +5,16 @@ import {
 	type NativeAgentChatPendingPrompt,
 	type NativeAgentChatSnapshot,
 	type NativeAgentInputFailure,
+	nativeAgentChatLivePending,
 	nativeAgentChatPendingIdleDeadline,
 } from "@/lib/agents/chat/nativeAgentChat";
 
-/** The conversation view's runtime-owned state, kept by the pane rather than
- * the view: hiding the view or a brief runtime drop (reconnect, a transition)
- * must not forget a sent prompt and offer the composer for it again. The
- * owner is one conversation of one terminal generation; a new owner starts
- * empty, and a late write from an older one is dropped. */
+/** The conversation's runtime-owned state, kept by the surface that shows
+ * it (the pane, a Work column) rather than by the view: hiding the view or a
+ * brief runtime drop (reconnect, a transition) must not forget a sent prompt
+ * and offer the composer for it again. The owner is one conversation of one
+ * terminal generation (`nativeAgentChatOwnerKey`); a new owner starts empty,
+ * and a late write from an older one is dropped. */
 export function useNativeAgentChatState(ownerKey: string, idle: boolean) {
 	const [snapshot, setSnapshot] =
 		useRuntimeOwnedValue<NativeAgentChatSnapshot>(ownerKey);
@@ -51,6 +53,8 @@ export function useNativeAgentChatState(ownerKey: string, idle: boolean) {
 		readFailed: readFailed === true,
 		setReadFailed,
 		pending,
+		/** The sent prompt while the newest read has not shown it. */
+		livePending: nativeAgentChatLivePending(pending, snapshot),
 		setPending,
 		sendError,
 		setSendError,

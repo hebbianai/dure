@@ -23,6 +23,5 @@ export const work: Record<string, string> = {
 	"work.detail.moveRight": "向右移动",
 	"work.detail.removed": "此智能体已被移除。",
 	"work.conversation.label": "对话",
-	"work.conversation.pending": "正在等待人工处理。请在大窗口中回答。",
 	"work.conversation.none": "这里没有可显示的对话记录。",
 };

@@ -1,3 +1,4 @@
+import { agentRuntimePresentationOwnerKey } from "@/lib/agents/agentRuntimePresentationOwner";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
 import type {
 	AgentTimelinePageV1,
@@ -17,6 +18,7 @@ import type { HmuxAgentRuntimeState } from "@/lib/ipc/hmuxContracts";
 import type { Agent } from "@/types";
 import {
 	agentTranscriptFromProvider,
+	nativeAgentTranscriptSource,
 	type ProviderConversationTranscriptV1,
 	type ProviderTranscriptSource,
 } from "../../../../cli/lib/agent-transcript.mjs";
@@ -102,6 +104,24 @@ export function nativeAgentChatDraftIdentity(agent: Agent) {
 	};
 }
 
+/** The owner of a native terminal Agent's runtime-owned chat state: one
+ * presentation owner and its recorded conversation of one terminal
+ * generation. It is keyed to the Agent's record rather than the live runtime
+ * projection, so a momentary drop of the projection does not forget a sent
+ * prompt. Every surface that shows the conversation (the pane, the Work
+ * view) keys its state with this. */
+export function nativeAgentChatOwnerKey(agent: Agent): string {
+	const source = nativeAgentTranscriptSource(agent, agent.runtimeBinding);
+	const binding = agent.runtimeBinding;
+	return JSON.stringify([
+		agentRuntimePresentationOwnerKey(agent),
+		source.kind === "local" ? source.conversationId : undefined,
+		binding?.runtime === "hmux_managed_v1"
+			? binding.conversationIdentity?.terminalEpoch
+			: undefined,
+	]);
+}
+
 /** How long the runtime must stay at an idle prompt after a send before a
  * prompt nothing has recorded stops holding the composer. Generous on
  * purpose: a loaded desktop can report `working` seconds after the Host
@@ -171,6 +191,16 @@ export function nativeAgentChatPendingSettled(
 		isCanonicalDecimalString(before) &&
 		compareDecimalStrings(after, before) > 0
 	);
+}
+
+/** The sent prompt while the newest read has not shown it yet. */
+export function nativeAgentChatLivePending(
+	pending: NativeAgentChatPendingPrompt | undefined,
+	snapshot: NativeAgentChatSnapshot | undefined,
+): NativeAgentChatPendingPrompt | undefined {
+	return pending && !nativeAgentChatPendingSettled(pending, snapshot)
+		? pending
+		: undefined;
 }
 
 export type NativeAgentChatComposerState =

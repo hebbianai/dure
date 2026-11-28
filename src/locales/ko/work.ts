@@ -23,6 +23,5 @@ export const work: Record<string, string> = {
 	"work.detail.moveRight": "오른쪽으로 이동",
 	"work.detail.removed": "이 에이전트는 제거되었습니다.",
 	"work.conversation.label": "대화",
-	"work.conversation.pending": "사람의 응답을 기다리고 있습니다. 큰 창에서 답하세요.",
 	"work.conversation.none": "여기에 표시할 대화 기록이 없습니다.",
 };

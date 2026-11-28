@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { agentRuntimePresentationOwnerKey } from "@/lib/agents/agentRuntimePresentationOwner";
 import {
 	projectAgentChatTranscript,
 	segmentAgentChatRows,
@@ -10,6 +11,8 @@ import {
 	nativeAgentChatComposerState,
 	nativeAgentChatDraftIdentity,
 	nativeAgentChatIdle,
+	nativeAgentChatLivePending,
+	nativeAgentChatOwnerKey,
 	nativeAgentChatPage,
 	nativeAgentChatPendingEchoed,
 	nativeAgentChatPendingIdleDeadline,
@@ -23,6 +26,11 @@ import {
 } from "@/lib/agents/chat/nativeAgentChat";
 import { t } from "@/lib/i18n";
 import { DureBackendRequestError } from "@/lib/ipc/dureBackend";
+import {
+	managedAgentFixture,
+	managedBindingFixture,
+	stopFenceFixture,
+} from "@/test/agentFixtures";
 import type { Agent } from "@/types";
 import type { ProviderConversationTranscriptV1 } from "../../../../cli/lib/agent-transcript.mjs";
 
@@ -564,6 +572,24 @@ describe("native conversation refresh and pending prompt", () => {
 		).toBe(false);
 	});
 
+	it("holds a sent prompt live only until the newest read settles it", () => {
+		const sent = pending();
+		expect(nativeAgentChatLivePending(undefined, undefined)).toBeUndefined();
+		expect(nativeAgentChatLivePending(sent, undefined)).toBe(sent);
+		expect(
+			nativeAgentChatLivePending(sent, {
+				transcript: conversation,
+				turnCompletedCount: "2",
+			}),
+		).toBe(sent);
+		expect(
+			nativeAgentChatLivePending(sent, {
+				transcript: conversation,
+				turnCompletedCount: "3",
+			}),
+		).toBeUndefined();
+	});
+
 	it("never settles a prompt sent before any transcript loaded on matching text alone", () => {
 		// "continue" after an earlier "continue": the older entry must not
 		// settle the new prompt while the Host is still taking it up.
@@ -758,6 +784,64 @@ describe("native conversation composer", () => {
 			backendProfileId: "qa-profile",
 			interactionSessionId: "native:agent-one",
 		});
+	});
+
+	it("keys the runtime-owned chat state to the Agent's recorded conversation, as the pane did", () => {
+		const recorded = (conversationId: string, terminalEpoch: string) =>
+			managedBindingFixture({
+				sessionId: "session-one",
+				conversationIdentity: {
+					...stopFenceFixture({ terminalEpoch }),
+					schemaVersion: 1,
+					sessionId: "session-one",
+					workspaceId: "workspace-1",
+					revision: "1",
+					observedThroughOutputSeq: "1",
+					source: "provider_event",
+					providerId: "codex",
+					conversationId,
+				},
+			});
+		const agent = managedAgentFixture({
+			id: "agent-one",
+			provider: "codex",
+			sessionId: "session-one",
+			runtimeBinding: recorded("conversation-one", "epoch-one"),
+		});
+		const key = nativeAgentChatOwnerKey(agent);
+		// The formula the pane keyed its state with before the Work view
+		// shared it.
+		expect(key).toBe(
+			JSON.stringify([
+				agentRuntimePresentationOwnerKey(agent),
+				"conversation-one",
+				"epoch-one",
+			]),
+		);
+		// A copy of the same record keys the same state, so the pane and a
+		// Work column agree.
+		expect(nativeAgentChatOwnerKey({ ...agent })).toBe(key);
+		for (const changed of [
+			{ runtimeBinding: recorded("conversation-two", "epoch-one") },
+			{ runtimeBinding: recorded("conversation-one", "epoch-two") },
+			{
+				executionProfile: {
+					kind: "credential_reference" as const,
+					reference_id: "account-b",
+					credential_generation: "2",
+				},
+			},
+		]) {
+			expect(nativeAgentChatOwnerKey({ ...agent, ...changed })).not.toBe(key);
+		}
+		// No recorded conversation: the presentation owner alone.
+		const unrecorded = {
+			...agent,
+			runtimeBinding: managedBindingFixture({ sessionId: "session-one" }),
+		};
+		expect(nativeAgentChatOwnerKey(unrecorded)).toBe(
+			JSON.stringify([agentRuntimePresentationOwnerKey(unrecorded), null, null]),
+		);
 	});
 
 	it("routes to the recorded local control plane", () => {

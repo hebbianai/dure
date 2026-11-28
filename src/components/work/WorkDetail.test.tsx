@@ -6,11 +6,15 @@ import {
 	fireEvent,
 	render,
 	screen,
+	waitFor,
 	within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
+import type { AgentChatSessionView } from "@/lib/agents/chat/agentChatSessionView";
+import type { AgentPendingRequestV1 } from "@/lib/agents/chat/agentConversationContract";
 import { t } from "@/lib/i18n";
+import type { HmuxAgentRuntimeState } from "@/lib/ipc/hmuxContracts";
 import { useWindowSidebarStore } from "@/lib/sidebar/windowSidebarStore";
 import { WORK_VIEW_DEFAULT } from "@/lib/work/workViewState";
 import { useWorkViewStore } from "@/lib/work/workViewStore";
@@ -21,6 +25,7 @@ import {
 	managedBindingFixture,
 	stopFenceFixture,
 } from "@/test/agentFixtures";
+import { chatComposerSessionFixture } from "@/test/chatComposerSessionFixture";
 import type { Agent, Project, Space } from "@/types";
 
 const mocks = vi.hoisted(() => ({
@@ -29,6 +34,12 @@ const mocks = vi.hoisted(() => ({
 	terminal: vi.fn(),
 	open: vi.fn(),
 	revealAgent: vi.fn(),
+	send: vi.fn(),
+	answer: vi.fn(),
+}));
+vi.mock("@/lib/ipc/dureAgentNativeInput", () => ({
+	sendNativeAgentPrompt: (...args: unknown[]) => mocks.send(...args),
+	answerNativeAgentApproval: (...args: unknown[]) => mocks.answer(...args),
 }));
 vi.mock("@/lib/ipc/conversations", () => ({
 	readProviderConversationTranscript: (...args: unknown[]) =>
@@ -136,6 +147,86 @@ const transcript = {
 	],
 };
 
+const idleRuntime: HmuxAgentRuntimeState = {
+	terminalEpoch: "epoch-d",
+	revision: "1",
+	observedThroughOutputSeq: "1",
+	source: "provider_event",
+	lifecycle: "running",
+	activity: "waiting",
+	attention: "none",
+	turnCompletedCount: "1",
+};
+
+/** The Host's runtime for d, with the display state it implies. */
+function runtimeOfD(
+	patch: Partial<HmuxAgentRuntimeState>,
+	display: "waiting" | "working" | "blocked" = "waiting",
+) {
+	act(() => {
+		useStore.setState({
+			sessionAgentRuntimeState: { "s-d": { ...idleRuntime, ...patch } },
+		});
+		useAgentAttention.setState({
+			displayStates: {
+				...useAgentAttention.getState().displayStates,
+				d: display,
+			},
+		});
+	});
+}
+
+/** A ready session for chatty, as the shared lease answers it. */
+function chattySession(
+	patch: Partial<AgentChatSessionView> = {},
+	pendingRequests: AgentPendingRequestV1[] = [],
+): AgentChatSessionView {
+	const fixture = chatComposerSessionFixture("claude");
+	const page = fixture.page!;
+	return {
+		...fixture,
+		draftIdentity: {
+			agentId: "chatty",
+			backendProfileId: "local",
+			interactionSessionId: "interaction-chatty",
+		},
+		page: {
+			...page,
+			binding: {
+				...page.binding,
+				agentId: "chatty",
+				interactionSessionId: "interaction-chatty",
+			},
+			pendingRequests,
+		},
+		...patch,
+	};
+}
+
+function permissionRequest(requestId: string): AgentPendingRequestV1 {
+	return {
+		interactionSessionId: "interaction-chatty",
+		runtime: { runtimeGeneration: "runtime-1", providerEpoch: "query-1" },
+		request: {
+			requestId,
+			kind: "permission",
+			turnId: null,
+			clientMessageId: "message-1",
+			payload: { toolName: "Bash", input: { command: "pwd" } },
+			createdAtMs: 1,
+		},
+	};
+}
+
+const composerOf = (scope: HTMLElement) =>
+	within(scope).getByRole("textbox", {
+		name: t("agents.chat.composerLabel"),
+	}) as HTMLTextAreaElement;
+const sendOf = (scope: HTMLElement) =>
+	within(scope).getByRole("button", {
+		name: t("agents.chat.send"),
+	}) as HTMLButtonElement;
+
 function column(key: string): HTMLElement {
 	return document.querySelector<HTMLElement>(
 		`[data-work-column="${key}"]`,
@@ -166,18 +257,8 @@ beforeEach(() => {
 		] as Project[],
 		hmuxSessionMetadata: {},
 		sessionActivity: {},
-		sessionAgentRuntimeState: {
-			"s-d": {
-				terminalEpoch: "epoch-d",
-				revision: "1",
-				observedThroughOutputSeq: "1",
-				source: "provider_event",
-				lifecycle: "running",
-				activity: "waiting",
-				attention: "none",
-				turnCompletedCount: "1",
-			},
-		},
+		sessionAgentRuntimeState: { "s-d": idleRuntime },
+		chatDrafts: {},
 	});
 	useAgentAttention.setState({
 		...useAgentAttention.getInitialState(),
@@ -189,6 +270,11 @@ beforeEach(() => {
 	mocks.read.mockResolvedValue(transcript);
 	mocks.chatSession.mockReset();
 	mocks.chatSession.mockReturnValue({
+		draftIdentity: {
+			agentId: "chatty",
+			backendProfileId: "local",
+			interactionSessionId: "interaction-chatty",
+		},
 		phase: "connecting",
 		reconnecting: false,
 		loadingOlder: false,
@@ -199,6 +285,13 @@ beforeEach(() => {
 	mocks.terminal.mockReset();
 	mocks.open.mockReset();
 	mocks.revealAgent.mockReset();
+	mocks.send.mockReset();
+	mocks.send.mockResolvedValue({ terminalEpoch: "epoch-d", recordId: "1" });
+	mocks.answer.mockReset();
+	mocks.answer.mockResolvedValue({
+		terminalEpoch: "epoch-d",
+		attentionId: "attention-7",
+	});
 });
 
 afterEach(() => {
@@ -298,7 +391,7 @@ describe("Work detail", () => {
 		expect(useWorkViewStore.getState().selected).toBe("solo");
 	});
 
-	it("shows a terminal agent's provider transcript read-only and never mounts a terminal", async () => {
+	it("shows a terminal agent's provider transcript with its composer and never mounts a terminal", async () => {
 		useWorkViewStore.getState().select("d");
 		render(<WorkMain />);
 		const conversation = screen.getByRole("region", {
@@ -309,9 +402,164 @@ describe("Work detail", () => {
 		expect(mocks.read).toHaveBeenCalledWith("codex", "conversation-d", {
 			includeTools: true,
 		});
-		// No composer: typing happens in the large window.
-		expect(screen.queryByRole("textbox")).toBeNull();
+		// Selecting the agent shows its composer but never focuses it.
+		expect(document.activeElement).not.toBe(composerOf(conversation));
 		expect(mocks.terminal).not.toHaveBeenCalled();
+	});
+
+	it("sends to a terminal agent at its idle prompt through the Host", async () => {
+		useWorkViewStore.getState().select("d");
+		render(<WorkMain />);
+		const conversation = screen.getByRole("region", {
+			name: t("work.conversation.label"),
+		});
+		await within(conversation).findByText("Fix the flaky test");
+		fireEvent.change(composerOf(conversation), {
+			target: { value: "Run it again" },
+		});
+		// The list's arrow keys stay the list's: typing here selects nothing.
+		fireEvent.keyDown(composerOf(conversation), { key: "ArrowDown" });
+		expect(useWorkViewStore.getState().selected).toBe("d");
+		fireEvent.click(sendOf(conversation));
+		await waitFor(() =>
+			expect(mocks.send).toHaveBeenCalledWith(
+				{
+					agentId: "d",
+					backendProfileId: "local",
+					expectedTerminalEpoch: "epoch-d",
+				},
+				"Run it again",
+			),
+		);
+		// The sent prompt shows until the transcript has it, and holds Send.
+		expect(
+			await within(conversation).findByText(
+				t("agents.nativeChat.reason.pending"),
+			),
+		).toBeTruthy();
+		expect(within(conversation).getByText("Run it again")).toBeTruthy();
+		expect(composerOf(conversation).value).toBe("");
+		expect(sendOf(conversation).disabled).toBe(true);
+		expect(mocks.terminal).not.toHaveBeenCalled();
+	});
+
+	it("keeps a terminal agent's draft while it works and sends nothing until its prompt is idle", async () => {
+		runtimeOfD({ activity: "working" }, "working");
+		useWorkViewStore.getState().select("d");
+		render(<WorkMain />);
+		const conversation = screen.getByRole("region", {
+			name: t("work.conversation.label"),
+		});
+		await within(conversation).findByText("Fix the flaky test");
+		expect(
+			within(conversation).getByText(t("agents.nativeChat.reason.working")),
+		).toBeTruthy();
+		fireEvent.change(composerOf(conversation), {
+			target: { value: "Next step" },
+		});
+		expect(sendOf(conversation).disabled).toBe(true);
+		fireEvent.keyDown(composerOf(conversation), { key: "Enter" });
+		expect(mocks.send).not.toHaveBeenCalled();
+		expect(composerOf(conversation).value).toBe("Next step");
+
+		runtimeOfD({ turnCompletedCount: "2" });
+		await waitFor(() => expect(sendOf(conversation).disabled).toBe(false));
+		expect(composerOf(conversation).value).toBe("Next step");
+	});
+
+	it("answers a terminal agent's approval from the column", async () => {
+		runtimeOfD(
+			{
+				attention: "approval_required",
+				attentionId: "attention-7",
+				approvalRequest: {
+					toolName: "Bash",
+					summary: "cargo test -p dure",
+					choices: ["approve", "approve_always", "deny"],
+				},
+			},
+			"blocked",
+		);
+		useWorkViewStore.getState().select("d");
+		render(<WorkMain />);
+		const conversation = screen.getByRole("region", {
+			name: t("work.conversation.label"),
+		});
+		expect(
+			await within(conversation).findByText(
+				t("agents.nativeChat.approval.title", { tool: "Bash" }),
+			),
+		).toBeTruthy();
+		expect(within(conversation).getByText("cargo test -p dure")).toBeTruthy();
+		expect(sendOf(conversation).disabled).toBe(true);
+		fireEvent.click(
+			within(conversation).getByRole("button", { name: t("agents.chat.allow") }),
+		);
+		await waitFor(() =>
+			expect(mocks.answer).toHaveBeenCalledWith(
+				{
+					agentId: "d",
+					backendProfileId: "local",
+					expectedTerminalEpoch: "epoch-d",
+				},
+				"attention-7",
+				"approve",
+			),
+		);
+	});
+
+	it("sends what the column cannot answer to the large window", async () => {
+		runtimeOfD({ attention: "input_required" }, "blocked");
+		useWorkViewStore.getState().select("d");
+		render(<WorkMain />);
+		const conversation = screen.getByRole("region", {
+			name: t("work.conversation.label"),
+		});
+		expect(
+			await within(conversation).findByText(
+				t("agents.nativeChat.reason.attention"),
+			),
+		).toBeTruthy();
+		expect(sendOf(conversation).disabled).toBe(true);
+		act(() =>
+			within(conversation)
+				.getByRole("button", {
+					name: t("agents.finalResponse.continueInTerminal"),
+				})
+				.click(),
+		);
+		expect(mocks.open).toHaveBeenCalledWith("d", "Agent d", undefined);
+		expect(mocks.terminal).not.toHaveBeenCalled();
+	});
+
+	it("offers no composer for a terminal agent that is not running or whose runtime is unknown", () => {
+		for (const runtime of [
+			{ ...idleRuntime, lifecycle: "exited" as const },
+			{ ...idleRuntime, lifecycle: "starting" as const },
+			undefined,
+		]) {
+			act(() =>
+				useStore.setState({
+					sessionAgentRuntimeState: runtime ? { "s-d": runtime } : {},
+				}),
+			);
+			useWorkViewStore.getState().select("d");
+			const mounted = render(<WorkMain />);
+			const conversation = screen.getByRole("region", {
+				name: t("work.conversation.label"),
+			});
+			expect(
+				within(conversation).getByText(t("work.conversation.none")),
+			).toBeTruthy();
+			expect(within(conversation).queryByRole("textbox")).toBeNull();
+			expect(
+				within(conversation).getByRole("button", {
+					name: t("work.detail.openLargeWindow"),
+				}),
+			).toBeTruthy();
+			mounted.unmount();
+		}
+		expect(mocks.send).not.toHaveBeenCalled();
 	});
 
 	it("says when there is no conversation record and offers the large window", () => {
@@ -332,13 +580,84 @@ describe("Work detail", () => {
 		expect(mocks.terminal).not.toHaveBeenCalled();
 	});
 
-	it("reads a Chat agent's conversation through the shared session lease, without a composer", () => {
+	it("reads a Chat agent's conversation through the shared session lease", () => {
 		useWorkViewStore.getState().select("chatty");
 		render(<WorkMain />);
 		expect(mocks.chatSession).toHaveBeenCalledWith("chatty", chatty.interactionProfile);
 		expect(screen.getByText(t("agents.chat.connecting"))).toBeTruthy();
-		expect(screen.queryByRole("textbox")).toBeNull();
 		expect(mocks.terminal).not.toHaveBeenCalled();
+	});
+
+	it("sends to an idle Chat agent and steers into its running turn", () => {
+		const idle = chattySession();
+		mocks.chatSession.mockReturnValue(idle);
+		useWorkViewStore.getState().select("chatty");
+		const mounted = render(<WorkMain />);
+		let conversation = screen.getByRole("region", {
+			name: t("work.conversation.label"),
+		});
+		expect(document.activeElement).not.toBe(composerOf(conversation));
+		fireEvent.change(composerOf(conversation), { target: { value: "Hello" } });
+		fireEvent.keyDown(composerOf(conversation), { key: "Enter" });
+		expect(idle.send).toHaveBeenCalledWith("Hello");
+		expect(idle.steerOrQueue).not.toHaveBeenCalled();
+		mounted.unmount();
+
+		const running = chattySession({
+			activeTurn: { turnId: "turn-1", clientMessageId: "message-1" },
+		});
+		mocks.chatSession.mockReturnValue(running);
+		render(<WorkMain />);
+		conversation = screen.getByRole("region", {
+			name: t("work.conversation.label"),
+		});
+		fireEvent.change(composerOf(conversation), {
+			target: { value: "Also check the docs" },
+		});
+		fireEvent.keyDown(composerOf(conversation), { key: "Enter" });
+		expect(running.steerOrQueue).toHaveBeenCalledWith("Also check the docs");
+		expect(running.send).not.toHaveBeenCalled();
+		expect(mocks.terminal).not.toHaveBeenCalled();
+	});
+
+	it("answers a Chat agent's pending request in the column, without a team line", () => {
+		// chatty manages one agent, so a team line would have something to show.
+		useStore.setState({
+			agents: [
+				...agents,
+				agent("helper", {
+					projectId: "p-api",
+					runParent: {
+						sessionId: "s-unknown",
+						workspaceId: "workspace-1",
+						leadAgentId: "chatty",
+					},
+				}),
+			],
+		});
+		const asking = chattySession({}, [permissionRequest("request-1")]);
+		mocks.chatSession.mockReturnValue(asking);
+		useWorkViewStore.getState().select("chatty");
+		render(<WorkMain />);
+		const conversation = screen.getByRole("region", {
+			name: t("work.conversation.label"),
+		});
+		fireEvent.click(
+			within(conversation).getByRole("button", { name: t("agents.chat.allow") }),
+		);
+		expect(asking.answerPending).toHaveBeenCalledWith("request-1", {
+			decision: "allow",
+		});
+		// The managed list above is the column's team.
+		expect(
+			within(column("chatty")).getByRole("region", {
+				name: t("agents.team.label"),
+			}),
+		).toBeTruthy();
+		expect(
+			column("chatty").querySelector('[data-slot="agent-team-line"]'),
+		).toBeNull();
+		expect(composerOf(conversation)).toBeTruthy();
 	});
 });
 
