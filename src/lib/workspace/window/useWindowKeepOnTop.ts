@@ -58,8 +58,9 @@ export function useWindowKeepOnTop(): WindowKeepOnTop {
 			const revision = revisionRef.current;
 			void win
 				.isAlwaysOnTop()
-				.then((onTop) => {
+				.then((level) => {
 					if (disposedRef.current || revision !== revisionRef.current) return;
+					const onTop = level === true;
 					setKeepOnTop(onTop);
 					if (reconciled) return;
 					reconciled = true;
