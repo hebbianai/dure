@@ -1,9 +1,7 @@
-import { type ComponentProps, type ReactNode, useMemo, useState } from "react";
-import { AgentRow, agentRowManagedText } from "@/components/agents/AgentRow";
-import {
-	useAgentManagedSummary,
-	useAgentRelations,
-} from "@/components/agents/useAgentRelations";
+import { useMemo, useState } from "react";
+import { AgentManagedFold } from "@/components/agents/AgentManagedFold";
+import { AgentRow } from "@/components/agents/AgentRow";
+import { useAgentRelations } from "@/components/agents/useAgentRelations";
 import {
 	type AgentRowPlacement,
 	useAgentRowFacts,
@@ -12,14 +10,8 @@ import {
 	useAgentRevealSpaceNames,
 	useNextUp,
 } from "@/components/agents/useNextUp";
-import { FoldLine } from "@/components/ui/fold-line";
-import { StatusDot } from "@/components/ui/status-dot";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
-import {
-	type AgentRowManagedUrgency,
-	agentRowManagedUrgency,
-	agentRowModel,
-} from "@/lib/agents/agentRowModel";
+import { agentRowModel } from "@/lib/agents/agentRowModel";
 import {
 	type NextUpEntry,
 	nextUpEntries,
@@ -27,7 +19,6 @@ import {
 } from "@/lib/agents/nextUp";
 import { revealAgent } from "@/lib/agents/nextUpNavigation";
 import { agentTeamMembers } from "@/lib/agents/relations/agentTeam";
-import { t } from "@/lib/i18n";
 import { isMainWindow } from "@/lib/workspace/window/windows";
 
 /** What an agent manages, folded to one line in its conversation. Unfolded,
@@ -50,59 +41,9 @@ function MainWindowTeamLine({ agentId }: { agentId: string }) {
 			slot="agent-team-line"
 			open={open}
 			onOpenChange={setOpen}
-			bodyClassName="max-h-48 overflow-y-auto"
 		>
 			<AgentTeamRows agentId={agentId} />
 		</AgentManagedFold>
-	);
-}
-
-/** The dot beside a team's summary, by its most urgent member. A quiet team
- * is softer than a muted dot elsewhere: nothing below needs anything. */
-const MANAGED_DOT: Record<
-	AgentRowManagedUrgency,
-	Pick<ComponentProps<typeof StatusDot>, "tone" | "className">
-> = {
-	needs_person: { tone: "blocked" },
-	working: { tone: "warn" },
-	quiet: { tone: "muted", className: "bg-muted-foreground/60" },
-};
-
-/** What an agent manages, folded to one line under a hairline: a dot for the
- * most urgent of them and the words every row uses for it. Unfolded, it holds
- * the caller's rows, mounted only while open so a folded line subscribes to
- * no row. Whether it is open is the caller's. Absent when it manages none. */
-export function AgentManagedFold({
-	agentId,
-	slot,
-	open,
-	onOpenChange,
-	bodyClassName,
-	children,
-}: {
-	agentId: string;
-	/** The `data-slot` that tells the surfaces holding the fold apart. */
-	slot: string;
-	open: boolean;
-	onOpenChange: (open: boolean) => void;
-	/** Caps the unfolded rows, which scroll under the line. */
-	bodyClassName: string;
-	children: ReactNode;
-}) {
-	const managed = useAgentManagedSummary(agentId);
-	if (!managed) return null;
-	return (
-		<FoldLine
-			aria-label={t("agents.team.label")}
-			data-slot={slot}
-			dot={<StatusDot {...MANAGED_DOT[agentRowManagedUrgency(managed)]} />}
-			summary={agentRowManagedText(managed)}
-			open={open}
-			onOpenChange={onOpenChange}
-			bodyClassName={bodyClassName}
-		>
-			{open && children}
-		</FoldLine>
 	);
 }
 

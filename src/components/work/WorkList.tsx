@@ -129,9 +129,7 @@ export function WorkList({ className }: { className?: string }) {
 								className="px-2 pt-2"
 								bodyClassName="pl-0"
 								open={resultsOpen}
-								onToggle={(event) =>
-									setResultsOpen(event.currentTarget.open)
-								}
+								onOpenChange={setResultsOpen}
 								label={`${t("work.list.resultsToday")} · ${list.resultsToday.length}`}
 							>
 								<ul>
@@ -296,7 +294,7 @@ export function WorkShellRow({
 }: {
 	shell: WorkShellEntry;
 	selected?: boolean;
-	variant?: "list" | "card";
+	variant?: AgentListRowVariant;
 	onSelect?: (key: string) => void;
 }) {
 	return (

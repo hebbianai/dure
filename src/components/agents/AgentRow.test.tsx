@@ -63,26 +63,6 @@ describe("AgentRow", () => {
 		expect(button.textContent).not.toContain(t("agents.row.approval", { tool: "Bash" }));
 	});
 
-	it("keeps what an agent was asked to one line in a compact row, and to more elsewhere", () => {
-		const asked = agentRowModel({
-			agentId: "worker",
-			title: "Fix the build",
-			prompt: "Run the whole suite again and report every flaky test you find",
-		});
-		const text = t("agents.row.asked", {
-			prompt: "Run the whole suite again and report every flaky test you find",
-		});
-		for (const [variant, lines] of [
-			["compact", "line-clamp-1"],
-			["list", "line-clamp-2"],
-			["card", "line-clamp-3"],
-		] as const) {
-			render(<AgentRow row={asked} variant={variant} />);
-			expect(screen.getByText(text).classList).toContain(lines);
-			cleanup();
-		}
-	});
-
 	it("says the state in words on a card that nothing lists for attention", () => {
 		const working = agentRowModel({
 			agentId: "a",

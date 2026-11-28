@@ -55,7 +55,9 @@ function columnFacts(key: string) {
 		'[data-slot="work-conversation"]',
 	);
 	const details = managed?.querySelector("details");
-	const body = details?.querySelector<HTMLElement>(":scope > div");
+	// The fold's body, then the scroller FoldLine caps its rows in.
+	const scroller = details?.querySelector<HTMLElement>(":scope > div > div");
+	const detail = root.querySelector<HTMLElement>(":scope > section");
 	const rows = Array.from(
 		managed?.querySelectorAll<HTMLElement>('[data-slot="agent-row"]') ?? [],
 	);
@@ -78,21 +80,52 @@ function columnFacts(key: string) {
 		const { top, bottom, height } = element.getBoundingClientRect();
 		return { top, bottom, height };
 	};
+	/** Where the first thing a label paints starts: its dot (an empty
+	 * element) or its words (text), whatever padding holds them. */
+	const labelLeft = (element: Element | null | undefined) => {
+		if (!element) return null;
+		const walker = document.createTreeWalker(
+			element,
+			NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+		);
+		for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+			if (node instanceof Text && node.textContent?.trim()) {
+				const range = document.createRange();
+				range.selectNodeContents(node);
+				return range.getBoundingClientRect().left;
+			}
+			if (node instanceof HTMLElement && node.childNodes.length === 0) {
+				return node.getBoundingClientRect().left;
+			}
+		}
+		return null;
+	};
+	const scrollerTop = scroller
+		? scroller.getBoundingClientRect().top - scroller.scrollTop
+		: 0;
+	const card = root.querySelector("header");
 	return {
 		managed: managed
 			? {
 					open: details?.open ?? false,
 					summary: details?.querySelector("summary")?.textContent ?? null,
-					rows: rows.map((row) => row.dataset.variant),
+					labelLeft: labelLeft(details?.querySelector("summary > span")),
+					variants: rows.map((row) => row.dataset.variant),
+					rowDotLeft:
+						rows[0]?.firstElementChild?.getBoundingClientRect().left ?? null,
 					activities,
 					rect: rect(managed),
-					body: body
+					scroller: scroller
 						? {
-								height: body.getBoundingClientRect().height,
-								scrollHeight: body.scrollHeight,
-								clientHeight: body.clientHeight,
+								height: scroller.getBoundingClientRect().height,
+								scrollHeight: scroller.scrollHeight,
+								clientHeight: scroller.clientHeight,
 							}
 						: null,
+					rowBottoms: Array.from(
+						scroller?.firstElementChild?.children ?? [],
+						(row) => row.getBoundingClientRect().bottom - scrollerTop,
+					),
 					borderTop: getComputedStyle(managed).borderTopWidth,
 					borderColor: getComputedStyle(managed).borderTopColor,
 				}
@@ -100,11 +133,16 @@ function columnFacts(key: string) {
 		heading: heading
 			? {
 					rect: rect(heading),
+					labelLeft: labelLeft(heading),
 					borderTop: getComputedStyle(heading).borderTopWidth,
 					borderColor: getComputedStyle(heading).borderTopColor,
 				}
 			: null,
 		conversation: rect(conversation),
+		detailHeight: detail?.getBoundingClientRect().height ?? null,
+		cardSaysManaged: Boolean(
+			card?.textContent?.includes(t("agents.row.manages", { n: "" }).trim()),
+		),
 	};
 }
 
@@ -121,10 +159,24 @@ function facts(key: string, beside: string) {
 	};
 }
 
-/** Each phase holds until the client has captured the window. */
+/** A fresh home raises the first-run tooling notice over the window a
+ * minute in; the probe closes it the way a person would, so it covers no
+ * capture. */
+function dismissNotices() {
+	const close = JSON.stringify(t("common.close"));
+	for (const button of document.querySelectorAll<HTMLButtonElement>(
+		`section > div > button[aria-label=${close}]`,
+	)) {
+		button.click();
+	}
+}
+
+/** Each phase holds until the client has captured the window, closing a
+ * notice that arrives while it waits. */
 async function captured(home: string, phase: string) {
 	const deadline = performance.now() + 180_000;
 	for (;;) {
+		dismissNotices();
 		try {
 			await readFile(`${home}/work-detail-captured-${phase}`);
 			return;
@@ -235,6 +287,7 @@ async function run(report: (phase: string, facts?: object) => void) {
 			},
 			60_000,
 		);
+		dismissNotices();
 		await painted();
 		report(phase, {
 			managedOpen: useWorkViewStore.getState().managedOpen,

@@ -377,13 +377,17 @@ describe("Work detail", () => {
 		).toBeNull();
 	});
 
-	it("labels the agents it manages and its conversation, each under a hairline, and shows no managed part for an agent that manages none", () => {
+	it("labels the agents it manages and its conversation, says what it manages once, and shows no managed part for an agent that manages none", () => {
 		useWorkViewStore.getState().select("a");
 		render(<WorkMain />);
 		const managed = managedOf("a") as HTMLElement;
-		// The fold's line sums up the whole team below a.
+		// The fold's line sums up the whole team below a, and only it does:
+		// the card above does not say it again.
 		expect(managed.querySelector("summary")?.textContent).toBe(managedText(3, 2));
-		expect(managed.className).toContain("border-t");
+		const card = column("a").querySelector("header") as HTMLElement;
+		expect(card.textContent).not.toContain(
+			t("agents.row.manages", { n: 3 }),
+		);
 		// Each row keeps to one line of what it was asked.
 		expect(
 			within(managed)
@@ -393,7 +397,6 @@ describe("Work detail", () => {
 		const heading = within(column("a")).getByRole("heading", {
 			name: t("work.conversation.label"),
 		});
-		expect(heading.className).toContain("border-t");
 		const conversation = within(column("a")).getByRole("region", {
 			name: t("work.conversation.label"),
 		});

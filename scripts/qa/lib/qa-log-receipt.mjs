@@ -18,8 +18,10 @@ export function findQaLogReceipt(log, name, proof) {
   return receipt;
 }
 
-/** Read only a bounded tail of the run's QA log and select its exact receipt. */
-export async function waitForQaLogReceipt(name, proof, { logPath = resolveQaLogPath(), timeoutMs = 120_000 } = {}) {
+/** Read only a bounded tail of the run's QA log and select its exact receipt.
+ * With `failedName`, a receipt of that name for the same proof ends the wait
+ * at once with the probe's own report. */
+export async function waitForQaLogReceipt(name, proof, { logPath = resolveQaLogPath(), timeoutMs = 120_000, failedName } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     let log = "";
@@ -34,6 +36,8 @@ export async function waitForQaLogReceipt(name, proof, { logPath = resolveQaLogP
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
+    const failed = failedName && findQaLogReceipt(log, failedName, proof);
+    if (failed) throw new Error(`In-app probe failed: ${JSON.stringify(failed)}`);
     const receipt = findQaLogReceipt(log, name, proof);
     if (receipt) return receipt;
     await delay(100);

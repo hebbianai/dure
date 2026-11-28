@@ -647,7 +647,7 @@ function GitHubWorkspaceSurface({
 					{visiblePayload && visiblePayload.skipped.length > 0 && (
 						<Disclosure
 							key={projectId}
-							open={projectId !== ALL_REPOSITORIES}
+							defaultOpen={projectId !== ALL_REPOSITORIES}
 							label={t("github.workspace.discovery.skipped", {
 								count: visiblePayload.skipped.length,
 							})}

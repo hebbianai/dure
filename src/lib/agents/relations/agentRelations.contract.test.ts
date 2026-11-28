@@ -46,8 +46,10 @@ describe("relation coverage", () => {
 		const rowFacts = source("components/agents/useAgentRowFacts.ts");
 		expect(rowFacts).toContain("relations.chain(agentId, below)");
 		expect(rowFacts).toContain("useAgentManagedSummary(agentId)");
+		expect(source("components/agents/AgentManagedFold.tsx")).toContain(
+			"useAgentManagedSummary(agentId)",
+		);
 		const teamLine = source("components/agents/AgentTeamLine.tsx");
-		expect(teamLine).toContain("useAgentManagedSummary(agentId)");
 		expect(teamLine).toContain("useAgentRelations()");
 		expect(teamLine).toContain("agentTeamMembers(");
 		// The manager the phone is told about, and the forest it builds from it.

@@ -63,3 +63,15 @@ it("reports an observation deadline without accepting another run", async () => 
   writeFileSync(logPath, line("storage", "peer"));
   await expect(waitForQaLogReceipt("storage", "ours", { logPath, timeoutMs: 1 })).rejects.toThrow("No storage receipt for ours");
 });
+
+it("stops waiting at the probe's failure receipt, and only for its own run", async () => {
+  const logPath = logFixture();
+  const failed = (proof) => `[time] ${JSON.stringify(["probe-failed", { proof, error: "no column" }])}\n`;
+  writeFileSync(logPath, failed("other-run"));
+  appendFileSync(logPath, line("probe-ready", "this-run"));
+  expect(await waitForQaLogReceipt("probe-ready", "this-run", { logPath, timeoutMs: 100, failedName: "probe-failed" }))
+    .toEqual({ proof: "this-run", result: "passed" });
+  appendFileSync(logPath, failed("failing-run"));
+  await expect(waitForQaLogReceipt("probe-ready", "failing-run", { logPath, timeoutMs: 5_000, failedName: "probe-failed" }))
+    .rejects.toThrow('In-app probe failed: {"proof":"failing-run","error":"no column"}');
+});

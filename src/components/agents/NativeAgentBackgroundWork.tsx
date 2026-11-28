@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FoldLine } from "@/components/ui/fold-line";
+import { FoldLine } from "@/components/ui/pane-line";
 import { StatusDot } from "@/components/ui/status-dot";
 import {
 	BACKGROUND_WORK_REFRESH_MS,
@@ -65,7 +65,6 @@ export function NativeAgentBackgroundWork({
 			aria-label={t("agents.backgroundWork.label")}
 			dot={<StatusDot tone="run" />}
 			summary={summary}
-			bodyClassName="max-h-48 overflow-y-auto"
 		>
 			<ul className="space-y-0.5 font-mono text-[11px]">
 				{backgroundWorkRows(list, now()).map((row) => (

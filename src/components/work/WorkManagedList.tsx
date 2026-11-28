@@ -1,14 +1,22 @@
-import { AgentManagedFold } from "@/components/agents/AgentTeamLine";
+import { AgentManagedFold } from "@/components/agents/AgentManagedFold";
 import { useAgentRelations } from "@/components/agents/useAgentRelations";
 import { useAgentRevealSpaceNames } from "@/components/agents/useNextUp";
 import { WorkAgentRow } from "@/components/work/WorkList";
 import { useWorkViewStore } from "@/lib/work/workViewStore";
 
+/** The rows' cap: a third of the agent detail (its size container), less
+ * the fold line above them and the Conversation label below, two pane lines
+ * of 31px and the 4px gap before the rows, so all three stay within that
+ * third at any window size. The rows hang their own 8px inset into the
+ * gutter, so each row's dot stands on the labels' edge. */
+const MANAGED_ROWS = "-ml-2 max-h-[calc(35cqh_-_4.125rem)]";
+
 /** The agents this one manages directly, in start order, each with what it
  * manages in turn, under the fold line that sums up its whole team. Selecting
  * one drills into it, the same way at every depth. The fold is one setting
- * for every column, and unfolded the rows scroll within a third of the window
- * so the conversation below stays in view. Absent when it manages none. */
+ * for every column, and unfolded the rows scroll within a third of the
+ * detail so the conversation below stays in view. Absent when it manages
+ * none. */
 export function WorkManagedList({
 	agentId,
 	dayStart,
@@ -29,7 +37,7 @@ export function WorkManagedList({
 			slot="work-managed"
 			open={open}
 			onOpenChange={setOpen}
-			bodyClassName="max-h-[35vh] overflow-y-auto"
+			rowsClassName={MANAGED_ROWS}
 		>
 			<WorkManagedRows
 				agentId={agentId}

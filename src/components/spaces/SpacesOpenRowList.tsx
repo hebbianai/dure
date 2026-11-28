@@ -113,8 +113,8 @@ function LeadWorkersFold({
 				size="meta"
 				open={!folded}
 				// The native fold flips itself first; the store follows once.
-				onToggle={(event) => {
-					if (event.currentTarget.open === folded) toggle(foldKey);
+				onOpenChange={(open) => {
+					if (open === folded) toggle(foldKey);
 				}}
 				label={
 					<span className="font-normal text-muted-foreground">

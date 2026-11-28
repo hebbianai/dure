@@ -20,7 +20,7 @@ import {
 	useAgentRevealTargets,
 } from "@/components/agents/useNextUp";
 import { Button } from "@/components/ui/button";
-import { PaneLine } from "@/components/ui/fold-line";
+import { PaneLabel } from "@/components/ui/pane-line";
 import { IconButton } from "@/components/ui/icon-button";
 import { WorkAlsoManagedBy, WorkBreadcrumb } from "@/components/work/WorkBreadcrumb";
 import { WorkConversation } from "@/components/work/WorkConversation";
@@ -139,6 +139,8 @@ function WorkAgentDetail({
 		...(manager ? { below: manager } : {}),
 	});
 	if (!facts) return null;
+	// The managed fold below sums up what it manages, so the card does not.
+	const { managed: _summedUpBelow, ...cardFacts } = facts;
 	// The large window takes over the pane it was opened for, so it gets the
 	// pane's owner id when the agent has one.
 	const paneOwnerId =
@@ -147,10 +149,14 @@ function WorkAgentDetail({
 		? () => void openAgentSessionWindow(agent.id, facts.title, paneOwnerId)
 		: undefined;
 	return (
-		<section aria-label={facts.title} className="flex min-h-0 flex-1 flex-col">
+		// A size container, so the managed rows' cap is a share of this detail.
+		<section
+			aria-label={facts.title}
+			className="flex min-h-0 flex-1 flex-col [container-type:size]"
+		>
 			<header className="flex shrink-0 flex-col gap-1.5 p-3">
 				<WorkBreadcrumb agentId={agent.id} onSelect={select} />
-				<AgentRow row={agentRowModel(facts)} variant="card" />
+				<AgentRow row={agentRowModel(cardFacts)} variant="card" />
 				<WorkAlsoManagedBy agentId={agent.id} onSelect={select} />
 				<div className="flex flex-wrap items-center gap-1">
 					{openLargeWindow && (
@@ -172,7 +178,7 @@ function WorkAgentDetail({
 				selected={selected}
 				onSelect={select}
 			/>
-			<PaneLine as="h3">{t("work.conversation.label")}</PaneLine>
+			<PaneLabel>{t("work.conversation.label")}</PaneLabel>
 			<WorkConversation agent={agent} onOpenLargeWindow={openLargeWindow} />
 		</section>
 	);
