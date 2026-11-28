@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { BackendTransportError } from "../cli/lib/backend-transport.mjs";
 import { MANAGED_REHOST_RUNNING_EXIT_CODE } from "../cli/lib/managed-rehost-named.mjs";
@@ -66,6 +69,8 @@ function fakeHmuxJournal() {
     const successor = { sessionId: `successor-of-${source.sessionId}`, workspaceId: source.workspaceId };
     const receipt = (replayed) => ({ kind: "success", stdout: JSON.stringify({ schema: "hmux-managed-rehost-v1",
       schemaVersion: 1, operationId, replayed, sourceStopReceipt: source, replacementReceipt: successor }) });
+    // The source's Host still answers, so a restart asks it for its own conversation.
+    if (argv[2] === "session" && argv[3] === "show") return { kind: "success", stdout: JSON.stringify({ health: "healthy" }) };
     switch (argv[1]) {
       case "managed-rehost-resolve":
         if (!entry || (operationId && entry.operationId !== operationId)) return resolution({ state: "not_found", source });
@@ -459,6 +464,45 @@ describe("durable Run commands", () => {
       expect(f.started).toHaveLength(1);
       expect(f.started[0]).toContain("--require-host-absent");
       expect(f.started[0][f.started[0].indexOf("--expected-conversation") + 1]).toBe("conversation-before-reboot");
+    });
+
+    it("observes the gone Host through the CLI's own native runner, as dure runs resume calls it", async () => {
+      // The CLI passes no runner, so this Hmux is a real executable on disk.
+      const root = mkdtempSync(join(tmpdir(), "dure-runs-reboot."));
+      const log = join(root, "argv.jsonl");
+      const hmux = join(root, "hmux");
+      writeFileSync(hmux, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+require("node:fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + "\\n");
+const value = (flag) => args[args.indexOf(flag) + 1];
+const source = { sessionId: value("--session"), workspaceId: value("--workspace") };
+const print = (body) => process.stdout.write(JSON.stringify(body));
+if (args[0] === "capabilities") print({ schemaVersion: 1, capabilities: ["managed_rehost_host_absent_start_v1"] });
+else if (args[0] === "managed-rehost-resolve") print({ schema: "hmux-managed-rehost-resolution-v1", schemaVersion: 1, state: "not_found", source });
+else if (args[1] === "session" && args[2] === "show") print({ health: "stale_transport", host_instance_id: "host-before-reboot", terminal_epoch: "terminal-before-reboot" });
+else if (args[0] === "managed-rehost-start" && args.includes("--require-host-absent")) print({ schema: "hmux-managed-rehost-v1", schemaVersion: 1, operationId: value("--operation-id"), replayed: false, sourceStopReceipt: source, replacementReceipt: { sessionId: "session-after-reboot", workspaceId: source.workspaceId } });
+else { process.stderr.write("hmux: error: hmux_managed_rehost_unavailable: source conversation handshake failed: connect to Hmux Host failed: Connection refused (os error 61)\\n"); process.exitCode = 1; }
+`, { mode: 0o700 });
+      // No control-plane preflight or runtime override reaches this Hmux.
+      vi.stubEnv("DURE_CONTROL_PLANE_BIN", join(root, "absent-control-plane"));
+      vi.stubEnv("DURE_HMUX_RUNTIME_BIN", "");
+      try {
+        const { run: _injected, ...f } = rebootFixture();
+        const resume = (confirmRestart) => collectRunsCommand({ ...f, command: hmux,
+          opts: { rest: ["resume", f.entry.name], ...(confirmRestart ? { confirmRestart } : {}) } });
+        expect(await resume(false)).toMatchObject({ ok: true, recovery: { state: "preview",
+          continuation: { sourceHost: "absent", expectedConversationId: "conversation-before-reboot" } } });
+        expect(await resume(true)).toMatchObject({ ok: true, recovery: { state: "completed",
+          nativeExecution: "completed", publication: "published" } });
+        const started = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line))
+          .filter((args) => args[0] === "managed-rehost-start");
+        expect(started).toHaveLength(1);
+        expect(started[0]).toEqual(expect.arrayContaining(["--require-host-absent", "--expected-conversation",
+          "conversation-before-reboot"]));
+      } finally {
+        vi.unstubAllEnvs();
+        rmSync(root, { recursive: true, force: true });
+      }
     });
 
     it("says in the preview that the Host is gone and which conversation resumes, with the same operation", async () => {

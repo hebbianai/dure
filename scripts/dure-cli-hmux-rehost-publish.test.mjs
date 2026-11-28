@@ -101,7 +101,10 @@ const refuse = (code) => {
 const receipt = (replayed) => ({ schema: "hmux-managed-rehost-v1", schemaVersion: 1, operationId, replayed,
   sourceStopReceipt: source, replacementReceipt: successor });
 const resolution = (fields) => write({ schema: "hmux-managed-rehost-resolution-v1", schemaVersion: 1, ...fields });
-if (args[0] === "managed-rehost-resolve") {
+// The source's Host still answers, so a restart asks it for its own conversation.
+if (args[1] === "session" && args[2] === "show") {
+  write({ health: "healthy" });
+} else if (args[0] === "managed-rehost-resolve") {
   if (!entry || (operationId && entry.operationId !== operationId)) resolution({ state: "not_found", source });
   else if (entry.state === "completed") resolution({ state: "resolved", operationIds: [entry.operationId],
     sourceGeneration: source, currentGeneration: successor });
@@ -220,6 +223,10 @@ it("does not report a different Agent's receipt as publication success", async (
 const previewArgs = ["hmux", "rehost", "--name", "project/worker", "--backend", "fixture", "--json"];
 /** The read-only journal lookup a native recovery makes before proposing an operation. */
 const sourceLookup = ["managed-rehost-resolve", "--session", "runtime-native-1", "--workspace", "workspace-1", "--json"];
+/** The read-only observation of the source's Host that follows when the journal holds nothing. */
+const hostLookup = ["--json", "session", "show", "runtime-native-1", "--workspace", "workspace-1"];
+/** A native call's subcommand; session show leads with Hmux's global --json flag. */
+const subcommand = (args) => (args[0] === "--json" ? args.slice(1, 3).join(" ") : args[0]);
 const projection = () => ({
   schemaVersion: 1, state: "stable",
   receipt: nativeRuntimeReceipt({ kind: "provider_default" }),
@@ -289,7 +296,7 @@ it("executes a confirmed name through native start and publishes its original so
   expect(output.code, output.stderr).toBe(0);
   const report = JSON.parse(output.stdout);
   expect(report).toMatchObject({ ok: true, nativeExecution: "completed", publication: "published" });
-  expect(nativeCalls()).toEqual([sourceLookup, [
+  expect(nativeCalls()).toEqual([sourceLookup, hostLookup, [
     "managed-rehost-start", "--session", "runtime-native-1", "--workspace", "workspace-1",
     "--operation-id", report.continuation.operationId, "--confirm-restart", "--json",
   ]]);
@@ -318,6 +325,7 @@ it("waits for a rehost another executor is applying, then publishes it once", as
     "--operation-id", report.continuation.operationId];
   expect(nativeCalls()).toEqual([
     sourceLookup,
+    hostLookup,
     ["managed-rehost-start", ...identity, "--confirm-restart", "--json"],
     ["managed-rehost-resolve", ...identity, "--json"],
     ["managed-rehost-reconcile", ...identity, "--confirm-restart", "--json"],
@@ -346,7 +354,7 @@ it("retains the exact operation after an uncertain native reply without publishi
   writeRegistry(root);
   installNative({ invalidReply: true });
   const output = await runCommand([...previewArgs, "--confirm-restart"]);
-  expect(nativeCalls().map(([subcommand]) => subcommand)).toEqual(["managed-rehost-resolve", "managed-rehost-start"]);
+  expect(nativeCalls().map(subcommand)).toEqual(["managed-rehost-resolve", "session show", "managed-rehost-start"]);
   expect(output.code).toBe(1);
   const report = JSON.parse(output.stderr);
   expect(report).toMatchObject({ ok: false, nativeExecution: "unknown", publication: "not_requested" });
@@ -405,7 +413,7 @@ it("does not report a named restart as finished when its binding publication is 
   const published = await runCommand(report.continuation.publish);
   expect(published.code, published.stderr).toBe(0);
   expect(calls[2].body).toEqual(calls[1].body);
-  expect(nativeCalls().map(([subcommand]) => subcommand)).toEqual(["managed-rehost-resolve", "managed-rehost-start"]);
+  expect(nativeCalls().map(subcommand)).toEqual(["managed-rehost-resolve", "session show", "managed-rehost-start"]);
 });
 
 it("finishes a lost publication with one command that never starts another operation", async () => {
@@ -427,7 +435,7 @@ it("finishes a lost publication with one command that never starts another opera
       nativeExecution: "completed", publication: "published", receipt: { operationId, replayed: true } });
   }
   // One admission; each finish only replayed the completed journal and published the same tuple.
-  expect(nativeCalls().map(([subcommand]) => subcommand)).toEqual(["managed-rehost-resolve", "managed-rehost-start",
+  expect(nativeCalls().map(subcommand)).toEqual(["managed-rehost-resolve", "session show", "managed-rehost-start",
     "managed-rehost-reconcile", "managed-rehost-reconcile"]);
   expect(calls.slice(1).map((request) => request.body)).toEqual(Array(3).fill({ schemaVersion: 1, agentId: "agent-1",
     operationId, sourceSessionId: "runtime-native-1", sourceWorkspaceId: "workspace-1" }));
