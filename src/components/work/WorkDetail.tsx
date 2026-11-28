@@ -257,12 +257,8 @@ function WorkShellDetail({
 	// The managed fold below sums up what it manages, so the card does not.
 	const { managed: _summedUpBelow, ...cardFacts } = useWorkShellRowFacts(shell);
 	return (
-		// A size container, so the managed rows' cap is a share of this detail.
-		<section
-			aria-label={shell.title}
-			className="flex min-h-0 flex-1 flex-col [container-type:size]"
-		>
-			<header className="flex w-full max-w-xl shrink-0 flex-col gap-1.5 p-3">
+		<section aria-label={shell.title} className="flex min-h-0 flex-1 flex-col">
+			<header className="flex shrink-0 flex-col gap-1.5 p-3">
 				<AgentRow row={agentRowModel(cardFacts)} variant="card" />
 				<div className="flex flex-wrap items-center gap-1">
 					<Button
@@ -275,12 +271,17 @@ function WorkShellDetail({
 					</Button>
 				</div>
 			</header>
-			<WorkManagedList
-				agentId={shell.key}
-				dayStart={dayStart}
-				selected={selected}
-				onSelect={select}
-			/>
+			{/* Nothing stands below the agents it started, so their rows take
+			    the rest of the column, less the fold line above them. */}
+			<div className="min-h-0 flex-1 [container-type:size]">
+				<WorkManagedList
+					agentId={shell.key}
+					dayStart={dayStart}
+					selected={selected}
+					onSelect={select}
+					rowsCap="max-h-[calc(100cqh_-_2rem)]"
+				/>
+			</div>
 		</section>
 	);
 }
