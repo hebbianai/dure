@@ -5,6 +5,7 @@ import path from "node:path";
 import { expect, test } from "vitest";
 import YAML from "yaml";
 import { RELEASE_HOST_MAX_LOAD_PER_CORE } from "./lib/release-host-admission.mjs";
+import { parseForegroundPriorityCommand } from "./run-with-foreground-priority.mjs";
 
 const workflow = YAML.parse(
   fs.readFileSync(".github/workflows/release.yml", "utf8"),
@@ -483,6 +484,29 @@ test("only the protected build step receives signing credentials and offers the 
   }
 });
 
+test("the signed build runs under the protected guard that keeps it out of background QoS", () => {
+  const build = workflow.jobs.build.steps.find(
+    (step) => step.name === "Build signed and notarized beta",
+  );
+  const lines = build.run.split("\n").filter((line) => /tauri build/.test(line));
+  expect(lines).toHaveLength(1);
+  // The guard comes from protected main, like every orchestration helper.
+  expect(lines[0].trim()).toMatch(/^node \.\.\/scripts\/run-with-foreground-priority\.mjs /);
+  const argv = execFileSync(
+    "bash",
+    ["--noprofile", "--norc", "-c", `set -- ${lines[0].trim().replace(/^node \S+ /, "")}; printf '%s\\n' "$@"`],
+    { env: { PATH: "/usr/bin:/bin" }, encoding: "utf8" },
+  ).trim().split("\n");
+  expect(parseForegroundPriorityCommand(argv)).toEqual({
+    label: "release build",
+    command: "node",
+    args: [
+      "scripts/run-with-build-storage.mjs", "full", "--",
+      "corepack", "pnpm", "tauri", "build", "--config", "src-tauri/tauri.beta.conf.json", "--bundles", "app",
+    ],
+  });
+});
+
 test.each(["build", "draft"])(
   "%s runs after an intentional verification skip only when its prerequisites succeed",
   (name) => {
@@ -537,7 +561,7 @@ test("separates protected workflow helpers from the immutable selected applicati
       ? "${{ needs.source.outputs.source_sha }}" : "${{ needs.version.outputs.release_sha }}");
     expect(workflow.jobs[name].defaults.run["working-directory"]).toBe("source");
     for (const step of workflow.jobs[name].steps) {
-      if (/node .*\/(?:release-public|prepare-release-candidate|validate-release-assets|build-latest-json|bundle-release-dmg|linux-release-packages|verify-release-state)\.mjs/.test(step.run ?? ""))
+      if (/node .*\/(?:release-public|prepare-release-candidate|validate-release-assets|build-latest-json|bundle-release-dmg|linux-release-packages|verify-release-state|run-with-foreground-priority)\.mjs/.test(step.run ?? ""))
         expect(step.run).toMatch(/node \.\.\/scripts\//);
     }
   }

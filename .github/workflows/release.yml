@@ -418,7 +418,10 @@ jobs:
           osascript -e 'tell application "Finder" to get version'
           # Only the app and the updater archive: the DMG comes from the next
           # step, so a Finder failure never discards this signed, notarized app.
-          node scripts/run-with-build-storage.mjs full -- corepack pnpm tauri build --config src-tauri/tauri.beta.conf.json --bundles app
+          # The protected guard lifts an external background-QoS demotion from
+          # the build's process tree every 30 s and records a nice/QoS timeline
+          # in the step summary (#836).
+          node ../scripts/run-with-foreground-priority.mjs --label "release build" -- node scripts/run-with-build-storage.mjs full -- corepack pnpm tauri build --config src-tauri/tauri.beta.conf.json --bundles app
       # The bundler can only rebuild the DMG together with the app (re-signing
       # and re-notarizing it), so the image is packaged here from the unchanged
       # app. Finder layout attempts retry under a deadline, then a plain image
