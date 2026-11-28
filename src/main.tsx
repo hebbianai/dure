@@ -193,6 +193,11 @@ if (import.meta.env.DEV) {
 			await probe.runChatDraftWindowsProbe();
 		});
 	}
+	if (qaParams.has("qaChatProviderExit")) {
+		void import("./qa/chatProviderExit").then((probe) =>
+			probe.runChatProviderExitProbe(),
+		);
+	}
 	if (qaParams.has("qaChatLargeWindow") && !qaParams.has("sessionWindow")) {
 		void import("./qa/chatLargeWindow").then((probe) =>
 			probe.runChatLargeWindowProbe(),
