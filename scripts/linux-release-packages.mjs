@@ -20,7 +20,8 @@
 //     On the packaging host: take exactly the AppImage and Debian package the
 //     bundler wrote for this version and architecture.
 //   sign <package-directory> <new-output-directory>
-//     On the signing host: sign every Linux package with the updater key from
+//     On the signing host: check that exactly this version's packages arrived
+//     as regular nonempty files, then sign every one with the updater key from
 //     the environment through the pinned Tauri CLI, check each signature
 //     against this commit's updater public key and write packages plus
 //     signatures. Key material only ever reaches the Tauri CLI's environment.
@@ -55,6 +56,14 @@ const DURE_CLI = "resources/dure-cli";
 const DURE_CLI_EXECUTABLES = ["node", "dure-control-plane", "dure-claude-process-relay", "hmux", "hmux-runtime"];
 
 const digest = (algorithm, file) => createHash(algorithm).update(fs.readFileSync(file)).digest("hex");
+
+/** A package must be a regular, nonempty file, never a link or a stub. */
+function requirePackageFile(file) {
+  const stat = fs.lstatSync(file);
+  if (!stat.isFile() || stat.size === 0) {
+    throw new Error(`Linux package is not a regular nonempty file: ${file}`);
+  }
+}
 
 // Packages are installed for every user of the machine: whatever umask the
 // payload was staged under, directories and executables are 0755, data 0644.
@@ -339,9 +348,7 @@ export function collectLinuxPackages({ root = process.cwd(), bundleRoot, arch, o
       throw new Error(`expected exactly ${entry.name} in ${directory}, found ${found.join(", ") || "nothing"}`);
     }
     const source = path.join(directory, entry.name);
-    if (!fs.lstatSync(source).isFile() || fs.statSync(source).size === 0) {
-      throw new Error(`Linux package is not a regular nonempty file: ${source}`);
-    }
+    requirePackageFile(source);
     fs.copyFileSync(source, path.join(output, entry.name), fs.constants.COPYFILE_EXCL);
   }
   return output;
@@ -365,6 +372,8 @@ export function signLinuxPackages({ root = process.cwd(), input, output, sign = 
   if (JSON.stringify(present) !== JSON.stringify(expected)) {
     throw new Error(`Linux packages to sign must be exactly ${expected.join(", ")}`);
   }
+  // Every download is checked before the updater key signs any of them.
+  for (const name of expected) requirePackageFile(path.join(input, name));
   fs.mkdirSync(output);
   for (const entry of packages) {
     const file = path.join(output, entry.name);

@@ -328,7 +328,11 @@ How the packages are made:
    None of these jobs receive credentials.
 2. `linux-sign` runs on the same runner as `build`, in the `macos-release`
    environment. That is the `dure-release` signing host unless the dispatch
-   selects `macos_runner=github-hosted`. It builds nothing: it signs the four
+   selects `macos_runner=github-hosted`. It builds nothing. It downloads both
+   architectures' packages in parallel within 10 minutes, retrying once (a
+   stalled download once used the job's whole two hours, #836). The download
+   action checks each archive's digest, and signing refuses anything but this
+   version's four packages as regular nonempty files. It signs the four
    packages with the existing
    `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`)
    through the pinned Tauri CLI, checks every signature against the tag's

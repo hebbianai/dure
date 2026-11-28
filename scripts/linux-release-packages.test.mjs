@@ -3,7 +3,7 @@ import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import {
   collectLinuxPackages,
   finishAppImage,
@@ -123,6 +123,24 @@ test("refuses a signature from another key and an incomplete package set", () =>
   expect(() => signLinuxPackages({
     root: partial, input: packages(partial, PACKAGES.slice(1)), output: path.join(partial, "signed"), sign: other.signFile,
   })).toThrow("must be exactly");
+});
+
+test.each([
+  ["an empty download", (file) => fs.writeFileSync(file, "")],
+  ["a link in place of a package", (file) => {
+    fs.renameSync(file, `${file}.elsewhere`);
+    fs.symlinkSync(`${file}.elsewhere`, file);
+  }],
+])("refuses %s before the updater key signs anything", (_name, damage) => {
+  const root = checkout(updaterKey().pubkey);
+  const input = packages(root);
+  damage(path.join(input, PACKAGES[2]));
+  fs.rmSync(path.join(input, `${PACKAGES[2]}.elsewhere`), { force: true, recursive: true });
+  const signer = vi.fn();
+  expect(() => signLinuxPackages({ root, input, output: path.join(root, "signed"), sign: signer }))
+    .toThrow(`Linux package is not a regular nonempty file: ${path.join(input, PACKAGES[2])}`);
+  expect(signer).not.toHaveBeenCalled();
+  expect(fs.existsSync(path.join(root, "signed"))).toBe(false);
 });
 
 const elf = (label) => Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46]), Buffer.from(` ${label}`)]);
