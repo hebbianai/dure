@@ -516,7 +516,8 @@ jobs:
     # The same selected runner as build, so the updater key reaches no other host.
     runs-on: ${{ fromJSON(needs.source.outputs.macos_runner) }}
     environment: macos-release
-    timeout-minutes: 120
+    # Two bounded download attempts, the install, signing and the upload.
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: source
@@ -544,13 +545,28 @@ jobs:
         run: node ../scripts/verify-release-state.mjs "$TAG"
       - name: Install the pinned Tauri CLI
         run: corepack pnpm install --frozen-lockfile --ignore-scripts
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      # This host's download speed swings from 77 KB/s to 4 MB/s, and one
+      # stalled download used the job's whole two hours (v0.2.70, #836). Both
+      # architectures download in parallel, about 3 minutes when healthy, within
+      # 10 minutes and with one retry, which rewrites any partial file. The
+      # action fails on an archive digest mismatch, and signing first checks
+      # that exactly this version's packages arrived as nonempty files.
+      - name: Download the Linux packages
+        id: linux-download
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: linux-packages-${{ needs.version.outputs.tag }}-x86_64
+          pattern: linux-packages-${{ needs.version.outputs.tag }}-{x86_64,aarch64}
+          merge-multiple: true
           path: ${{ runner.temp }}/linux-packages
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - name: Download the Linux packages again
+        if: steps.linux-download.outcome == 'failure'
+        timeout-minutes: 10
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: linux-packages-${{ needs.version.outputs.tag }}-aarch64
+          pattern: linux-packages-${{ needs.version.outputs.tag }}-{x86_64,aarch64}
+          merge-multiple: true
           path: ${{ runner.temp }}/linux-packages
       - name: Sign the Linux packages
         env:

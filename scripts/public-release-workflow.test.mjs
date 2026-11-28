@@ -702,6 +702,38 @@ test("only the protected Linux signing step receives the updater key, and nothin
   }
 });
 
+test("linux-sign downloads exactly both packages in parallel, bounded, with one retry", () => {
+  const steps = workflow.jobs["linux-sign"].steps;
+  const downloads = steps.filter((step) => step.uses?.startsWith("actions/download-artifact@"));
+  expect(downloads).toHaveLength(2);
+  const [first, retry] = downloads;
+  expect(first).toMatchObject({ id: "linux-download", "continue-on-error": true, "timeout-minutes": 10 });
+  expect(retry).toMatchObject({ if: "steps.linux-download.outcome == 'failure'", "timeout-minutes": 10 });
+  expect(retry["continue-on-error"]).toBeUndefined();
+  expect(retry.uses).toBe(first.uses);
+  expect(retry.with).toEqual(first.with);
+  expect(first.with).toEqual({
+    pattern: "linux-packages-${{ needs.version.outputs.tag }}-{x86_64,aarch64}",
+    "merge-multiple": true,
+    path: "${{ runner.temp }}/linux-packages",
+  });
+  // The pattern selects exactly the per-architecture package artifacts the
+  // called Linux workflow uploads, never its supply or smoke evidence.
+  const prefix = workflow.jobs["linux-packages"].with["artifact-prefix"];
+  const arches = linuxWorkflow.jobs.package.strategy.matrix.include.map((entry) => entry.arch);
+  const uploaded = Object.values(linuxWorkflow.jobs).flatMap((job) =>
+    job.steps.filter((step) => step.uses?.startsWith("actions/upload-artifact@")).flatMap((step) =>
+      arches.map((arch) => step.with.name.replaceAll("${{ env.ARTIFACT_PREFIX }}", prefix).replaceAll("${{ matrix.arch }}", arch))));
+  const tag = (text) => text.replaceAll("${{ needs.version.outputs.tag }}", "v1.2.3");
+  expect([...new Set(uploaded.map(tag))].filter((name) => path.matchesGlob(name, tag(first.with.pattern))).sort())
+    .toEqual(["linux-packages-v1.2.3-aarch64", "linux-packages-v1.2.3-x86_64"]);
+  expect(steps.indexOf(retry)).toBe(steps.indexOf(first) + 1);
+  expect(steps.indexOf(retry) + 1).toBe(steps.findIndex((step) => step.name === "Sign the Linux packages"));
+  // Both bounded attempts fit inside the job deadline with room to sign and upload.
+  expect(workflow.jobs["linux-sign"]["timeout-minutes"]).toBeGreaterThanOrEqual(2 * 10 + 20);
+  expect(workflow.jobs["linux-sign"]["timeout-minutes"]).toBeLessThan(120);
+});
+
 test("the draft carries Linux only after it was signed, and is unchanged with Linux off", () => {
   const draft = workflow.jobs.draft;
   const ok = { result: "success" }, skipped = { result: "skipped" };
