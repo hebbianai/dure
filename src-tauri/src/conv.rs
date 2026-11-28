@@ -19,11 +19,12 @@ mod codex_thread_index;
 pub(crate) mod presentation_metadata;
 mod recent_sessions;
 pub(crate) mod remote_presentation_metadata;
+pub(crate) mod transcript_follow;
 pub use recent_sessions::{
     background_work_any_account, details_global, details_remote, list_global, list_remote,
-    ProviderConversationDetails,
-    ProviderConversationActivity, ProviderConversationRecord, transcript_activity_any_account,
-    transcript_any_account, transcript_global,
+    transcript_activity_any_account, transcript_any_account, transcript_file_any_account,
+    transcript_global, ActivityPage, ProviderConversationActivity, ProviderConversationDetails,
+    ProviderConversationRecord,
 };
 
 #[tauri::command(async)]

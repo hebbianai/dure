@@ -92,6 +92,10 @@ sqlx = { version = "=0.9.1", default-features = false, features = ["runtime-toki
 tauri-plugin-updater = { version = "2.14.1", default-features = false, features = ["rustls-tls", "zip"] }
 tauri-plugin-process = "2.3.1"
 memchr = "2.8.2"
+# A conversation view follows the provider transcript it shows while the agent
+# writes it: the OS reports each change to the file (FSEvents, inotify,
+# ReadDirectoryChangesW). Only the native backends; no polling fallback.
+notify = { version = "8.2", default-features = false, features = ["macos_fsevent"] }
 
 [target.'cfg(unix)'.dependencies]
 hebbian-process-sampler = { path = "../crates/hebbian-process-sampler" }

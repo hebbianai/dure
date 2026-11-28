@@ -126,6 +126,8 @@ fn the_text_only_read_is_unchanged_by_tool_records() {
         transcript: read.clone(),
         tools: Vec::new(),
         older_cursor: None,
+        newer_cursor: None,
+        results: Vec::new(),
     };
     assert_eq!(serde_json::to_value(&without_tools).unwrap(), encoded);
     assert_eq!(
@@ -166,6 +168,7 @@ fn calls_before_a_left_out_message_are_left_out_and_the_rest_rebased() {
         transcript,
         tools,
         older_cursor,
+        ..
     } = read_window(
         file.path(),
         "claude",

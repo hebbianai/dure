@@ -12,14 +12,14 @@ import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TerminalPage } from "@/components/settings/TerminalPage";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
-import { setNativeAgentView } from "@/lib/agents/chatHandoverRuntime";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
+import { NATIVE_AGENT_PENDING_IDLE_GRACE_MS } from "@/lib/agents/chat/nativeAgentChat";
+import { setNativeAgentView } from "@/lib/agents/chatHandoverRuntime";
 import { t } from "@/lib/i18n";
 import {
 	normalizePersistedState,
 	persistedSlice,
 } from "@/lib/persistence/persistedAppState";
-import { NATIVE_AGENT_PENDING_IDLE_GRACE_MS } from "@/lib/agents/chat/nativeAgentChat";
 import { useStore } from "@/store";
 import {
 	managedAgentFixture,
@@ -39,6 +39,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/ipc/conversations", () => ({
 	readProviderConversationTranscript: (...args: unknown[]) =>
 		mocks.read(...args),
+	// As an older desktop answers: the view reads when its cursor moves.
+	followProviderConversationTranscript: async () => {
+		throw new Error("unknown command");
+	},
 	readAgentBackgroundWork: async () => ({
 		items: [],
 		counts: { subagents: 0, workflows: 0, shells: 0, monitors: 0 },

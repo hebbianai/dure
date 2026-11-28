@@ -407,6 +407,29 @@ export function nativeTranscriptToolCalls(
 	return calls.sort((left, right) => left.afterEntries - right.afterEntries);
 }
 
+/** How calls an earlier read holds ended, by the results a read after its
+ * newer cursor holds, checked at the boundary like its calls: a malformed
+ * result is left out on its own, and the newer of two results for one call
+ * wins. */
+export function nativeTranscriptToolResults(
+	results: unknown,
+): Map<string, ProviderToolCallState> {
+	const ended = new Map<string, ProviderToolCallState>();
+	if (!Array.isArray(results)) return ended;
+	for (const candidate of results) {
+		if (typeof candidate !== "object" || candidate === null) continue;
+		const { callId, state } = candidate as Record<string, unknown>;
+		if (
+			boundedToolText(callId) &&
+			typeof state === "string" &&
+			TOOL_CALL_STATES.has(state)
+		) {
+			ended.set(callId, state as ProviderToolCallState);
+		}
+	}
+	return ended;
+}
+
 /** Transcript reads joined oldest first, as one read: each is checked on its
  * own and its calls are placed after the messages of the reads before it. A
  * call a newer read records again keeps its place and takes the newer state,

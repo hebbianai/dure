@@ -469,9 +469,18 @@ fn the_whole_small_transcript_has_no_older_cursor_and_a_stale_one_fails() {
             .is_none()
     );
     let length = std::fs::metadata(file.path()).unwrap().len();
-    assert!(activity_page_from_file(file.path(), "claude", "test", Some(length + 1)).is_err());
+    assert!(
+        activity_page_from_file(
+            file.path(),
+            "claude",
+            "test",
+            ActivityPage::Before(length + 1)
+        )
+        .is_err()
+    );
     let first = record("one").len() as u64;
-    let older = activity_page_from_file(file.path(), "claude", "test", Some(first)).unwrap();
+    let older = activity_page_from_file(file.path(), "claude", "test", ActivityPage::Before(first))
+        .unwrap();
     assert_eq!(older.transcript.entries.len(), 1);
     assert_eq!(older.transcript.entries[0].text, "one");
     assert_eq!(older.older_cursor, None);
@@ -1211,4 +1220,153 @@ fn a_claude_message_ends_after_the_last_record_that_carries_it() {
     assert!(end("", length).is_err());
     assert!(end("u\"-0", length).is_err());
     assert!(claude_message_end_cursor(root.path(), "missing", "u-0", 0).is_err());
+}
+
+/// A read to the end names where the next read of what the provider appends
+/// starts; a record the provider is still writing is left for that read.
+#[test]
+fn a_newest_read_names_where_newer_records_begin() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    write!(file, "{}{}", record("one"), record("two")).unwrap();
+    let whole = std::fs::metadata(file.path()).unwrap().len();
+    let read = activity_from_file(file.path(), "claude", "test").unwrap();
+    assert_eq!(read.newer_cursor, Some(whole));
+    assert_eq!(
+        serde_json::to_value(&read).unwrap()["newerCursor"],
+        serde_json::json!(whole)
+    );
+
+    let partial = record("three");
+    write!(file, "{}", &partial[..partial.len() / 2]).unwrap();
+    let read = activity_from_file(file.path(), "claude", "test").unwrap();
+    assert_eq!(read.transcript.entries.len(), 2);
+    assert_eq!(read.newer_cursor, Some(whole), "the partial record is next");
+
+    let first = record("one").len() as u64;
+    let older = activity_page_from_file(file.path(), "claude", "test", ActivityPage::Before(first))
+        .unwrap();
+    assert_eq!(
+        older.newer_cursor, None,
+        "an older page ends inside the file"
+    );
+
+    // A last record whole without its line break is read, and only a whole
+    // read can tell where it ends.
+    write!(file, "{}", &partial[partial.len() / 2..partial.len() - 1]).unwrap();
+    let read = activity_from_file(file.path(), "claude", "test").unwrap();
+    assert_eq!(read.transcript.entries.len(), 3);
+    assert_eq!(read.newer_cursor, None);
+}
+
+/// The records after an earlier read's newer cursor, and how the calls that
+/// read holds ended; nothing the earlier read holds is read again.
+#[test]
+fn a_read_after_the_newer_cursor_holds_only_what_was_appended() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    write!(
+        file,
+        "{}{}",
+        record("prompt"),
+        assistant_with_call("reading", "call-earlier")
+    )
+    .unwrap();
+    let earlier = activity_from_file(file.path(), "claude", "test").unwrap();
+    assert_eq!(earlier.tools[0].state, ProviderToolState::Running);
+    let after = earlier.newer_cursor.unwrap();
+
+    let nothing =
+        activity_page_from_file(file.path(), "claude", "test", ActivityPage::After(after)).unwrap();
+    assert!(nothing.transcript.entries.is_empty() && nothing.tools.is_empty());
+    assert_eq!(nothing.newer_cursor, Some(after));
+    assert_eq!(nothing.older_cursor, None);
+
+    write!(
+        file,
+        "{}{}",
+        tool_result("call-earlier", true),
+        assistant_with_call("writing", "call-newer")
+    )
+    .unwrap();
+    let newer =
+        activity_page_from_file(file.path(), "claude", "test", ActivityPage::After(after)).unwrap();
+    assert_eq!(
+        newer
+            .transcript
+            .entries
+            .iter()
+            .map(|entry| entry.text.as_str())
+            .collect::<Vec<_>>(),
+        ["writing"]
+    );
+    assert_eq!(newer.tools.len(), 1);
+    assert_eq!(newer.tools[0].call_id, "call-newer");
+    assert_eq!(newer.tools[0].after_entries, 1);
+    assert_eq!(
+        newer.results,
+        [ProviderToolResult {
+            call_id: "call-earlier".into(),
+            state: ProviderToolState::Failed,
+        }]
+    );
+    assert_eq!(newer.older_cursor, None);
+    assert_eq!(
+        newer.newer_cursor,
+        Some(std::fs::metadata(file.path()).unwrap().len())
+    );
+    let encoded = serde_json::to_value(&newer).unwrap();
+    assert_eq!(
+        encoded["results"],
+        serde_json::json!([{"callId": "call-earlier", "state": "failed"}])
+    );
+    assert!(
+        serde_json::to_value(&earlier)
+            .unwrap()
+            .get("results")
+            .is_none(),
+        "a read from the start names no earlier calls"
+    );
+}
+
+/// A transcript with no record starting at the cursor is not the one the
+/// cursor was read in: it was replaced, cut or rewritten.
+#[test]
+fn a_read_after_a_cursor_the_transcript_no_longer_has_fails() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    write!(file, "{}{}", record("one"), record("two")).unwrap();
+    let length = std::fs::metadata(file.path()).unwrap().len();
+    assert!(
+        activity_page_from_file(
+            file.path(),
+            "claude",
+            "test",
+            ActivityPage::After(length + 1)
+        )
+        .is_err()
+    );
+    assert!(
+        activity_page_from_file(file.path(), "claude", "test", ActivityPage::After(3)).is_err()
+    );
+
+    file.as_file().set_len(0).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+    write!(file, "{}", record("replaced")).unwrap();
+    assert!(
+        activity_page_from_file(file.path(), "claude", "test", ActivityPage::After(length))
+            .is_err()
+    );
+}
+
+/// A tree's newer records may extend any of its branches, so only a whole
+/// read follows it.
+#[test]
+fn a_tree_transcript_names_no_newer_cursor() {
+    assert!(
+        activity_page_from_file(
+            Path::new("/nonexistent"),
+            "pi",
+            "test",
+            ActivityPage::After(1)
+        )
+        .is_err()
+    );
 }

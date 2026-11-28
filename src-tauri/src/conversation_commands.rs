@@ -1,4 +1,5 @@
 use crate::{accounts, conv, remote_accounts, ssh};
+use tauri::ipc::Channel;
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -141,32 +142,72 @@ pub(crate) async fn list_provider_conversations() -> Vec<conv::ProviderConversat
 /// shape shared by pane copy and the local CLI server. `include_tools` adds
 /// the tool calls between the messages (`tools`) for the conversation view;
 /// the entries are the same either way. With tools, the answer names where
-/// older records begin (`olderCursor`), and `before` reads the older page that
-/// ends there.
+/// older records begin (`olderCursor`) and where newer ones will
+/// (`newerCursor`): `before` reads the older page that ends at the one,
+/// `after` what the provider appended since the other.
 #[tauri::command(async)]
 pub(crate) async fn read_provider_conversation_transcript(
     provider: String,
     conversation_id: String,
     include_tools: Option<bool>,
     before: Option<u64>,
+    after: Option<u64>,
 ) -> Result<conv::ProviderConversationActivity, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let page = match (before, after) {
+            (None, None) => conv::ActivityPage::Newest,
+            (Some(before), None) => conv::ActivityPage::Before(before),
+            (None, Some(after)) => conv::ActivityPage::After(after),
+            (Some(_), Some(_)) => {
+                return Err("a transcript page reads before or after a cursor".to_string());
+            }
+        };
         if include_tools == Some(true) {
-            conv::transcript_activity_any_account(&provider, &conversation_id, before)
-        } else if before.is_some() {
-            Err("an older transcript page needs the tool read".to_string())
+            conv::transcript_activity_any_account(&provider, &conversation_id, page)
+        } else if page != conv::ActivityPage::Newest {
+            Err("a transcript page needs the tool read".to_string())
         } else {
             conv::transcript_any_account(&provider, &conversation_id).map(|transcript| {
                 conv::ProviderConversationActivity {
                     transcript,
                     tools: Vec::new(),
                     older_cursor: None,
+                    newer_cursor: None,
+                    results: Vec::new(),
                 }
             })
         }
     })
     .await
     .map_err(|error| format!("provider transcript task failed: {error}"))?
+}
+
+/// Follow one exact provider-owned transcript while a conversation view
+/// shows it: after each change to its file, `on_change` receives one message
+/// and the view reads from its `newerCursor`. The file is the one a read
+/// finds now. Returns the follow's id for
+/// `unfollow_provider_conversation_transcript`.
+#[tauri::command(async)]
+pub(crate) async fn follow_provider_conversation_transcript(
+    provider: String,
+    conversation_id: String,
+    on_change: Channel<()>,
+) -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = conv::transcript_file_any_account(&provider, &conversation_id)?;
+        conv::transcript_follow::follow(&path, move || {
+            // A view that went away stops answering; its follow ends when
+            // it is unfollowed or outnumbered.
+            let _ = on_change.send(());
+        })
+    })
+    .await
+    .map_err(|error| format!("provider transcript follow task failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) fn unfollow_provider_conversation_transcript(follow_id: u64) {
+    conv::transcript_follow::unfollow(follow_id);
 }
 
 /// The running background work of one local managed agent session, as the

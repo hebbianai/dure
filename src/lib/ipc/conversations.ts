@@ -4,7 +4,7 @@
 // 옮겨졌고, 소비자는 barrel(src/lib/ipc.ts)을 통해 기존 경로를 유지한다.
 // invoke 래퍼는 이 디렉토리에만 둔다(architecture fitness 게이트가 강제).
 
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type { ProviderConversationTranscriptV1 } from "../../../cli/lib/agent-transcript.mjs";
 import type { SshConnectOpts } from "./sessions";
 
@@ -74,6 +74,14 @@ export interface ProviderConversationActivity
 	 * names (OpenCode's: a message's creation time). Absent once the read
 	 * reaches the transcript's start. */
 	olderCursor?: number;
+	/** Where newer records begin: just past the last whole record of a read
+	 * that reaches the transcript's end, where a read `after` it continues.
+	 * Absent on older pages, on older desktops and on a transcript only read
+	 * whole (Pi's). */
+	newerCursor?: number;
+	/** How calls an earlier read holds ended, by the results a read `after`
+	 * its `newerCursor` holds (`{ callId, state }`); checked where shown. */
+	results?: unknown;
 }
 
 export const listConversations = (
@@ -116,16 +124,17 @@ export function readProviderConversationTranscript(
 ): Promise<ProviderConversationTranscript>;
 /** With `includeTools`, the answer also carries the tool calls between the
  * messages; the entries are the same either way. `before` reads the older
- * page that ends at an earlier answer's `olderCursor`. */
+ * page that ends at an earlier answer's `olderCursor`, `after` what the
+ * provider appended since an earlier answer's `newerCursor`. */
 export function readProviderConversationTranscript(
 	provider: string,
 	conversationId: string,
-	options: { includeTools: true; before?: number },
+	options: ProviderTranscriptToolRead,
 ): Promise<ProviderConversationActivity>;
 export function readProviderConversationTranscript(
 	provider: string,
 	conversationId: string,
-	options?: { includeTools: true; before?: number },
+	options?: ProviderTranscriptToolRead,
 ) {
 	return invoke<ProviderConversationActivity>(
 		"read_provider_conversation_transcript",
@@ -135,9 +144,39 @@ export function readProviderConversationTranscript(
 					conversationId,
 					includeTools: true,
 					...(options.before === undefined ? {} : { before: options.before }),
+					...(options.after === undefined ? {} : { after: options.after }),
 				}
 			: { provider, conversationId },
 	);
+}
+
+export type ProviderTranscriptToolRead = {
+	includeTools: true;
+	before?: number;
+	after?: number;
+};
+
+/** Calls `onChange` after each change to the provider's transcript file
+ * while the follow lasts. Resolves to the function that ends it; rejects
+ * when the desktop cannot follow the transcript (an older desktop, a file it
+ * cannot find or watch). */
+export async function followProviderConversationTranscript(
+	provider: string,
+	conversationId: string,
+	onChange: () => void,
+): Promise<() => void> {
+	const channel = new Channel<null>();
+	channel.onmessage = () => onChange();
+	const followId = await invoke<number>(
+		"follow_provider_conversation_transcript",
+		{ provider, conversationId, onChange: channel },
+	);
+	return () => {
+		channel.onmessage = () => {};
+		void invoke("unfollow_provider_conversation_transcript", {
+			followId,
+		}).catch(() => {});
+	};
 }
 
 export type BackgroundWorkKind = "subagent" | "workflow" | "shell" | "monitor";

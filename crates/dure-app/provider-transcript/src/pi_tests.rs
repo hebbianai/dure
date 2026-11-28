@@ -142,6 +142,7 @@ fn pi_messages_commands_and_tool_calls_read_like_the_chat_timeline() {
             json!({"role":"bashExecution","command":"cat .env","output":"secret","excludeFromContext":true,"timestamp":5}),
         );
     let read = activity_from_file(session.path(), "pi", SESSION).unwrap();
+    assert_eq!(read.newer_cursor, None, "a tree is only read whole");
     assert_eq!(
         read.transcript
             .entries
