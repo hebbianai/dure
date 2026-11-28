@@ -684,3 +684,111 @@ fn managed_environment_removes_build_overrides_and_preserves_isolation_and_crede
         assert_eq!(values.get(key), Some(&"synthetic-preserved"));
     }
 }
+
+/// The managed Claude settings file the app publishes for its channel.
+struct PublishedClaudeSettings(String);
+
+impl ProviderRuntimeIntegrationSource for PublishedClaudeSettings {
+    fn integration(
+        &self,
+        _: &ProviderIdV1,
+    ) -> Result<ProviderRuntimeIntegrationV1, ExtensionFailureCodeV1> {
+        Ok(ProviderRuntimeIntegrationV1::SettingsFile {
+            path: self.0.clone(),
+        })
+    }
+}
+
+/// Every `--settings` value of a Claude command, as Claude would read them.
+fn claude_settings_documents(arguments: &[String]) -> Vec<serde_json::Value> {
+    assert!(
+        !arguments
+            .iter()
+            .any(|argument| argument.starts_with("--settings="))
+    );
+    arguments
+        .iter()
+        .enumerate()
+        .filter(|(_, argument)| *argument == "--settings")
+        .map(|(index, _)| {
+            serde_json::Value::Object(
+                dure_provider_profile::claude_settings::read(&arguments[index + 1]).unwrap(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn ultracode_claude_launch_passes_one_settings_document_that_keeps_the_managed_hooks() {
+    let root = tempfile::tempdir().unwrap();
+    let control_dir = root.path().join("control");
+    fs::create_dir(&control_dir).unwrap();
+    fs::set_permissions(&control_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    let hooks = serde_json::json!({
+        "SessionStart": [{"hooks": [{"type": "command", "command": "/fixture/managed-hook.sh"}]}],
+    });
+    let managed = control_dir.join("managed-claude-settings.json");
+    fs::write(
+        &managed,
+        serde_json::to_vec(&serde_json::json!({ "hooks": hooks })).unwrap(),
+    )
+    .unwrap();
+    fs::set_permissions(&managed, fs::Permissions::from_mode(0o600)).unwrap();
+    let managed_contents = fs::read(&managed).unwrap();
+    let provider = BundledAgentProvider::new(
+        "test.bundled.claude",
+        "Test Claude",
+        "claude",
+        "/fixture/claude",
+        Arc::new(PublishedClaudeSettings(
+            managed.to_string_lossy().into_owned(),
+        )),
+        false,
+    );
+    let claude = ProviderIdV1::new("claude").unwrap();
+
+    for (effort, expected) in [
+        (
+            "ultracode",
+            serde_json::json!({ "hooks": hooks, "ultracode": true }),
+        ),
+        ("xhigh", serde_json::json!({ "hooks": hooks })),
+    ] {
+        let effort = AgentSpawnEffortSelectionV1::parse(effort).unwrap();
+        let session = provider
+            .session_launch_plan(
+                &claude,
+                &ProviderPermissionModeV1::Default,
+                None,
+                Some(&effort),
+                None,
+                MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER,
+            )
+            .unwrap();
+        let launch = provider
+            .launch_plan(
+                &claude,
+                &ProviderPermissionModeV1::Default,
+                None,
+                Some(&effort),
+                None,
+            )
+            .unwrap();
+        assert_eq!(session.launch, launch);
+        for arguments in [
+            &launch.arguments,
+            session.resume_arguments.as_ref().unwrap(),
+        ] {
+            assert_eq!(
+                claude_settings_documents(arguments),
+                std::slice::from_ref(&expected)
+            );
+            assert!(
+                arguments
+                    .windows(2)
+                    .any(|pair| pair == ["--effort", "xhigh"])
+            );
+        }
+    }
+    assert_eq!(fs::read(&managed).unwrap(), managed_contents);
+}

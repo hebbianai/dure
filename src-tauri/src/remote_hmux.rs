@@ -414,6 +414,20 @@ impl RemoteManagedLaunchOptions {
         .ok_or_else(|| "remote_hmux_provider_unsupported".to_string())
     }
 
+    /// The provider settings this launch's selection contributes to the
+    /// managed integration's settings document.
+    fn launch_settings(
+        &self,
+        provider_id: &str,
+    ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+        let provider =
+            dure_app::ProviderIdV1::new(provider_id).map_err(|error| error.to_string())?;
+        Ok(dure_provider_adapter::native_provider_launch_settings(
+            &provider,
+            self.effort.as_ref(),
+        ))
+    }
+
     fn rehost_plan(
         &self,
         provider_id: &str,
@@ -1304,12 +1318,17 @@ fn ready_remote_managed_create<R: tauri::Runtime>(
         request.credential_id.as_deref(),
         request.credential_profile_directory.as_deref(),
     )?;
+    let launch_settings = match &request.launch_options {
+        Some(options) => options.launch_settings(&request.provider_id)?,
+        None => serde_json::Map::new(),
+    };
     let integration = crate::remote_provider_runtime::ensure(
         &account_ssh,
         &request.provider_id,
         provisioned.runtime(),
         &request.cwd,
         &provider_state_environment,
+        launch_settings,
     )?;
     let github_directory = crate::remote_github::prepare(
         &account_ssh, provisioned.runtime().home(), &request.cwd,
@@ -1673,12 +1692,14 @@ pub(crate) async fn remote_hmux_managed_rehost(
                     target_credential_id.as_deref(),
                     target_credential_profile_directory.as_deref(),
                 )?;
+                // A rehost replays the reviewed plan without launch options.
                 let integration = crate::remote_provider_runtime::ensure(
                     &account_ssh,
                     &provider_id,
                     provisioned.runtime(),
                     &cwd,
                     &provider_state_environment,
+                    serde_json::Map::new(),
                 )?;
                 let github_directory = crate::remote_github::prepare(
                     &account_ssh, provisioned.runtime().home(), &cwd,

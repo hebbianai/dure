@@ -146,8 +146,12 @@ fn exact_file(
     })
 }
 
+/// The remote hook and the one settings document a remote Claude launch
+/// passes: the managed hooks with the launch selection's `settings` set over
+/// them, because Claude reads one `--settings` per launch.
 fn claude_publication_plan(
     runtime: &crate::remote_hmux_install::RemoteHmuxRuntimeLocation,
+    settings: serde_json::Map<String, serde_json::Value>,
 ) -> Result<ClaudePublicationPlan, String> {
     let hook = exact_file(
         runtime.home(),
@@ -158,10 +162,15 @@ fn claude_publication_plan(
         0o700,
         true,
     )?;
-    let mut settings = serde_json::to_vec_pretty(&managed_hook_rendering::claude_settings(
-        hook.exact_path.as_str(),
-    ))
-    .map_err(|error| format!("remote_provider_integration_invalid: {error}"))?;
+    let mut document = managed_hook_rendering::claude_settings(hook.exact_path.as_str());
+    let serde_json::Value::Object(managed) = &mut document else {
+        return Err(
+            "remote_provider_integration_invalid: managed settings are not an object".into(),
+        );
+    };
+    dure_provider_adapter::merge_native_provider_launch_settings(managed, settings);
+    let mut settings = serde_json::to_vec_pretty(&document)
+        .map_err(|error| format!("remote_provider_integration_invalid: {error}"))?;
     settings.push(b'\n');
     let settings = exact_file(runtime.home(), "claude/settings", "json", settings, 0o600, false)?;
     Ok(ClaudePublicationPlan { hook, settings })
@@ -202,18 +211,23 @@ fn publish_exact_file(
     })
 }
 
+/// Publish the provider's managed integration on the remote host. `settings`
+/// are the launch selection's provider settings, which join the integration's
+/// settings document.
 pub(crate) fn ensure(
     opts: &crate::ssh::SshOptions,
     provider_id: &str,
     runtime: &crate::remote_hmux_install::RemoteHmuxRuntimeLocation,
     cwd: &str,
     environment: &hmux_client::ProviderStateEnvironment,
+    settings: serde_json::Map<String, serde_json::Value>,
 ) -> Result<Option<ProviderRuntimeIntegrationV1>, String> {
     ensure_with(
         provider_id,
         runtime,
         cwd,
         environment,
+        settings,
         &mut |command, stdin| crate::ssh::exec_once_with_stdin(opts, command, stdin),
     )
 }
@@ -223,6 +237,7 @@ fn ensure_with(
     runtime: &crate::remote_hmux_install::RemoteHmuxRuntimeLocation,
     cwd: &str,
     environment: &hmux_client::ProviderStateEnvironment,
+    settings: serde_json::Map<String, serde_json::Value>,
     exec: &mut impl FnMut(&str, Option<&str>) -> Result<crate::ssh::ExecResult, String>,
 ) -> Result<Option<ProviderRuntimeIntegrationV1>, String> {
     if provider_id == "codex" {
@@ -239,7 +254,7 @@ fn ensure_with(
     if provider_id != "claude" {
         return Ok(None);
     }
-    let plan = claude_publication_plan(runtime)?;
+    let plan = claude_publication_plan(runtime, settings)?;
     publish_exact_file(&plan.hook, exec)?;
     publish_exact_file(&plan.settings, exec)?;
     let integration = ProviderRuntimeIntegrationV1::SettingsFile {
@@ -529,6 +544,7 @@ sys.stdout.buffer.write(len(reply).to_bytes(4, 'big') + reply)
                 &self.runtime,
                 self.home.to_str().unwrap(),
                 &self.environment,
+                serde_json::Map::new(),
                 &mut |command, stdin| {
                     use std::io::Write;
                     calls += 1;
@@ -708,6 +724,7 @@ sys.stdout.buffer.write(len(reply).to_bytes(4, 'big') + reply)
                 &fixture.runtime,
                 fixture.home.to_str().unwrap(),
                 &fixture.environment,
+                serde_json::Map::new(),
                 &mut |_, _| {
                     calls += 1;
                     Ok(crate::ssh::ExecResult {
@@ -762,13 +779,15 @@ sys.stdout.buffer.write(len(reply).to_bytes(4, 'big') + reply)
 
     #[test]
     fn claude_files_are_content_addressed_to_the_execution_side() {
-        let first = claude_publication_plan(&runtime(
-            "/home/developer/.local/share/hmux/versions/build-1/bin/hmux-runtime",
-        ))
+        let first = claude_publication_plan(
+            &runtime("/home/developer/.local/share/hmux/versions/build-1/bin/hmux-runtime"),
+            serde_json::Map::new(),
+        )
         .unwrap();
-        let second = claude_publication_plan(&runtime(
-            "/home/developer/.local/share/hmux/versions/build-2/bin/hmux-runtime",
-        ))
+        let second = claude_publication_plan(
+            &runtime("/home/developer/.local/share/hmux/versions/build-2/bin/hmux-runtime"),
+            serde_json::Map::new(),
+        )
         .unwrap();
 
         assert_ne!(first.hook.exact_path, second.hook.exact_path);
@@ -787,6 +806,44 @@ sys.stdout.buffer.write(len(reply).to_bytes(4, 'big') + reply)
     }
 
     #[test]
+    fn remote_ultracode_settings_join_the_one_published_settings_document() {
+        let runtime =
+            runtime("/home/developer/.local/share/hmux/versions/build-1/bin/hmux-runtime");
+        let claude = ProviderIdV1::new("claude").unwrap();
+        let ultracode = dure_app::AgentSpawnEffortSelectionV1::parse("ultracode").unwrap();
+        let settings =
+            dure_provider_adapter::native_provider_launch_settings(&claude, Some(&ultracode));
+        let base = claude_publication_plan(&runtime, serde_json::Map::new()).unwrap();
+        let composed = claude_publication_plan(&runtime, settings).unwrap();
+
+        assert_eq!(composed.hook, base.hook);
+        assert_ne!(composed.settings.exact_path, base.settings.exact_path);
+        let mut expected: serde_json::Value =
+            serde_json::from_str(&base.settings.contents).unwrap();
+        expected["ultracode"] = serde_json::Value::Bool(true);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&composed.settings.contents).unwrap(),
+            expected
+        );
+        let plan = dure_provider_adapter::native_provider_launch_plan(
+            &claude,
+            &dure_app::ProviderPermissionModeV1::Default,
+            None,
+            Some(&ultracode),
+            dure_provider_adapter::NativeProviderConversationReference::Fresh,
+        )
+        .unwrap()
+        .unwrap();
+        let integration = ProviderRuntimeIntegrationV1::SettingsFile {
+            path: composed.settings.exact_path.to_string(),
+        };
+        let command = launch_command("claude", plan, Some(&integration), None).unwrap();
+        assert_eq!(command[2].matches("'--settings'").count(), 1);
+        assert!(command[2].contains(composed.settings.exact_path.as_str()));
+        assert!(command[2].contains("'--effort' 'xhigh'"));
+    }
+
+    #[test]
     fn remote_hook_argv_runs_with_spaces_and_apostrophes_in_home() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -796,7 +853,7 @@ sys.stdout.buffer.write(len(reply).to_bytes(4, 'big') + reply)
             home.to_str().unwrap(),
             &format!("{}/.local/bin/hmux-runtime", home.display()),
         );
-        let plan = claude_publication_plan(&runtime).unwrap();
+        let plan = claude_publication_plan(&runtime, serde_json::Map::new()).unwrap();
         // Materialize the remote plan in a disposable direct-exec fixture.
         let hook_path = std::path::PathBuf::from(plan.hook.exact_path.to_string());
         std::fs::create_dir_all(hook_path.parent().unwrap()).unwrap();

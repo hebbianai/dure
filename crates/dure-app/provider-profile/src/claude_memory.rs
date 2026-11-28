@@ -7,6 +7,7 @@
 //! an account switch keeps the conversation's notes. Earlier per-account and
 //! legacy notes are merged in once, with every original retained.
 
+use super::claude_settings::{self, publish_private_file, read_regular};
 use super::{
     create_or_require_owned_directory, lock_profile, require_owned_real_directory, typed_error,
     unique_sidecar_path,
@@ -15,11 +16,10 @@ use hmux_runtime_contract::ProviderStateEnvironment;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
-const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_TREE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ENTRIES: usize = 4096;
 
@@ -27,61 +27,12 @@ fn error(detail: &str) -> String {
     typed_error("claude_memory_unavailable", detail)
 }
 
-fn read_regular(path: &Path) -> Result<Vec<u8>, String> {
-    let mut file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
-        .open(path)
-        .map_err(|_| error("cannot open memory or settings file"))?;
-    let metadata = file
-        .metadata()
-        .map_err(|_| error("cannot inspect memory or settings file"))?;
-    if !metadata.is_file()
-        || metadata.uid() != unsafe { libc::geteuid() }
-        || metadata.nlink() != 1
-        || metadata.len() > MAX_FILE_BYTES
-    {
-        return Err(error(
-            "memory and settings must be bounded, owned, single-link files",
-        ));
-    }
-    let mut bytes = Vec::new();
-    (&mut file)
-        .take(MAX_FILE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| error("cannot read memory or settings file"))?;
-    if bytes.len() as u64 > MAX_FILE_BYTES {
-        return Err(error("file exceeds memory limit"));
-    }
-    let after = file
-        .metadata()
-        .map_err(|_| error("cannot recheck memory or settings file"))?;
-    if super::FileGeneration::from(&metadata) != super::FileGeneration::from(&after)
-        || bytes.len() as u64 != metadata.len()
-    {
-        return Err(error(
-            "memory or settings changed during preparation; retry launch",
-        ));
-    }
-    Ok(bytes)
-}
-
 fn settings(value: &str) -> Result<Map<String, Value>, String> {
-    let bytes = if value.trim_start().starts_with('{') {
-        value.as_bytes().to_vec()
+    if generated_settings_path(value) {
+        claude_settings::read_published(Path::new(value))
     } else {
-        read_regular(Path::new(value))?
-    };
-    if generated_settings_path(value)
-        && Path::new(value).file_name().and_then(|name| name.to_str())
-            != Some(format!("{:x}.json", Sha256::digest(&bytes)).as_str())
-    {
-        return Err(error("published Claude memory settings changed"));
+        claude_settings::read(value)
     }
-    serde_json::from_slice::<Value>(&bytes)
-        .ok()
-        .and_then(|value| value.as_object().cloned())
-        .ok_or_else(|| error("Claude launch settings must be a JSON object"))
 }
 
 // Claude Agent SDK 0.3.234 project-key contract: ASCII sanitization over JS
@@ -508,41 +459,9 @@ fn publish_settings(config: &Path, document: &Map<String, Value>) -> Result<Stri
         "Claude launch settings",
         0o700,
     )?;
-    let bytes =
-        serde_json::to_vec(document).map_err(|_| error("cannot serialize memory settings"))?;
-    let path = root.join(format!("{:x}.json", Sha256::digest(&bytes)));
-    publish_private_file(&path, &bytes)?;
-    Ok(path.to_string_lossy().into_owned())
-}
-
-fn publish_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            if metadata.mode() & 0o077 != 0 || read_regular(path)? != bytes {
-                return Err(error("published Claude memory settings changed"));
-            }
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let mut transaction = super::OverlayTransaction::default();
-            let mut fault = super::FaultInjection {
-                fail_after: None,
-                mutations: 0,
-            };
-            super::atomic_replace_regular_file(
-                path,
-                &mut transaction,
-                &mut fault,
-                |file| {
-                    file.write_all(bytes)
-                        .map_err(|_| error("cannot publish memory settings"))
-                },
-                || Ok(()),
-            )?;
-            transaction.commit()?;
-        }
-        Err(_) => return Err(error("cannot inspect published memory settings")),
-    }
-    Ok(())
+    Ok(claude_settings::publish(&root, document)?
+        .to_string_lossy()
+        .into_owned())
 }
 
 fn generated_settings_path(value: &str) -> bool {
@@ -694,7 +613,7 @@ mod tests {
 #[cfg(test)]
 mod migration_tests {
     use super::*;
-    use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 
     struct Fixture {
         _root: tempfile::TempDir,

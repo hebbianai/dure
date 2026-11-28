@@ -702,6 +702,91 @@ mod permission_tests {
     }
 
     #[test]
+    fn ultracode_claude_launch_and_resume_keep_one_settings_with_hooks_and_memory() {
+        use dure_app::{
+            AgentExecutionProfileV1, AgentSpawnEffortSelectionV1, ProviderRuntimeIntegrationV1,
+            WorkflowSessionResumePlanV1,
+        };
+        use hmux_client::{
+            MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER, ManagedRehostSourceRecipe,
+        };
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let control_dir = root.path().join("control");
+        std::fs::create_dir(&control_dir).unwrap();
+        std::fs::set_permissions(&control_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let managed = control_dir.join("managed-claude-settings.json");
+        let hooks = serde_json::json!({"SessionStart": [{"hooks": [
+            {"type": "command", "command": "/fixture/managed-hook.sh"},
+        ]}]});
+        std::fs::write(&managed, serde_json::json!({ "hooks": hooks }).to_string()).unwrap();
+        std::fs::set_permissions(&managed, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let registry = crate::provider_extension::test_integrated_provider_registry(
+            "claude",
+            "/fixture/claude",
+            ProviderRuntimeIntegrationV1::SettingsFile {
+                path: managed.to_string_lossy().into_owned(),
+            },
+            None,
+        );
+        let plan = registry
+            .session_launch_plan(
+                &dure_app::ProviderIdV1::new("claude").unwrap(),
+                &ProviderPermissionModeV1::Default,
+                None,
+                Some(&AgentSpawnEffortSelectionV1::parse("ultracode").unwrap()),
+                None,
+                MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER,
+            )
+            .unwrap()
+            .unwrap();
+        let profile = root.path().join("accounts/claude-work");
+        std::fs::create_dir_all(&profile).unwrap();
+        let environment = ProviderStateEnvironment::new(BTreeMap::from([(
+            "CLAUDE_CONFIG_DIR".into(),
+            profile.to_string_lossy().into_owned(),
+        )]))
+        .unwrap();
+        let mut request = launch_request(None);
+        request.provider_id = dure_app::ProviderIdV1::new("claude").unwrap();
+        request.provider_executable = plan.launch.executable;
+        request.provider_arguments = plan.launch.arguments;
+        request.working_directory = root.path().to_string_lossy().into_owned();
+        request.provider_resume = WorkflowSessionResumePlanV1::from_arguments(
+            plan.resume_arguments,
+            &AgentExecutionProfileV1::CredentialReference {
+                reference_id: "work".into(),
+                credential_generation: Some("generation".into()),
+            },
+        );
+
+        let managed_create = managed_create_request(&request, environment, None).unwrap();
+        let resume = ManagedRehostSourceRecipe::from_create_request(&managed_create)
+            .unwrap()
+            .unwrap()
+            .rehost()
+            .render_command("conversation")
+            .unwrap();
+        for command in [managed_create.command(), resume.as_slice()] {
+            let settings: Vec<_> = command
+                .iter()
+                .enumerate()
+                .filter(|(_, argument)| *argument == "--settings")
+                .map(|(index, _)| &command[index + 1])
+                .collect();
+            assert_eq!(settings.len(), 1, "{command:?}");
+            let document: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(settings[0]).unwrap()).unwrap();
+            assert_eq!(document["hooks"], hooks);
+            assert_eq!(document["ultracode"], true);
+            assert!(
+                std::path::Path::new(document["autoMemoryDirectory"].as_str().unwrap()).is_dir()
+            );
+            assert!(command.windows(2).any(|pair| pair == ["--effort", "xhigh"]));
+        }
+    }
+
+    #[test]
     fn resume_recipe_preserves_launch_profile_without_replaying_setup_or_prompt() {
         use dure_app::{AgentExecutionProfileV1, WorkflowSessionResumePlanV1};
         use hmux_client::{

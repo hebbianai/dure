@@ -1,6 +1,10 @@
 use super::*;
 use dure_app::{AgentProviderSessionLaunchPlanV1, AgentProviderSessionLaunchRequestV1};
-use dure_provider_adapter::{native_provider_project_move, native_provider_session_launch_plan};
+use dure_provider_adapter::{
+    merge_native_provider_launch_settings, native_provider_launch_settings,
+    native_provider_project_move, native_provider_session_launch_plan,
+};
+use dure_provider_profile::claude_settings;
 
 fn conversation(reference: Option<&str>) -> NativeProviderConversationReference<'_> {
     reference.map_or(
@@ -33,6 +37,38 @@ fn native_session_plan(
         native_provider_project_move(request.provider_id, &mut plan, directory)?;
     }
     Ok(plan)
+}
+
+/// The runtime integration a launch carries. A launch selection may contribute
+/// provider settings (Claude's `ultracode`); they join the settings document
+/// the integration publishes, because Claude reads one `--settings` per launch
+/// and a second one would drop the managed hooks.
+fn launch_integration(
+    source: &dyn ProviderRuntimeIntegrationSource,
+    provider_id: &ProviderIdV1,
+    effort: Option<&AgentSpawnEffortSelectionV1>,
+) -> Result<ProviderRuntimeIntegrationV1, ExtensionFailureCodeV1> {
+    let integration = source.integration(provider_id)?;
+    let settings = native_provider_launch_settings(provider_id, effort);
+    if settings.is_empty() {
+        return Ok(integration);
+    }
+    let ProviderRuntimeIntegrationV1::SettingsFile { path } = integration else {
+        return Err(
+            ExtensionFailureCodeV1::new("provider_launch_settings_unsupported")
+                .expect("static failure code is valid"),
+        );
+    };
+    claude_settings::read(&path)
+        .and_then(|mut document| {
+            merge_native_provider_launch_settings(&mut document, settings);
+            claude_settings::publish_beside(&path, &document)
+        })
+        .map(|path| ProviderRuntimeIntegrationV1::SettingsFile { path })
+        .map_err(|_| {
+            ExtensionFailureCodeV1::new("provider_launch_settings_unavailable")
+                .expect("static failure code is valid")
+        })
 }
 
 fn integrate_session_launch(
@@ -130,7 +166,11 @@ impl BundledAgentProvider {
     ) -> Result<AgentProviderSessionLaunchPlanV1, ExtensionFailureCodeV1> {
         let preflight = self.preflight_plan(request.provider_id)?;
         // Resolve the integration once so launch and resume retain one selection.
-        let integration = self.integrations.integration(request.provider_id)?;
+        let integration = launch_integration(
+            self.integrations.as_ref(),
+            request.provider_id,
+            request.effort,
+        )?;
         let mut plan = native_session_plan(request, project_directory)?;
         plan.launch.executable = preflight.executable;
         integrate_session_launch(request.provider_id, &integration, &mut plan)?;
@@ -170,7 +210,7 @@ impl AgentProviderImplementation for BundledAgentProvider {
         native.executable = preflight.executable;
         apply_provider_runtime_integration(
             provider_id,
-            &self.integrations.integration(provider_id)?,
+            &launch_integration(self.integrations.as_ref(), provider_id, effort)?,
             &mut native,
         )?;
         bind_launch_channel(self.integrations.as_ref(), &mut native)?;
