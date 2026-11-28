@@ -611,6 +611,38 @@ describe("Work detail", () => {
 		await waitFor(() => expect(unfollow).toHaveBeenCalled());
 	});
 
+	it("follows a new conversation once its provider writes the transcript", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		let written = false;
+		mocks.read.mockImplementation(async () => {
+			if (!written) throw new Error("provider conversation was not found");
+			return { ...transcript, finalResponse: null, newerCursor: 80 };
+		});
+		mocks.follow.mockImplementation(async () => {
+			if (!written) throw new Error("provider conversation was not found");
+			return () => {};
+		});
+		runtimeOfD({ activity: "working" }, "working");
+		useWorkViewStore.getState().select("d");
+		render(<WorkMain />);
+		const conversation = screen.getByRole("region", {
+			name: t("work.conversation.label"),
+		});
+		expect(
+			await within(conversation).findByText(
+				t("agents.nativeChat.transcriptUnavailable"),
+			),
+		).toBeTruthy();
+
+		written = true;
+		await act(() => vi.advanceTimersByTimeAsync(1_000));
+		// The turn is still running: the follow's first read is the whole one.
+		expect(
+			await within(conversation).findByText("Fix the flaky test"),
+		).toBeTruthy();
+		vi.useRealTimers();
+	});
+
 	it("answers a terminal agent's approval from the column", async () => {
 		runtimeOfD(
 			{

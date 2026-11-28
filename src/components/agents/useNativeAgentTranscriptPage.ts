@@ -86,14 +86,23 @@ export function useNativeAgentTranscriptPage({
 		};
 	}, [cursor, setSnapshot, setReadFailed]);
 
-	// The follow continues the newest read; the cursor's read starts it, and a
-	// read that answers after a newer whole read is dropped.
+	// The follow continues the newest read, and a read that answers after a
+	// newer one is dropped. With no read yet (a new conversation whose
+	// provider had not written its transcript when the cursor moved), its
+	// first read is the whole read at the current cursor.
 	const snapshotRef = useRef(snapshot);
 	snapshotRef.current = snapshot;
+	const currentRef = useRef({ cursor, turnCompletedCount });
+	currentRef.current = { cursor, turnCompletedCount };
 	const onScreen = useDocumentVisible();
 	const following = working && onScreen;
 	useEffect(() => {
 		if (!following) return;
+		const readPage = (after?: number) =>
+			readProviderConversationTranscript(provider, conversationId, {
+				includeTools: true,
+				after,
+			});
 		return followNativeTranscript({
 			follow: (onChange) =>
 				followProviderConversationTranscript(
@@ -103,21 +112,18 @@ export function useNativeAgentTranscriptPage({
 				),
 			read: async () => {
 				const base = snapshotRef.current;
-				if (!base) return;
-				const transcript = await readFollowedTranscript(
-					base.transcript,
-					(after) =>
-						readProviderConversationTranscript(provider, conversationId, {
-							includeTools: true,
-							after,
-						}),
-				);
-				if (transcript !== base.transcript && snapshotRef.current === base) {
-					setSnapshot({ ...base, transcript });
+				const at = currentRef.current;
+				const transcript = base
+					? await readFollowedTranscript(base.transcript, readPage)
+					: await readPage();
+				if (snapshotRef.current !== base || transcript === base?.transcript) {
+					return;
 				}
+				setSnapshot(base ? { ...base, transcript } : { transcript, ...at });
+				setReadFailed(false);
 			},
 		});
-	}, [following, provider, conversationId, setSnapshot]);
+	}, [following, provider, conversationId, setSnapshot, setReadFailed]);
 
 	// Older history loads on request above the newest read, from where that
 	// read starts; a newer read that starts elsewhere starts the pages again.

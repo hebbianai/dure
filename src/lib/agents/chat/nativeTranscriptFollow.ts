@@ -12,7 +12,7 @@ import type {
  * reads what was appended since the newest read, at most once per this many
  * milliseconds. A whole read still happens whenever the refresh cursor
  * moves (see `nativeAgentChatRefreshCursor`). */
-export const NATIVE_TRANSCRIPT_FOLLOW_INTERVAL_MS = 1_000;
+const NATIVE_TRANSCRIPT_FOLLOW_INTERVAL_MS = 1_000;
 
 function transcriptCursor(value: unknown): value is number {
 	return Number.isSafeInteger(value) && (value as number) >= 0;
@@ -107,12 +107,16 @@ export async function readFollowedTranscript(
 	return read();
 }
 
+/** The longest wait between two tries to start a follow. */
+const MAX_FOLLOW_RETRY_MS = 8_000;
+
 /** Reads a followed transcript after the changes its file reports: once the
  * follow begins (for what was written before it did), then after each
  * change, at most once per `intervalMs` and never two reads at once; a
- * change during a read is read after it. Without a follow (an older
- * desktop, a file it cannot watch) nothing is read here. Returns the
- * function that ends the follow. */
+ * change during a read is read after it. A follow that cannot start yet (a
+ * new conversation whose provider has not written its transcript) is tried
+ * again, each wait twice the last up to MAX_FOLLOW_RETRY_MS; nothing is read
+ * until it starts. Returns the function that ends the follow. */
 export function followNativeTranscript({
 	follow,
 	read,
@@ -130,6 +134,7 @@ export function followNativeTranscript({
 	let reading = false;
 	let lastReadAt = Number.NEGATIVE_INFINITY;
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let retry: ReturnType<typeof setTimeout> | undefined;
 	let unfollow: (() => void) | undefined;
 
 	const schedule = () => {
@@ -157,20 +162,30 @@ export function followNativeTranscript({
 		schedule();
 	};
 
-	void follow(onChange).then(
-		(end) => {
-			if (ended) {
-				end();
-				return;
-			}
-			unfollow = end;
-			onChange();
-		},
-		() => {},
-	);
+	const start = (wait: number) => {
+		void follow(onChange).then(
+			(end) => {
+				if (ended) {
+					end();
+					return;
+				}
+				unfollow = end;
+				onChange();
+			},
+			() => {
+				if (ended) return;
+				retry = setTimeout(
+					() => start(Math.min(wait * 2, MAX_FOLLOW_RETRY_MS)),
+					wait,
+				);
+			},
+		);
+	};
+	start(intervalMs);
 	return () => {
 		ended = true;
 		if (timer !== undefined) clearTimeout(timer);
+		if (retry !== undefined) clearTimeout(retry);
 		unfollow?.();
 	};
 }

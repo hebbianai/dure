@@ -275,13 +275,37 @@ describe("followNativeTranscript", () => {
 		expect(read).not.toHaveBeenCalled();
 	});
 
-	it("reads nothing when the desktop cannot follow the transcript", async () => {
+	it("tries again to follow a transcript its provider has not written yet", async () => {
 		const read = vi.fn(async () => {});
-		followNativeTranscript({
-			follow: () => Promise.reject(new Error("unknown command")),
-			read,
-		});
-		await vi.advanceTimersByTimeAsync(10_000);
+		const unfollow = vi.fn();
+		const follow = vi
+			.fn<(onChange: () => void) => Promise<() => void>>()
+			.mockRejectedValueOnce(new Error("provider conversation was not found"))
+			.mockRejectedValueOnce(new Error("provider conversation was not found"))
+			.mockResolvedValue(unfollow);
+		const end = followNativeTranscript({ follow, read, intervalMs: 1_000 });
+		await vi.advanceTimersByTimeAsync(0);
 		expect(read).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(follow).toHaveBeenCalledTimes(2);
+		// Each wait is twice the last.
+		await vi.advanceTimersByTimeAsync(1_999);
+		expect(follow).toHaveBeenCalledTimes(2);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(follow).toHaveBeenCalledTimes(3);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(read).toHaveBeenCalledTimes(1);
+
+		end();
+		expect(unfollow).toHaveBeenCalledTimes(1);
+	});
+
+	it("stops trying once ended", async () => {
+		const follow = vi.fn(() => Promise.reject(new Error("not found")));
+		const end = followNativeTranscript({ follow, read: async () => {} });
+		await vi.advanceTimersByTimeAsync(0);
+		end();
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(follow).toHaveBeenCalledTimes(1);
 	});
 });
