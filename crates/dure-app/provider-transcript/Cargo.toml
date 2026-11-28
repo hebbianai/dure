@@ -7,10 +7,16 @@ license = "Apache-2.0"
 publish = false
 description = "Provider-owned Claude Code, Codex and Pi transcript reads shared by Dure and Hmux"
 
-# Deliberately lean: serde and std. The desktop links this through
-# `dure-provider-profile`, and `hmux mobile-gateway` links it on every server
-# the phone reads a conversation from, so anything added here ships there too.
+# Deliberately lean: serde, std and a zstd decoder. The desktop links this
+# through `dure-provider-profile`, and `hmux mobile-gateway` links it on every
+# server the phone reads a conversation from, so anything added here ships
+# there too.
 [dependencies]
+# Decodes the compressed copies Codex keeps of rollouts it no longer writes.
+# Pure Rust and decode only, with no dependencies of its own without its
+# default features (checksum verification). Pinned: 0.8.2 and later require
+# Rust 1.87, above the rust-version declared here.
+ruzstd = { version = "=0.8.1", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

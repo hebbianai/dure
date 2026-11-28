@@ -5,9 +5,10 @@ pub use dure_provider_profile::transcript::{
     ConversationTurnRole, ProviderConversationActivity, ProviderConversationTranscript,
 };
 use dure_provider_profile::transcript::{
-    bounded_prefix, claude_turn, codex_content_text, codex_turn, find_claude_conversation,
-    find_codex_conversation, find_pi_conversation, mtime, provider_context_injection, safe_id,
-    text_content, transcript_from_file, MAX_TRANSCRIPT_DISCOVERY_ENTRIES,
+    bounded_prefix, bounded_suffix, bounded_windows, claude_turn, codex_content_text, codex_turn,
+    find_claude_conversation, find_codex_conversation, find_pi_conversation, mtime,
+    provider_context_injection, safe_id, text_content, transcript_from_file, transcript_name,
+    MAX_TRANSCRIPT_DISCOVERY_ENTRIES,
 };
 use serde::Serialize;
 #[path = "pi_sessions.rs"]
@@ -766,24 +767,6 @@ fn bounded_full(path: &Path, max_bytes: u64) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-fn bounded_suffix(path: &Path, max_bytes: u64) -> Option<String> {
-    let metadata = fs::metadata(path).ok()?;
-    if !metadata.is_file() || metadata.len() == 0 {
-        return None;
-    }
-    let mut file = fs::File::open(path).ok()?;
-    let start = metadata.len().saturating_sub(max_bytes);
-    file.seek(std::io::SeekFrom::Start(start)).ok()?;
-    let mut bytes = Vec::new();
-    file.take(max_bytes).read_to_end(&mut bytes).ok()?;
-    let mut text = String::from_utf8_lossy(&bytes).into_owned();
-    if start > 0 {
-        let newline = text.find('\n')?;
-        text.drain(..=newline);
-    }
-    Some(text)
-}
-
 fn turn_preview_text(text: String) -> Option<String> {
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if normalized.is_empty() {
@@ -827,16 +810,17 @@ fn latest_recent_turns(
     turns
 }
 
+/// The recent turns of a transcript read as a prefix and a suffix; `whole`
+/// when the prefix holds all of it.
 fn recent_turns_from_bounded_windows(
     prefix: &str,
     suffix: Option<&str>,
-    file_size: u64,
-    prefix_window_bytes: u64,
+    whole: bool,
     parse: fn(&Value) -> Option<(ConversationTurnRole, String)>,
 ) -> Vec<ConversationTurnPreview> {
     match suffix {
         Some(content) => latest_recent_turns(content, parse),
-        None if file_size <= prefix_window_bytes => latest_recent_turns(prefix, parse),
+        None if whole => latest_recent_turns(prefix, parse),
         None => Vec::new(),
     }
 }
@@ -1061,8 +1045,7 @@ fn collect_claude(root: &Path, output: &mut Vec<Candidate>) {
                 candidate.record.recent_turns = recent_turns_from_bounded_windows(
                     &prefix,
                     suffix.as_deref(),
-                    file_size,
-                    MAX_SESSION_BYTES,
+                    file_size <= MAX_SESSION_BYTES,
                     claude_turn,
                 );
                 candidate.record.subagent_count = claude_subagent_count(&project.path(), id);
@@ -1257,11 +1240,13 @@ fn observe_input_authority(
     });
 }
 
-/// Read one rollout file's bounded windows and derive its scan outcome.
-/// `None` means the file could not be read at all — that is not cached, so a
-/// transient permission or race failure retries on the next scan.
-fn inspect_codex_file(path: &Path, file_size: u64) -> Option<CodexFileOutcome> {
-    let prefix = bounded_prefix(path, MAX_SESSION_BYTES)?;
+/// Read one rollout file's bounded windows, plain or compressed, and derive
+/// its scan outcome. `None` means the file could not be read at all — that is
+/// not cached, so a transient permission or race failure retries on the next
+/// scan.
+fn inspect_codex_file(path: &Path) -> Option<CodexFileOutcome> {
+    let windows = bounded_windows(path, MAX_SESSION_BYTES)?;
+    let (prefix, suffix) = (windows.prefix, windows.suffix);
     let Some(metadata) = prefix
         .lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
@@ -1281,7 +1266,6 @@ fn inspect_codex_file(path: &Path, file_size: u64) -> Option<CodexFileOutcome> {
     let Some(cwd) = metadata.pointer("/payload/cwd").and_then(Value::as_str) else {
         return Some(CodexFileOutcome::Skip);
     };
-    let suffix = bounded_suffix(path, MAX_SESSION_BYTES);
     let title = suffix
         .as_deref()
         .and_then(latest_codex_title)
@@ -1301,13 +1285,8 @@ fn inspect_codex_file(path: &Path, file_size: u64) -> Option<CodexFileOutcome> {
     candidate.record.branch = codex_branch(&metadata);
     (candidate.record.model, candidate.record.effort) =
         codex_session_settings(&prefix, suffix.as_deref());
-    candidate.record.recent_turns = recent_turns_from_bounded_windows(
-        &prefix,
-        suffix.as_deref(),
-        file_size,
-        MAX_SESSION_BYTES,
-        codex_turn,
-    );
+    candidate.record.recent_turns =
+        recent_turns_from_bounded_windows(&prefix, suffix.as_deref(), windows.whole, codex_turn);
     Some(CodexFileOutcome::Candidate(Box::new(candidate)))
 }
 
@@ -1331,10 +1310,7 @@ fn collect_codex_files(
             // Unchanged fingerprint — replay without opening the file.
             (_, Some(outcome)) => outcome,
             (stamp, None) => {
-                let file_size = fs::metadata(&path)
-                    .map(|metadata| metadata.len())
-                    .unwrap_or(MAX_SESSION_BYTES.saturating_add(1));
-                let Some(outcome) = inspect_codex_file(&path, file_size) else {
+                let Some(outcome) = inspect_codex_file(&path) else {
                     continue;
                 };
                 // A file rewritten mid-inspection would be cached under the
@@ -1996,9 +1972,7 @@ fn collect_codex_subagent_files(
             );
             continue;
         }
-        if !kind.is_file()
-            || entry.path().extension().and_then(|value| value.to_str()) != Some("jsonl")
-        {
+        if !kind.is_file() || transcript_name(&entry.path()).is_none() {
             continue;
         }
         let path = entry.path();
@@ -2600,8 +2574,7 @@ fn collect_remote_claude(
                 candidate.record.recent_turns = recent_turns_from_bounded_windows(
                     &prefix,
                     suffix.as_deref(),
-                    file_size,
-                    MAX_REMOTE_PREFIX_BYTES,
+                    file_size <= MAX_REMOTE_PREFIX_BYTES,
                     claude_turn,
                 );
                 candidate.record.subagent_count =
@@ -2705,8 +2678,7 @@ impl RemoteCodexScan<'_, '_> {
                 candidate.record.recent_turns = recent_turns_from_bounded_windows(
                     &prefix,
                     suffix.as_deref(),
-                    file_size,
-                    MAX_REMOTE_PREFIX_BYTES,
+                    file_size <= MAX_REMOTE_PREFIX_BYTES,
                     codex_turn,
                 );
                 output.push(candidate);
@@ -4705,6 +4677,43 @@ mod tests {
         let record = finalize(candidates).into_iter().next().unwrap();
 
         assert!(record.recent_turns.is_empty());
+    }
+
+    /// A rollout Codex compressed is listed with what its plain file showed:
+    /// its latest turns and the settings its last turn ran with.
+    #[test]
+    fn a_compressed_codex_rollout_is_listed_with_its_latest_turns() {
+        let temporary = tempfile::tempdir().unwrap();
+        let roots = roots(&temporary);
+        let day = roots.codex_sessions.join("2026/10/12");
+        fs::create_dir_all(&day).unwrap();
+        fs::write(
+            day.join("rollout-2026-10-12T00-00-00-019f0000-0000-7000-8000-000000000820.jsonl.zst"),
+            include_bytes!(
+                "../../../crates/dure-app/provider-transcript/fixtures/codex-rollout.jsonl.zst"
+            ),
+        )
+        .unwrap();
+
+        let mut candidates = Vec::new();
+        collect_codex(&roots.codex_sessions, &mut candidates);
+        let records = finalize(candidates);
+
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.id, "019f0000-0000-7000-8000-000000000820");
+        assert_eq!(record.cwd, "/work/project");
+        assert_eq!(
+            (record.model.as_deref(), record.effort.as_deref()),
+            (Some("model-a"), Some("high"))
+        );
+        let turns = record
+            .recent_turns
+            .iter()
+            .map(|turn| turn.text.split(':').next().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(turns.last(), Some(&"answer 7"));
+        assert!(turns.contains(&"prompt 7"));
     }
 
     #[test]

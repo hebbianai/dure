@@ -11,13 +11,13 @@ use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    io::{BufRead, Read, Seek, SeekFrom},
+    io::{BufRead, Read},
     path::{Path, PathBuf},
 };
 
 use crate::{
     ConversationTurnRole, MAX_TRANSCRIPT_DISCOVERY_ENTRIES, MAX_TRANSCRIPT_SOURCE_BYTES,
-    bounded_prefix, mtime, safe_id, text_content,
+    TranscriptFile, bounded_prefix, mtime, safe_id, text_content,
 };
 
 /// The longest session header a lookup reads, as the Pi Chat runtime does.
@@ -174,7 +174,7 @@ pub(crate) struct Branch {
 /// oldest; the newest page follows it from the range's newest entry, which is
 /// the leaf Pi appended last.
 pub(crate) fn branch(
-    file: &mut fs::File,
+    file: &mut TranscriptFile,
     region: &[u8],
     region_start: u64,
     before: Option<u64>,
@@ -223,10 +223,11 @@ pub(crate) fn branch(
 }
 
 /// The entry whose record starts at `offset`.
-fn entry_at(file: &mut fs::File, offset: u64) -> Option<Link> {
-    file.seek(SeekFrom::Start(offset)).ok()?;
+fn entry_at(file: &mut TranscriptFile, offset: u64) -> Option<Link> {
     let mut raw = Vec::new();
-    std::io::BufReader::new(file.take(MAX_TRANSCRIPT_SOURCE_BYTES))
+    file.records_from(offset)
+        .ok()?
+        .take(MAX_TRANSCRIPT_SOURCE_BYTES)
         .read_until(b'\n', &mut raw)
         .ok()?;
     Link::entry(&raw)

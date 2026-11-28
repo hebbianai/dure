@@ -37,7 +37,7 @@ fn visit(
         if kind.is_dir() {
             visit(&entry.path(), depth + 1, inspected, limit, files);
         } else if kind.is_file()
-            && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")
+            && dure_provider_profile::transcript::transcript_name(&entry.path()).is_some()
         {
             let Ok(metadata) = entry.metadata() else {
                 continue;
@@ -139,6 +139,17 @@ mod tests {
         let files = recent(&fixture.0.join("2026/09/15"), 200);
         assert_eq!(files.first(), Some(&latest));
         assert_eq!(files.len(), 200);
+    }
+
+    #[test]
+    fn compressed_rollouts_are_listed_unless_their_plain_file_is_beside_them() {
+        let fixture = Fixture::new();
+        let cold = fixture.rollout("2026/09/01/cold.jsonl.zst", 100);
+        let resumed = fixture.rollout("2026/09/02/resumed.jsonl", 200);
+        // Codex writes the plain file while both are there.
+        fixture.rollout("2026/09/02/resumed.jsonl.zst", 300);
+        fixture.rollout("2026/09/02/archive.zst", 400);
+        assert_eq!(recent(&fixture.0, 200), vec![resumed, cold]);
     }
 
     #[test]
