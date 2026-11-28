@@ -1128,6 +1128,31 @@ process.stdout.write(JSON.stringify(response));
   return remote;
 }
 
+/** A preview backend that records a Run's parent Session. */
+function installParentRemoteFixture(root) {
+  const remote = installRemoteFixture(root);
+  const profilesPath = join(root, "backend-profiles.json");
+  const profiles = JSON.parse(readFileSync(profilesPath, "utf8"));
+  profiles.profiles[0].expected.capabilities.push("agent_spawn.parent_link.v1");
+  writeFileSync(profilesPath, JSON.stringify(profiles), { mode: 0o600 });
+  const ssh = join(remote.bin, "ssh");
+  renameSync(ssh, join(remote.bin, "ssh-preview"));
+  writeFileSync(
+    ssh,
+    `#!/usr/bin/env node
+const { execFileSync } = require("node:child_process");
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
+const input = readFileSync(0, "utf8");
+const response = JSON.parse(execFileSync(join(__dirname, "ssh-preview"), process.argv.slice(2), { input }));
+response.backend.capabilities.push("agent_spawn.parent_link.v1");
+process.stdout.write(JSON.stringify(response));
+`,
+  );
+  chmodSync(ssh, 0o755);
+  return remote;
+}
+
 function installRunRemoteFixture(root) {
   const remote = installRemoteFixture(root);
   const profilesPath = join(root, "backend-profiles.json");
@@ -1771,6 +1796,88 @@ describe("dure run and spawn CLI", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Usage: dure spawn preview");
     expect(existsSync(`${remote.log}.operations`)).toBe(false);
+  });
+
+  it("records the parent dure run would in a spawn preview", () => {
+    const root = temporaryRoot();
+    const remote = installParentRemoteFixture(root);
+    const preview = (extra) =>
+      runCli(
+        root,
+        ["spawn", "preview", "--project", "dure", "--provider", "codex", "--name", "codex-1",
+          "--idempotency-key", "spawn-request-1", "--no-worktree", ...extra,
+          "--backend", "remote-a", "--json"],
+        { DURE_AGENT_SPAWN_LOG: remote.log, PATH: `${remote.bin}:${process.env.PATH}` },
+      );
+    const parent = { sessionId: "session-lead", workspaceId: "workspace-lead" };
+
+    const linked = preview(["--parent", parent.sessionId, "--parent-workspace", parent.workspaceId]);
+    expect(linked.status, `${linked.stdout}\n${linked.stderr}`).toBe(0);
+    const sent = JSON.parse(readFileSync(remote.log, "utf8")).request;
+    expect(sent.body.parent).toEqual(parent);
+    expect(sent.expected.requiredCapabilities).toContain("agent_spawn.parent_link.v1");
+    expect(JSON.parse(linked.stdout).receipt.plan.request.parent).toEqual(parent);
+
+    // The calling pane's Session belongs to this machine, not to an SSH
+    // backend, and --no-parent records none.
+    for (const [extra, environment] of [
+      [[], { HMUX_SESSION_ID: "source-session", HMUX_WORKSPACE_ID: "source-workspace" }],
+      [["--no-parent"], {}],
+    ]) {
+      const result = runCli(
+        root,
+        ["spawn", "preview", "--project", "dure", "--provider", "codex", "--name", "codex-1",
+          "--idempotency-key", "spawn-request-1", "--no-worktree", ...extra,
+          "--backend", "remote-a", "--json"],
+        { DURE_AGENT_SPAWN_LOG: remote.log, PATH: `${remote.bin}:${process.env.PATH}`, ...environment },
+      );
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(JSON.parse(readFileSync(remote.log, "utf8")).request.body.parent).toBeUndefined();
+    }
+  });
+
+  it("refuses a spawn preview parent it can't record before any backend request", () => {
+    const root = temporaryRoot();
+    const remote = installRemoteFixture(root);
+    const result = runCli(
+      root,
+      ["spawn", "preview", "--project", "dure", "--provider", "codex", "--name", "codex-1",
+        "--idempotency-key", "spawn-request-1", "--no-worktree",
+        "--parent", "session-lead", "--parent-workspace", "workspace-lead",
+        "--backend", "remote-a", "--json"],
+      { DURE_AGENT_SPAWN_LOG: remote.log, PATH: `${remote.bin}:${process.env.PATH}` },
+    );
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stderr).error.code).toBe("run_parent_unsupported");
+    expect(existsSync(remote.log)).toBe(false);
+  });
+
+  it.each([
+    ["--no-parent with --parent", ["--no-parent", "--parent", "lead"]],
+    ["--parent-workspace without --parent", ["--parent-workspace", "workspace-lead"]],
+    ["an empty --parent", ["--parent", ""]],
+  ])("refuses a spawn preview with %s", (_label, extra) => {
+    const root = temporaryRoot();
+    const result = runCli(root, ["spawn", "preview", "--project", "dure", "--provider", "codex",
+      "--name", "codex-1", "--idempotency-key", "spawn-request-1", "--no-worktree", ...extra]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Usage: dure spawn preview");
+  });
+
+  it.each(["apply", "status"])("refuses parent flags on spawn %s", (action) => {
+    const root = temporaryRoot();
+    for (const extra of [["--parent", "lead"], ["--no-parent"]]) {
+      const result = runCli(root, [
+        "spawn",
+        action,
+        "--operation-id",
+        "spawn-0123456789abcdef0123456789abcdef",
+        ...(action === "apply" ? ["--plan-token", `sha256:${"b".repeat(64)}`, "--expected-sequence", "1"] : []),
+        ...extra,
+      ]);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Usage: dure spawn preview");
+    }
   });
 
   it.each(["apply", "status"])("refuses --account on spawn %s", (action) => {

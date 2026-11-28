@@ -148,7 +148,8 @@ finds those Runs.
 on the same backend by name, Agent ID or Session ID — a Chat agent by its Agent
 ID — and `--parent SESSION_ID --parent-workspace ID` needs no app. An explicit
 parent the backend can't record is refused before anything starts; the
-automatic link is skipped on such a backend.
+automatic link is skipped on such a backend. `dure spawn preview` records its
+parent the same way and takes the same flags.
 
 ```sh
 dure run --worktree fix-12 "fix #12"
