@@ -1,10 +1,10 @@
 // Who manages whom — the ONE relation owner. Every surface that says it reads
-// the forest this module builds: Next up paths, Spaces' lead nesting and
-// worker pane placement today; the Work view, crowded Space cards, a
-// coordinator's team line and the phone as they arrive.
+// the forest this module builds: Next up paths, Spaces' lead nesting, worker
+// pane placement, the Work view, a coordinator's team line and the phone.
 //
-// Relations are facts, not roles. An agent manages others exactly when it has
-// children, and agents nest to any depth. Every fact is kept with its source;
+// Relations are facts, not roles. A node is an agent, or a row that is no
+// agent (a plain shell pane); it manages others exactly when it has
+// children, and nodes nest to any depth. Every fact is kept with its source;
 // one of them is the agent's display manager. Missing facts never exclude
 // anyone: an agent with no usable fact is a root. The module imports no
 // store, i18n or React, so the phone's build can share it.
@@ -21,6 +21,9 @@ const AGENT_RELATION_SOURCES = [
 	/** The Agent that owned that Session when this client first presented
 	 * the Run. */
 	"run_parent_recorded",
+	/** The one plain shell row that holds the Run's parent Session now, when
+	 * no Agent is bound to it: a lead started the Run from a shell pane. */
+	"run_parent_shell",
 	/** The display manager the agent's computer reported in its catalog
 	 * (`SessionPresentation.managerAgentId`). It is the phone's only fact:
 	 * the computer already chose among its own. */

@@ -17,6 +17,7 @@ export const workEnglishTranslations: Record<string, string> = {
 	"work.detail.relationSource.runParentAgent": "started its Run",
 	"work.detail.relationSource.runParentSession": "owns its Run’s parent session",
 	"work.detail.relationSource.runParentRecorded": "owned that session when its Run opened",
+	"work.detail.relationSource.runParentShell": "the shell its Run was started in",
 	"work.detail.relationSource.computerReported": "reported by its computer",
 	"work.detail.pin": "Pin as a column",
 	"work.detail.unpin": "Unpin",

@@ -1,24 +1,30 @@
 // Store wiring for the Work view's list. Who manages whom comes from the
 // relation owner, who needs a person and what has a result from the Next up
-// order (with the Work view's own window, the local day), and providers in
-// plain shell panes from the Spaces rows, which already find them. The list
-// arrangement itself is workViewList.
+// order (with the Work view's own window, the local day), and plain shell
+// panes from the Spaces rows, which already find them. The list arrangement
+// itself is workViewList.
 import { useMemo } from "react";
-import { useAgentRelations } from "@/components/agents/useAgentRelations";
+import {
+	useAgentManagedSummary,
+	useAgentRelations,
+} from "@/components/agents/useAgentRelations";
 import {
 	useAgentRevealSpaceNames,
 	useNextUp,
 } from "@/components/agents/useNextUp";
 import { useLocalDayTick } from "@/components/spaces/useNowTick";
 import { type SpaceRow, useSpaces } from "@/components/spaces/useSpaces";
+import type { AgentRowFacts } from "@/lib/agents/agentRowModel";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
+import type { AgentRelations } from "@/lib/agents/relations/agentRelations";
 import type { NeedsPersonReason } from "@/lib/agents/needsPerson";
 import { type WorkViewList, workViewList } from "@/lib/work/workViewList";
 import { useWorkViewStore } from "@/lib/work/workViewStore";
 import { useStore } from "@/store";
 
-/** A provider found running in a plain shell pane. It has no Agent record,
- * so it has no relations, conversation or large window: only its pane. */
+/** A plain shell pane with a provider found running in it, or that agents
+ * were started from. It has no Agent record, so it has no conversation or
+ * large window: only its pane, and the agents it started. */
 export interface WorkShellEntry {
 	readonly key: string;
 	readonly desktopId: string;
@@ -40,25 +46,19 @@ export interface WorkView {
 	readonly dayStart: number;
 }
 
-const SHELL_KEY_PREFIX = "pane:";
-
-/** The key of a shell pane's entry. Pane ids are unique per Space only. */
-function workShellKey(desktopId: string, panelId: string): string {
-	return `${SHELL_KEY_PREFIX}${desktopId}:${panelId}`;
-}
-
-/** Whether a Work entry's key names a shell pane rather than an Agent. */
-export function isWorkShellKey(key: string): boolean {
-	return key.startsWith(SHELL_KEY_PREFIX);
-}
-
-function shellEntries(rows: readonly SpaceRow[]): WorkShellEntry[] {
+function shellEntries(
+	rows: readonly SpaceRow[],
+	relations: AgentRelations,
+): WorkShellEntry[] {
 	return rows.flatMap((row) =>
-		row.agentId || !row.provider || row.hidden
+		row.agentId ||
+		!row.relationKey ||
+		row.hidden ||
+		(!row.provider && relations.managedBy(row.relationKey).length === 0)
 			? []
 			: [
 					{
-						key: workShellKey(row.desktopId, row.key),
+						key: row.relationKey,
 						desktopId: row.desktopId,
 						panelId: row.key,
 						title: row.title,
@@ -76,12 +76,29 @@ function shellEntries(rows: readonly SpaceRow[]): WorkShellEntry[] {
 	);
 }
 
+/** What a plain shell pane's row reports, the way every row does: its
+ * provider's state and, when the needs-person rule flags it, why, and what
+ * the agents started from it amount to. */
+export function useWorkShellRowFacts(shell: WorkShellEntry): AgentRowFacts {
+	const managed = useAgentManagedSummary(shell.key);
+	return {
+		agentId: shell.key,
+		title: shell.title,
+		...(shell.state ? { state: shell.state } : {}),
+		...(shell.needsPerson ? { needsPerson: { reason: shell.needsPerson } } : {}),
+		...(shell.projectName ? { projectName: shell.projectName } : {}),
+		...(shell.spaceName ? { spaceName: shell.spaceName } : {}),
+		...(managed ? { managed } : {}),
+	};
+}
+
 /** One shell pane's entry, for a view of that entry alone. */
 export function useWorkShell(key: string): WorkShellEntry | undefined {
 	const spaceRows = useSpaces();
+	const relations = useAgentRelations();
 	return useMemo(
-		() => shellEntries(spaceRows).find((shell) => shell.key === key),
-		[spaceRows, key],
+		() => shellEntries(spaceRows, relations).find((shell) => shell.key === key),
+		[spaceRows, relations, key],
 	);
 }
 
@@ -95,7 +112,10 @@ export function useWorkView(): WorkView {
 	const depth = useWorkViewStore((state) => state.depth);
 	const grouping = useWorkViewStore((state) => state.grouping);
 
-	const shells = useMemo(() => shellEntries(spaceRows), [spaceRows]);
+	const shells = useMemo(
+		() => shellEntries(spaceRows, relations),
+		[spaceRows, relations],
+	);
 	const agentIds = useMemo(() => agents.map((agent) => agent.id), [agents]);
 	const spaceNames = useAgentRevealSpaceNames(agentIds, "pane");
 	const list = useMemo(

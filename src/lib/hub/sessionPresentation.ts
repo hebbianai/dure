@@ -36,10 +36,13 @@ export interface SessionPresentation
 	 * never rebuilds this desktop's row keys. Absent for a row that is no
 	 * Agent. */
 	readonly agentId?: string;
-	/** Its display manager, from the one relation owner
+	/** Its display manager when that is an Agent, from the one relation owner
 	 * (`agentRelations.ts`). Absent when no fact names one: the phone then
 	 * lists the agent at the top level. */
 	readonly managerAgentId?: string;
+	/** Its display manager when that is a plain shell row, by the Hmux
+	 * Session the phone keys that row by. At most one of the two is set. */
+	readonly managerSessionId?: string;
 	/** When the Agent's backend continues it by itself after its usage
 	 * limit resets, while recovery waits for that: the backend's own wait
 	 * (`agent_recovery.waits`), not a row's words. The phone reads it with
@@ -49,10 +52,10 @@ export interface SessionPresentation
 }
 
 /** The Agent a row shows and who manages it, as the relation owner says. */
-export interface SessionAgentRelation {
-	readonly agentId: string;
-	readonly managerAgentId?: string;
-}
+export type SessionAgentRelation = Pick<
+	SessionPresentation,
+	"managerAgentId" | "managerSessionId"
+> & { readonly agentId: string };
 
 export function sessionPresentation(
 	row: SpacesFacetSource & {
@@ -98,6 +101,9 @@ export function sessionPresentation(
 		...(row.notificationsMuted ? { notificationsMuted: true } : {}),
 		...(relation ? { agentId: relation.agentId } : {}),
 		...(relation?.managerAgentId ? { managerAgentId: relation.managerAgentId } : {}),
+		...(relation?.managerSessionId
+			? { managerSessionId: relation.managerSessionId }
+			: {}),
 		...(row.continuesAtMs === undefined ? {} : { continuesAtMs: row.continuesAtMs }),
 	};
 }

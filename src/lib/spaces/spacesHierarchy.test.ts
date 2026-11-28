@@ -202,12 +202,12 @@ describe("selectableRowKeys", () => {
 });
 
 describe("nestLeadWorkers", () => {
-	const lead = { key: "p-lead", desktopId: "d1", agentId: "lead" };
+	const lead = { key: "p-lead", desktopId: "d1", relationKey: "lead" };
 	// Dockview order differs from start order on purpose.
-	const second = { key: "p-2", desktopId: "d1", agentId: "w2", leadAgentId: "lead", workerOrder: 2 };
-	const plain = { key: "p-plain", desktopId: "d1", agentId: "solo" };
-	const third = { key: "p-3", desktopId: "d1", agentId: "w3", leadAgentId: "lead", workerOrder: 3 };
-	const first = { key: "p-1", desktopId: "d1", agentId: "w1", leadAgentId: "lead", workerOrder: 1 };
+	const second = { key: "p-2", desktopId: "d1", relationKey: "w2", leadKey: "lead", workerOrder: 2 };
+	const plain = { key: "p-plain", desktopId: "d1", relationKey: "solo" };
+	const third = { key: "p-3", desktopId: "d1", relationKey: "w3", leadKey: "lead", workerOrder: 3 };
+	const first = { key: "p-1", desktopId: "d1", relationKey: "w1", leadKey: "lead", workerOrder: 1 };
 	const terminal = { key: "term", desktopId: "d1" };
 
 	it("lifts a lead's workers under it in start order and keeps every other row in place", () => {
@@ -244,7 +244,7 @@ describe("nestLeadWorkers", () => {
 	});
 
 	it("nests one step only and never loops on a cycle", () => {
-		const grandchild = { key: "p-g", desktopId: "d1", agentId: "g", leadAgentId: "w1", workerOrder: 4 };
+		const grandchild = { key: "p-g", desktopId: "d1", relationKey: "g", leadKey: "w1", workerOrder: 4 };
 		expect(
 			nestLeadWorkers([lead, first, grandchild]).map(({ row, workers }) => [
 				row.key,
@@ -254,12 +254,28 @@ describe("nestLeadWorkers", () => {
 			["p-lead", ["p-1"]],
 			["p-g", []],
 		]);
-		const a = { key: "a", desktopId: "d1", agentId: "a", leadAgentId: "b" };
-		const b = { key: "b", desktopId: "d1", agentId: "b", leadAgentId: "a" };
+		const a = { key: "a", desktopId: "d1", relationKey: "a", leadKey: "b" };
+		const b = { key: "b", desktopId: "d1", relationKey: "b", leadKey: "a" };
 		expect(nestLeadWorkers([a, b]).map(({ row, workers }) => [row.key, workers.length])).toEqual([
 			["a", 0],
 			["b", 0],
 		]);
+	});
+
+	it("nests the Agents started from a plain shell under that shell's row", () => {
+		const shell = { key: "p-shell", desktopId: "d1", relationKey: "pane:d1:p-shell" };
+		const worker = { ...first, leadKey: shell.relationKey };
+		expect(
+			nestLeadWorkers([worker, shell, plain]).map(({ row, workers }) => [
+				row.key,
+				workers.map((entry) => entry.key),
+			]),
+		).toEqual([
+			["p-shell", ["p-1"]],
+			["p-plain", []],
+		]);
+		const folded = { [leadWorkersFoldKey(shell.relationKey)]: true as const };
+		expect(leadWorkerRowKeys([worker, shell], folded)).toEqual(["p-shell"]);
 	});
 
 	it("orders selection as drawn, and a closed fold keeps only the focused worker", () => {

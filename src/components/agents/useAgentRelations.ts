@@ -1,31 +1,38 @@
 // The relation forest and its subtree summaries for React surfaces, in two
-// passes: the forest follows the Agents' relation facts only, and the
-// summaries follow the needs-person map and attention. An attention change
-// re-runs the summary pass over the same forest; it never rebuilds it.
+// passes: the forest follows the relation facts only (agentRelationFacts.ts),
+// and the summaries follow the needs-person map and attention. An attention
+// change re-runs the summary pass over the same forest; it never rebuilds it.
 import { useMemo, useSyncExternalStore } from "react";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
 import type { NeedsPersonMap } from "@/lib/agents/needsPerson";
 import { readNeedsPerson } from "@/lib/agents/needsPersonFacts";
-import { agentRelationsOf } from "@/lib/agents/relations/agentRelationFacts";
+import {
+	type AgentRelationFacts,
+	agentRelationFactsOf,
+	agentRelationsOf,
+} from "@/lib/agents/relations/agentRelationFacts";
 import {
 	type AgentRelationSummary,
 	type AgentRelations,
 	summarizeAgentRelations,
 } from "@/lib/agents/relations/agentRelations";
-import { type AppState, useStore } from "@/store";
+import { shellRelationNodesOf } from "@/lib/agents/relations/shellRelationNodes";
+import { useStore } from "@/store";
 
-/** Who manages whom among the window's Agents. The store replaces its
- * Agents array on every edit, so the facts are compared only then. */
+/** Who manages whom among the window's Agents and plain shell rows. The
+ * store replaces its Agents array on every edit, and the shells keep theirs
+ * until one changes, so the facts are compared only then. */
 export function useAgentRelations(): AgentRelations {
 	const agents = useStore((state) => state.agents);
-	return useMemo(() => agentRelationsOf(agents), [agents]);
+	const shells = useStore(shellRelationNodesOf);
+	return useMemo(() => agentRelationsOf({ agents, shells }), [agents, shells]);
 }
 
 type Summaries = ReadonlyMap<string, AgentRelationSummary>;
 
 let summaryCache: {
-	agents?: AppState["agents"];
+	facts?: AgentRelationFacts;
 	relations?: AgentRelations;
 	needsPerson?: NeedsPersonMap;
 	displayStates?: Readonly<Record<string, AgentDisplayState>>;
@@ -48,14 +55,20 @@ function sameSummary(
  * whose numbers did not change keeps its object, so a row re-renders only
  * when its own line changes. */
 function readAgentRelationSummaries(): Summaries {
-	const { agents } = useStore.getState();
+	const facts = agentRelationFactsOf(useStore.getState());
 	const needsPerson = readNeedsPerson();
 	const { displayStates } = useAgentAttention.getState();
 	const sameFacts =
 		summaryCache.needsPerson === needsPerson &&
 		summaryCache.displayStates === displayStates;
-	if (sameFacts && summaryCache.agents === agents) return summaryCache.value;
-	const relations = agentRelationsOf(agents);
+	if (
+		sameFacts &&
+		summaryCache.facts?.agents === facts.agents &&
+		summaryCache.facts.shells === facts.shells
+	) {
+		return summaryCache.value;
+	}
+	const relations = agentRelationsOf(facts);
 	let value = summaryCache.value;
 	if (!sameFacts || summaryCache.relations !== relations) {
 		const previous = summaryCache.value;
@@ -69,7 +82,7 @@ function readAgentRelationSummaries(): Summaries {
 		}
 		value = next;
 	}
-	summaryCache = { agents, relations, needsPerson, displayStates, value };
+	summaryCache = { facts, relations, needsPerson, displayStates, value };
 	return value;
 }
 

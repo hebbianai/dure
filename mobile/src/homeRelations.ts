@@ -4,7 +4,8 @@
  *
  * The phone records no relation of its own. Each computer names the Agent a
  * row shows and that Agent's display manager (`SessionPresentation.agentId`,
- * `managerAgentId`), and this file hands those facts to the shared forest, so
+ * and `managerAgentId`, or `managerSessionId` for a plain shell row that
+ * started it), and this file hands those facts to the shared forest, so
  * the phone nests agents to any depth with the desktop's own rules: a cycle is
  * broken and counted once, and a manager this phone has no row for is no
  * manager here.
@@ -32,6 +33,7 @@ export interface HomeRelationRow {
 	readonly row: Pick<UnifiedRow, "sessionId" | "title">;
 	readonly agentId?: string;
 	readonly managerAgentId?: string;
+	readonly managerSessionId?: string;
 	readonly displayState?: AgentDisplayState;
 	readonly need?: NeedsPerson;
 }
@@ -43,9 +45,19 @@ export interface HomeRelations {
 	managed(view: HomeRelationRow): AgentRelationSummary | undefined;
 }
 
+const agentNode = (agentId: string) => `agent:${agentId}`;
+const rowNode = (sessionId: string) => `row:${sessionId}`;
+
 /** The forest node a row stands for: its Agent when a computer named one, else the row. */
 function nodeOf(view: HomeRelationRow): string {
-	return view.agentId ? `agent:${view.agentId}` : `row:${view.row.sessionId}`;
+	return view.agentId ? agentNode(view.agentId) : rowNode(view.row.sessionId);
+}
+
+/** The node the computer says manages the row's Agent: an Agent, or a row. */
+function managerNodeOf(view: HomeRelationRow): string | undefined {
+	if (!view.agentId) return undefined;
+	if (view.managerAgentId) return agentNode(view.managerAgentId);
+	return view.managerSessionId ? rowNode(view.managerSessionId) : undefined;
 }
 
 /**
@@ -67,12 +79,8 @@ export function homeRelations(rows: readonly HomeRelationRow[]): HomeRelations {
 		titles.set(node, view.row.title);
 		if (view.need) needsPerson.set(node, view.need);
 		displayStates[node] = view.displayState;
-		if (view.agentId && view.managerAgentId)
-			edges.push({
-				child: node,
-				manager: `agent:${view.managerAgentId}`,
-				source: "computer_reported",
-			});
+		const manager = managerNodeOf(view);
+		if (manager) edges.push({ child: node, manager, source: "computer_reported" });
 	}
 	const relations = buildAgentRelations(nodes, edges);
 	const summaries = summarizeAgentRelations(relations, {

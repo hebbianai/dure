@@ -20,8 +20,15 @@ import {
 	subscribeConversationPresentation,
 } from "@/lib/agents/chat/conversationPresentationState";
 import { programStatusNotice } from "@/lib/agents/programStatus";
+import {
+	isShellRowKey,
+	type ShellRelationNode,
+	shellRelationNodesOf,
+} from "@/lib/agents/relations/shellRelationNodes";
 import { managedConversationId } from "@/lib/sessions/managed/managedConversationIdentity";
+import { shellRowTitle } from "@/lib/spaces/shellRowTitle";
 import { agentRowPrompt } from "@/lib/spaces/unopenedAgentPresentation";
+import { getTerminalExecutionLocation } from "@/lib/terminal/terminalExecutionLocationStore";
 import { observedTitle, resolveAgentPaneTitle } from "@/lib/workspace/pane/paneTitle";
 import { type AppState, useStore } from "@/store";
 import type { Agent } from "@/types";
@@ -57,17 +64,37 @@ function agentRowTitle(
 	});
 }
 
-/** The title every row shows for each of `agentIds`, in the same order;
- * undefined for an id no registered Agent has. */
+/** The same title as the plain shell's Spaces row. */
+function shellNodeTitle(
+	shell: ShellRelationNode,
+	state: Pick<AppState, "sessionAgentPin" | "sessionAgent" | "sessionCwd">,
+): string {
+	const id = shell.terminalSessionId;
+	const location = getTerminalExecutionLocation(id);
+	return shellRowTitle({
+		sshTarget: location?.kind === "ssh" ? location.target : undefined,
+		provider: state.sessionAgentPin[id] ?? state.sessionAgent[id] ?? null,
+		cwd: state.sessionCwd[id] || shell.cwd || "",
+	});
+}
+
+/** The title every row shows for each relation node in `keys` — an Agent,
+ * or a plain shell row — in the same order; undefined for a key that names
+ * neither. */
 export function useAgentRowTitles(
-	agentIds: readonly string[],
+	keys: readonly string[],
 ): readonly (string | undefined)[] {
 	return useStore(
 		useShallow((state) => {
 			const agents = agentIndexOf(state.agents);
-			return agentIds.map((id) => {
-				const agent = agents.get(id);
-				return agent ? agentRowTitle(agent, state) : undefined;
+			const shells = keys.some(isShellRowKey)
+				? new Map(shellRelationNodesOf(state).map((shell) => [shell.key, shell]))
+				: undefined;
+			return keys.map((key) => {
+				const agent = agents.get(key);
+				if (agent) return agentRowTitle(agent, state);
+				const shell = shells?.get(key);
+				return shell ? shellNodeTitle(shell, state) : undefined;
 			});
 		}),
 	);

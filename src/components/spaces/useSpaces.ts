@@ -8,6 +8,7 @@ import {
 } from "@/lib/agents/agentAttentionStore";
 import { agentNotificationsMuted } from "@/lib/agents/agentNotificationMute";
 import { agentContinuesAtMs } from "@/lib/agents/agentRowModel";
+import { shellRowKey } from "@/lib/agents/relations/shellRelationNodes";
 import { presentedAgentDisplayState } from "@/lib/agents/agentStateModel";
 import { needsPersonReason } from "@/lib/agents/needsPerson";
 import {
@@ -17,7 +18,6 @@ import {
 	conversationTitle,
 	subscribeConversationPresentation,
 } from "@/lib/agents/chat/conversationPresentationState";
-import { pathBasename } from "@/lib/files/paths";
 import { hmuxManagedPromotionAvailability } from "@/lib/hmux/conversion/hmuxManagedPromotionEligibility";
 import { hmuxSessionMetadataKey } from "@/lib/hmux/identity/hmuxSessionMetadata";
 import { t } from "@/lib/i18n";
@@ -27,6 +27,7 @@ import { sessionRuntimeDisplayState } from "@/lib/sessions/runtime/sessionRuntim
 import { hasSessionAgentRuntimeObservation } from "@/lib/sessions/runtime/sessionRuntimeStoreSlice";
 import { paneHmuxSessionId } from "@/lib/spaces/hmuxSessionIdentity";
 import { projectIndexFor } from "@/lib/spaces/projectIndex";
+import { shellRowTitle } from "@/lib/spaces/shellRowTitle";
 import { spaceRowDetail } from "@/lib/spaces/spaceRowDetail";
 import {
 	createSpacesPaneProjection,
@@ -60,9 +61,7 @@ import {
 } from "@/lib/workspace/pane/paneTitle";
 import { excludeHiddenAgentPanes } from "@/lib/workspace/pane/paneVisibility";
 import { useStore } from "@/store";
-import { PROVIDERS, type Provider } from "@/types";
-
-const spaceBasename = (path: string) => pathBasename(path);
+import type { Provider } from "@/types";
 
 const REMOTE_SESSION_KINDS = new Set(["ssh"]);
 
@@ -105,7 +104,8 @@ export function useSpaces() {
 		() => new Map(agents.map((agent, index) => [agent.id, index])),
 		[agents],
 	);
-	// Spaces nest one level: a row's lead is its display manager.
+	// Spaces nest one level: a row's lead is its display manager, an Agent or
+	// a plain shell row.
 	const relations = useAgentRelations();
 	const desktopOrder = useMemo(
 		() => spaces.map((desktop) => desktop.id),
@@ -288,7 +288,13 @@ export function useSpaces() {
 				: undefined;
 			// Where a chosen title stands, the provider's moves to the info line.
 			const explicitAgentTitle = agent ? chosenAgentTitle(agent) : undefined;
-			const leadAgentId = agent ? relations.managerOf(agent.id) : undefined;
+			// The row's node in the relation forest, and the node it nests under.
+			const relationKey = agent
+				? agent.id
+				: space.agentId
+					? undefined
+					: shellRowKey(space.desktopId, space.key);
+			const leadKey = relationKey && relations.managerOf(relationKey);
 			const title = agent
 				? resolveAgentPaneTitle({
 						agent,
@@ -296,10 +302,7 @@ export function useSpaces() {
 						opaqueConversationId: agent.conversationId,
 						directoryCandidates: [cwd, agent.worktreePath],
 					})
-				: nestedSsh?.target ||
-					(provider ? PROVIDERS[provider].label : "") ||
-					spaceBasename(cwd) ||
-					t("spaces.session.shell");
+				: shellRowTitle({ sshTarget: nestedSsh?.target, provider, cwd });
 			// PaneChrome과 같은 제목 권위를 쓴다. 사용자가 지정한 이름이
 			// 있으면 그 이름을, 없으면 provider conversation title을 첫 줄에
 			// 둔다. 최근 prompt와 경로는 정보 줄에만 남는다.
@@ -430,11 +433,12 @@ export function useSpaces() {
 						)
 					: undefined,
 				unread: agent ? isAgentUnread(episodes, acks, agent.id) : false,
-				/** The lead Agent this worker nests under, and its start order
-				 *  among that lead's workers. */
-				leadAgentId,
+				/** The row's relation node, the lead node it nests under, and
+				 *  its start order among that lead's workers. */
+				relationKey,
+				leadKey,
 				workerOrder:
-					leadAgentId && agent ? agentStartOrder.get(agent.id) : undefined,
+					leadKey && agent ? agentStartOrder.get(agent.id) : undefined,
 				...(space.hidden ? { hidden: true as const } : {}),
 				...(agent && agentNotificationsMuted(agent)
 					? { notificationsMuted: true as const }

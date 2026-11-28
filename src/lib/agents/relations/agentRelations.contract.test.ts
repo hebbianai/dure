@@ -1,6 +1,7 @@
 // Coverage contract: every surface that says who manages whom reads the one
 // relation owner, so Spaces' lead nesting, worker pane placement, the row
-// paths and a manager's team line cannot disagree about an agent's manager.
+// paths and a manager's team line cannot disagree about an agent's manager,
+// whether that is an Agent or a plain shell row.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -38,7 +39,7 @@ describe("relation coverage", () => {
 
 	it("routes every surface that names a manager through the owner", () => {
 		expect(source("components/spaces/useSpaces.ts")).toContain(
-			"relations.managerOf(agent.id)",
+			"relations.managerOf(relationKey)",
 		);
 		expect(source("lib/workspace/dock/workerColumnPlacement.ts")).toContain(
 			"relations.managerOf(worker.id)",
@@ -55,6 +56,13 @@ describe("relation coverage", () => {
 		// The manager the phone is told about, and the forest it builds from it.
 		expect(source("components/hub/useHubSidebarLayout.ts")).toContain(
 			"relations.managerOf(agentId)",
+		);
+		// Every reader outside React takes the store's facts, shells included.
+		expect(source("lib/agents/agentAttentionNotifier.ts")).toContain(
+			"agentRelationsOfState(useStore.getState())",
+		);
+		expect(source("lib/workspace/dock.ts")).toContain(
+			"agentRelationFactsOf(useStore.getState())",
 		);
 		expect(source("../mobile/src/homeRelations.ts")).toContain(
 			"buildAgentRelations(nodes, edges)",

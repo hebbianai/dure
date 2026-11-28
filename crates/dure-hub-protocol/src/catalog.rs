@@ -155,6 +155,12 @@ pub struct SessionPresentation {
     /// older desktops: the phone then lists the agent at the top level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manager_agent_id: Option<String>,
+    /// The plain shell row that manages it instead, by the session id that
+    /// row is listed under: a lead started the agent from a shell pane. At
+    /// most one of the two managers is set. Absent from older desktops; an
+    /// older phone ignores it and lists the agent at the top level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manager_session_id: Option<String>,
     /// When the Agent's backend continues it by itself after its usage
     /// limit resets, in Unix milliseconds, while recovery waits for that
     /// (`agent_recovery.waits`). The phone's shared needs-person authority
@@ -568,12 +574,36 @@ mod tests {
         let older: SessionPresentation =
             serde_json::from_str(r#"{"displayState":"working"}"#).unwrap();
         assert_eq!(
-            (older.agent_id.as_deref(), older.manager_agent_id.as_deref()),
-            (None, None)
+            (
+                older.agent_id.as_deref(),
+                older.manager_agent_id.as_deref(),
+                older.manager_session_id.as_deref()
+            ),
+            (None, None, None)
         );
         let written = serde_json::to_value(older).unwrap();
         assert!(written.get("agentId").is_none());
         assert!(written.get("managerAgentId").is_none());
+        assert!(written.get("managerSessionId").is_none());
+    }
+
+    /// A shell row's manager travels as the session id the phone lists that
+    /// row under, beside the worker's Agent id.
+    #[test]
+    fn a_shell_manager_travels_by_its_session_id() {
+        let mut current = catalog();
+        current.sessions[0].presentation = Some(SessionPresentation {
+            agent_id: Some("agent-worker".into()),
+            manager_session_id: Some("session-shell".into()),
+            ..Default::default()
+        });
+        let encoded = encode(&current).unwrap();
+        assert_eq!(read(&mut encoded.as_slice()).unwrap(), current);
+        let wire = serde_json::to_value(&current.sessions[0].presentation).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({ "agentId": "agent-worker", "managerSessionId": "session-shell" })
+        );
     }
 
     /// A recovery wait travels under the name the phone's shared

@@ -92,15 +92,15 @@ export function rowListBindingsEqual(
  *  restarts. A closed fold still shows the focused pane's row, as a folded
  *  repository does. */
 function LeadWorkersFold({
-	leadAgentId,
+	leadKey,
 	workers,
 	renderRow,
 }: {
-	leadAgentId: string;
+	leadKey: string;
 	workers: readonly SpaceRow[];
 	renderRow: (space: SpaceRow) => ReactNode;
 }) {
-	const foldKey = leadWorkersFoldKey(leadAgentId);
+	const foldKey = leadWorkersFoldKey(leadKey);
 	const folded = useSpacesCollapsedGroups(
 		(state) => state.collapsed[foldKey] === true,
 	);
@@ -229,13 +229,13 @@ export function SpacesOpenRowList({
 		// 2386:41128 "VerticalBorder" kept them 2px apart.
 		<div className="flex flex-col">
 			{nestLeadWorkers(spaces).map(({ row, workers }) =>
-				workers.length === 0 || !row.agentId ? (
+				workers.length === 0 || !row.relationKey ? (
 					renderRow(row)
 				) : (
 					<Fragment key={row.key}>
 						{renderRow(row)}
 						<LeadWorkersFold
-							leadAgentId={row.agentId}
+							leadKey={row.relationKey}
 							workers={workers}
 							renderRow={renderRow}
 						/>

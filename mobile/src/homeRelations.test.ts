@@ -124,6 +124,28 @@ describe("home relations", () => {
 		]);
 	});
 
+	it("nests the agents a lead in a plain shell started under the shell's row", () => {
+		const sessions = [
+			session("shell", "working", undefined, {
+				session_name: "Shell",
+				presentation: { agentId: undefined, kind: "term" },
+			}),
+			session("worker", "blocked", undefined, {
+				presentation: { managerSessionId: "session-shell" },
+			}),
+			session("helper", "working", "worker"),
+		];
+		expect(agentOf(sessions, "helper")?.path).toEqual(["Shell", "Agent worker"]);
+		expect(agentOf(sessions, "shell")?.managed).toEqual({
+			count: 2,
+			needsPerson: 1,
+			working: 1,
+		});
+		// A shell this phone has no row for is no manager here.
+		const unlisted = sessions.slice(1);
+		expect(agentOf(unlisted, "worker")?.path).toBeUndefined();
+	});
+
 	it("keeps an agent a person is needed for out of Has a result", () => {
 		const exited = session("crashed", "waiting", undefined, {
 			failure: { code: "provider_exited", terminal_epoch: "epoch-crashed", occurred_unix_ms: String(now) },

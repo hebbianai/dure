@@ -71,6 +71,7 @@ describe("useHubSidebarLayout — mobile presentation", () => {
 			sessionTitle: {},
 			pinnedPanes: {},
 			sessionAgentRuntimeState: {},
+			layouts: {},
 		});
 		useAgentAttention.setState({ recoveryWaits: {} });
 	});
@@ -242,6 +243,56 @@ describe("useHubSidebarLayout — mobile presentation", () => {
 		} as (typeof mocks.spaces)[number]];
 		act(() => useStore.setState({ desktops: [{ id: "work", name: "Work" }] }));
 		expect(presented("hmux-2")).toMatchObject({ agentId: "agent-2", managerAgentId: "agent-1" });
+	});
+
+	/** #821: a lead in a plain shell pane is the manager the phone nests the
+	 * agents it started under, by the Hmux session the shell's seat is keyed
+	 * by. */
+	it("publishes a plain shell row that started an agent as its manager", () => {
+		const worker = managedAgentFixture({
+			id: "agent-2",
+			name: "codex-15",
+			provider: "claude",
+			projectId: project.id,
+			worktreePath: "/repo/.worktrees/codex-15",
+			runtimeBinding: managedBindingFixture({ sessionId: "hmux-2" }),
+			runParent: { sessionId: "hmux-shell", workspaceId: "workspace-1" },
+		});
+		mocks.spaces = [{
+			key: "term:lead", kind: "term", desktopId: "work", projectName: "Dure",
+			title: "Shell", hmuxSessionId: "hmux-shell", relationKey: "pane:work:term:lead",
+		} as (typeof mocks.spaces)[number]];
+		useStore.setState({
+			agents: [agent, worker],
+			desktops: [{ id: "work", name: "Work" }],
+			spaces: [{ id: "work", name: "Work" }],
+			layouts: {
+				work: {
+					panels: {
+						"term:lead": {
+							contentComponent: "terminal",
+							params: {
+								sessionId: "shell-lead",
+								binding: {
+									runtime: "hmux_session_v1",
+									sessionId: "hmux-shell",
+									workspaceId: "workspace-1",
+								},
+							},
+						},
+					},
+				},
+			},
+		});
+		const send = vi.fn();
+		renderHook(() => useHubSidebarLayout(send));
+		const presented = (key: string) => lastSent(send).placements[key].presentation;
+		expect(presented("hmux-2")).toMatchObject({
+			agentId: "agent-2",
+			managerSessionId: "hmux-shell",
+		});
+		expect(presented("hmux-2")?.managerAgentId).toBeUndefined();
+		expect(presented("hmux-shell")?.managerSessionId).toBeUndefined();
 	});
 
 	/**

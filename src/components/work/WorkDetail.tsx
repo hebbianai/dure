@@ -24,10 +24,14 @@ import { PaneLabel } from "@/components/ui/pane-line";
 import { IconButton } from "@/components/ui/icon-button";
 import { WorkAlsoManagedBy, WorkBreadcrumb } from "@/components/work/WorkBreadcrumb";
 import { WorkConversation } from "@/components/work/WorkConversation";
-import { WorkShellRow } from "@/components/work/WorkList";
 import { WorkManagedList } from "@/components/work/WorkManagedList";
-import { isWorkShellKey, useWorkShell } from "@/components/work/useWorkView";
+import {
+	useWorkShell,
+	useWorkShellRowFacts,
+	type WorkShellEntry,
+} from "@/components/work/useWorkView";
 import { agentRowModel } from "@/lib/agents/agentRowModel";
+import { isShellRowKey } from "@/lib/agents/relations/shellRelationNodes";
 import { revealAgent } from "@/lib/agents/nextUpNavigation";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -65,8 +69,8 @@ export function WorkDetailColumn({
 				marked && "bg-glass-tint",
 			)}
 		>
-			{isWorkShellKey(column.key) ? (
-				<WorkShellColumn shellKey={column.key} />
+			{isShellRowKey(column.key) ? (
+				<WorkShellColumn shellKey={column.key} dayStart={dayStart} />
 			) : (
 				<WorkAgentColumn
 					agentId={column.key}
@@ -227,25 +231,57 @@ function WorkPinControls({
 	);
 }
 
-/** A provider found in a plain shell pane: its card and the way to its
- * pane. It has no Agent record, so no conversation, relations or pin. */
-function WorkShellColumn({ shellKey }: { shellKey: string }) {
+/** A plain shell pane: its card, the way to its pane and the agents started
+ * from it. It has no Agent record, so no conversation or pin. */
+function WorkShellColumn({
+	shellKey,
+	dayStart,
+}: {
+	shellKey: string;
+	dayStart: number;
+}) {
 	const shell = useWorkShell(shellKey);
 	if (!shell) return <WorkDetailEmpty />;
+	return <WorkShellDetail shell={shell} dayStart={dayStart} />;
+}
+
+function WorkShellDetail({
+	shell,
+	dayStart,
+}: {
+	shell: WorkShellEntry;
+	dayStart: number;
+}) {
+	const select = useWorkViewStore((state) => state.select);
+	const selected = useWorkViewStore((state) => state.selected);
+	// The managed fold below sums up what it manages, so the card does not.
+	const { managed: _summedUpBelow, ...cardFacts } = useWorkShellRowFacts(shell);
 	return (
-		<div className="flex w-full max-w-xl flex-col gap-2 p-3">
-			<WorkShellRow shell={shell} variant="card" />
-			<div className="flex flex-wrap items-center gap-1">
-				<Button
-					variant="ghost"
-					size="xs"
-					onClick={() => navigateToPanel(shell.desktopId, shell.panelId)}
-				>
-					<LayoutGrid />
-					{t("work.detail.showInSpace")}
-				</Button>
-			</div>
-		</div>
+		// A size container, so the managed rows' cap is a share of this detail.
+		<section
+			aria-label={shell.title}
+			className="flex min-h-0 flex-1 flex-col [container-type:size]"
+		>
+			<header className="flex w-full max-w-xl shrink-0 flex-col gap-1.5 p-3">
+				<AgentRow row={agentRowModel(cardFacts)} variant="card" />
+				<div className="flex flex-wrap items-center gap-1">
+					<Button
+						variant="ghost"
+						size="xs"
+						onClick={() => navigateToPanel(shell.desktopId, shell.panelId)}
+					>
+						<LayoutGrid />
+						{t("work.detail.showInSpace")}
+					</Button>
+				</div>
+			</header>
+			<WorkManagedList
+				agentId={shell.key}
+				dayStart={dayStart}
+				selected={selected}
+				onSelect={select}
+			/>
+		</section>
 	);
 }
 

@@ -1,9 +1,13 @@
 // A lead's new worker panes stack in a column to the lead's right, in start
-// order. Only the new pane's position is chosen: existing panes keep their
-// place (design/SOUL.md: nothing rearranges silently).
-import type { DockviewApi } from "dockview-react";
+// order. The lead is an Agent's pane or a plain shell pane. Only the new
+// pane's position is chosen: existing panes keep their place (design/SOUL.md:
+// nothing rearranges silently).
+import type { DockviewApi, IDockviewPanel } from "dockview-react";
 import type { RunParentedAgent } from "@/lib/agents/agentRunParent";
-import { agentRelationsOf } from "@/lib/agents/relations/agentRelationFacts";
+import {
+	type AgentRelationFacts,
+	agentRelationsOf,
+} from "@/lib/agents/relations/agentRelationFacts";
 import { findAgentPanel } from "@/lib/workspace/dock/dockPanelParameters";
 import { restoreMaximizedPane } from "@/lib/workspace/pane/paneMaximize";
 import type { PanelPosition } from "@/lib/workspace/pane/panePlacement";
@@ -38,11 +42,29 @@ function pickWorkerColumnPlacement(
 	};
 }
 
-function gridGroupOf(api: DockviewApi, agentId: string) {
-	const group = findAgentPanel(api, agentId)?.group;
+function gridGroupOf(panel: IDockviewPanel | undefined) {
+	const group = panel?.group;
 	return group?.api.location.type === "grid" && group.api.isVisible !== false
 		? group
 		: undefined;
+}
+
+/** The pane of a relation node in this Space: an Agent's pane, or the shell
+ * pane a shell node names when it is in this Space. */
+function relationNodePanel(
+	api: DockviewApi,
+	desktopId: string,
+	shells: AgentRelationFacts["shells"],
+): (key: string) => IDockviewPanel | undefined {
+	const shellPanels = new Map(
+		shells.flatMap((shell) =>
+			shell.desktopId === desktopId ? [[shell.key, shell.panelId]] : [],
+		),
+	);
+	return (key) => {
+		const panelId = shellPanels.get(key);
+		return panelId === undefined ? findAgentPanel(api, key) : api.getPanel(panelId);
+	};
 }
 
 /** Where a new pane for `worker` goes when its lead — its display manager —
@@ -52,24 +74,26 @@ function gridGroupOf(api: DockviewApi, agentId: string) {
  * keeps its own placement; a worker is never sent to an unrelated group. */
 export function workerColumnPosition(
 	api: DockviewApi,
+	desktopId: string,
 	worker: RunParentedAgent,
-	agents: readonly RunParentedAgent[],
+	facts: AgentRelationFacts,
 	minimumHeight: number,
 ): PanelPosition | undefined {
 	// A worker not registered yet starts after every Agent there is.
 	const relations = agentRelationsOf(
-		agents.some((agent) => agent.id === worker.id)
-			? agents
-			: [...agents, worker],
+		facts.agents.some((agent) => agent.id === worker.id)
+			? facts
+			: { ...facts, agents: [...facts.agents, worker] },
 	);
 	const leadId = relations.managerOf(worker.id);
 	if (leadId === undefined) return undefined;
-	const leadGroup = gridGroupOf(api, leadId);
+	const panelOf = relationNodePanel(api, desktopId, facts.shells);
+	const leadGroup = gridGroupOf(panelOf(leadId));
 	if (!leadGroup) return undefined;
 	let lastWorkerGroup: ReturnType<typeof gridGroupOf>;
-	for (const agentId of relations.managedBy(leadId)) {
-		if (agentId === worker.id) continue;
-		const group = gridGroupOf(api, agentId);
+	for (const memberId of relations.managedBy(leadId)) {
+		if (memberId === worker.id) continue;
+		const group = gridGroupOf(panelOf(memberId));
 		if (group && group.id !== leadGroup.id) lastWorkerGroup = group;
 	}
 	// Measure the real layout, as autoSplitPosition does.

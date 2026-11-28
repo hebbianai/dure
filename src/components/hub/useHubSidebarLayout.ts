@@ -43,7 +43,7 @@ import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
 import { useDiffBadges } from "@/lib/scm/status/diffBadgesStore";
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useRecentSessionHistory } from "@/components/sessions/useRecentSessionHistory";
-import { useSpaces } from "@/components/spaces/useSpaces";
+import { type SpaceRow, useSpaces } from "@/components/spaces/useSpaces";
 import { sessionAccountSummary } from "@/lib/hub/sessionAccount";
 import {
 	type SessionAgentRelation,
@@ -51,6 +51,7 @@ import {
 } from "@/lib/hub/sessionPresentation";
 import { useAgentRelations } from "@/components/agents/useAgentRelations";
 import type { AgentRelations } from "@/lib/agents/relations/agentRelations";
+import { isShellRowKey } from "@/lib/agents/relations/shellRelationNodes";
 import { presentedAgentDisplayState } from "@/lib/agents/agentStateModel";
 import { buildSidebarLayout, chatOwnedAgent } from "@/lib/hub/sidebarLayout";
 import { pathBasename } from "@/lib/files/paths";
@@ -75,11 +76,32 @@ import { isPanePinned, panePinKey } from "@/lib/workspace/pane/panePin";
 import { useStore } from "@/store";
 
 /** The row's Agent and its display manager, as the one relation owner says:
- * the phone builds its own forest from these, so it never names a manager
- * the desktop would not. */
-function agentRelation(relations: AgentRelations, agentId: string): SessionAgentRelation {
-	const managerAgentId = relations.managerOf(agentId);
-	return managerAgentId === undefined ? { agentId } : { agentId, managerAgentId };
+ * an Agent by its id, a plain shell row by the Hmux Session its seat is keyed
+ * by (`shellSessions`). The phone builds its own forest from these, so it
+ * never names a manager the desktop would not. */
+function agentRelation(
+	relations: AgentRelations,
+	shellSessions: ReadonlyMap<string, string>,
+	agentId: string,
+): SessionAgentRelation {
+	const manager = relations.managerOf(agentId);
+	if (manager === undefined) return { agentId };
+	if (!isShellRowKey(manager)) return { agentId, managerAgentId: manager };
+	const managerSessionId = shellSessions.get(manager);
+	return managerSessionId === undefined ? { agentId } : { agentId, managerSessionId };
+}
+
+/** Each plain shell row's Hmux Session, by its relation node. */
+function shellSessionsOf(
+	spaces: readonly Pick<SpaceRow, "relationKey" | "agentId" | "hmuxSessionId">[],
+): ReadonlyMap<string, string> {
+	return new Map(
+		spaces.flatMap((space) =>
+			space.relationKey && !space.agentId && space.hmuxSessionId
+				? [[space.relationKey, space.hmuxSessionId]]
+				: [],
+		),
+	);
 }
 
 /** 허브에게 표를 넘기는 쪽. 시험이 진짜 IPC 없이 이 훅을 태울 수 있게 주입한다. */
@@ -97,6 +119,7 @@ export function useHubSidebarLayout(send: LayoutSink): void {
 	const pinnedPanes = useStore((state) => state.pinnedPanes);
 	const spaces = useSpaces();
 	const relations = useAgentRelations();
+	const shellSessions = useMemo(() => shellSessionsOf(spaces), [spaces]);
 	const sessionActivity = useStore((state) => state.sessionActivity);
 	const displayStates = useAgentAttention((state) => state.displayStates);
 	// Each Agent's backend wait to continue it after its usage limit resets:
@@ -177,12 +200,12 @@ export function useHubSidebarLayout(send: LayoutSink): void {
 					notificationsMuted: agentNotificationsMuted(agent),
 					continuesAtMs: recoveryWaits[agent.id],
 				}, diffBadges[agent.id] ? normalizeDiffBadge(diffBadges[agent.id]) : undefined,
-				sessionAccountSummary(agent, accounts), agentRelation(relations, agent.id)),
+				sessionAccountSummary(agent, accounts), agentRelation(relations, shellSessions, agent.id)),
 			};
 		});
 		// `titleRevision` is not read; it is what makes a newly published live
 		// title re-run this and reach the phone.
-	}, [agents, accounts, projects, spaces, branchOf, sessionTitle, conversationIndex, titleRevision, sshHosts, displayStates, activity, sessionActivity, diffBadges, runtimeStates, relations, recoveryWaits]);
+	}, [agents, accounts, projects, spaces, branchOf, sessionTitle, conversationIndex, titleRevision, sshHosts, displayStates, activity, sessionActivity, diffBadges, runtimeStates, relations, shellSessions, recoveryWaits]);
 
 	// 브랜치는 space 자체의 값이 아니라 그 space 가 붙어 있는 에이전트의 값이라,
 	// 표를 만들기 직전에 얹는다.
@@ -203,10 +226,10 @@ export function useHubSidebarLayout(send: LayoutSink): void {
 					continuesAtMs: agent && recoveryWaits[agent.id],
 				}, space.agentId && diffBadges[space.agentId] ? normalizeDiffBadge(diffBadges[space.agentId]) : undefined,
 				agent && sessionAccountSummary(agent, accounts),
-				agent && agentRelation(relations, agent.id)),
+				agent && agentRelation(relations, shellSessions, agent.id)),
 			};
 		}),
-		[spaces, agents, accounts, branchOf, diffBadges, pinnedPanes, runtimeStates, relations, recoveryWaits],
+		[spaces, agents, accounts, branchOf, diffBadges, pinnedPanes, runtimeStates, relations, shellSessions, recoveryWaits],
 	);
 
 	useEffect(() => {
