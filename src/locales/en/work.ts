@@ -24,6 +24,5 @@ export const workEnglishTranslations: Record<string, string> = {
 	"work.detail.moveRight": "Move right",
 	"work.detail.removed": "This agent was removed.",
 	"work.conversation.label": "Conversation",
-	"work.conversation.pending": "Waiting for a person. Answer it in the large window.",
 	"work.conversation.none": "No conversation record to show here.",
 };

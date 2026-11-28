@@ -23,6 +23,5 @@ export const work: Record<string, string> = {
 	"work.detail.moveRight": "Mover para a direita",
 	"work.detail.removed": "Este agente foi removido.",
 	"work.conversation.label": "Conversa",
-	"work.conversation.pending": "Aguardando uma pessoa. Responda na janela grande.",
 	"work.conversation.none": "Nenhum registro de conversa para mostrar aqui.",
 };

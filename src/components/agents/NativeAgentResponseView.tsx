@@ -7,7 +7,10 @@ import { useRuntimeOwnedValue } from "@/components/agents/useRuntimeOwnedValue";
 import { Button } from "@/components/ui/button";
 import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
 import { agentRuntimePresentationOwnerKey } from "@/lib/agents/agentRuntimePresentationOwner";
-import { nativeAgentChatIdle } from "@/lib/agents/chat/nativeAgentChat";
+import {
+	nativeAgentChatIdle,
+	nativeAgentChatOwnerKey,
+} from "@/lib/agents/chat/nativeAgentChat";
 import type { NativeAgentViewPort } from "@/lib/agents/chatHandover";
 import { nativeConversationViewAvailability } from "@/lib/agents/nativeConversationView";
 import { nativeFinalResponse } from "@/lib/agents/nativeFinalResponse";
@@ -38,11 +41,6 @@ export function NativeAgentResponseView({
 	const provider = source.kind === "local" ? source.provider : undefined;
 	const conversationId =
 		source.kind === "local" ? source.conversationId : undefined;
-	const binding = agent.runtimeBinding;
-	const conversationEpoch =
-		binding?.runtime === "hmux_managed_v1"
-			? binding.conversationIdentity?.terminalEpoch
-			: undefined;
 	const count = runtime?.turnCompletedCount;
 	const ownerKey = JSON.stringify([
 		agentRuntimePresentationOwnerKey(agent),
@@ -57,11 +55,7 @@ export function NativeAgentResponseView({
 	// recorded conversation rather than the live runtime projection, so a
 	// momentary drop of the projection does not forget a sent prompt.
 	const chat = useNativeAgentChatState(
-		JSON.stringify([
-			agentRuntimePresentationOwnerKey(agent),
-			conversationId,
-			conversationEpoch,
-		]),
+		nativeAgentChatOwnerKey(agent),
 		nativeAgentChatIdle({ runtime, state }),
 	);
 	const conversationAvailable = nativeConversationViewAvailability(

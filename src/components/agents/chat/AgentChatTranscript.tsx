@@ -24,7 +24,7 @@ import { t } from "@/lib/i18n";
  * than the seeded window and the gaps between its rows loading on request.
  * What follows the conversation is the caller's: the pane and its large
  * window put the team line, goal and composer below it as `children`; the
- * Work view shows it read-only, with nothing below. */
+ * Work view puts the goal and composer there. */
 export function AgentChatTranscript({
 	session,
 	typography,

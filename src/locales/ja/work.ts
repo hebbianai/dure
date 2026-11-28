@@ -23,6 +23,5 @@ export const work: Record<string, string> = {
 	"work.detail.moveRight": "右へ移動",
 	"work.detail.removed": "このエージェントは削除されました。",
 	"work.conversation.label": "会話",
-	"work.conversation.pending": "人の対応を待っています。大きいウィンドウで回答してください。",
 	"work.conversation.none": "ここに表示できる会話の記録はありません。",
 };

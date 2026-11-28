@@ -1,18 +1,30 @@
 import { Expand } from "lucide-react";
-import { useState } from "react";
 import { NativeAgentBackgroundWork } from "@/components/agents/NativeAgentBackgroundWork";
+import { NativeAgentChatComposer } from "@/components/agents/NativeAgentChatComposer";
+import { AgentChatPendingAnswer } from "@/components/agents/chat/AgentChatPendingAnswer";
 import { AgentChatTranscript } from "@/components/agents/chat/AgentChatTranscript";
 import { TranscriptContents } from "@/components/agents/chat/AgentChatTimelineRows";
+import { AgentGoalBar } from "@/components/agents/chat/AgentGoalBar";
 import { ChatAlert } from "@/components/agents/chat/ChatAlert";
+import { ChatComposer } from "@/components/agents/chat/ChatComposer";
 import { useAgentChatSession } from "@/components/agents/chat/useAgentChatSession";
 import { useChatContentTypography } from "@/components/agents/chat/useChatContentTypography";
 import { useNativeAgentResponseState } from "@/components/agents/useAgentDisplayState";
+import {
+	type NativeAgentChatState,
+	useNativeAgentChatState,
+} from "@/components/agents/useNativeAgentChatState";
 import { useNativeAgentTranscriptPage } from "@/components/agents/useNativeAgentTranscriptPage";
 import { PanelStatus } from "@/components/common/PanelStatus";
+import { useStructuredAgentPanelState } from "@/components/panels/useAgentPanelState";
 import { Button } from "@/components/ui/button";
+import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
 import type { AgentStructuredInteractionProfileV1 } from "@/lib/agents/chat/agentInteractionProfile";
 import { backgroundWorkSession } from "@/lib/agents/chat/backgroundWork";
-import type { NativeAgentChatSnapshot } from "@/lib/agents/chat/nativeAgentChat";
+import {
+	nativeAgentChatIdle,
+	nativeAgentChatOwnerKey,
+} from "@/lib/agents/chat/nativeAgentChat";
 import { nativeConversationViewAvailability } from "@/lib/agents/nativeConversationView";
 import { t } from "@/lib/i18n";
 import type { HmuxAgentRuntimeState } from "@/lib/ipc/hmuxContracts";
@@ -23,11 +35,14 @@ import {
 	nativeAgentTranscriptSource,
 } from "../../../cli/lib/agent-transcript.mjs";
 
-/** The agent's conversation in a Work column, read-only: a Chat Agent's
- * committed timeline, a local terminal's provider transcript when the
- * pane's Conversation view could show it, and otherwise a note
- * that there is none. It never mounts a terminal, so showing it never
- * changes a terminal's size; typing happens in the large window. */
+/** The agent's conversation in a Work column with the composer each agent
+ * has elsewhere: a Chat Agent's committed timeline, goal and composer
+ * through the window's shared session, and a local terminal's provider
+ * transcript with the native composer on the Host's idle prompt path when
+ * the pane's Conversation view could show it; otherwise a note that there
+ * is none. It never mounts a terminal, so showing it or sending from it
+ * never changes a terminal's size, and it never takes focus on its own:
+ * what the composer cannot answer goes to the large window. */
 export function WorkConversation({
 	agent,
 	onOpenLargeWindow,
@@ -44,11 +59,7 @@ export function WorkConversation({
 			className="relative flex min-h-0 flex-1 flex-col"
 		>
 			{target?.kind === "chat" ? (
-				<WorkChatConversation
-					agentId={agent.id}
-					profile={target.profile}
-					onOpenLargeWindow={onOpenLargeWindow}
-				/>
+				<WorkChatConversation agent={agent} profile={target.profile} />
 			) : (
 				<WorkNativeConversation
 					agent={agent}
@@ -60,46 +71,39 @@ export function WorkConversation({
 }
 
 function WorkChatConversation({
-	agentId,
+	agent,
 	profile,
-	onOpenLargeWindow,
 }: {
-	agentId: string;
+	agent: Agent;
 	profile: AgentStructuredInteractionProfileV1;
-	onOpenLargeWindow?: () => void;
 }) {
 	// The window's shared lease on the session: the pane, its large window
-	// and this column read the same controller.
-	const session = useAgentChatSession(agentId, profile);
+	// and this column read and send through the same controller.
+	const session = useAgentChatSession(agent.id, profile);
+	const { project } = useStructuredAgentPanelState(agent);
 	const { fontSize, lineHeight } = useChatContentTypography();
+	const identity = session.draftIdentity;
+	// Like a shared conversation, the column runs no pane controls: it has no
+	// launch selection, recovery or new conversation, and its team is the
+	// managed list above, so there is no team line.
 	return (
 		<AgentChatTranscript
 			session={session}
 			typography={{ fontSize, lineHeight }}
-			renderPending={() => (
-				<WorkPendingNotice onOpenLargeWindow={onOpenLargeWindow} />
+			renderPending={(pending) => (
+				<AgentChatPendingAnswer session={session} pending={pending} />
 			)}
-		/>
-	);
-}
-
-/** What a pending request shows here: that it waits for a person, and where
- * to answer it. The answer is given where the agent can be typed into. */
-function WorkPendingNotice({
-	onOpenLargeWindow,
-}: {
-	onOpenLargeWindow?: () => void;
-}) {
-	return (
-		<ChatAlert className="items-center">
-			<span className="min-w-0 flex-1">{t("work.conversation.pending")}</span>
-			{onOpenLargeWindow && (
-				<Button type="button" variant="ghost" size="xs" onClick={onOpenLargeWindow}>
-					<Expand />
-					{t("work.detail.openLargeWindow")}
-				</Button>
-			)}
-		</ChatAlert>
+		>
+			<AgentGoalBar
+				key={`${identity.backendProfileId}:${identity.agentId}:${identity.interactionSessionId}`}
+				session={session}
+			/>
+			<ChatComposer
+				session={session}
+				disabled={false}
+				attachmentsEnabled={project?.kind === "local"}
+			/>
+		</AgentChatTranscript>
 	);
 }
 
@@ -114,6 +118,13 @@ function WorkNativeConversation({
 	// view reads them.
 	const { runtime, state } = useNativeAgentResponseState(agent);
 	const source = nativeAgentTranscriptSource(agent, agent.runtimeBinding);
+	// The column keeps the conversation's runtime-owned state for as long as
+	// it shows the agent, under the pane's owner key, so a momentary drop of
+	// the runtime projection does not forget a sent prompt.
+	const chat = useNativeAgentChatState(
+		nativeAgentChatOwnerKey(agent),
+		nativeAgentChatIdle({ runtime, state }),
+	);
 	// The same authority as the pane's View menu decides whether there is a
 	// conversation to show.
 	const shown =
@@ -130,9 +141,12 @@ function WorkNativeConversation({
 			{shown ? (
 				<WorkNativeTranscript
 					key={`${shown.source.conversationId}:${shown.runtime.terminalEpoch}`}
+					agent={agent}
 					source={shown.source}
 					runtime={shown.runtime}
-					working={state === "working"}
+					state={state}
+					chat={chat}
+					onOpenLargeWindow={onOpenLargeWindow}
 				/>
 			) : (
 				<WorkNoConversation onOpenLargeWindow={onOpenLargeWindow} />
@@ -151,24 +165,29 @@ function WorkNativeConversation({
 }
 
 function WorkNativeTranscript({
+	agent,
 	source,
 	runtime,
-	working,
+	state,
+	chat,
+	onOpenLargeWindow,
 }: {
+	agent: Agent;
 	source: NativeAgentTranscriptSource;
 	runtime: HmuxAgentRuntimeState;
-	working: boolean;
+	state: AgentDisplayState;
+	chat: NativeAgentChatState;
+	onOpenLargeWindow?: () => void;
 }) {
-	// This column keeps its own read for as long as it is shown; the pane's
-	// read stays the pane's.
-	const [snapshot, setSnapshot] = useState<NativeAgentChatSnapshot>();
-	const [readFailed, setReadFailed] = useState(false);
+	const { snapshot, setSnapshot, readFailed, setReadFailed, livePending } =
+		chat;
 	const { page, older } = useNativeAgentTranscriptPage({
 		source,
 		terminalEpoch: runtime.terminalEpoch,
 		turnCompletedCount: runtime.turnCompletedCount,
-		working,
+		working: state === "working",
 		read: { snapshot, setSnapshot, setReadFailed },
+		pending: livePending,
 	});
 	const { fontSize, lineHeight } = useChatContentTypography();
 	if (page === undefined && !readFailed) {
@@ -201,6 +220,15 @@ function WorkNativeTranscript({
 					</span>
 				</ChatAlert>
 			)}
+			{/* The terminal lives in the large window: what the composer cannot
+			    answer continues there. */}
+			<NativeAgentChatComposer
+				agent={agent}
+				runtime={runtime}
+				state={state}
+				chat={chat}
+				onContinueInTerminal={onOpenLargeWindow}
+			/>
 		</div>
 	);
 }

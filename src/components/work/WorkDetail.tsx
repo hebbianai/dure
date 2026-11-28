@@ -38,7 +38,8 @@ import { openAgentSessionWindow } from "@/lib/workspace/window/windows";
 import type { Agent } from "@/types";
 
 /** One detail column: an agent with the agents above it, the other agents
- * that manage it, its read-only conversation and the agents it manages.
+ * that manage it, the agents it manages and its conversation with a
+ * composer.
  * Every column is this same view, the selection's and each pinned one's.
  * Selecting any agent in it drills in by selecting that agent. */
 export function WorkDetailColumn({

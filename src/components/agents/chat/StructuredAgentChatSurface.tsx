@@ -1,6 +1,6 @@
 import { AgentChatSurface } from "@/components/agents/chat/AgentChatSurface";
 import type { IDockviewPanelProps } from "dockview-react";
-import { AgentPendingRequestCard } from "@/components/agents/chat/AgentPendingRequestCard";
+import { AgentChatPendingAnswer } from "@/components/agents/chat/AgentChatPendingAnswer";
 import type { ChatTurnFailureRecovery } from "@/components/agents/chat/ChatComposer";
 import { useChatContentTypography } from "@/components/agents/chat/useChatContentTypography";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
@@ -45,15 +45,7 @@ export function StructuredAgentChatSurface({
 			recovery={recovery}
 			onNewConversation={onNewConversation}
 			renderPending={(pending) => (
-				<AgentPendingRequestCard
-					pending={pending}
-					busy={session.answeringRequestId !== undefined}
-					onAnswer={(answer) => {
-						void session
-							.answerPending(pending.request.requestId, answer)
-							.catch(() => {});
-					}}
-				/>
+				<AgentChatPendingAnswer session={session} pending={pending} />
 			)}
 		/>
 	);
