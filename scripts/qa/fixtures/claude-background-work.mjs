@@ -226,9 +226,11 @@ process.stdin.on("data",bytes=>child.stdin.write(bytes.toString().replaceAll("\\
         && record.at > lastStop.at), "New native UserPromptSubmit not observed");
       assert.equal(newPrompt.code, 0);
       assert.notEqual(newPrompt.body.prompt_id, lastStop.body.prompt_id);
-      const beforeDelivery = snapshot();
-      assert.equal(beforeDelivery.agentRuntimeState.activity, "working");
-      assert.equal(beforeDelivery.agentRuntimeState.background_work, undefined, "A new parent turn kept the ready prompt");
+      // The hook is answered once its report is queued; the Host applies it next.
+      const beforeDelivery = await until(() => {
+        const value = snapshot();
+        return value.agentRuntimeState.activity === "working" && value.agentRuntimeState.background_work === undefined && value;
+      }, "A new parent turn kept the ready prompt");
       const replayEnvironment = { ...environment, ...Object.fromEntries(Object.entries(fence)
         .map(([key, value]) => [`HMUX_${key.toUpperCase()}`, String(value)])) };
       execFileSync("/bin/sh", ["-c", hookCommand], { env: replayEnvironment, cwd: root,

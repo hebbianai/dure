@@ -228,10 +228,10 @@ async fn authenticates_the_selected_generation_and_capability_before_posting() {
 }
 
 #[tokio::test]
-async fn waits_for_the_app_servers_accepted_reply_after_a_slow_host_report() {
-    // The app answers 202 once its Host report has not finished within 1.5 s
-    // (`dispatch_claude_hook_request`). A hook that stops waiting at that same
-    // instant reports a delivered prompt as unavailable.
+async fn waits_for_the_app_servers_accepted_reply_when_it_is_late() {
+    // The app answers 202 once the report is queued for its Host, but on a
+    // loaded machine that answer can still take seconds. A hook that stopped
+    // waiting early reported a delivered prompt as unavailable.
     let server = server_replying(
         ping(),
         Duration::ZERO,
@@ -265,6 +265,22 @@ async fn a_report_the_app_never_answers_still_ends_within_the_hook_budget() {
         "{delivered:?}"
     );
     assert!(started.elapsed() < TOTAL_TIMEOUT + Duration::from_millis(250));
+}
+
+#[tokio::test]
+async fn a_stop_the_app_confirms_only_after_the_budget_is_not_a_failed_hook() {
+    // #822: on a loaded machine the app's answer arrived after the budget, and
+    // Claude printed "Stop hook failed" for a report the app already held.
+    let server = server_replying(ping(), Duration::ZERO, 202, Duration::from_secs(30), "{}").await;
+    let root = tempfile::tempdir().unwrap();
+    publish(root.path(), server.port);
+    let delivered = send(root.path(), "Stop", "epoch-1", true).await;
+    assert_eq!(delivered, Err(HookFailure::Timeout));
+    assert_eq!(completed(delivered, false), Ok(()));
+    let posts = server.posts.lock().unwrap();
+    assert_eq!(posts.len(), 1, "the app holds the report");
+    let report: Value = serde_json::from_slice(&posts[0].1).unwrap();
+    assert_eq!(report["hook_event_name"], "Stop");
 }
 
 #[tokio::test]

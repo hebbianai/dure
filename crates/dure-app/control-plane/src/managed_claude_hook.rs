@@ -358,9 +358,9 @@ async fn attempt(
         .url_mut()
         .set_port(Some(descriptor.port))
         .map_err(|_| HookFailure::Unavailable)?;
-    // The app answers `202 accepted` once its Host report has not finished
-    // within 1.5 s. Waiting only that long here turned every slow report,
-    // such as the first prompt after a restart, into a false failure.
+    // The app answers `202 accepted` once the report is queued for its Host.
+    // On a loaded machine that answer can still be late, so the report waits
+    // for the rest of the budget rather than a share of it.
     *request.timeout_mut() = Some(remaining(deadline)?);
     let mut authorization = HeaderValue::from_str(&format!("Bearer {}", descriptor.report_token))
         .map_err(|_| HookFailure::Unavailable)?;
@@ -504,10 +504,13 @@ async fn session_start_guidance(
 }
 
 /// Claude applies hook output only after a successful exit, so a failed report
-/// must not discard guidance that was already written.
+/// must not discard guidance that was already written. A report the app has
+/// not confirmed in time is best effort, never a failed hook: the app usually
+/// already holds it, and a slow app or Host is nothing the person can act on.
+/// Its code still goes to stderr for diagnostics.
 fn completed(delivered: Result<(), HookFailure>, guided: bool) -> Result<(), HookFailure> {
     match delivered {
-        Err(failure) if guided => {
+        Err(failure) if guided || failure == HookFailure::Timeout => {
             eprintln!("{}", failure.code());
             Ok(())
         }
@@ -529,6 +532,7 @@ pub async fn run() -> Result<(), HookFailure> {
     let deadline = Instant::now() + TOTAL_TIMEOUT;
     let expires = tokio::time::Instant::from_std(deadline);
     let mut raw = Vec::new();
+    // Input that never arrives is the caller's failure, not a slow app.
     tokio::time::timeout_at(
         expires,
         tokio::io::stdin()
@@ -536,7 +540,7 @@ pub async fn run() -> Result<(), HookFailure> {
             .read_to_end(&mut raw),
     )
     .await
-    .map_err(|_| HookFailure::Timeout)?
+    .map_err(|_| HookFailure::InputUnavailable)?
     .map_err(|_| HookFailure::InputUnavailable)?;
     let fallback_cwd = std::env::current_dir().unwrap_or_default();
     let guidance = session_start_guidance(&raw, &fallback_cwd, deadline).await;

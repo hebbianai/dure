@@ -150,3 +150,17 @@ fn guidance_keeps_a_failed_report_from_hiding_it() {
     );
     assert_eq!(completed(Ok(()), false), Ok(()));
 }
+
+#[test]
+fn only_a_report_the_app_has_not_confirmed_in_time_degrades_without_guidance() {
+    assert_eq!(completed(Err(HookFailure::Timeout), false), Ok(()));
+    assert_eq!(completed(Err(HookFailure::Timeout), true), Ok(()));
+    for failure in [
+        HookFailure::InputUnavailable,
+        HookFailure::InvalidInput,
+        HookFailure::InvalidFence,
+        HookFailure::Unavailable,
+    ] {
+        assert_eq!(completed(Err(failure), false), Err(failure));
+    }
+}
