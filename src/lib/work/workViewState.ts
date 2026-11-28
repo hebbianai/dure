@@ -1,12 +1,15 @@
 // The Work view's own presentation state: which row is selected, how deep
-// the list goes, whether it groups by project, whether today's results and
+// the list goes, whether it groups by project, which folds are open, whether
 // the details' managed agents are unfolded, and which agents are pinned as
-// columns beside the selection. It
-// belongs to one window; the main window keeps it across restarts. Nothing
-// here records an answer or an acknowledgement. The module imports no store,
-// i18n or React.
+// columns beside the selection. It belongs to one window; the main window
+// keeps it across restarts. Nothing here records an answer or an
+// acknowledgement. The module imports no store, i18n or React.
 import { asRecord } from "@/lib/payloadGuards";
-import type { WorkDepth, WorkGrouping } from "@/lib/work/workViewList";
+import {
+	RESULTS_TODAY_FOLD_KEY,
+	type WorkDepth,
+	type WorkGrouping,
+} from "@/lib/work/workViewList";
 
 export interface WorkViewState {
 	/** The selected entry's key (an Agent id, or a shell pane's key). Drilling
@@ -14,8 +17,9 @@ export interface WorkViewState {
 	readonly selected: string | null;
 	readonly depth: WorkDepth;
 	readonly grouping: WorkGrouping;
-	/** Whether the Has a result today section is unfolded. */
-	readonly resultsOpen: boolean;
+	/** Keys of the folds the person opened (WorkListFold.key): today's
+	 * results, each group's ended agents. Every fold starts closed. */
+	readonly openFolds: readonly string[];
 	/** Whether a detail's agents it manages are unfolded: one setting for the
 	 * selection's column and every pinned one. */
 	readonly managedOpen: boolean;
@@ -28,20 +32,27 @@ export const WORK_VIEW_DEFAULT: WorkViewState = {
 	selected: null,
 	depth: "top",
 	grouping: "project",
-	resultsOpen: false,
+	openFolds: [],
 	managedOpen: true,
 	pinned: [],
 };
 
 const VERSION = 1;
 
-function normalizePinned(value: unknown): readonly string[] {
-	if (!Array.isArray(value)) return WORK_VIEW_DEFAULT.pinned;
-	const pinned = new Set<string>();
+/** An ordered set of keys, each once, in the order first saved. */
+function normalizeKeys(value: unknown): readonly string[] {
+	if (!Array.isArray(value)) return [];
+	const keys = new Set<string>();
 	for (const key of value) {
-		if (typeof key === "string" && key.length > 0) pinned.add(key);
+		if (typeof key === "string" && key.length > 0) keys.add(key);
 	}
-	return [...pinned];
+	return [...keys];
+}
+
+/** Builds before folds were keyed saved one flag for today's results. */
+function normalizeOpenFolds(state: Record<string, unknown>): readonly string[] {
+	if (state.openFolds !== undefined) return normalizeKeys(state.openFolds);
+	return state.resultsOpen === true ? [RESULTS_TODAY_FOLD_KEY] : [];
 }
 
 function normalizeWorkViewState(value: unknown): WorkViewState {
@@ -54,11 +65,11 @@ function normalizeWorkViewState(value: unknown): WorkViewState {
 				: null,
 		depth: state.depth === "all" ? "all" : "top",
 		grouping: state.grouping === "none" ? "none" : "project",
-		resultsOpen: state.resultsOpen === true,
+		openFolds: normalizeOpenFolds(state),
 		// Absent in what builds before pins and the managed fold saved; older
 		// builds ignore both.
 		managedOpen: state.managedOpen !== false,
-		pinned: normalizePinned(state.pinned),
+		pinned: normalizeKeys(state.pinned),
 	};
 }
 
@@ -80,22 +91,34 @@ export function serializeWorkViewState(state: WorkViewState): string {
 	return JSON.stringify({ state: normalizeWorkViewState(state), version: VERSION });
 }
 
-/** `pinned` with `agentId` added at the right end; unchanged when it is
- * already pinned. */
-export function withPin(
-	pinned: readonly string[],
-	agentId: string,
+/** `keys` with `key` added at the end (a pin's right end); unchanged when
+ * it is there already. */
+export function withKey(
+	keys: readonly string[],
+	key: string,
 ): readonly string[] {
-	return pinned.includes(agentId) ? pinned : [...pinned, agentId];
+	return keys.includes(key) ? keys : [...keys, key];
 }
 
-export function withoutPin(
-	pinned: readonly string[],
-	agentId: string,
+/** `keys` without `key`; unchanged when it is not there. */
+export function withoutKey(
+	keys: readonly string[],
+	key: string,
 ): readonly string[] {
-	return pinned.includes(agentId)
-		? pinned.filter((key) => key !== agentId)
-		: pinned;
+	return keys.includes(key) ? keys.filter((other) => other !== key) : keys;
+}
+
+/** `openFolds` with `foldKey` opened or closed, keeping only the folds the
+ * list has now (`listFolds`): a fold gone with its project is forgotten. */
+export function withFoldOpen(
+	openFolds: readonly string[],
+	foldKey: string,
+	open: boolean,
+	listFolds: readonly string[],
+): readonly string[] {
+	const next = (open ? withKey : withoutKey)(openFolds, foldKey);
+	const kept = next.filter((key) => listFolds.includes(key));
+	return kept.length === next.length ? next : kept;
 }
 
 /** `pinned` with `agentId` moved one column left (-1) or right (1);

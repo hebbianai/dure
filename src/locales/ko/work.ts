@@ -3,6 +3,7 @@ export const work: Record<string, string> = {
 	"work.list.empty": "아직 에이전트가 없습니다. 어느 프로젝트에서든 시작한 에이전트가 여기에 나타납니다.",
 	"work.list.noProject": "프로젝트 없음",
 	"work.list.resultsToday": "오늘 결과 있음",
+	"work.list.ended": "종료됨",
 	"work.list.depth": "표시할 에이전트",
 	"work.list.topLevel": "최상위만",
 	"work.list.expandAll": "모두 펼치기",

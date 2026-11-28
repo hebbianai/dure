@@ -16,10 +16,13 @@ import {
 } from "@/components/work/useWorkView";
 import { agentRowModel } from "@/lib/agents/agentRowModel";
 import { t } from "@/lib/i18n";
+import { useHeldWhilePresent } from "@/lib/ui/heldWhilePresent";
 import { cn } from "@/lib/utils";
 import {
 	type WorkDepth,
+	type WorkListFold,
 	type WorkListRow,
+	workListFoldKeys,
 	workListOrder,
 } from "@/lib/work/workViewList";
 import { useWorkViewStore } from "@/lib/work/workViewStore";
@@ -28,22 +31,26 @@ import { useWorkViewStore } from "@/lib/work/workViewStore";
 const LEVEL_INDENT_PX = 12;
 
 /** The Work view's list: every agent in every project and on every backend,
- * what needs a person at any depth with its path, and today's results,
- * folded. Selecting a row only changes the selection: it mounts no terminal,
- * opens no pane and acknowledges nothing. */
+ * what needs a person at any depth with its path, each group's ended agents
+ * and today's results, folded. Selecting a row only changes the selection: it
+ * mounts no terminal, opens no pane and acknowledges nothing. While the
+ * pointer or focus is in the list its arrangement holds still. */
 export function WorkList({ className }: { className?: string }) {
 	const view = useWorkView();
-	const { list } = view;
+	const { value: list, region, presence } = useHeldWhilePresent(view.list);
 	const selected = useWorkViewStore((state) => state.selected);
 	const select = useWorkViewStore((state) => state.select);
-	const resultsOpen = useWorkViewStore((state) => state.resultsOpen);
-	const setResultsOpen = useWorkViewStore((state) => state.setResultsOpen);
+	const openFolds = useWorkViewStore((state) => state.openFolds);
 	const grouping = useWorkViewStore((state) => state.grouping);
 	const scroller = useRef<HTMLDivElement>(null);
 	const empty = list.groups.length === 0;
+	const listFolds = workListFoldKeys(list);
+	const rows = (listed: readonly WorkListRow[]) => (
+		<WorkRows rows={listed} view={view} selected={selected} onSelect={select} />
+	);
 
 	const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-		const keys = workListOrder(list, resultsOpen);
+		const keys = workListOrder(list, openFolds);
 		if (keys.length === 0) return;
 		const index = selected === null ? -1 : keys.indexOf(selected);
 		const next =
@@ -89,62 +96,45 @@ export function WorkList({ className }: { className?: string }) {
 					viewportRef={scroller}
 				>
 					{/* Arrow keys, Home and End move the selection between the rows. */}
-					<div className="px-1.5" onKeyDown={onKeyDown}>
+					<div
+						ref={region}
+						className="px-1.5"
+						onKeyDown={onKeyDown}
+						{...presence}
+					>
 						{list.needsYou.length > 0 && (
 							<WorkSection heading={t("agents.nextUp.needsYou")}>
-								{list.needsYou.map((row) => (
-									<WorkRow
-										key={row.key}
-										row={row}
-										view={view}
-										selected={selected === row.key}
-										onSelect={select}
-									/>
-								))}
+								{rows(list.needsYou)}
 							</WorkSection>
 						)}
 						{list.groups.map((group) => (
 							<WorkSection
-								key={group.projectId ?? "none"}
+								key={group.key}
 								heading={
 									grouping === "none"
 										? undefined
 										: (group.projectName ?? t("work.list.noProject"))
 								}
 							>
-								{group.rows.map((row) => (
-									<WorkRow
-										key={row.key}
-										row={row}
-										view={view}
-										selected={selected === row.key}
-										onSelect={select}
-									/>
-								))}
+								{rows(group.rows)}
+								{/* Finished work stays quiet, at the group heading's tone. */}
+								<WorkFold
+									fold={group.ended}
+									label={t("work.list.ended")}
+									listFolds={listFolds}
+									summaryClassName="text-muted-foreground hover:text-foreground"
+								>
+									{rows(group.ended.rows)}
+								</WorkFold>
 							</WorkSection>
 						))}
-						{list.resultsToday.length > 0 && (
-							<Disclosure
-								size="meta"
-								className="px-2 pt-2"
-								bodyClassName="pl-0"
-								open={resultsOpen}
-								onOpenChange={setResultsOpen}
-								label={`${t("work.list.resultsToday")} · ${list.resultsToday.length}`}
-							>
-								<ul>
-									{list.resultsToday.map((row) => (
-										<WorkRow
-											key={row.key}
-											row={row}
-											view={view}
-											selected={selected === row.key}
-											onSelect={select}
-										/>
-									))}
-								</ul>
-							</Disclosure>
-						)}
+						<WorkFold
+							fold={list.resultsToday}
+							label={t("work.list.resultsToday")}
+							listFolds={listFolds}
+						>
+							{rows(list.resultsToday.rows)}
+						</WorkFold>
 					</div>
 				</SidebarScrollArea>
 			)}
@@ -211,8 +201,72 @@ function WorkSection({
 					{heading}
 				</h3>
 			)}
-			<ul>{children}</ul>
+			{children}
 		</section>
+	);
+}
+
+/** A folded part of the list, labelled with how many rows it holds, open
+ * while the person keeps it open; absent when it holds none. Its summary
+ * stands as tall as a section heading, its chevron on the rows' dot column
+ * and its label on their title column; the rows it reveals line up with the
+ * rows above. */
+function WorkFold({
+	fold,
+	label,
+	listFolds,
+	summaryClassName,
+	children,
+}: {
+	fold: WorkListFold;
+	label: string;
+	/** Every fold the list has now; a saved key matching none is dropped. */
+	listFolds: readonly string[];
+	summaryClassName?: string;
+	children: ReactNode;
+}) {
+	const open = useWorkViewStore((state) => state.openFolds.includes(fold.key));
+	const setFoldOpen = useWorkViewStore((state) => state.setFoldOpen);
+	if (fold.rows.length === 0) return null;
+	return (
+		<Disclosure
+			size="meta"
+			summaryClassName={cn("h-7 px-1.5", summaryClassName)}
+			bodyClassName="mt-0 pl-0"
+			open={open}
+			onOpenChange={(next) => setFoldOpen(fold.key, next, listFolds)}
+			label={`${label} · ${fold.rows.length}`}
+		>
+			{children}
+		</Disclosure>
+	);
+}
+
+/** Rows in reading order; absent when there are none. */
+function WorkRows({
+	rows,
+	view,
+	selected,
+	onSelect,
+}: {
+	rows: readonly WorkListRow[];
+	view: WorkView;
+	selected: string | null;
+	onSelect: (key: string) => void;
+}) {
+	if (rows.length === 0) return null;
+	return (
+		<ul>
+			{rows.map((row) => (
+				<WorkRow
+					key={row.key}
+					row={row}
+					view={view}
+					selected={selected === row.key}
+					onSelect={onSelect}
+				/>
+			))}
+		</ul>
 	);
 }
 

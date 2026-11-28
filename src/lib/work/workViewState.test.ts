@@ -3,9 +3,11 @@ import {
 	parseWorkViewState,
 	serializeWorkViewState,
 	WORK_VIEW_DEFAULT,
+	withFoldOpen,
 	withPinMoved,
 	workDetailColumns,
 } from "@/lib/work/workViewState";
+import { RESULTS_TODAY_FOLD_KEY } from "@/lib/work/workViewList";
 import { createWorkViewStore } from "@/lib/work/workViewStore";
 
 describe("workViewState", () => {
@@ -14,7 +16,7 @@ describe("workViewState", () => {
 			selected: "agent-1",
 			depth: "all" as const,
 			grouping: "none" as const,
-			resultsOpen: true,
+			openFolds: ["results-today", "ended:project:p-app"],
 			managedOpen: false,
 			pinned: ["lead-app", "lead-api"],
 		};
@@ -31,10 +33,22 @@ describe("workViewState", () => {
 			selected: null,
 			depth: "top",
 			grouping: "project",
-			resultsOpen: false,
+			openFolds: [],
 			managedOpen: true,
 			pinned: [],
 		});
+	});
+
+	it("reads the open results of a state saved before folds were keyed", () => {
+		const saved = (resultsOpen: boolean) =>
+			parseWorkViewState(
+				JSON.stringify({
+					state: { selected: null, depth: "top", grouping: "project", resultsOpen },
+					version: 1,
+				}),
+			).openFolds;
+		expect(saved(true)).toEqual([RESULTS_TODAY_FOLD_KEY]);
+		expect(saved(false)).toEqual([]);
 	});
 
 	it("reads a state saved before pins and the managed fold existed with none pinned and the fold open", () => {
@@ -56,7 +70,7 @@ describe("workViewState", () => {
 						selected: "",
 						depth: "deep",
 						grouping: "none",
-						resultsOpen: "yes",
+						openFolds: "results-today",
 						managedOpen: "no",
 						pinned: ["a", "", 7, "a", "b"],
 					},
@@ -117,6 +131,38 @@ describe("workViewState", () => {
 		expect(workDetailColumns(store.getState())).toEqual([
 			{ key: "gone", pinned: true, selected: false },
 		]);
+	});
+});
+
+describe("withFoldOpen", () => {
+	const listFolds = ["ended:project:a", "ended:project:b", RESULTS_TODAY_FOLD_KEY];
+	it("opens and closes a fold", () => {
+		const opened = withFoldOpen([], "ended:project:a", true, listFolds);
+		expect(opened).toEqual(["ended:project:a"]);
+		expect(withFoldOpen(opened, "ended:project:a", false, listFolds)).toEqual([]);
+		// Unchanged state keeps its identity, so nothing is saved.
+		expect(withFoldOpen(opened, "ended:project:a", true, listFolds)).toBe(opened);
+	});
+
+	it("forgets a saved fold that matches none the list has now", () => {
+		expect(
+			withFoldOpen(
+				["ended:project:gone", RESULTS_TODAY_FOLD_KEY],
+				"ended:project:b",
+				true,
+				listFolds,
+			),
+		).toEqual([RESULTS_TODAY_FOLD_KEY, "ended:project:b"]);
+	});
+
+	it("saves a fold toggled through the store", () => {
+		const save = vi.fn();
+		const store = createWorkViewStore(WORK_VIEW_DEFAULT, save);
+		store.getState().setFoldOpen(RESULTS_TODAY_FOLD_KEY, true, listFolds);
+		expect(save).toHaveBeenLastCalledWith({
+			...WORK_VIEW_DEFAULT,
+			openFolds: [RESULTS_TODAY_FOLD_KEY],
+		});
 	});
 });
 

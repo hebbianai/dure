@@ -33,11 +33,13 @@ export type DisclosureOpenState =
  * `onOpenChange`.
  *
  * `size`: "xs" (12/18 — panes, cards, dialogs) or "meta" (11/15 — the
- * sidebar tier). `bodyClassName` replaces the body's default 4px gap. */
+ * sidebar tier). `bodyClassName` replaces the body's default 4px gap;
+ * `summaryClassName` adjusts the summary row (padding, height, tone). */
 export function Disclosure({
 	label,
 	size = "xs",
 	className,
+	summaryClassName,
 	bodyClassName,
 	open,
 	defaultOpen,
@@ -49,6 +51,7 @@ export function Disclosure({
 		label: ReactNode;
 		size?: "xs" | "meta";
 		className?: string;
+		summaryClassName?: string;
 		bodyClassName?: string;
 	}) {
 	return (
@@ -64,7 +67,12 @@ export function Disclosure({
 			onToggle={(event) => onOpenChange?.(event.currentTarget.open)}
 			{...props}
 		>
-			<summary className="flex cursor-pointer list-none items-center gap-1.5 font-medium text-foreground select-none [&::-webkit-details-marker]:hidden">
+			<summary
+				className={cn(
+					"flex cursor-pointer list-none items-center gap-1.5 font-medium text-foreground select-none [&::-webkit-details-marker]:hidden",
+					summaryClassName,
+				)}
+			>
 				<DisclosureChevron className="group-open/disclosure:rotate-90" />
 				<span className="min-w-0 truncate">{label}</span>
 			</summary>

@@ -16,6 +16,11 @@ import {
 	resetWindowBootForTest,
 	windowContentPainted,
 } from "@/lib/workspace/boot/windowBootState";
+import {
+	endedFoldKey,
+	RESULTS_TODAY_FOLD_KEY,
+	workGroupKey,
+} from "@/lib/work/workViewList";
 import { WORK_VIEW_DEFAULT } from "@/lib/work/workViewState";
 import { useWorkViewStore } from "@/lib/work/workViewStore";
 import { useStore } from "@/store";
@@ -155,6 +160,112 @@ describe("Work list", () => {
 		expect(useAgentAttention.getState().acks).toEqual({});
 		expect(navigation.revealAgent).not.toHaveBeenCalled();
 		expect(rowTitles()).toContain("solo");
+	});
+});
+
+describe("ended agents", () => {
+	it("fold per project, closed, while live and unknown agents stay open", () => {
+		useAgentAttention.setState({
+			...useAgentAttention.getInitialState(),
+			displayStates: {
+				coordinator: "exited",
+				worker: "exited",
+				helper: "exited",
+				solo: "unknown",
+			},
+		});
+		render(<WorkPane />);
+		const app = screen.getByRole("region", { name: "app" });
+		const label = within(app).getByText(`${t("work.list.ended")} · 1`);
+		const fold = label.closest("details") as HTMLDetailsElement;
+		expect(fold.open).toBe(false);
+		expect(within(fold).getByText("Agent coordinator")).toBeTruthy();
+		// Nothing is removed: the whole tree is listed under its root.
+		act(() => useWorkViewStore.getState().setDepth("all"));
+		expect(
+			within(screen.getByRole("region", { name: "app" })).getByText(
+				`${t("work.list.ended")} · 3`,
+			),
+		).toBeTruthy();
+		// Status unavailable is not an exit: it never folds.
+		const api = screen.getByRole("region", { name: "api" });
+		expect(within(api).queryByText(new RegExp(t("work.list.ended")))).toBeNull();
+		expect(within(api).getByText("Agent solo")).toBeTruthy();
+	});
+
+	it("holds a row that ends under the pointer until the pointer leaves the list", () => {
+		render(<WorkPane />);
+		const app = () => screen.getByRole("region", { name: "app" });
+		const list = app().parentElement as HTMLElement;
+		fireEvent.pointerEnter(list);
+		act(() =>
+			useAgentAttention.setState({
+				displayStates: {
+					coordinator: "exited",
+					worker: "exited",
+					helper: "exited",
+					solo: "waiting",
+				},
+			}),
+		);
+		// The dot already reads the exit; the row stays where it was.
+		expect(within(app()).queryByText(new RegExp(t("work.list.ended")))).toBeNull();
+		act(() => {
+			fireEvent.pointerLeave(list);
+		});
+		expect(within(app()).getByText(`${t("work.list.ended")} · 1`)).toBeTruthy();
+	});
+
+	it("keeps a root open while anything it manages is still working", () => {
+		useAgentAttention.setState({
+			...useAgentAttention.getInitialState(),
+			displayStates: {
+				coordinator: "exited",
+				worker: "exited",
+				helper: "working",
+				solo: "waiting",
+			},
+		});
+		render(<WorkPane />);
+		const app = screen.getByRole("region", { name: "app" });
+		expect(within(app).queryByText(new RegExp(t("work.list.ended")))).toBeNull();
+		expect(within(app).getByText("Agent coordinator")).toBeTruthy();
+	});
+
+	it("opens one project's fold without opening the others", () => {
+		useAgentAttention.setState({
+			...useAgentAttention.getInitialState(),
+			displayStates: {
+				coordinator: "exited",
+				worker: "exited",
+				helper: "exited",
+				solo: "exited",
+			},
+		});
+		render(<WorkPane />);
+		const folds = () =>
+			["app", "api"].map(
+				(name) =>
+					(
+						within(screen.getByRole("region", { name })).getByText(
+							new RegExp(t("work.list.ended")),
+						).closest("details") as HTMLDetailsElement
+					).open,
+			);
+		expect(folds()).toEqual([false, false]);
+		const appFold = endedFoldKey(workGroupKey("project", "p-app"));
+		const apiFold = endedFoldKey(workGroupKey("project", "p-api"));
+		act(() =>
+			useWorkViewStore
+				.getState()
+				.setFoldOpen(appFold, true, [appFold, apiFold, RESULTS_TODAY_FOLD_KEY]),
+		);
+		expect(folds()).toEqual([true, false]);
+		// Arrow keys reach the rows of an open fold only.
+		const first = document.querySelector<HTMLElement>("[data-agent-row-key]");
+		first?.focus();
+		fireEvent.keyDown(first as HTMLElement, { key: "End" });
+		expect(useWorkViewStore.getState().selected).toBe("coordinator");
 	});
 });
 

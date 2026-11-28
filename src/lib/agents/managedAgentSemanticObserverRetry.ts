@@ -26,16 +26,24 @@ export interface SemanticObserverFailureEvidence {
 	readonly code?: string;
 	readonly retryDirective?: HmuxStructuredTerminalRetryDirective;
 	readonly retiredSource: boolean;
+	/** The Host says the exact session is gone: not in its catalog, or
+	 * exited. A retired source can also be a generation change or a class
+	 * mismatch, which says another session holds the place, not that this one
+	 * ended. */
+	readonly sessionGone: boolean;
 }
 
 const FAILURE_CODE = /^[a-z][a-z0-9_]{0,191}$/i;
 const MESSAGE_FAILURE_CODE =
 	/\b(?:managed_agent_semantic|hmux|remote_hmux)_[a-z0-9_]{1,160}\b/i;
-const RETIRED_SESSION_FAILURE_CODES = new Set([
+const SESSION_GONE_FAILURE_CODES = new Set([
 	"hmux_session_not_found",
 	"hmux_session_exited",
 	"remote_hmux_session_not_found",
 	"remote_hmux_session_exited",
+]);
+const RETIRED_SESSION_FAILURE_CODES = new Set([
+	...SESSION_GONE_FAILURE_CODES,
 	"remote_hmux_session_class_mismatch",
 	"remote_hmux_managed_attach_generation_changed",
 	"managed_agent_semantic_attach_generation_changed",
@@ -56,7 +64,43 @@ function failureEvidence(
 		code,
 		retryDirective,
 		retiredSource: code !== undefined && RETIRED_SESSION_FAILURE_CODES.has(code),
+		sessionGone: code !== undefined && SESSION_GONE_FAILURE_CODES.has(code),
 	};
+}
+
+/**
+ * What a failed semantic attach leads to:
+ * - `retry`: reconnect with backoff, within the retry budget.
+ * - `stop`: stop observing; nothing here proves an exit.
+ * - `confirm_exit`: the Host says the session is gone. A census taken after
+ *   this failure decides between the Agent's exit and a retry.
+ */
+export type SemanticObserverFailureOutcome = "retry" | "stop" | "confirm_exit";
+
+/** The one decision table for a failed attach. A not-found or exited answer
+ * proves nothing about a binding with no published generation: when the
+ * generation is published the binding changes and a new observation starts.
+ * Nor does it about an Agent this window saw alive or starting, whose first
+ * attach may have raced the session's publication; that retries. */
+export function semanticObserverFailureOutcome(input: {
+	readonly failure: SemanticObserverFailureEvidence;
+	/** A typed runtime failure of the session itself. */
+	readonly sessionFailure: boolean;
+	/** The binding names a published Host generation (its stop fence). */
+	readonly publishedGeneration: boolean;
+	/** This window holds a positive observation of the Agent. */
+	readonly observedAlive: boolean;
+}): SemanticObserverFailureOutcome {
+	const { failure } = input;
+	if (failure.sessionGone) {
+		if (!input.publishedGeneration) return "stop";
+		return input.observedAlive ? "retry" : "confirm_exit";
+	}
+	return input.sessionFailure ||
+		failure.retiredSource ||
+		failure.retryDirective === "never"
+		? "stop"
+		: "retry";
 }
 
 /** Parse typed adapter evidence once, falling back to legacy message tokens. */

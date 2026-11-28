@@ -21,11 +21,12 @@ import {
   attentionEquivalentState,
   isAttentionTransition,
   resolveAgentDisplayFromTiers,
-  UNOBSERVED_AGENT_ACTIVITY,
 } from "@/lib/agents/agentStateModel";
 import { structuredAgentTierInputs } from "@/lib/agents/structuredAgentRuntime";
 import { managedLocalRuntimeLiveness } from "@/lib/terminal/hmuxManagedAttachConcurrency";
 import { hasSessionAgentRuntimeObservation } from "@/lib/sessions/runtime/sessionRuntimeStoreSlice";
+import type { HmuxAgentRuntimeState } from "@/lib/ipc";
+import type { Agent } from "@/types";
 
 export interface AgentAttentionSource {
   agentId: string;
@@ -267,6 +268,23 @@ function sameWaitStarts(
   );
 }
 
+/** Whether this window observes an Agent's Host session. An Agent with a
+ * Host binding that nothing here observes, and no Host state of which ever
+ * reached this window, is unobserved: it reads unknown, or the exit the Host
+ * reported, never the legacy unobserved default. */
+function hostObservation(
+  agent: Agent,
+  state: HmuxAgentRuntimeState | undefined,
+  observers: Parameters<typeof hasSessionAgentRuntimeObservation>[1],
+): boolean | undefined {
+  const observed = hasSessionAgentRuntimeObservation(state, observers);
+  if (observed !== undefined) return observed;
+  return agent.runtimeBinding?.runtime === "hmux_managed_v1" &&
+    state === undefined
+    ? false
+    : undefined;
+}
+
 function collectSources(): AgentAttentionSource[] {
   const st = useStore.getState();
   return st.agents.map((agent) => {
@@ -279,7 +297,8 @@ function collectSources(): AgentAttentionSource[] {
       heuristic,
     ) ?? {
       hmux: st.sessionAgentRuntimeState[agent.sessionId],
-      hmuxObserved: hasSessionAgentRuntimeObservation(
+      hmuxObserved: hostObservation(
+        agent,
         st.sessionAgentRuntimeState[agent.sessionId],
         st.sessionAgentRuntimeObservers[agent.sessionId],
       ),
@@ -288,7 +307,7 @@ function collectSources(): AgentAttentionSource[] {
       agentId: agent.id,
       sessionId: agent.sessionId,
       tiers: {
-        heuristic: heuristic ?? UNOBSERVED_AGENT_ACTIVITY,
+        heuristic,
         hmuxLiveness: managedLocalRuntimeLiveness(
           agent.runtimeBinding,
           st.hmuxSessionMetadata,

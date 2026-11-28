@@ -4,7 +4,11 @@ import {
 	buildAgentRelations,
 } from "@/lib/agents/relations/agentRelations";
 import {
+	endedFoldKey,
+	RESULTS_TODAY_FOLD_KEY,
 	type WorkViewListFacts,
+	workGroupKey,
+	workListFoldKeys,
 	workListOrder,
 	workViewList,
 } from "@/lib/work/workViewList";
@@ -32,6 +36,7 @@ function facts(
 		),
 		needsYou: [],
 		resultsToday: [],
+		ended: [],
 		projects,
 		depth: "top",
 		grouping: "project",
@@ -74,7 +79,13 @@ describe("workViewList", () => {
 			),
 		);
 		expect(list.groups).toEqual([
-			{ projectId: "p-app", projectName: "app", rows: [{ key: "lead", level: 0 }] },
+			{
+				key: "project:p-app",
+				projectId: "p-app",
+				projectName: "app",
+				rows: [{ key: "lead", level: 0 }],
+				ended: { key: "ended:project:p-app", rows: [] },
+			},
 		]);
 	});
 
@@ -115,11 +126,13 @@ describe("workViewList", () => {
 		);
 		expect(list.groups).toEqual([
 			{
+				key: "all",
 				rows: [
 					{ key: "a", level: 0 },
 					{ key: "b", level: 0 },
 					{ key: "c", level: 0 },
 				],
+				ended: { key: "ended:all", rows: [] },
 			},
 		]);
 	});
@@ -154,9 +167,98 @@ describe("workViewList", () => {
 				{ needsYou: ["a"], resultsToday: ["a", "b"] },
 			),
 		);
-		expect(keys(list.resultsToday)).toEqual(["b"]);
-		expect(workListOrder(list, false)).toEqual(["a", "b"]);
-		expect(workListOrder(list, true)).toEqual(["a", "b"]);
+		expect(list.resultsToday.key).toBe(RESULTS_TODAY_FOLD_KEY);
+		expect(keys(list.resultsToday.rows)).toEqual(["b"]);
+		expect(workListOrder(list, [])).toEqual(["a", "b"]);
+		expect(workListOrder(list, [RESULTS_TODAY_FOLD_KEY])).toEqual(["a", "b"]);
+	});
+
+	it("folds each group's ended trees at its bottom, and keeps the rest open", () => {
+		const list = workViewList(
+			facts(
+				[
+					{ key: "live", projectId: "p-app" },
+					{ key: "done", projectId: "p-app" },
+					{ key: "unknown", projectId: "p-app" },
+					{ key: "api-done", projectId: "p-api" },
+					{ key: "loose-done" },
+				],
+				[],
+				{ ended: ["done", "api-done", "loose-done"] },
+			),
+		);
+		expect(
+			list.groups.map((group) => [
+				group.ended.key,
+				keys(group.rows),
+				keys(group.ended.rows),
+			]),
+		).toEqual([
+			// An entry whose state is unknown is not ended: it stays open.
+			["ended:project:p-app", ["live", "unknown"], ["done"]],
+			// A group of ended agents alone still shows, its rows folded.
+			["ended:project:p-api", [], ["api-done"]],
+			["ended:no-project", [], ["loose-done"]],
+		]);
+	});
+
+	it("keeps an ended root open while anything it manages is live, needs a person or has a result today", () => {
+		const tree = (overrides: Partial<WorkViewListFacts>) =>
+			workViewList(
+				facts(
+					[
+						{ key: "lead", projectId: "p-app" },
+						{ key: "worker", projectId: "p-app" },
+						{ key: "helper", projectId: "p-app" },
+					],
+					[edge("worker", "lead"), edge("helper", "worker")],
+					overrides,
+				),
+			).groups[0];
+		// The grandchild is still working.
+		expect(keys(tree({ ended: ["lead", "worker"] }).ended.rows)).toEqual([]);
+		// The grandchild ended too: the whole tree folds, its subtree with it.
+		expect(
+			tree({ ended: ["lead", "worker", "helper"], depth: "all" }).ended.rows,
+		).toEqual([
+			{ key: "lead", level: 0 },
+			{ key: "worker", under: "lead", level: 1 },
+			{ key: "helper", under: "worker", level: 2 },
+		]);
+		const allEnded = { ended: ["lead", "worker", "helper"] };
+		expect(keys(tree({ ...allEnded, needsYou: ["helper"] }).rows)).toEqual([
+			"lead",
+		]);
+		expect(keys(tree({ ...allEnded, resultsToday: ["lead"] }).rows)).toEqual([
+			"lead",
+		]);
+	});
+
+	it("moves through an ended fold only while it is open", () => {
+		const list = workViewList(
+			facts(
+				[
+					{ key: "app-live", projectId: "p-app" },
+					{ key: "app-done", projectId: "p-app" },
+					{ key: "api-live", projectId: "p-api" },
+					{ key: "api-done", projectId: "p-api" },
+				],
+				[],
+				{ ended: ["app-done", "api-done"] },
+			),
+		);
+		const appFold = endedFoldKey(workGroupKey("project", "p-app"));
+		expect(workListFoldKeys(list)).toEqual([
+			appFold,
+			endedFoldKey(workGroupKey("project", "p-api")),
+			RESULTS_TODAY_FOLD_KEY,
+		]);
+		expect(workListOrder(list, [])).toEqual(["app-live", "api-live"]);
+		expect(workListOrder(list, [appFold])).toEqual([
+			"app-live",
+			"app-done",
+			"api-live",
+		]);
 	});
 
 	it("lists a cycle once", () => {

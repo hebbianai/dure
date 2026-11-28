@@ -123,7 +123,7 @@ function LeadWorkersFold({
 							: t("spaces.workers.other", { n: count })}
 					</span>
 				}
-				className="[&>summary]:px-2 [&>summary]:py-1"
+				summaryClassName="px-2 py-1"
 				bodyClassName="mt-0 pl-0"
 			>
 				{!folded && <div className="flex flex-col">{workers.map(renderRow)}</div>}

@@ -41,8 +41,13 @@ import type {
 import { installManagedAgentSemanticObserverRuntime } from "@/lib/agents/managedAgentSemanticObserverRuntime";
 import { HmuxSessionFailureError } from "@/lib/hmux/failure/sessionFailure";
 import { HmuxStructuredTerminalAttachError } from "@/lib/hmux/failure/structuredTerminalAttachFailure";
+import { publishHmuxControlPlaneCensus } from "@/lib/hmux/identity/hmuxControlPlaneCensusFeed";
 import { hmuxSessionMetadataKey } from "@/lib/hmux/identity/hmuxSessionMetadata";
-import type { HmuxAgentRuntimeState } from "@/lib/ipc";
+import type {
+	HmuxAgentRuntimeState,
+	HmuxControlPlaneCensus,
+	HmuxSessionSummary,
+} from "@/lib/ipc";
 import { useStore } from "@/store";
 import {
 	agentFixture,
@@ -62,6 +67,16 @@ const agent = agentFixture({
 		stopFence: stopFenceFixture({ terminalEpoch: "terminal-a" }),
 	}),
 });
+
+const emptyCensus: HmuxControlPlaneCensus = {
+	policy: {
+		activation: "local_bundled_or_installed_current",
+		signedReleaseFetch: "not_implemented",
+		signedPackageInstall: "blocked_missing_trust_root",
+	},
+	sessions: [],
+	protectedBuildIds: [],
+};
 
 const working: HmuxAgentRuntimeState = {
 	terminalEpoch: "terminal-a",
@@ -354,37 +369,250 @@ it("does not repeat an approval episode across a disconnected observation", asyn
 	}
 });
 
-it("does not retry semantic attachment for a session the catalog proves absent", async () => {
+function sessionNotFound(): HmuxStructuredTerminalAttachError {
+	return new HmuxStructuredTerminalAttachError({
+		code: "hmux_session_not_found",
+		message:
+			'Hmux session "session-background" was not found in workspace "workspace-background"',
+		retryDirective: "never",
+	});
+}
+
+/** A census source the test answers by hand: each failed attach asks once. */
+function censusOnRequest() {
+	const listeners: ((sessions: readonly HmuxSessionSummary[]) => void)[] = [];
+	return {
+		requests: () => listeners.length,
+		answer: (sessions: readonly HmuxSessionSummary[]) => {
+			for (const listener of listeners.splice(0)) listener(sessions);
+		},
+		next: (listener: (sessions: readonly HmuxSessionSummary[]) => void) => {
+			listeners.push(listener);
+			return () => {
+				const index = listeners.indexOf(listener);
+				if (index >= 0) listeners.splice(index, 1);
+			};
+		},
+	};
+}
+
+function exactBinding() {
+	const binding = agent.runtimeBinding;
+	if (binding?.runtime !== "hmux_managed_v1" || !binding.stopFence) {
+		throw new Error("expected exact managed fixture binding");
+	}
+	return { ...binding, stopFence: binding.stopFence };
+}
+
+it("records the Host's exit once a census taken after the answer agrees, and stops retrying", async () => {
 	// A binding whose session no longer exists in any discovery root can never
 	// attach. Live daily driver 2026-08-24: 28 such zombie bindings replayed the
 	// full 11-attempt cycle every boot (~300 failed attaches per boot) and made
 	// hmux-connection-diagnostics 508/512 one code. The catalog's typed verdict
-	// (hmux_session_not_found) must terminate the observation on first sight.
+	// (hmux_session_not_found), confirmed by a census taken after it, must end
+	// the observation without another attach. After a reload nothing in this
+	// window says the Agent is alive, and its row reads Exited, not unknown.
+	useStore.setState({ agentActivity: {} });
+	const census = censusOnRequest();
 	const connect = vi.fn(async () => {
-		throw new HmuxStructuredTerminalAttachError({
-			code: "hmux_session_not_found",
-			message:
-				'Hmux session "session-background" was not found in workspace "workspace-background"',
-			retryDirective: "never",
-		});
+		throw sessionNotFound();
 	});
 	const refreshRuntimeProjection = vi.fn();
+	const stopWatch = installAgentAttentionWatch();
 	const stopRuntime = installManagedAgentSemanticObserverRuntime(
 		{ connect },
 		refreshRuntimeProjection,
+		census.next,
 	);
-	await flushMicrotasks();
+	try {
+		await flushMicrotasks();
+		expect(connect).toHaveBeenCalledTimes(1);
+		expect(refreshRuntimeProjection).toHaveBeenCalledWith({
+			agentId: agent.id,
+			evidence: expect.stringContaining("semantic_source_retired"),
+		});
+		// Until the census answers, the answer alone proves nothing.
+		expect(census.requests()).toBe(1);
+		expect(useAgentAttention.getState().displayStates[agent.id]).toBe(
+			"unknown",
+		);
+		// It waits for the census instead of spending attaches.
+		await vi.advanceTimersByTimeAsync(120_000);
+		expect(connect).toHaveBeenCalledTimes(1);
 
-	expect(connect).toHaveBeenCalledTimes(1);
-	expect(refreshRuntimeProjection).toHaveBeenCalledWith({
-		agentId: agent.id,
-		evidence: expect.stringContaining("semantic_source_retired"),
+		census.answer([]);
+		expect(useStore.getState().agentActivity[agent.id]).toBe("exited");
+		expect(useAgentAttention.getState().displayStates[agent.id]).toBe(
+			"exited",
+		);
+		expect(useAgentAttention.getState().episodes[agent.id]).toBeUndefined();
+		await vi.advanceTimersByTimeAsync(120_000);
+		await flushMicrotasks();
+		expect(connect).toHaveBeenCalledTimes(1);
+	} finally {
+		stopRuntime();
+		stopWatch();
+	}
+});
+
+it("never records a live agent Exited from a census older than its first attach", async () => {
+	// Started by another client (a CLI run, a lead's worker): this window
+	// recorded no spawn, and its last census predates the session. The first
+	// attach races the session's publication.
+	useStore.setState({ agentActivity: {} });
+	publishHmuxControlPlaneCensus(
+		{ ...emptyCensus, sessions: [] },
+		Date.now() - 60_000,
+	);
+	const { client } = fakeClient(() => working);
+	const connect = vi.fn(client.connect).mockRejectedValueOnce(sessionNotFound());
+	const exited = vi.fn();
+	const stopWatch = installAgentAttentionWatch();
+	const stopExitedWatch = useStore.subscribe((state) => {
+		if (state.agentActivity[agent.id] === "exited") exited();
 	});
-	await vi.advanceTimersByTimeAsync(120_000);
-	await flushMicrotasks();
-	expect(connect).toHaveBeenCalledTimes(1);
+	const stopRuntime = installManagedAgentSemanticObserverRuntime({ connect });
+	try {
+		await flushMicrotasks();
+		expect(connect).toHaveBeenCalledTimes(1);
+		expect(exited).not.toHaveBeenCalled();
+		// The census requested after the answer lists the session live.
+		const binding = exactBinding();
+		publishHmuxControlPlaneCensus({
+			...emptyCensus,
+			sessions: [
+				hmuxSessionSummaryFixture({
+					sessionId: binding.sessionId,
+					workspaceId: binding.workspaceId,
+					terminalEpoch: binding.stopFence.terminalEpoch,
+					stopFence: binding.stopFence,
+				}),
+			],
+		});
+		await vi.advanceTimersByTimeAsync(1_000);
+		await flushMicrotasks();
+		expect(connect).toHaveBeenCalledTimes(2);
+		expect(useAgentAttention.getState().displayStates[agent.id]).toBe(
+			"working",
+		);
+		expect(exited).not.toHaveBeenCalled();
+	} finally {
+		stopRuntime();
+		stopExitedWatch();
+		stopWatch();
+	}
+});
 
-	stopRuntime();
+it("stops without recording an exit for a binding with no published generation", async () => {
+	const { stopFence: _, ...unfenced } = exactBinding();
+	useStore.setState({
+		agentActivity: {},
+		agents: [{ ...agent, runtimeBinding: unfenced }],
+	});
+	const census = censusOnRequest();
+	const connect = vi.fn(async () => {
+		throw sessionNotFound();
+	});
+	const stopWatch = installAgentAttentionWatch();
+	const stopRuntime = installManagedAgentSemanticObserverRuntime(
+		{ connect },
+		undefined,
+		census.next,
+	);
+	try {
+		await vi.advanceTimersByTimeAsync(120_000);
+		await flushMicrotasks();
+		expect(connect).toHaveBeenCalledTimes(1);
+		expect(census.requests()).toBe(0);
+		expect(useStore.getState().agentActivity[agent.id]).toBeUndefined();
+		expect(useAgentAttention.getState().displayStates[agent.id]).toBe(
+			"unknown",
+		);
+	} finally {
+		stopRuntime();
+		stopWatch();
+	}
+});
+
+it("retries a first attach that raced publication of a spawn this window recorded", async () => {
+	useStore.setState({ agentActivity: { [agent.id]: "connecting" } });
+	const census = censusOnRequest();
+	const { client } = fakeClient(() => working);
+	const connect = vi.fn(client.connect).mockRejectedValueOnce(sessionNotFound());
+	const stopWatch = installAgentAttentionWatch();
+	const stopRuntime = installManagedAgentSemanticObserverRuntime(
+		{ connect },
+		undefined,
+		census.next,
+	);
+	try {
+		await flushMicrotasks();
+		expect(connect).toHaveBeenCalledTimes(1);
+		expect(census.requests()).toBe(0);
+		expect(useStore.getState().agentActivity[agent.id]).toBe("connecting");
+		await vi.advanceTimersByTimeAsync(1_000);
+		await flushMicrotasks();
+		expect(connect).toHaveBeenCalledTimes(2);
+		expect(useAgentAttention.getState().displayStates[agent.id]).toBe(
+			"working",
+		);
+	} finally {
+		stopRuntime();
+		stopWatch();
+	}
+});
+
+it("retries within its budget while each later census lists the session", async () => {
+	useStore.setState({ agentActivity: {} });
+	const binding = exactBinding();
+	const listed = hmuxSessionSummaryFixture({
+		sessionId: binding.sessionId,
+		workspaceId: binding.workspaceId,
+		terminalEpoch: binding.stopFence.terminalEpoch,
+		stopFence: binding.stopFence,
+	});
+	const connect = vi.fn(async () => {
+		throw sessionNotFound();
+	});
+	const stopRuntime = installManagedAgentSemanticObserverRuntime(
+		{ connect },
+		undefined,
+		(listener) => {
+			listener([listed]);
+			return () => undefined;
+		},
+	);
+	try {
+		await vi.advanceTimersByTimeAsync(300_000);
+		await flushMicrotasks();
+		expect(useStore.getState().agentActivity[agent.id]).toBeUndefined();
+		expect(connect).toHaveBeenCalledTimes(11);
+	} finally {
+		stopRuntime();
+	}
+});
+
+it("reads an unobserved Host-bound agent as unknown, never the unobserved default", () => {
+	const legacy = agentFixture({ id: "agent-legacy", sessionId: "session-legacy" });
+	useStore.setState({ agents: [agent, legacy], agentActivity: {} });
+	const stopWatch = installAgentAttentionWatch();
+	try {
+		// No observer here and no Host state: a managed agent proves nothing.
+		expect(useAgentAttention.getState().displayStates[agent.id]).toBe(
+			"unknown",
+		);
+		// An agent with no Host binding keeps the legacy default.
+		expect(useAgentAttention.getState().displayStates[legacy.id]).toBe(
+			"exited",
+		);
+		// An exit the Host reported still reads Exited.
+		useStore.getState().setAgentActivity(agent.id, "exited");
+		expect(useAgentAttention.getState().displayStates[agent.id]).toBe(
+			"exited",
+		);
+	} finally {
+		stopWatch();
+	}
 });
 
 it("uses the typed retry directive as the observer retry authority", async () => {
@@ -462,7 +690,8 @@ it("retires an unavailable observer when census proves its exact generation exit
 	stopRuntime();
 });
 
-it("reconciles an SSH source whose managed generation was replaced", async () => {
+/** An Agent on an SSH backend, made the only Agent in the store. */
+function storeRemoteAgent() {
 	const remoteAgent = agentFixture({
 		id: "agent-remote",
 		projectId: "project-remote",
@@ -504,6 +733,11 @@ it("reconciles an SSH source whose managed generation was replaced", async () =>
 			},
 		],
 	});
+	return remoteAgent;
+}
+
+it("reconciles an SSH source whose managed generation was replaced", async () => {
+	const remoteAgent = storeRemoteAgent();
 	const connect = vi.fn(async (request) => {
 		expect(request.binding.source).toBe("ssh");
 		throw new Error("remote_hmux_managed_attach_generation_changed");
@@ -523,8 +757,34 @@ it("reconciles an SSH source whose managed generation was replaced", async () =>
 	await vi.advanceTimersByTimeAsync(120_000);
 	await flushMicrotasks();
 	expect(connect).toHaveBeenCalledTimes(1);
+	// A replaced generation is not this Agent's exit.
+	expect(useStore.getState().agentActivity[remoteAgent.id]).toBeUndefined();
 
 	stopRuntime();
+});
+
+it("records an SSH agent's exit from its remote Host's own catalog answer", async () => {
+	const remoteAgent = storeRemoteAgent();
+	const census = censusOnRequest();
+	const connect = vi.fn(async () => {
+		throw new Error("remote_hmux_session_not_found");
+	});
+	const stopRuntime = installManagedAgentSemanticObserverRuntime(
+		{ connect },
+		undefined,
+		census.next,
+	);
+	try {
+		await flushMicrotasks();
+		expect(connect).toHaveBeenCalledTimes(1);
+		// The remote catalog is that Host's census; the local one says nothing.
+		expect(census.requests()).toBe(0);
+		expect(useStore.getState().agentActivity[remoteAgent.id]).toBe("exited");
+		await vi.advanceTimersByTimeAsync(120_000);
+		expect(connect).toHaveBeenCalledTimes(1);
+	} finally {
+		stopRuntime();
+	}
 });
 
 it("publishes an exited native generation as a projection refresh hint", async () => {

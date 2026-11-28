@@ -13,8 +13,9 @@ import {
 	parseWorkViewState,
 	serializeWorkViewState,
 	type WorkViewState,
-	withoutPin,
-	withPin,
+	withFoldOpen,
+	withKey,
+	withoutKey,
 	withPinMoved,
 } from "@/lib/work/workViewState";
 
@@ -26,7 +27,13 @@ export interface WorkViewStore extends WorkViewState {
 	select: (key: string | null) => void;
 	setDepth: (depth: WorkDepth) => void;
 	setGrouping: (grouping: WorkGrouping) => void;
-	setResultsOpen: (open: boolean) => void;
+	/** Open or close the fold with this key (WorkListFold.key); `listFolds`
+	 * are the folds the list has now. */
+	setFoldOpen: (
+		foldKey: string,
+		open: boolean,
+		listFolds: readonly string[],
+	) => void;
 	setManagedOpen: (open: boolean) => void;
 	pin: (agentId: string) => void;
 	unpin: (agentId: string) => void;
@@ -42,12 +49,15 @@ export function createWorkViewStore(
 		select: (selected) => set({ selected }),
 		setDepth: (depth) => set({ depth }),
 		setGrouping: (grouping) => set({ grouping }),
-		setResultsOpen: (resultsOpen) => set({ resultsOpen }),
+		setFoldOpen: (foldKey, open, listFolds) =>
+			set((current) => ({
+				openFolds: withFoldOpen(current.openFolds, foldKey, open, listFolds),
+			})),
 		setManagedOpen: (managedOpen) => set({ managedOpen }),
 		pin: (agentId) =>
-			set((current) => ({ pinned: withPin(current.pinned, agentId) })),
+			set((current) => ({ pinned: withKey(current.pinned, agentId) })),
 		unpin: (agentId) =>
-			set((current) => ({ pinned: withoutPin(current.pinned, agentId) })),
+			set((current) => ({ pinned: withoutKey(current.pinned, agentId) })),
 		movePin: (agentId, offset) =>
 			set((current) => ({
 				pinned: withPinMoved(current.pinned, agentId, offset),
@@ -59,7 +69,7 @@ export function createWorkViewStore(
 				current.selected === previous.selected &&
 				current.depth === previous.depth &&
 				current.grouping === previous.grouping &&
-				current.resultsOpen === previous.resultsOpen &&
+				current.openFolds === previous.openFolds &&
 				current.managedOpen === previous.managedOpen &&
 				current.pinned === previous.pinned
 			) {
@@ -69,7 +79,7 @@ export function createWorkViewStore(
 				selected: current.selected,
 				depth: current.depth,
 				grouping: current.grouping,
-				resultsOpen: current.resultsOpen,
+				openFolds: current.openFolds,
 				managedOpen: current.managedOpen,
 				pinned: current.pinned,
 			});

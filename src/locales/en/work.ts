@@ -4,6 +4,7 @@ export const workEnglishTranslations: Record<string, string> = {
 	"work.list.empty": "No agents yet. Agents you start in any project appear here.",
 	"work.list.noProject": "No project",
 	"work.list.resultsToday": "Has a result today",
+	"work.list.ended": "Ended",
 	"work.list.depth": "Agents to show",
 	"work.list.topLevel": "Top level",
 	"work.list.expandAll": "Expand all",

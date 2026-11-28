@@ -5,7 +5,14 @@ import { hmuxSessionMetadataKey } from "@/lib/hmux/identity/hmuxSessionMetadata"
 import type { HmuxControlPlaneCensus } from "@/lib/ipc";
 import { useStore } from "@/store";
 import { hmuxSessionSummaryFixture } from "@/test/agentFixtures";
-import { installHmuxControlPlaneCensusRuntime } from "./hmuxControlPlaneCensusRuntime";
+import {
+	publishHmuxControlPlaneCensus,
+	subscribeHmuxControlPlaneCensusSince,
+} from "./hmuxControlPlaneCensusFeed";
+import {
+	installHmuxControlPlaneCensusRuntime,
+	nextHmuxControlPlaneCensus,
+} from "./hmuxControlPlaneCensusRuntime";
 
 const mocks = vi.hoisted(() => ({
 	requestHmuxControlPlaneCensus: vi.fn(),
@@ -181,5 +188,65 @@ describe("Hmux control-plane census runtime", () => {
 		stop();
 		window.dispatchEvent(new FocusEvent("focus"));
 		expect(request).toHaveBeenCalledOnce();
+	});
+
+	it("answers a refresh with a census requested after it, even in a hidden window", async () => {
+		setVisibility("hidden");
+		const resolvers: ((value: HmuxControlPlaneCensus) => void)[] = [];
+		const request = vi.fn(
+			() =>
+				new Promise<HmuxControlPlaneCensus>((done) => {
+					resolvers.push(done);
+				}),
+		);
+		const stop = installHmuxControlPlaneCensusRuntime({
+			request,
+			apply: (result, requestedAtMs) =>
+				publishHmuxControlPlaneCensus(result, requestedAtMs),
+			windowRole: () => "main",
+			warn: vi.fn(),
+		});
+		try {
+			const first = vi.fn();
+			const second = vi.fn();
+			nextHmuxControlPlaneCensus(first);
+			nextHmuxControlPlaneCensus(second);
+			// Concurrent askers share one request, labelled as session recovery.
+			expect(request).toHaveBeenCalledOnce();
+			expect(request).toHaveBeenCalledWith({
+				source: "session_recovery",
+				trigger: "refresh",
+				windowRole: "main",
+			});
+			// One asked while that request is in flight needs a later one.
+			await new Promise((done) => setTimeout(done, 2));
+			const late = vi.fn();
+			nextHmuxControlPlaneCensus(late);
+			expect(request).toHaveBeenCalledOnce();
+			resolvers[0](census);
+			await vi.waitFor(() => expect(second).toHaveBeenCalledOnce());
+			expect(first).toHaveBeenCalledOnce();
+			expect(late).not.toHaveBeenCalled();
+			await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+			resolvers[1](census);
+			await vi.waitFor(() => expect(late).toHaveBeenCalledOnce());
+			expect(first).toHaveBeenCalledOnce();
+		} finally {
+			stop();
+		}
+	});
+});
+
+describe("Hmux control-plane census feed", () => {
+	it("answers a waiter only with a census requested at or after its moment", () => {
+		publishHmuxControlPlaneCensus(census, 1_000);
+		const listener = vi.fn();
+		const cancel = subscribeHmuxControlPlaneCensusSince(2_000, listener);
+		publishHmuxControlPlaneCensus(census, 1_500);
+		expect(listener).not.toHaveBeenCalled();
+		publishHmuxControlPlaneCensus(census, 2_000);
+		publishHmuxControlPlaneCensus(census, 3_000);
+		expect(listener).toHaveBeenCalledOnce();
+		cancel();
 	});
 });

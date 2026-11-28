@@ -1,4 +1,5 @@
 import {
+	exactCensusSession,
 	hasPositiveAgentRuntimeObservation,
 	isExitedHmuxSession,
 } from "@/lib/agents/agentRuntimeLiveness";
@@ -54,17 +55,6 @@ export function absentManagedAgentCleanupEligibleIds(input: {
 	);
 }
 
-function exactSession(
-	sessions: readonly HmuxSessionSummary[],
-	binding: HmuxManagedPaneBindingV1,
-): HmuxSessionSummary | undefined {
-	return sessions.find(
-		(session) =>
-			session.sessionId === binding.sessionId &&
-			session.workspaceId === binding.workspaceId,
-	);
-}
-
 function isStaleHmuxSession(summary: HmuxSessionSummary): boolean {
 	return (
 		!isExitedHmuxSession(summary) &&
@@ -116,7 +106,7 @@ export function planExitedManagedAgentCleanup(input: {
 		) {
 			continue;
 		}
-		const source = exactSession(input.sessions, binding);
+		const source = exactCensusSession(input.sessions, binding);
 		if (
 			source &&
 			binding.stopFence &&

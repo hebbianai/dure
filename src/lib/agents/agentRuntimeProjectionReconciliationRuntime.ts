@@ -1,5 +1,6 @@
 import { observeRuntimeConvergence } from "@/lib/agents/agentRuntimeConvergence";
 import {
+	exactCensusSession,
 	hasPositiveAgentRuntimeObservation,
 	isExitedHmuxSession,
 } from "@/lib/agents/agentRuntimeLiveness";
@@ -120,11 +121,7 @@ function retiredLocalSourceEvidence(
 	if (agent.sessionId !== binding.sessionId) {
 		return JSON.stringify(["agent_session_replaced", binding.sessionId]);
 	}
-	const session = sessions.find(
-		(candidate) =>
-			candidate.sessionId === binding.sessionId &&
-			candidate.workspaceId === binding.workspaceId,
-	);
+	const session = exactCensusSession(sessions, binding);
 	if (!session) {
 		if (
 			hasPositiveAgentRuntimeObservation({

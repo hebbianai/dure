@@ -52,9 +52,14 @@ export interface HmuxStateInput {
   turnCompletedCount?: string;
 }
 
+/** Legacy presentation fallback before a runtime observation lifetime exists.
+ * Managed streams explicitly withdraw unavailable observations as unknown. */
+export const UNOBSERVED_AGENT_ACTIVITY: AgentActivity = "exited";
+
 export function resolveAgentState(input: {
-  /** Presentation lifecycle while the Host projection is unavailable. */
-  heuristic: AgentActivity;
+  /** Presentation lifecycle while the Host projection is unavailable; absent
+   * when nothing in this window recorded one. */
+  heuristic?: AgentActivity;
   /** Existing exact managed Host census projection. It fences impossible
    * legacy lifecycle values; semantic Host state still owns activity. */
   hmuxLiveness?: "alive" | "exited" | "unknown";
@@ -65,7 +70,14 @@ export function resolveAgentState(input: {
   const { heuristic, hmuxLiveness, hmux } = input;
   if (hmuxLiveness === "exited") return "exited";
   if (hmux?.lifecycle === "exited") return "exited";
-  if (input.hmuxObserved === false) return "unknown";
+  // An unavailable observation proves nothing about a live process, but an
+  // exit the Host already reported stays one: every "exited" lifecycle the
+  // store holds is a Host fact, unless the census sees the generation alive.
+  if (input.hmuxObserved === false) {
+    return heuristic === "exited" && hmuxLiveness !== "alive"
+      ? "exited"
+      : "unknown";
+  }
   if (hmux) {
     if (hmux.lifecycle === "starting") return "connecting";
     if (hmux.activity === "working") return "working";
@@ -74,33 +86,33 @@ export function resolveAgentState(input: {
     if (hmux.attention === "approval_required") return "blocked";
     return "waiting";
   }
+  const presented = heuristic ?? UNOBSERVED_AGENT_ACTIVITY;
   const fencedHeuristic =
     hmuxLiveness === "alive" &&
-    (heuristic === "exited" || heuristic === "connecting")
+    (presented === "exited" || presented === "connecting")
       ? "waiting"
-      : heuristic;
+      : presented;
   if (fencedHeuristic === "exited") return "exited";
   if (fencedHeuristic === "connecting") return "connecting";
   return fencedHeuristic;
 }
 
 export interface AgentTierInputs {
-  heuristic: AgentActivity;
+  /** The presentation lifecycle the store holds; absent when none. */
+  heuristic?: AgentActivity;
   hmuxLiveness?: "alive" | "exited" | "unknown";
   /** Whether a current stream substantiates the retained Host snapshot. */
   hmuxObserved?: boolean;
   hmux?: HmuxStateInput;
 }
 
-/** Legacy presentation fallback before a runtime observation lifetime exists.
- * Managed streams explicitly withdraw unavailable observations as unknown. */
-export const UNOBSERVED_AGENT_ACTIVITY: AgentActivity = "exited";
-
 /** The state a surface presents for an agent: the attention watcher's
  * projection when it has one, otherwise the presentation lifecycle the store
- * holds, otherwise the unobserved default. useAgentDisplayState, the Spaces
- * rows and native search all present through this — the fallback chain is
- * not spelled anywhere else. */
+ * holds, otherwise the unobserved default. The watcher projects every Agent,
+ * and a Host-bound one this window does not observe as unknown, so the
+ * default only fills the moment before its first projection.
+ * useAgentDisplayState, the Spaces rows and native search all present
+ * through this — the fallback chain is not spelled anywhere else. */
 export function presentedAgentDisplayState(
   resolved: AgentDisplayState | undefined,
   activity: AgentActivity | undefined,

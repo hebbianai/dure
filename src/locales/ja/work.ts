@@ -3,6 +3,7 @@ export const work: Record<string, string> = {
 	"work.list.empty": "まだエージェントがありません。どのプロジェクトで開始したエージェントもここに表示されます。",
 	"work.list.noProject": "プロジェクトなし",
 	"work.list.resultsToday": "今日の結果あり",
+	"work.list.ended": "終了済み",
 	"work.list.depth": "表示するエージェント",
 	"work.list.topLevel": "最上位のみ",
 	"work.list.expandAll": "すべて展開",
