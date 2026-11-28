@@ -238,6 +238,17 @@ continue. Every command's output is logged and uploaded as the
 Accept a fallback DMG deliberately: it is signed and contains the same notarized
 app, but its Finder window is unstyled.
 
+Other work on a shared host can demote a running process tree to background
+QoS, and every process the tree starts afterwards inherits the demotion. That
+made the release build's later Cargo, `tsc` and `vite` runs 15–40 times slower
+(#836). The build therefore runs under `run-with-foreground-priority.mjs` from
+the protected checkout. Right away and every 30 seconds it lifts the background
+state from every process of the build (`taskpolicy -B -p`). It prints a warning
+when a demotion or a raised nice first appears, and it appends a nice/QoS
+timeline to the job summary. It cannot lower a raised nice, because that needs
+root, and it cannot lift a process that put itself into the background. Off
+macOS it only runs the build.
+
 The independent hosted version writer treats the candidate patch as data. It
 reconstructs every allowed manifest/lock byte from the frozen source, commits
 only that version inventory, and atomically publishes `release/vX.Y.Z` and
