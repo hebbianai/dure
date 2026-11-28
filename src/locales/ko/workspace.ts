@@ -133,6 +133,7 @@ export const workspace: Record<string, string> = {
 	"workspace.health.notResponding": "응답 지연",
 	"workspace.paneRename.description": "이 pane에만 적용됩니다. 세션, 작업 폴더와 에이전트 이름은 바뀌지 않습니다.",
 	"workspace.agentWindow.unavailable": "이 세션은 큰 창에서 볼 수 없습니다",
+	"workspace.window.keepOnTop": "항상 위에 표시",
 	"workspace.statusCard.enlargeForTerminal": "이 pane을 키우면 터미널이 보입니다",
 	"workspace.statusCard.enlargeForConversation": "이 pane을 키우면 대화가 보입니다",
 	"workspace.desktopClose.terminatesSessions": "일반 터미널/SSH 세션 {n}개를 종료합니다. 등록된 에이전트 세션은 유지됩니다.",

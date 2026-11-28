@@ -15,11 +15,12 @@ function receipt() {
   const typed = "Sent from the large window";
   const observation = (phase, patch = {}) => ({
     proof: "large-proof", phase, label: "win-session-agent", toolbar: true, viewControl: true,
-    viewEnabled: true, composer: true, sent: [], agentView: "chat", ...patch,
+    viewEnabled: true, composer: true, sent: [], agentView: "chat", keepOnTopPressed: "false", ...patch,
   });
   return structuredClone({
     proof: "large-proof", result: "passed", label: "main", largeLabel: "win-session-agent", typed,
     proxyShown: true, sourceSent: 0, switchRequests: [{ sourceStopPolicy: "preserve" }],
+    sourceReads: { keptOnTop: true, reopenedAtCreation: true, released: false },
     userAgent: "AppleWebKit/605.1.15",
     observations: [
       observation("ready"),
@@ -27,6 +28,9 @@ function receipt() {
       observation("view-terminal", { sent: [typed] }),
       observation("terminal-followed", { sent: [typed], composer: false, agentView: "terminal" }),
       observation("chat-followed", { sent: [typed] }),
+      observation("keep-on-top", { sent: [typed], keepOnTopPressed: "true", alwaysOnTop: true }),
+      observation("reopened", { sent: [typed], keepOnTopPressed: "true", alwaysOnTop: true }),
+      observation("keep-on-top-off", { sent: [typed], keepOnTopPressed: "false", alwaysOnTop: false }),
     ],
   });
 }
@@ -49,7 +53,7 @@ function run(report) {
   return { status: child.status, saved };
 }
 
-it("accepts the large window's toolbar, send, proxy and View round trip", () => {
+it("accepts the large window's toolbar, send, proxy, View round trip and keep on top", () => {
   const report = receipt();
   expect(run(report)).toEqual({ status: 0, saved: report });
 });
@@ -62,6 +66,10 @@ it.each([
   ["window kept the Chat after the switch", (report) => { report.observations[3].composer = true; }],
   ["window never returned to Chat", (report) => { report.observations[4].agentView = "terminal"; }],
   ["steps from another window", (report) => { report.observations[2].label = "main"; }],
+  ["window never went on top", (report) => { report.observations[5].alwaysOnTop = false; }],
+  ["reopened window lost the level", (report) => { report.observations[6].alwaysOnTop = false; }],
+  ["window stayed on top after turning it off", (report) => { report.observations[7].alwaysOnTop = true; }],
+  ["source window saw another level", (report) => { report.sourceReads.reopenedAtCreation = false; }],
 ])("rejects a run where the %s", (_name, corrupt) => {
   const report = receipt();
   corrupt(report);

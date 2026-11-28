@@ -13,6 +13,7 @@ import {
 	useSecondaryWindowBoot,
 	windowChromeDragHandler,
 } from "@/components/workspace/SecondaryWindowShell";
+import { WindowKeepOnTopToggle } from "@/components/workspace/WindowKeepOnTopToggle";
 import { presentedFileDocumentIO } from "@/lib/files/fileDocumentIO";
 import { type FilePresentation, fileBaseName } from "@/lib/files/filePresentation";
 import { publishFileReopen } from "@/lib/files/fileReopenEvents";
@@ -100,6 +101,7 @@ export function FilePresentationWindowRoot() {
 						{t("panels.filePresentation.presentedBy", { name: presenterName })}
 					</span>
 				) : null}
+				<WindowKeepOnTopToggle className="ml-auto" />
 			</div>
 			<div className="relative min-h-0 flex-1">
 				{file && viewerProps ? (

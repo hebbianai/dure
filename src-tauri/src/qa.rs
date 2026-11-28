@@ -1801,6 +1801,7 @@ fn native_window_state<R: Runtime>(app: &AppHandle<R>, label: &str) -> Value {
         "exists": true,
         "visible": window.is_visible().ok(),
         "focused": window.is_focused().ok(),
+        "alwaysOnTop": window.is_always_on_top().ok(),
         "innerPhysicalSize": inner_size,
     })
 }

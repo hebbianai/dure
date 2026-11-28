@@ -48,6 +48,7 @@ import {
 	openPopoutWindow,
 	restoreWindowAfterSecondaryClose,
 } from "@/lib/workspace/window/windows";
+import { rememberKeepOnTop } from "@/lib/workspace/window/windowKeepOnTop";
 import {
 	SECONDARY_WINDOW_EVENT_TIMEOUT_MS,
 	SECONDARY_WINDOW_LOOKUP_TIMEOUT_MS,
@@ -198,6 +199,22 @@ describe("agent session secondary window", () => {
 		expect(mocks.unminimize.mock.invocationCallOrder[0]).toBeLessThan(
 			mocks.setFocus.mock.invocationCallOrder[0],
 		);
+	});
+
+	it("opens a large window kept on top at that level, and others at the normal one", async () => {
+		rememberKeepOnTop(localStorage, "win-session-agent-1", true);
+
+		await openAgentSessionWindow("agent-1", "UI polish");
+		await openAgentSessionWindow("agent-2", "Docs");
+		await openAgentDiffWindow("agent-1");
+
+		expect(
+			mocks.created.map(({ label, options }) => [label, options.alwaysOnTop]),
+		).toEqual([
+			["win-session-agent-1", true],
+			["win-session-agent-2", false],
+			["win-diff-agent-1", false],
+		]);
 	});
 
 	it("records a non-main workspace as the return target", async () => {

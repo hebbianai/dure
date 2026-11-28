@@ -25,6 +25,8 @@ import {
 	registerDockview,
 	unregisterDockview,
 } from "@/lib/workspace/dock/dockRegistry";
+import { waitForSecondaryWindowCreation } from "@/lib/workspace/window/secondaryWindowOperation";
+import { keepOnTopWindowOptions } from "@/lib/workspace/window/windowKeepOnTop";
 import { SECONDARY_WINDOW_LABEL_PREFIX } from "@/lib/workspace/window/windowLabel";
 import { startWindowSync } from "@/lib/workspace/window/windows";
 import { durableAppStorage, useStore } from "@/store";
@@ -62,12 +64,33 @@ interface LargeWindowReport {
 	composer: boolean;
 	sent: string[];
 	agentView: "chat" | "terminal" | "missing";
+	/** The keep-on-top toggle's `aria-pressed`, or null without a toggle. */
+	keepOnTopPressed: string | null;
+	/** The native level this window last read for itself. */
+	alwaysOnTop?: boolean;
 }
 
 async function waitFor(description: string, ready: () => boolean) {
 	const deadline = Date.now() + 30_000;
 	while (!ready()) {
 		if (Date.now() >= deadline) throw new Error(`Timed out: ${description}`);
+		await new Promise<void>((resolve) => setTimeout(resolve, 50));
+	}
+}
+
+/** Polls a native read: some platforms apply a window level on a later turn
+ * of their event loop, so the first read after a change may still be old. */
+async function waitForNative<T>(
+	description: string,
+	read: () => Promise<T>,
+	expected: T,
+): Promise<T> {
+	const deadline = Date.now() + 10_000;
+	for (;;) {
+		const value = await read();
+		if (value === expected) return value;
+		if (Date.now() >= deadline)
+			throw new Error(`Timed out: ${description} (read ${String(value)})`);
 		await new Promise<void>((resolve) => setTimeout(resolve, 50));
 	}
 }
@@ -194,6 +217,25 @@ export function prepareChatLargeWindowQa(sourceWindowLabel: string): void {
 	const sent: string[] = [];
 	serveAgentChatFixtureForQa(fixtureConversation(proof, (input) => sent.push(input)));
 	const label = getCurrentWebviewWindow().label;
+	let alwaysOnTop: boolean | undefined;
+	const keepOnTopToggle = () =>
+		document.querySelector<HTMLButtonElement>(
+			`header [aria-label="${t("workspace.window.keepOnTop")}"]`,
+		);
+	/** Presses the large window's own toggle and waits for the native level. */
+	const keepOnTop = async (expected: boolean) => {
+		const toggle = keepOnTopToggle();
+		check(toggle, "The large window has no keep-on-top toggle");
+		toggle.click();
+		await waitFor("the toggle shows the new level", () =>
+			keepOnTopToggle()?.getAttribute("aria-pressed") === String(expected),
+		);
+		alwaysOnTop = await waitForNative(
+			"the native window takes the new level",
+			() => getCurrentWebviewWindow().isAlwaysOnTop(),
+			expected,
+		);
+	};
 	const observe = (phase: string, error?: string): LargeWindowReport => {
 		const control = viewControl();
 		return {
@@ -207,6 +249,8 @@ export function prepareChatLargeWindowQa(sourceWindowLabel: string): void {
 			composer: Boolean(document.querySelector("textarea")),
 			sent: [...sent],
 			agentView: agentView(),
+			keepOnTopPressed: keepOnTopToggle()?.getAttribute("aria-pressed") ?? null,
+			...(alwaysOnTop === undefined ? {} : { alwaysOnTop }),
 		};
 	};
 	const report = (phase: string, error?: string) =>
@@ -262,6 +306,18 @@ export function prepareChatLargeWindowQa(sourceWindowLabel: string): void {
 				() => agentView() === "chat" && observe("").composer,
 			);
 		},
+		"keep-on-top": () => keepOnTop(true),
+		reopened: async () => {
+			alwaysOnTop = await waitForNative(
+				"the reopened window is on top",
+				() => getCurrentWebviewWindow().isAlwaysOnTop(),
+				true,
+			);
+			await waitFor("the reopened toggle shows it", () =>
+				keepOnTopToggle()?.getAttribute("aria-pressed") === "true",
+			);
+		},
+		"keep-on-top-off": () => keepOnTop(false),
 	};
 	void listenWhenReady<{ proof: string; action: string }>(
 		ACTION,
@@ -348,6 +404,7 @@ export async function runChatLargeWindowProbe(): Promise<void> {
 	const observations: LargeWindowReport[] = [];
 	const stops: Array<() => void> = [];
 	let large: WebviewWindow | undefined;
+	const sourceReads: Record<string, boolean> = {};
 	let proxyShown = false;
 	let sourceSent = 0;
 	serveAgentChatFixtureForQa(
@@ -427,16 +484,27 @@ export async function runChatLargeWindowProbe(): Promise<void> {
 		);
 
 		const largeLabel = `${SECONDARY_WINDOW_LABEL_PREFIX}session-${AGENT_ID}`;
-		large = new WebviewWindow(largeLabel, {
-			...(await webviewStorageOptions()),
-			url: `index.html?sessionWindow=${encodeURIComponent(AGENT_ID)}&sourceWindow=${encodeURIComponent(label)}&sourcePane=${encodeURIComponent(SOURCE_PANE_OWNER)}&qaChatLargeWindow=${encodeURIComponent(proof)}`,
-			width: 1180,
-			height: 880,
-			visible: false,
-			focus: false,
-			focusable: false,
-			backgroundThrottling: "disabled" as BackgroundThrottlingPolicy,
-		});
+		const storage = await webviewStorageOptions();
+		/** Opens the large window as the product opener does, with the level
+		 * saved for its label, but hidden and unfocusable. */
+		const openLarge = async () => {
+			reports.delete("loaded");
+			const opened = new WebviewWindow(largeLabel, {
+				...storage,
+				url: `index.html?sessionWindow=${encodeURIComponent(AGENT_ID)}&sourceWindow=${encodeURIComponent(label)}&sourcePane=${encodeURIComponent(SOURCE_PANE_OWNER)}&qaChatLargeWindow=${encodeURIComponent(proof)}`,
+				width: 1180,
+				height: 880,
+				visible: false,
+				focus: false,
+				focusable: false,
+				...keepOnTopWindowOptions(largeLabel),
+				backgroundThrottling: "disabled" as BackgroundThrottlingPolicy,
+			});
+			return waitForSecondaryWindowCreation(opened, () =>
+				WebviewWindow.getByLabel(largeLabel),
+			);
+		};
+		large = await openLarge();
 		await waitFor("the large window loads", () => reports.has("loaded"));
 		const step = async (action: string) => {
 			reports.delete(action);
@@ -476,8 +544,33 @@ export async function runChatLargeWindowProbe(): Promise<void> {
 		await durableAppStorage.flush();
 		const chat = await step("chat-followed");
 		check(chat.composer && chat.toolbar, "The window did not return to Chat");
+
+		// Keep on top, read back from both windows, then close and reopen the
+		// same Agent's large window: it comes back on top.
+		const kept = await step("keep-on-top");
+		check(kept.alwaysOnTop === true, "The large window did not go on top");
+		const shown = large;
+		sourceReads.keptOnTop = await waitForNative(
+			"the source window sees the large window on top",
+			() => shown.isAlwaysOnTop(),
+			true,
+		);
 		// Hidden windows never focus, so the window is retired without the
 		// user-facing close path, which brings the source window forward.
+		await large.destroy();
+		large = await openLarge();
+		const reopenedWindow = large;
+		sourceReads.reopenedAtCreation = await reopenedWindow.isAlwaysOnTop();
+		await waitFor("the reopened large window loads", () => reports.has("loaded"));
+		const reopened = await step("reopened");
+		check(reopened.alwaysOnTop === true, "The reopened window is not on top");
+		const released = await step("keep-on-top-off");
+		check(released.alwaysOnTop === false, "The large window stayed on top");
+		sourceReads.released = await waitForNative(
+			"the source window sees the large window at the normal level",
+			() => reopenedWindow.isAlwaysOnTop(),
+			false,
+		);
 		await large.destroy();
 		large = undefined;
 		qaLog("chat-large-window", {
@@ -489,6 +582,7 @@ export async function runChatLargeWindowProbe(): Promise<void> {
 			proxyShown,
 			switchRequests,
 			sourceSent,
+			sourceReads,
 			observations,
 			userAgent: navigator.userAgent,
 		});
