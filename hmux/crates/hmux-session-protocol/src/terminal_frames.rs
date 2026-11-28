@@ -438,16 +438,16 @@ impl AgentRuntimeStateProjection {
             )
     }
 
-    /// The provider's turn ended on a typed API failure its adapter reported,
-    /// nothing runs and nothing more is coming until someone sends input.
-    /// Unlike semantic quiescence this leaves an open error episode, so it
-    /// never counts as idle; it only admits a fenced managed stop.
+    /// The provider's turn ended on an error its adapter reported, with or
+    /// without a typed reason: nothing runs and nothing more is coming until
+    /// someone sends input. Unlike semantic quiescence this leaves an open
+    /// error episode, so it never counts as idle; it only admits a fenced
+    /// managed stop.
     #[must_use]
     pub fn is_settled_turn_failure(&self) -> bool {
         self.lifecycle == AgentRuntimeLifecycle::Running
             && self.activity == AgentRuntimeActivity::Waiting
             && self.attention == AgentRuntimeAttention::Error
-            && self.turn_failure.is_some()
             && !self.background_work
             && self.source == AgentRuntimeStateSource::ProviderEvent
     }

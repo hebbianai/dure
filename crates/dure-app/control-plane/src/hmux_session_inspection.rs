@@ -100,9 +100,7 @@ pub(crate) struct HmuxSessionInspection {
 
 impl HmuxSessionInspection {
     pub(crate) fn semantic_idle_age(&self) -> Result<Option<Duration>, &'static str> {
-        if !self.capabilities.iter().any(|capability| {
-            capability == hmux_session_protocol::SEMANTIC_IDLE_OBSERVATION_CAPABILITY
-        }) {
+        if !self.supports(hmux_session_protocol::SEMANTIC_IDLE_OBSERVATION_CAPABILITY) {
             return Ok(None);
         }
         // Idle is quiescence only: a settled turn failure may admit a stop,
@@ -120,9 +118,7 @@ impl HmuxSessionInspection {
     }
 
     pub(crate) fn supports_semantic_quiescent_stop(&self) -> bool {
-        self.capabilities.iter().any(|capability| {
-            capability == hmux_session_protocol::MANAGED_PROVIDER_SEMANTIC_QUIESCENT_STOP_CAPABILITY
-        })
+        self.supports(hmux_session_protocol::MANAGED_PROVIDER_SEMANTIC_QUIESCENT_STOP_CAPABILITY)
     }
 
     pub(crate) fn created_unix_ms(&self) -> Option<u64> {
@@ -151,39 +147,51 @@ impl HmuxSessionInspection {
         })
     }
 
-    /// Why the provider's turn ended, when it settled on a typed API failure
-    /// nobody has answered: the Host negotiated the failure, the prompt waits
-    /// on that error with no background work, and no typed input is pending.
-    /// Nothing runs and nothing more is coming until someone sends input, so
-    /// a fenced managed stop may end it without losing work.
+    fn supports(&self, capability: &str) -> bool {
+        self.capabilities.iter().any(|value| value == capability)
+    }
+
+    /// The provider's turn settled on an error nobody has answered, whether
+    /// or not its reporter named why: the prompt waits on that error with no
+    /// background work, and no typed input is pending. Nothing runs and
+    /// nothing more is coming until someone sends input.
+    fn settled_error_state(&self) -> Option<&AgentRuntimeState> {
+        if self.controller_input_pending != Some(false) {
+            return None;
+        }
+        self.agent_runtime_state.as_ref().filter(|state| {
+            state.lifecycle == AgentRuntimeLifecycle::Running
+                && state.activity == AgentRuntimeActivity::Waiting
+                && state.attention == AgentRuntimeAttention::Error
+                && state.attention_id.is_some()
+                && !state.background_work
+        })
+    }
+
+    /// Why the provider's turn ended, when it settled on an error whose
+    /// typed reason the Host negotiated. Recovery acts on that reason.
     pub(crate) fn settled_turn_failure(&self) -> Option<dure_app::AgentTurnFailureReasonV1> {
-        if !self.capabilities.iter().any(|capability| {
-            capability == hmux_session_protocol::AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY
-        }) || self.controller_input_pending != Some(false)
-        {
+        if !self.supports(hmux_session_protocol::AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY) {
             return None;
         }
-        let state = self.agent_runtime_state.as_ref()?;
-        if state.lifecycle != AgentRuntimeLifecycle::Running
-            || state.activity != AgentRuntimeActivity::Waiting
-            || state.attention != AgentRuntimeAttention::Error
-            || state.attention_id.is_none()
-            || state.background_work
-        {
-            return None;
-        }
-        state
+        self.settled_error_state()?
             .turn_failure
             .as_deref()
             .and_then(dure_app::AgentTurnFailureReasonV1::from_token)
     }
 
     /// Whether a managed stop that preserves the conversation may end the
-    /// provider here: it is idle, or its turn settled on a typed failure.
-    /// Idle-only consumers (hibernation, child results) keep using
+    /// provider here: it is idle, or its turn settled on an error, so a
+    /// fenced stop ends it without losing work. A Host admits that stop at
+    /// any settled error only when it says so; an older Host only at a typed
+    /// failure. Idle-only consumers (hibernation, child results) keep using
     /// [`Self::is_agent_quiescent`].
     pub(crate) fn is_stop_boundary(&self) -> bool {
-        self.is_agent_quiescent() || self.settled_turn_failure().is_some()
+        self.is_agent_quiescent()
+            || self.settled_turn_failure().is_some()
+            || (self
+                .supports(hmux_session_protocol::MANAGED_PROVIDER_SETTLED_ERROR_STOP_CAPABILITY)
+                && self.settled_error_state().is_some())
     }
 
     /// Names the Host evidence that keeps this observation from being an idle
@@ -685,6 +693,82 @@ mod tests {
         let parsed = parse(&unknown);
         assert_eq!(parsed.settled_turn_failure(), None);
         assert!(parsed.managed_stop_quiescence_fence().is_err());
+    }
+
+    /// A turn that ended on any provider error is settled, whether or not its
+    /// reporter named why, so a Host that admits that stop lets a switch end
+    /// it. Recovery still acts only on a typed reason, and a running turn,
+    /// a pending question or unsent input keeps the session.
+    #[test]
+    fn a_settled_error_without_a_reason_is_a_stop_boundary_on_a_host_that_admits_it() {
+        let failed = || {
+            let mut observed = inspection();
+            observed["capabilities"] =
+                json!([hmux_session_protocol::MANAGED_PROVIDER_SETTLED_ERROR_STOP_CAPABILITY]);
+            observed["controllerInputPending"] = json!(false);
+            let state = &mut observed["agentRuntimeState"];
+            state["activity"] = json!("waiting");
+            state["attention"] = json!("error");
+            state["attention_id"] = json!("attention-3");
+            observed
+        };
+        let parse = |value: &serde_json::Value| {
+            parse_exact_hmux_session(&serde_json::to_vec(value).unwrap(), &expected()).unwrap()
+        };
+
+        let mut unknown_reason = failed();
+        unknown_reason["capabilities"] = json!([
+            hmux_session_protocol::MANAGED_PROVIDER_SETTLED_ERROR_STOP_CAPABILITY,
+            hmux_session_protocol::AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY,
+        ]);
+        unknown_reason["agentRuntimeState"]["turn_failure"] = json!("quota_exhausted_v9");
+        for settled in [failed(), unknown_reason] {
+            let parsed = parse(&settled);
+            assert!(parsed.is_stop_boundary());
+            let fence = parsed.managed_stop_quiescence_fence().unwrap();
+            assert_eq!(fence.runtime_revision(), 3);
+            assert_eq!(fence.observed_through_output_seq(), 9);
+            assert_eq!(parsed.settled_turn_failure(), None);
+            assert!(!parsed.is_agent_quiescent());
+        }
+
+        // A Host that admits a stop only at a typed failure would refuse it.
+        let mut typed_only_host = failed();
+        typed_only_host["capabilities"] =
+            json!([hmux_session_protocol::AGENT_STATE_REPORT_TURN_FAILURE_CAPABILITY]);
+        let mut running = failed();
+        running["agentRuntimeState"]["activity"] = json!("working");
+        running["agentRuntimeState"]["attention"] = json!("none");
+        running["agentRuntimeState"]
+            .as_object_mut()
+            .unwrap()
+            .remove("attention_id");
+        let mut input_pending = failed();
+        input_pending["controllerInputPending"] = json!(true);
+        let mut input_unknown = failed();
+        input_unknown
+            .as_object_mut()
+            .unwrap()
+            .remove("controllerInputPending");
+        let mut background = failed();
+        background["agentRuntimeState"]["background_work"] = json!(true);
+        let mut asking = failed();
+        asking["agentRuntimeState"]["attention"] = json!("input_required");
+        let mut approving = failed();
+        approving["agentRuntimeState"]["attention"] = json!("approval_required");
+        for refused in [
+            typed_only_host,
+            running,
+            input_pending,
+            input_unknown,
+            background,
+            asking,
+            approving,
+        ] {
+            let parsed = parse(&refused);
+            assert!(!parsed.is_stop_boundary(), "{refused}");
+            assert!(parsed.managed_stop_quiescence_fence().is_err(), "{refused}");
+        }
     }
 
     #[test]

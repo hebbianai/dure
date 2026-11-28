@@ -181,6 +181,12 @@ pub const MANAGED_PROVIDER_QUIESCENT_STOP_CAPABILITY: &str = "managed_provider_q
 /// support the atomic fence above without this stronger idle guarantee.
 pub const MANAGED_PROVIDER_SEMANTIC_QUIESCENT_STOP_CAPABILITY: &str =
     "managed_provider_semantic_quiescent_stop_v1";
+/// Extends the quiescence-fenced stop to a turn that settled on any provider
+/// error, whether or not its reporter named why: the prompt waits on that
+/// error and nothing runs until someone sends input. Older Hosts admit only a
+/// failure typed under `agent_state_report_turn_failure_v1`.
+pub const MANAGED_PROVIDER_SETTLED_ERROR_STOP_CAPABILITY: &str =
+    "managed_provider_settled_error_stop_v1";
 /// Publishes current semantic idle age from the live Host's monotonic clock.
 /// Observer/backend restarts do not reset it; a replacement Host never inherits it.
 pub const SEMANTIC_IDLE_OBSERVATION_CAPABILITY: &str = "semantic_idle_observation_v1";

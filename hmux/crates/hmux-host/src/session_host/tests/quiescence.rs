@@ -335,7 +335,8 @@ fn a_settled_turn_failure_admits_only_its_exact_stop_fence() {
         "a new turn retires the failure's stop authority"
     );
 
-    // An untyped error never admits a stop: a person decides what it means.
+    // An error its reporter did not name is just as settled, so it admits its
+    // exact stop fence too; only recovery needs the reason.
     let mut host = super::host();
     let AgentStateReportFold::Applied(untyped) = host
         .apply_agent_state_report(
@@ -351,15 +352,14 @@ fn a_settled_turn_failure_admits_only_its_exact_stop_fence() {
         panic!("the error report must apply");
     };
     assert!(
-        !host
-            .matches_agent_runtime_quiescence(
-                &current,
-                &ManagedProviderStopQuiescenceFence {
-                    terminal_epoch: untyped.terminal_epoch.clone(),
-                    runtime_revision: untyped.revision,
-                    observed_through_output_seq: host.current_output_seq(),
-                },
-            )
-            .unwrap()
+        host.matches_agent_runtime_quiescence(
+            &current,
+            &ManagedProviderStopQuiescenceFence {
+                terminal_epoch: untyped.terminal_epoch.clone(),
+                runtime_revision: untyped.revision,
+                observed_through_output_seq: host.current_output_seq(),
+            },
+        )
+        .unwrap()
     );
 }
