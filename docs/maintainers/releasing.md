@@ -204,26 +204,31 @@ admitted the build. In full mode the verification job does this on the selected
 macOS runner. In emergency mode a `host-preflight` job runs there instead: it waits for
 the `macos-release` approval, checks the arm64 host and its Finder session,
 and, on the hosted runner, that the certificate secrets are set. On the
-self-hosted runner it also refuses an overloaded host and runs the full build's
-storage admission without building (`run-with-build-storage.mjs full -- true`).
-It receives no publisher credentials or signing secrets. A rejected or
+self-hosted runner it also waits for, or refuses, an overloaded host and runs
+the full build's storage admission without building
+(`run-with-build-storage.mjs --wait-minutes 25 full -- true`). That admission
+re-checks a refusal every minute, with the same budget, floor and safe reclaim,
+for up to 25 minutes before it refuses. It receives no publisher credentials or
+signing secrets. A rejected or
 cancelled approval, a missing hosted certificate, a load refusal or a storage
 refusal stops the run before `release/vX.Y.Z` and `vX.Y.Z` exist, so the
 version stays unused; fix the cause, then re-run the failed jobs or start a new
 dispatch. The build job uses the same environment after the tag exists, so every
-run asks for `macos-release` approval twice. The preflight is a point-in-time
-check: the build admits its storage again, and a volume that fills up in between
-still stops the build after tagging.
+run asks for `macos-release` approval twice. The preflight does not reserve
+anything for later: the build admits its storage again, and a volume that fills
+up in between still stops the build after tagging.
 
 On the self-hosted runner, both pre-tag jobs run
-`check-release-host.mjs --max-load-per-core 16` and refuse with
-`release_host_overloaded` when the one-minute load average exceeds 16 per
-logical core (256 on the 16-core signing host), or with
-`release_host_memory_critical`. A hosted VM skips the check. Nothing else runs
+`check-release-host.mjs --max-load-per-core 16 --wait-minutes 25`. It waits up
+to 25 minutes for the one-minute load average to drop under 16 per logical core
+(256 on the 16-core signing host) and for memory pressure to leave critical.
+After that it refuses with `release_host_overloaded` or
+`release_host_memory_critical`. v0.2.73's preflight was refused twice within 19
+minutes, and v0.2.71's single refusal took 2 h 49 min to rerun (#836). A hosted VM skips the check. Nothing else runs
 on it, and its boot alone measured a load of 48 on 3 cores. The threshold comes from release run
 41195693547 (#308): the DMG step succeeded at a load of about 155 and failed at
-400–935 while the host swapped. The check is a point-in-time refusal before the
-version is reserved; the build job never refuses after tagging.
+400–935 while the host swapped. The check refuses only before the version is
+reserved; the build job never refuses after tagging.
 
 The build job runs `tauri build --bundles app`, which compiles, signs and
 notarizes the app and writes the signed updater archive, and then packages the

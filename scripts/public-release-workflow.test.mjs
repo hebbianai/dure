@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
 import YAML from "yaml";
-import { RELEASE_HOST_MAX_LOAD_PER_CORE } from "./lib/release-host-admission.mjs";
+import {
+  RELEASE_HOST_MAX_LOAD_PER_CORE,
+  RELEASE_HOST_WAIT_MINUTES,
+} from "./lib/release-host-admission.mjs";
 import { parseForegroundPriorityCommand } from "./run-with-foreground-priority.mjs";
 
 const workflow = YAML.parse(
@@ -25,6 +28,7 @@ const isCertificatePresenceCheck = (step) =>
   JSON.stringify(step.env) === JSON.stringify({ CERTIFICATE_CONFIGURED: CERTIFICATE_PRESENCE });
 const isCertificateImport = (step) =>
   step.name === "Import the signing certificate into a job keychain";
+const STORAGE_ADMISSION = `node scripts/run-with-build-storage.mjs --wait-minutes ${RELEASE_HOST_WAIT_MINUTES} full -- true`;
 
 function runStep(run, env = {}) {
   return spawnSync("bash", ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", run], {
@@ -330,7 +334,7 @@ test("an emergency release approves and admits the signing host before any versi
   expect(preflight["runs-on"]).toEqual(workflow.jobs.build["runs-on"]);
   expect(preflight.environment).toBe(workflow.jobs.build.environment);
   const runs = preflight.steps.map((step) => step.run ?? "");
-  expect(runs).toContain("node scripts/run-with-build-storage.mjs full -- true");
+  expect(runs).toContain(STORAGE_ADMISSION);
   expect(runs.join("\n")).not.toMatch(/tauri|cargo|pnpm|release-public/);
   const withoutPresence = preflight.steps.filter((step) => !isCertificatePresenceCheck(step));
   expect(withoutPresence).toHaveLength(preflight.steps.length - 1);
@@ -602,7 +606,7 @@ test("the DMG is packaged from the signed app with layout retries, a plain fallb
 });
 
 test("an overloaded signing host is refused before any version ref exists, never after", () => {
-  const check = `node scripts/check-release-host.mjs --max-load-per-core ${RELEASE_HOST_MAX_LOAD_PER_CORE}`;
+  const check = `node scripts/check-release-host.mjs --max-load-per-core ${RELEASE_HOST_MAX_LOAD_PER_CORE} --wait-minutes ${RELEASE_HOST_WAIT_MINUTES}`;
   for (const name of ["verification", "host-preflight"]) {
     const steps = workflow.jobs[name].steps;
     const refusal = steps.findIndex((step) => step.run === check);
@@ -624,9 +628,17 @@ test("an overloaded signing host is refused before any version ref exists, never
   for (const name of ["verification", "host-preflight"])
     expect(workflow.jobs[name].steps.find((step) => step.run === check).if, name).toBe(selfHostedOnly);
   expect(
-    preflight.find((step) => step.run === "node scripts/run-with-build-storage.mjs full -- true").if,
+    preflight.find((step) => step.run === STORAGE_ADMISSION).if,
   ).toBe(selfHostedOnly);
   expect(preflight.find((step) => step.name === "Check the signing host session").if).toBeUndefined();
+  // Each wait ends inside its own step deadline, and the job leaves room for
+  // both waits next to the verification or the checks around them (#836).
+  for (const [name, run] of [["verification", check], ["host-preflight", check], ["host-preflight", STORAGE_ADMISSION]]) {
+    const step = workflow.jobs[name].steps.find((entry) => entry.run === run);
+    expect(step["timeout-minutes"], `${name}: ${run}`).toBeGreaterThan(RELEASE_HOST_WAIT_MINUTES);
+  }
+  expect(workflow.jobs["host-preflight"]["timeout-minutes"]).toBeGreaterThanOrEqual(2 * RELEASE_HOST_WAIT_MINUTES + 5);
+  expect(workflow.jobs.verification["timeout-minutes"]).toBeGreaterThanOrEqual(180 + RELEASE_HOST_WAIT_MINUTES);
   // After the tag exists a refusal would only burn the version; the DMG
   // packager waits for the load to drop instead.
   expect(workflow.jobs.build.steps.some((step) => /check-release-host/.test(step.run ?? ""))).toBe(false);
