@@ -104,13 +104,14 @@ pub use agent_spawn::{
     AgentSpawnPermissionModeV1, AgentSpawnPlanDraftV1, AgentSpawnPlanIntentDraftV1,
     AgentSpawnPlanTokenV1, AgentSpawnPlanV1, AgentSpawnPreviewIntentV1, AgentSpawnPreviewRequestV1,
     AgentSpawnPromptDigestV1, AgentSpawnRecoveryDirectiveV1, AgentSpawnRuntimePlanV1,
-    AgentSpawnSourceRuntimeAuthorityV1, AgentSpawnSourceSelectionAuthorityV1,
-    AgentSpawnStageDispositionV1, AgentSpawnStageEvidenceV1, AgentSpawnStageInputsV1,
-    AgentSpawnStageReceiptV1, AgentSpawnStageV1, AgentSpawnStartupGateKindV1,
-    AgentSpawnStartupGateV1, AgentSpawnTerminalOutcomeV1, AgentSpawnWorkspaceLeaseV1,
-    AgentSpawnWorktreePolicyV1, create_agent_spawn_plan_from_defaults_v1,
-    create_agent_spawn_plan_v1, fold_agent_spawn_journal_v1, structured_prompt_identity,
-    validate_agent_spawn_plan_intent_v1, worktree_directory_name,
+    AgentSpawnSendDeliveryV1, AgentSpawnSourceRuntimeAuthorityV1,
+    AgentSpawnSourceSelectionAuthorityV1, AgentSpawnStageDispositionV1, AgentSpawnStageEvidenceV1,
+    AgentSpawnStageInputsV1, AgentSpawnStageReceiptV1, AgentSpawnStageV1,
+    AgentSpawnStartupGateKindV1, AgentSpawnStartupGateV1, AgentSpawnTerminalOutcomeV1,
+    AgentSpawnWorkspaceLeaseV1, AgentSpawnWorktreePolicyV1,
+    create_agent_spawn_plan_from_defaults_v1, create_agent_spawn_plan_v1,
+    fold_agent_spawn_journal_v1, structured_prompt_identity, validate_agent_spawn_plan_intent_v1,
+    worktree_directory_name,
 };
 pub use agent_timeline::*;
 pub use backend_observation::is_durable_agent_observation;

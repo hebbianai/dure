@@ -275,6 +275,7 @@ describe("Run receipt summary", () => {
       interactionProfile: "native_cli",
       parent: null,
       parentAgent: null,
+      sendDelivery: null,
       startupGate: null,
       error: null,
     });
@@ -331,12 +332,14 @@ describe("Run receipt summary", () => {
       interactionProfile: "native_cli",
       parent: null,
       parentAgent: null,
+      sendDelivery: null,
       startupGate: null,
       error: null,
     });
     expect(runReceiptSummary({ kind: "dure.agent_spawn.error", error: { code: "x" } })).toEqual({
       agentId: null, sessionId: null, workspaceId: null, panelId: null, spaceId: null,
-      state: null, presentation: null, interactionProfile: null, parent: null, parentAgent: null, startupGate: null, error: null,
+      state: null, presentation: null, interactionProfile: null, parent: null, parentAgent: null, sendDelivery: null,
+      startupGate: null, error: null,
     });
   });
 

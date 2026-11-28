@@ -1288,6 +1288,13 @@ function writeScreenRead({ text, notice }) {
   if (notice) process.stderr.write(`${notice}\n`);
 }
 
+/** The backend that owns a `dure send` target: an SSH Agent's host, or the
+ * local backend for a local Agent or an exact local Session. */
+function sendTargetBackend(agent) {
+  const binding = typeof agent === "string" ? null : agent.runtimeBinding;
+  return backendProfileQueryContext({ backendSpecified: true, backend: binding?.source === "ssh" ? binding.hostId : "local" });
+}
+
 /** The Session the backend now binds to a registry Agent, when the app's
  * registry still lists an earlier one (see agent-current-session.mjs). */
 async function findAgentSessionSuccessor(agent) {
@@ -2082,6 +2089,8 @@ async function cmdAgentSpawn(sub, opts) {
   if (
     !["preview", "apply", "status"].includes(action) ||
     opts.rest.length !== 1 ||
+    // A send delivery pins a terminal session, which only dure run chooses.
+    opts.sendDelivery !== undefined ||
     invalidPreview ||
     invalidApply ||
     invalidStatus
@@ -2187,7 +2196,7 @@ Usage:
   dure run [--project ID | --path PATH] [--provider ID] [--name NAME]
            [--worktree NAME [--base-commit SHA] [--branch REF]]
            [--setup-command COMMAND] [--account ACCOUNT_ID|default]
-           [--runtime chat|terminal]
+           [--runtime chat|terminal] [--send-delivery inbox]
            [--permission-override require_approvals|auto_edit|bypass_approvals]
            [--skip-permissions]
            [--space ID|NAME] [--idempotency-key KEY] [--backend ID] [--json] [--verbose]
@@ -2217,6 +2226,11 @@ the Run starts in the provider's chat runtime instead and says so on stderr.
 --runtime chat|terminal chooses the interface wherever the command runs, overriding those defaults.
 chat stops before anything starts when the host has no chat runtime for the provider (it cannot
 be combined with --setup-command); terminal never falls back to chat.
+--send-delivery inbox makes the agent's durable inbox the only way dure send reaches it: every
+dure send to it becomes a tracked message, options that only terminal input has are refused,
+and nothing falls back to terminal input. The Run records the choice, and neither the agent nor a
+prompt can change it; the person keeps typing in the terminal. An inbox needs a terminal session,
+so it starts one (it cannot be combined with --runtime chat). summary.sendDelivery reports it.
 A connected current app supplies its selected provider account, including headless Runs.
 --account selects an exact account ID; --account default uses the provider default.
 It accepts app account IDs and the IDs registered on the backend, the same IDs
@@ -2225,7 +2239,7 @@ Without account-selection support, omitted --account uses the provider default.
 The Run receipt executionProfile identifies the credential reference and generation.
 With --json the receipt starts with summary: agentId, sessionId, workspaceId, panelId,
 spaceId, state (the Run receipt state), presentation (the pane outcome),
-interactionProfile, parent, parentAgent, startupGate (login or workspace_trust when the provider is
+interactionProfile, parent, parentAgent, sendDelivery, startupGate (login or workspace_trust when the provider is
 stopped at sign-in or at its folder-trust prompt) and error (stage, code and detail of the
 failure when the Run stopped short); a value the receipt cannot vouch for is null. The full receipt,
 presentation and registration follow unchanged. source.backend carries the backend
@@ -2333,7 +2347,7 @@ async function cmdLegacySpawnReuse(opts, prompt, positionalPrompt, providerId) {
     opts.skipPermissions === true ||
     opts.permissionOverride !== undefined ||
     opts.setupCommand !== undefined ||
-    opts.runtime !== undefined ||
+    opts.runtime !== undefined || opts.sendDelivery !== undefined ||
     opts.backendSpecified === true || opts.account !== undefined ||
     opts.mergePolicy !== undefined ||
     hasRunParentOptions(opts)
@@ -2397,6 +2411,7 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     opts.lead === true || opts.mergePolicy !== undefined
       ? await import("./lib/lead-run-prompt.mjs")
       : null;
+  const { AGENT_SPAWN_SEND_DELIVERIES } = await import("./lib/agent-spawn-query.mjs");
   if (
     (opts.account !== undefined && !opts.account) ||
     (!legacySpawn && !prompt) ||
@@ -2424,6 +2439,8 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
       (!opts.setupCommand || typeof opts.worktree !== "string")) ||
     (opts.runtime !== undefined && !["chat", "terminal"].includes(opts.runtime)) ||
     (opts.runtime === "chat" && opts.setupCommand !== undefined) ||
+    (opts.sendDelivery !== undefined &&
+      (!AGENT_SPAWN_SEND_DELIVERIES.includes(opts.sendDelivery) || opts.runtime === "chat")) ||
     (opts.baseCommit !== undefined && !opts.baseCommit) ||
     (opts.branch !== undefined && !opts.branch) ||
     opts.spaceId !== undefined ||
@@ -2530,7 +2547,8 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
   try {
     executionProfile = await resolveAgentRunAccount({ descriptor: loadServer(), providerId, backendProfileId: backend.profile?.id ?? "local", account: opts.account, backend });
     runInterface = await resolveAgentRunInterface({
-      runtime: opts.runtime,
+      // An inbox lives in a terminal Session, so a send delivery pins one.
+      runtime: opts.sendDelivery === undefined ? opts.runtime : "terminal",
       descriptor: loadServer(),
       presenting: presentationTarget.state === "requested",
       profile: backend.profile,
@@ -2561,6 +2579,7 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     executionProfile,
     ...runInterface,
     parent: runParent.parent,
+    sendDelivery: opts.sendDelivery,
     backend,
     deadlineMs,
     verbose: opts.verbose === true,
@@ -4967,8 +4986,14 @@ async function main() {
       sendTracked: async (agent, text, opts) => {
         const { sendTrackedMessage } = await import("./lib/tracked-message.mjs");
         const binding = typeof agent === "string" ? null : agent.runtimeBinding;
-        const backend = await backendProfileQueryContext({ backendSpecified: true, backend: binding?.source === "ssh" ? binding.hostId : "local" });
+        const backend = await sendTargetBackend(agent);
         return sendTrackedMessage({ sessionId: typeof agent === "string" ? agent : binding?.sessionId, workspaceId: opts.workspace ?? binding?.workspaceId }, text, { backend, hmuxCommand: hmuxCommand(), title: opts.messageTitle });
+      },
+      sendDelivery: async (agent) => {
+        const [{ sendTargetDelivery }, { performBackendProfileRequest }] = await Promise.all([
+          import("./lib/send-delivery.mjs"), import("./lib/backend-transport.mjs")]);
+        return sendTargetDelivery({ target: agent, backend: await sendTargetBackend(agent),
+          requestBackend: performBackendProfileRequest });
       },
       fail,
     });

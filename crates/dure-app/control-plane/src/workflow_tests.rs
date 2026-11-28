@@ -97,6 +97,7 @@ mod slack_connector_tests;
 mod slack_spawn_smoke;
 mod spawn_destination_tests;
 mod spawn_parent_agent_tests;
+mod spawn_send_delivery_tests;
 mod work_claim_tests;
 
 #[derive(Clone)]

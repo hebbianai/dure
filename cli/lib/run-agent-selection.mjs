@@ -126,28 +126,33 @@ function validSessionResolution(value, sessionId) {
       Number.isSafeInteger(owner.bindingGeneration) && owner.bindingGeneration > 0);
 }
 
-/** The Agents whose backend binding names this native Session, or null when
- * the backend cannot say. This needs no app Agent list, so it still resolves a
- * live Session after the app lost its state. It maps identity only; the caller
- * re-reads each Agent's runtime. */
-async function sessionAgentCandidates({ selector, backend, requestBackend }) {
+/** The IDs of the Agents whose backend binding names this native Session, or
+ * null when the backend cannot say. This needs no app Agent list, so it still
+ * resolves a live Session after the app lost its state. It maps identity only;
+ * the caller re-reads each Agent's runtime. */
+export async function sessionAgentIds({ sessionId, backend, requestBackend }) {
   if (!backend.profile.expected?.capabilities?.includes(NATIVE_SESSION_RESOLVE_CAPABILITY)) return null;
   let response;
   try {
     response = await requestBackend(backend.profile, {
       requestId: randomUUID(), operation: NATIVE_SESSION_RESOLVE_CAPABILITY,
       requiredCapabilities: [NATIVE_SESSION_RESOLVE_CAPABILITY],
-      body: { schemaVersion: 1, sessionId: selector },
+      body: { schemaVersion: 1, sessionId },
     }, backend.transportOptions);
   } catch (error) {
     // A backend started before this read keeps resolving Agent IDs only.
     if (error?.code === "backend_transport_capability_missing") return null;
     throw error;
   }
-  if (!validSessionResolution(response.result, selector)) {
+  if (!validSessionResolution(response.result, sessionId)) {
     throw Object.assign(new Error("The backend returned an invalid Session lookup."), { code: "runs_response_invalid" });
   }
-  return response.result.agents.map((owner) => ({ agentId: owner.agentId, name: null, project: null, providerId: null }));
+  return response.result.agents.map((owner) => owner.agentId);
+}
+
+async function sessionAgentCandidates({ selector, backend, requestBackend }) {
+  const agentIds = await sessionAgentIds({ sessionId: selector, backend, requestBackend });
+  return agentIds?.map((agentId) => ({ agentId, name: null, project: null, providerId: null })) ?? null;
 }
 
 /** Resolve an app-launched, resumed or imported Agent that has no spawn

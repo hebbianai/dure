@@ -281,6 +281,7 @@ fn request() -> AgentSpawnPreviewIntentV1 {
         interaction_preference: None,
         parent: None,
         parent_agent: None,
+        send_delivery: None,
     }
 }
 

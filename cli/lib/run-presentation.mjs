@@ -4,6 +4,7 @@ import {
   requestAppControl,
 } from "./app-control-client.mjs";
 import {
+  AGENT_SPAWN_SEND_DELIVERIES,
   agentSpawnLaunchProjection,
   stoppedAtStartupGate,
   validSpawnParent,
@@ -300,6 +301,7 @@ export function runReceiptSummary(report, presentation = null) {
     interactionProfile,
     parent: validSpawnParent(plan?.request?.parent) ? plan.request.parent : null,
     parentAgent: validSpawnParentAgent(plan?.request?.parentAgent) ? plan.request.parentAgent : null,
+    sendDelivery: AGENT_SPAWN_SEND_DELIVERIES.includes(plan?.request?.sendDelivery) ? plan.request.sendDelivery : null,
     startupGate: stoppedAtStartupGate(receipt),
     error: runReceiptError(receipt, token),
   };

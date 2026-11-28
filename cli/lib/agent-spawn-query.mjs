@@ -25,6 +25,9 @@ export const AGENT_SPAWN_PARENT_LINK_CAPABILITY = "agent_spawn.parent_link.v1";
 export const AGENT_SPAWN_CONVERSATION_OBSERVATION_CAPABILITY =
   "agent_spawn.conversation_observation.v1";
 export const AGENT_SPAWN_PARENT_AGENT_CAPABILITY = "agent_spawn.parent_agent.v1";
+export const AGENT_SPAWN_SEND_DELIVERY_CAPABILITY = "agent_spawn.send_delivery.v1";
+/** How dure send may reach a Run's Agent (send-delivery.mjs). */
+export const AGENT_SPAWN_SEND_DELIVERIES = Object.freeze(["inbox"]);
 
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 const PROVIDER_CONVERSATION_REF = /^[A-Za-z0-9._:/-]{1,160}$/;
@@ -269,6 +272,12 @@ function validSetupCommand(value) {
   );
 }
 
+/** A send delivery needs an inbox, which only a terminal Session has. */
+function validSendDelivery(value) {
+  return value.sendDelivery === undefined ||
+    (AGENT_SPAWN_SEND_DELIVERIES.includes(value.sendDelivery) && value.interactionPreference === "native_cli");
+}
+
 function validNormalizedRequest(value) {
   const setupKeys = value?.setupCommand === undefined ? [] : ["setupCommand"];
   const executionProfileKeys = value?.executionProfile === undefined
@@ -282,7 +291,7 @@ function validNormalizedRequest(value) {
   const interactionKeys = value?.interactionPreference === undefined
     ? []
     : ["interactionPreference"];
-  const parentKeys = ["parent", "parentAgent"].filter((key) => value?.[key] !== undefined);
+  const recordedKeys = ["parent", "parentAgent", "sendDelivery"].filter((key) => value?.[key] !== undefined);
   return (
     onlyKeys(value, [
       "schemaVersion",
@@ -299,11 +308,12 @@ function validNormalizedRequest(value) {
       ...modelKeys,
       ...effortKeys,
       ...interactionKeys,
-      ...parentKeys,
+      ...recordedKeys,
     ]) &&
     validRequestFields(value) &&
     (value.parent === undefined || validSpawnParent(value.parent)) &&
     (value.parentAgent === undefined || validSpawnParentAgent(value.parentAgent)) &&
+    validSendDelivery(value) &&
     (value.interactionPreference === undefined ||
       value.interactionPreference === "native_cli") &&
     (value.providerConversationRef === undefined ||
@@ -343,13 +353,15 @@ function validPreviewRequest(value) {
       ...conversationKeys,
       "promptDigest",
       ...setupKeys,
-      ...["model", "effort", "executionProfile", "parent", "parentAgent"].filter((key) => value[key] !== undefined),
+      ...["model", "effort", "executionProfile", "parent", "parentAgent", "sendDelivery"]
+        .filter((key) => value[key] !== undefined),
     ]) &&
     (value.providerConversationRef === undefined ||
       (typeof value.providerConversationRef === "string" &&
         PROVIDER_CONVERSATION_REF.test(value.providerConversationRef))) &&
     (value.parent === undefined || validSpawnParent(value.parent)) &&
     (value.parentAgent === undefined || validSpawnParentAgent(value.parentAgent)) &&
+    validSendDelivery(value) &&
     value.schemaVersion === AGENT_SPAWN_QUERY_SCHEMA_VERSION &&
     validExecutionProfile(value.executionProfile, { allowMissing: true }) &&
     (value.model === undefined || isProviderModelSelection(value.model)) &&
@@ -1392,6 +1404,7 @@ function previewRequest(options) {
     ...(options.interactionPreference === undefined ? {} : { interactionPreference: options.interactionPreference }),
     ...(options.providerConversationRef === undefined ? {} : { providerConversationRef: options.providerConversationRef }),
     ...spawnParentFields(options.parent),
+    ...(options.sendDelivery === undefined ? {} : { sendDelivery: options.sendDelivery }),
     agentName: options.agentName,
     worktree: options.worktree,
     ...(options.permissionOverride === undefined
@@ -1422,6 +1435,7 @@ export async function collectAgentSpawnQuery({
   interactionPreference,
   providerConversationRef,
   parent,
+  sendDelivery,
   setupCommand,
   prompt,
   operationId,
@@ -1454,6 +1468,7 @@ export async function collectAgentSpawnQuery({
           interactionPreference,
           providerConversationRef,
           parent,
+          sendDelivery,
           includePresentationProject: presentationProjectSupported,
           setupCommand,
           prompt,
@@ -1523,6 +1538,7 @@ export async function collectAgentSpawnQuery({
                 : []),
               ...(request.parent ? [AGENT_SPAWN_PARENT_LINK_CAPABILITY] : []),
               ...(request.parentAgent ? [AGENT_SPAWN_PARENT_AGENT_CAPABILITY] : []),
+              ...(request.sendDelivery ? [AGENT_SPAWN_SEND_DELIVERY_CAPABILITY] : []),
             ]
           : [`agent_spawn.${action}`],
         body: action === "preview"
@@ -1616,6 +1632,7 @@ export function formatAgentSpawnQuery(report) {
     `account\t${receipt.plan.request.executionProfile?.kind === "credential_reference" ? receipt.plan.request.executionProfile.reference_id : "provider_default"}`,
     ...(receipt.plan.request.parent ? [`parent\t${receipt.plan.request.parent.sessionId}`] : []),
     ...(receipt.plan.request.parentAgent ? [`parent\t${receipt.plan.request.parentAgent.agentId}`] : []),
+    ...(receipt.plan.request.sendDelivery ? [`send_delivery\t${receipt.plan.request.sendDelivery}`] : []),
   ];
   lines.push(
     launch?.interactionProfile === "native_cli"

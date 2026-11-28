@@ -93,6 +93,10 @@ pub(crate) async fn list(
             if let Some(parent_agent) = &receipt.plan.request.parent_agent {
                 run["parentAgent"] = serde_json::json!(parent_agent);
             }
+            // How `dure send` reaches the Agent, read before every send.
+            if let Some(delivery) = &receipt.plan.request.send_delivery {
+                run["sendDelivery"] = serde_json::json!(delivery);
+            }
             run
         })
         .collect();
@@ -473,11 +477,11 @@ mod tests {
         AgentExecutionProfileV1, AgentInteractionBindingV1, AgentInteractionProfileV1,
         AgentInteractionSessionIdV1, AgentProviderRuntimeFenceV1, AgentSpawnEffortSelectionV1,
         AgentSpawnModelSelectionV1, AgentSpawnParentAgentV1, AgentSpawnParentV1,
-        AgentSpawnPermissionModeV1, AgentSpawnPromptDigestV1, AgentSpawnWorktreePolicyV1,
-        AgentTimelineEpochV1, PROVIDER_LAUNCH_DEFAULTS_SCHEMA_VERSION_V1, ProviderIdV1,
-        ProviderLaunchDefaultV1, ProviderLaunchDefaultsPutRequestV1,
-        ProviderLaunchPermissionModeV1, ProviderLaunchPermissionOverrideV1,
-        ProviderPermissionModeV1,
+        AgentSpawnPermissionModeV1, AgentSpawnPromptDigestV1, AgentSpawnSendDeliveryV1,
+        AgentSpawnWorktreePolicyV1, AgentTimelineEpochV1,
+        PROVIDER_LAUNCH_DEFAULTS_SCHEMA_VERSION_V1, ProviderIdV1, ProviderLaunchDefaultV1,
+        ProviderLaunchDefaultsPutRequestV1, ProviderLaunchPermissionModeV1,
+        ProviderLaunchPermissionOverrideV1, ProviderPermissionModeV1,
     };
 
     use super::*;
@@ -509,6 +513,7 @@ mod tests {
             interaction_preference: None,
             parent: None,
             parent_agent: None,
+            send_delivery: None,
         }
     }
 
@@ -1116,6 +1121,91 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(replay, receipt);
+    }
+
+    #[tokio::test]
+    async fn send_delivery_is_recorded_listed_and_fenced_by_the_idempotency_key() {
+        let root = tempfile::tempdir().unwrap();
+        let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+            .await
+            .unwrap();
+        let providers = crate::provider_extension::test_local_agent_provider_registry();
+        let mut inbox = request("codex-inbox");
+        inbox.interaction_preference = Some(AgentSpawnInteractionPreferenceV1::NativeCli);
+        inbox.send_delivery = Some(AgentSpawnSendDeliveryV1::Inbox);
+        let receipt = preview(
+            &store,
+            &providers,
+            "dure-local",
+            "generation-1",
+            project(),
+            inbox.clone(),
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            receipt.plan.request.send_delivery,
+            Some(AgentSpawnSendDeliveryV1::Inbox)
+        );
+
+        let listed = list(
+            &store,
+            AgentSpawnListBody {
+                schema_version: 1,
+                after: None,
+                selector: Some(receipt.plan.agent_id.as_str().into()),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            listed["runs"][0]["sendDelivery"],
+            serde_json::json!("inbox")
+        );
+        assert!(
+            crate::control_plane_build_identity::capabilities()
+                .iter()
+                .any(|capability| capability == "agent_spawn.send_delivery.v1")
+        );
+
+        // Whoever starts the Run chooses once: the same key without it is a
+        // different Run, so a retry can't drop the choice.
+        let mut terminal = inbox.clone();
+        terminal.send_delivery = None;
+        assert_eq!(
+            preview(
+                &store,
+                &providers,
+                "dure-local",
+                "generation-1",
+                project(),
+                terminal,
+                2,
+            )
+            .await
+            .unwrap_err(),
+            "agent_spawn_idempotency_conflict"
+        );
+
+        // An inbox needs a terminal Session, which only native_cli plans.
+        let mut unpinned = request("codex-unpinned");
+        unpinned.idempotency_key = "spawn-request-unpinned".into();
+        unpinned.send_delivery = Some(AgentSpawnSendDeliveryV1::Inbox);
+        assert_eq!(
+            preview(
+                &store,
+                &providers,
+                "dure-local",
+                "generation-1",
+                project(),
+                unpinned,
+                3,
+            )
+            .await
+            .unwrap_err(),
+            "agent_spawn_plan_invalid"
+        );
     }
 
     #[tokio::test]
