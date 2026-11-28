@@ -5,33 +5,8 @@ import { supportsHmuxCapability } from "./runtime-diagnostics.mjs";
 const NATIVE_QUERY_TIMEOUT_MS = 5_000;
 const HOST_ABSENT_CAPABILITY = "managed_rehost_host_absent_start_v1";
 
-/** Whether the local runtime can prove a Host is gone before it replaces the source. */
-export async function supportsHostAbsentStart({ command, run }) {
-  let manifest;
-  try {
-    const response = await run([command, "capabilities", "--json"], { timeoutMs: NATIVE_QUERY_TIMEOUT_MS });
-    manifest = response?.kind === "success" ? JSON.parse(response.stdout) : undefined;
-  } catch {
-    return false;
-  }
-  return supportsHmuxCapability(manifest, HOST_ABSENT_CAPABILITY);
-}
-
-/**
- * Hmux's current observation of one exact session: null when Hmux reports it
- * has no record of that session, undefined when it gave no answer.
- */
-export async function readSourceSession({ command, run, sessionId, workspaceId }) {
-  let response;
-  try {
-    response = await run([command, "--json", "session", "show", sessionId, "--workspace", workspaceId],
-      { timeoutMs: NATIVE_QUERY_TIMEOUT_MS, maxCaptureBytes: 1024 * 1024 });
-  } catch {
-    return undefined;
-  }
-  // hmux-client's SessionNotFound, which session show prints as text even with --json.
-  if (response?.kind === "nonzero" && typeof response.stderr === "string" &&
-      response.stderr.includes(`Hmux session ${JSON.stringify(sessionId)} was not found`)) return null;
+/** A successful native query's JSON object; undefined for any other answer. */
+function parsedObject(response) {
   if (response?.kind !== "success") return undefined;
   try {
     const parsed = JSON.parse(response.stdout);
@@ -39,6 +14,25 @@ export async function readSourceSession({ command, run, sessionId, workspaceId }
   } catch {
     return undefined;
   }
+}
+
+/** Whether the local runtime can prove a Host is gone before it replaces the source. */
+export async function supportsHostAbsentStart({ command, run = runBoundedCommand }) {
+  const response = await run([command, "capabilities", "--json"], { timeoutMs: NATIVE_QUERY_TIMEOUT_MS });
+  return supportsHmuxCapability(parsedObject(response), HOST_ABSENT_CAPABILITY);
+}
+
+/**
+ * Hmux's current observation of one exact session: null when Hmux reports it
+ * has no record of that session, undefined when it gave no answer.
+ */
+export async function readSourceSession({ command, run = runBoundedCommand, sessionId, workspaceId }) {
+  const response = await run([command, "--json", "session", "show", sessionId, "--workspace", workspaceId],
+    { timeoutMs: NATIVE_QUERY_TIMEOUT_MS, maxCaptureBytes: 1024 * 1024 });
+  // hmux-client's SessionNotFound, which session show prints as text even with --json.
+  if (response?.kind === "nonzero" && typeof response.stderr === "string" &&
+      response.stderr.includes(`Hmux session ${JSON.stringify(sessionId)} was not found`)) return null;
+  return parsedObject(response);
 }
 
 /**
