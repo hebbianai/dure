@@ -659,10 +659,21 @@ pub(crate) fn test_installed_provider_registry(
     executable: &str,
     integration: ProviderRuntimeIntegrationV1,
 ) -> AgentProviderRegistry {
-    struct Installed(ProviderRuntimeIntegrationV1);
+    test_integrated_provider_registry(provider, executable, integration, Some(STABLE_CHANNEL))
+}
+
+/// One bundled provider with this integration, bound to `channel` if any.
+#[cfg(test)]
+pub(crate) fn test_integrated_provider_registry(
+    provider: &str,
+    executable: &str,
+    integration: ProviderRuntimeIntegrationV1,
+    channel: Option<&'static str>,
+) -> AgentProviderRegistry {
+    struct Installed(ProviderRuntimeIntegrationV1, Option<&'static str>);
     impl ProviderRuntimeIntegrationSource for Installed {
         fn app_channel(&self) -> Option<&str> {
-            Some(STABLE_CHANNEL)
+            self.1
         }
         fn integration(
             &self,
@@ -679,7 +690,7 @@ pub(crate) fn test_installed_provider_registry(
             "Dure installed test provider",
             provider,
             executable,
-            Arc::new(Installed(integration)),
+            Arc::new(Installed(integration, channel)),
             false,
         ),
     );

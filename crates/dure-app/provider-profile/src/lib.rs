@@ -6,6 +6,7 @@
 //! remains private to each profile. See the credential-only switching design.
 
 pub mod claude_memory;
+pub mod claude_settings;
 mod claude_shared_state;
 
 /// Read Claude's existing project trust using the same bounded, owned-file

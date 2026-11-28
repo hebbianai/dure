@@ -38,7 +38,7 @@ if (!continuationOnly) {
   const probe = await mkdtemp(path.join(root, "dure-managed-claude-native-hook-"));
   await runNativeHookProbe(probe, runtime, claude, settings);
   assert.deepEqual(await readFile(settings), contents, "Provider execution changed app-owned settings");
-  console.log("Actual app publication and installed native companion: clean HOME, preserved hooks, and bounded stdin passed; report destination was an isolated HTTP fixture.");
+  console.log("Actual app publication and installed native companion: clean HOME, preserved hooks, Ultracode settings, and bounded stdin passed; report destination was an isolated HTTP fixture.");
 }
 await runClaudeConversationContinuation({
   ownerRoot: canonicalRoot,

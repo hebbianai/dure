@@ -36,7 +36,17 @@ async function prepare(scope) {
   }
 }
 
-async function runProvider(scope, runtime, claude, existingHooks, publishedSettings) {
+// An Ultracode launch passes one settings document: the managed hooks with
+// the selection's `ultracode` setting, never a second --settings, which would
+// replace the managed hooks.
+async function ultracodeLaunch(scope, settings) {
+  const composed = path.join(scope, "ultracode-settings.json");
+  const managed = JSON.parse(await readFile(settings, "utf8"));
+  await writeFile(composed, JSON.stringify({ ...managed, ultracode: true }), { mode: 0o600 });
+  return ["--settings", composed, "--effort", "xhigh"];
+}
+
+async function runProvider(scope, runtime, claude, { existingHooks = false, ultracode = false }, publishedSettings) {
   await prepare(scope);
   const hook = path.join(scope, "managed-hook.sh");
   await writeFile(hook, `#!/bin/sh\nexec '${runtime.replaceAll("'", "'\\''")}' managed-claude-hook\n`, { mode: 0o700 });
@@ -108,7 +118,8 @@ async function runProvider(scope, runtime, claude, existingHooks, publishedSetti
     port, processId: process.pid, generation, reportToken: token, channel: "stable",
   }), { mode: 0o600 });
   try {
-    const child = spawn(claude, ["--settings", settings, "--init-only"], {
+    const launch = ultracode ? await ultracodeLaunch(scope, settings) : ["--settings", settings];
+    const child = spawn(claude, [...launch, "--init-only"], {
       cwd: path.join(scope, "home"), env: environment(scope, port), stdio: ["pipe", "ignore", "ignore"],
     });
     child.stdin.end();
@@ -123,7 +134,7 @@ async function runProvider(scope, runtime, claude, existingHooks, publishedSetti
       assert.equal(await readFile(file, "utf8"), contents, "Existing hook configuration changed");
       assert.equal(await readFile(marker, "utf8"), "x", "Existing hook must execute exactly once");
     }
-    return { existingHooks, code, signal, reports, exactFence, hasConversation, reportingProcess, providerRequests, preservedFiles: originals.length };
+    return { existingHooks, ultracode, code, signal, reports, exactFence, hasConversation, reportingProcess, providerRequests, preservedFiles: originals.length };
   } finally {
     await new Promise(resolve => server.close(resolve));
   }
@@ -132,8 +143,10 @@ async function runProvider(scope, runtime, claude, existingHooks, publishedSetti
 export async function runNativeHookProbe(root, runtime, claude, publishedSettings) {
   assert(path.isAbsolute(root) && path.basename(root).startsWith(prefix));
   const receipts = [];
-  for (const existingHooks of [false, true]) {
-    const receipt = await runProvider(path.join(root, existingHooks ? "existing-hooks" : "clean"), runtime, claude, existingHooks, publishedSettings);
+  for (const [name, scenario] of [
+    ["clean", {}], ["existing-hooks", { existingHooks: true }], ["ultracode", { ultracode: true }],
+  ]) {
+    const receipt = await runProvider(path.join(root, name), runtime, claude, scenario, publishedSettings);
     receipts.push(receipt);
     console.log(JSON.stringify(receipt));
   }

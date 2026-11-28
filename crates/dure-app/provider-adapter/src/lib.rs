@@ -54,13 +54,26 @@ enum ResumeArgument {
 
 #[derive(Clone, Copy)]
 enum EffortArgument {
-    Flag(&'static str),
+    /// `flag <level>`. A mode selection runs at its level with its setting on.
+    Flag(&'static str, &'static [EffortMode]),
     CodexConfig,
-    ClaudeFlag,
 }
 
-/// Claude's `ultracode` selection runs at this effort with the ultracode setting.
-const CLAUDE_ULTRACODE_EFFORT: &str = "xhigh";
+/// An effort selection that is a mode rather than a level: the session runs at
+/// `level`, and the provider turns the mode on from a boolean `setting` in its
+/// settings document. A host composes that setting with the settings it
+/// manages, because a provider reads one settings document per launch.
+struct EffortMode {
+    selection: &'static str,
+    level: &'static str,
+    setting: &'static str,
+}
+
+const CLAUDE_EFFORT_MODES: &[EffortMode] = &[EffortMode {
+    selection: "ultracode",
+    level: "xhigh",
+    setting: "ultracode",
+}];
 
 /// A native flag may be accepted by the parser but ignored by its resume route.
 /// Prompt and model delivery consume the same reviewed applicability rule.
@@ -167,7 +180,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         plan_arguments: Some(&["--permission-mode", "plan"]),
         skip_permissions_argument: Some("--dangerously-skip-permissions"),
         model_argument: Some(LaunchFlag::Always("--model")),
-        effort_argument: Some(EffortArgument::ClaudeFlag),
+        effort_argument: Some(EffortArgument::Flag("--effort", CLAUDE_EFFORT_MODES)),
         resume: ResumeArgument::Adjacent(&["--resume"]),
         exact_identity_is_uuid: false,
     },
@@ -276,7 +289,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: Some(LaunchFlag::Always("--model")),
-        effort_argument: Some(EffortArgument::Flag("--thinking")),
+        effort_argument: Some(EffortArgument::Flag("--thinking", &[])),
         resume: ResumeArgument::Adjacent(&["--session"]),
         exact_identity_is_uuid: false,
     },
@@ -685,25 +698,17 @@ pub fn native_provider_launch_plan_with_initial_prompt(
             .effort_argument
             .ok_or_else(|| failure("effort_selection_unsupported"))?
         {
-            EffortArgument::Flag(flag) => {
-                arguments.extend([flag.to_string(), effort.as_str().to_string()]);
+            EffortArgument::Flag(flag, _) => {
+                arguments.extend([
+                    flag.to_string(),
+                    native_provider_effort_level(provider_id, effort).to_string(),
+                ]);
             }
             EffortArgument::CodexConfig => {
                 arguments.extend([
                     "-c".to_string(),
                     format!("model_reasoning_effort={}", effort.as_str()),
                 ]);
-            }
-            EffortArgument::ClaudeFlag if effort.as_str() == "ultracode" => {
-                arguments.extend([
-                    "--effort".to_string(),
-                    CLAUDE_ULTRACODE_EFFORT.to_string(),
-                    "--settings".to_string(),
-                    "{\"ultracode\":true}".to_string(),
-                ]);
-            }
-            EffortArgument::ClaudeFlag => {
-                arguments.extend(["--effort".to_string(), effort.as_str().to_string()]);
             }
         }
     }
@@ -750,19 +755,49 @@ pub fn native_provider_launch_plan_with_initial_prompt(
     Ok(Some(plan))
 }
 
+fn effort_mode(
+    provider_id: &ProviderIdV1,
+    effort: &AgentSpawnEffortSelectionV1,
+) -> Option<&'static EffortMode> {
+    let Some(EffortArgument::Flag(_, modes)) = adapter(provider_id)?.effort_argument else {
+        return None;
+    };
+    modes.iter().find(|mode| mode.selection == effort.as_str())
+}
+
 /// The effort level a native session runs and records for an effort
-/// selection. They differ only where the adapter maps a selection onto
-/// another level, such as Claude's `ultracode`.
+/// selection. They differ only where the selection is a mode, such as
+/// Claude's `ultracode`.
 pub fn native_provider_effort_level<'a>(
     provider_id: &ProviderIdV1,
     effort: &'a AgentSpawnEffortSelectionV1,
 ) -> &'a str {
-    match adapter(provider_id).and_then(|adapter| adapter.effort_argument) {
-        Some(EffortArgument::ClaudeFlag) if effort.as_str() == "ultracode" => {
-            CLAUDE_ULTRACODE_EFFORT
-        }
-        _ => effort.as_str(),
-    }
+    effort_mode(provider_id, effort).map_or(effort.as_str(), |mode| mode.level)
+}
+
+/// The settings a launch selection contributes to the provider's settings
+/// document, such as `{"ultracode": true}` for Claude's `ultracode`. The launch
+/// plan never passes them itself: Claude reads one `--settings` per launch,
+/// so the host composes them into the settings document its runtime
+/// integration publishes.
+pub fn native_provider_launch_settings(
+    provider_id: &ProviderIdV1,
+    effort: Option<&AgentSpawnEffortSelectionV1>,
+) -> serde_json::Map<String, serde_json::Value> {
+    effort
+        .and_then(|effort| effort_mode(provider_id, effort))
+        .map(|mode| (mode.setting.to_string(), serde_json::Value::Bool(true)))
+        .into_iter()
+        .collect()
+}
+
+/// Set a launch selection's settings over the settings document a host
+/// publishes for the launch. A selection's key replaces the same top-level key.
+pub fn merge_native_provider_launch_settings(
+    document: &mut serde_json::Map<String, serde_json::Value>,
+    settings: serde_json::Map<String, serde_json::Value>,
+) {
+    document.extend(settings);
 }
 
 /// Render provider-native runtime integration arguments beside the native
@@ -1077,6 +1112,46 @@ mod tests {
         assert_eq!(level("claude", "max"), "max");
         assert_eq!(level("codex", "ultracode"), "ultracode");
         assert_eq!(level("codex", "low"), "low");
+    }
+
+    #[test]
+    fn a_mode_selection_contributes_its_setting_to_the_settings_document_not_argv() {
+        let effort = |value: &str| AgentSpawnEffortSelectionV1::parse(value).unwrap();
+        let ultracode = effort("ultracode");
+        let plan = native_provider_launch_plan(
+            &provider("claude"),
+            &ProviderPermissionModeV1::Default,
+            None,
+            Some(&ultracode),
+            NativeProviderConversationReference::Fresh,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(plan.arguments, ["--effort", "xhigh"]);
+        let settings = native_provider_launch_settings(&provider("claude"), Some(&ultracode));
+        assert_eq!(
+            serde_json::Value::Object(settings.clone()),
+            serde_json::json!({"ultracode": true})
+        );
+        for (provider_id, selection) in [("claude", "max"), ("codex", "ultracode"), ("pi", "high")]
+        {
+            assert!(
+                native_provider_launch_settings(&provider(provider_id), Some(&effort(selection)))
+                    .is_empty(),
+                "{provider_id} {selection}"
+            );
+        }
+        assert!(native_provider_launch_settings(&provider("claude"), None).is_empty());
+
+        let mut document = serde_json::json!({"hooks": {"Stop": []}, "ultracode": false})
+            .as_object()
+            .unwrap()
+            .clone();
+        merge_native_provider_launch_settings(&mut document, settings);
+        assert_eq!(
+            serde_json::Value::Object(document),
+            serde_json::json!({"hooks": {"Stop": []}, "ultracode": true})
+        );
     }
 
     #[test]
