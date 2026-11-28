@@ -2041,6 +2041,7 @@ async function cmdAgentSpawn(sub, opts) {
         !["require_approvals", "auto_edit", "bypass_approvals"].includes(
           opts.permissionOverride,
         )) ||
+      invalidRunParentOptions(opts) ||
       operationId !== undefined ||
       (opts.worktree === false &&
         (opts.baseCommit !== undefined || opts.branch !== undefined)));
@@ -2058,7 +2059,8 @@ async function cmdAgentSpawn(sub, opts) {
       opts.setupCommand !== undefined ||
       opts.skipPermissions === true ||
       opts.permissionOverride !== undefined ||
-      opts.account !== undefined);
+      opts.account !== undefined ||
+      hasRunParentOptions(opts));
   const invalidApply =
     action === "apply" &&
     (!operationId ||
@@ -2075,7 +2077,8 @@ async function cmdAgentSpawn(sub, opts) {
       opts.setupCommand !== undefined ||
       opts.skipPermissions === true ||
       opts.permissionOverride !== undefined ||
-      opts.account !== undefined);
+      opts.account !== undefined ||
+      hasRunParentOptions(opts));
   if (
     !["preview", "apply", "status"].includes(action) ||
     opts.rest.length !== 1 ||
@@ -2085,7 +2088,7 @@ async function cmdAgentSpawn(sub, opts) {
   ) {
     fail(
       "Usage: dure spawn preview (--project ID | --path PATH) --provider ID --name NAME --idempotency-key KEY " +
-        "(--no-worktree | --worktree NAME [--base-commit SHA] [--branch REF] | --base-commit SHA --branch REF) [--account ACCOUNT_ID|default] [--setup-command COMMAND] [--prompt TEXT] [--permission-override require_approvals|auto_edit|bypass_approvals] [--skip-permissions] [--backend ID] [--json] [--verbose]\n" +
+        "(--no-worktree | --worktree NAME [--base-commit SHA] [--branch REF] | --base-commit SHA --branch REF) [--account ACCOUNT_ID|default] [--setup-command COMMAND] [--prompt TEXT] [--permission-override require_approvals|auto_edit|bypass_approvals] [--skip-permissions] [--parent AGENT | --parent SESSION_ID --parent-workspace ID | --no-parent] [--backend ID] [--json] [--verbose]\n" +
         "        dure spawn apply --operation-id ID --plan-token TOKEN --expected-sequence N [--prompt TEXT] [--backend ID] [--json] [--verbose]\n" +
         "        dure spawn status (--operation-id ID | --idempotency-key KEY) [--backend ID] [--json] [--verbose]",
     );
@@ -2096,6 +2099,18 @@ async function cmdAgentSpawn(sub, opts) {
     formatAgentSpawnQuery,
   } = await import("./lib/agent-spawn-query.mjs");
   const backend = await backendProfileQueryContext(opts);
+  // A preview records the same parent `dure run` would.
+  let runParent = { parent: undefined };
+  if (action === "preview") {
+    const { loadSessionClientProjection } = await import("./lib/session-query.mjs");
+    runParent = await resolveCliRunParent(
+      opts,
+      backend,
+      loadSessionClientProjection({ registryPath: REG, clientId: sessionQueryClientId() }),
+      "dure.agent_spawn.error",
+    );
+  }
+  if (!runParent) return;
   // --account binds the plan to the same execution profile `dure run` would.
   let executionProfile;
   if (opts.account !== undefined) {
@@ -2131,6 +2146,7 @@ async function cmdAgentSpawn(sub, opts) {
       ? "bypass_approvals"
       : opts.permissionOverride,
     setupCommand: opts.setupCommand,
+    parent: runParent.parent,
     prompt: opts.prompt || undefined,
     operationId,
     planToken: opts.planToken,
@@ -2238,6 +2254,42 @@ its final response and pull request links on the parent's Session and wakes it. 
 grants no control over either Run.
 spawn --reuse reuses an existing Agent without creating a new provider.`;
 
+/** Whether any of the parent flags a new Run takes is given. */
+function hasRunParentOptions(opts) {
+  return opts.parent !== undefined || opts.parentWorkspace !== undefined || opts.noParent === true;
+}
+
+/** The parent flags `dure run` and `dure spawn preview` share:
+ * --parent AGENT, --parent SESSION_ID --parent-workspace ID, or --no-parent. */
+function invalidRunParentOptions(opts) {
+  return (
+    (opts.parent !== undefined && !opts.parent) ||
+    (opts.parentWorkspace !== undefined &&
+      (!opts.parentWorkspace || opts.parent === undefined)) ||
+    (opts.noParent === true && opts.parent !== undefined)
+  );
+}
+
+/** The parent a new Run records (run-parent.mjs), or null after writing why
+ * it can't be resolved. `registry`, the app's Agent list, resolves
+ * --parent AGENT. */
+async function resolveCliRunParent(opts, backend, registry, errorKind) {
+  const { resolveRunParent } = await import("./lib/run-parent.mjs");
+  try {
+    return resolveRunParent({
+      selector: opts.parent,
+      workspaceId: opts.parentWorkspace,
+      noParent: opts.noParent === true,
+      environment: process.env,
+      registry,
+      backend,
+    });
+  } catch (error) {
+    writeCliActionError(error, opts, "dure.run-parent/v1", errorKind, "run_parent_invalid");
+    return null;
+  }
+}
+
 function writeCliActionError(
   error,
   opts,
@@ -2284,8 +2336,7 @@ async function cmdLegacySpawnReuse(opts, prompt, positionalPrompt, providerId) {
     opts.runtime !== undefined ||
     opts.backendSpecified === true || opts.account !== undefined ||
     opts.mergePolicy !== undefined ||
-    opts.parent !== undefined || opts.parentWorkspace !== undefined ||
-    opts.noParent === true
+    hasRunParentOptions(opts)
   ) {
     fail(RUN_HELP);
   }
@@ -2381,10 +2432,7 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     opts.operationId !== undefined ||
     opts.planToken !== undefined ||
     opts.expectedSequence !== undefined ||
-    (opts.parent !== undefined && !opts.parent) ||
-    (opts.parentWorkspace !== undefined &&
-      (!opts.parentWorkspace || opts.parent === undefined)) ||
-    (opts.noParent === true && opts.parent !== undefined) ||
+    invalidRunParentOptions(opts) ||
     (opts.skipPermissions === true && opts.permissionOverride !== undefined) ||
     (opts.permissionOverride !== undefined &&
       !["require_approvals", "auto_edit", "bypass_approvals"].includes(
@@ -2449,21 +2497,8 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     resolveAgentRunAccount,
   } = await import("./lib/agent-run.mjs");
   const backend = await backendProfileQueryContext(opts);
-  let runParent;
-  try {
-    const { resolveRunParent } = await import("./lib/run-parent.mjs");
-    runParent = resolveRunParent({
-      selector: opts.parent,
-      workspaceId: opts.parentWorkspace,
-      noParent: opts.noParent === true,
-      environment: process.env,
-      registry: clientRegistry,
-      backend,
-    });
-  } catch (error) {
-    writeCliActionError(error, opts, "dure.run-parent/v1", "dure.run.error", "run_parent_invalid");
-    return;
-  }
+  const runParent = await resolveCliRunParent(opts, backend, clientRegistry, "dure.run.error");
+  if (!runParent) return;
   const explicitWorktreeName =
     typeof opts.worktree === "string" ? opts.worktree : undefined;
   const agentName =
@@ -4209,6 +4244,7 @@ Usage:
                                       Create or reuse a durable spawn plan without the app daemon
                                       Requires --no-worktree, --worktree NAME (as dure run) or --base-commit SHA --branch REF
                                       --account ACCOUNT_ID|default binds the plan to that account, as dure run does
+                                      Records its parent as dure run does; --parent or --no-parent as there
                                       Dedicated checkouts support --setup-command COMMAND
   dure spawn apply --operation-id <id> --plan-token <token> --expected-sequence <n>
                                       Apply or resume the reviewed plan without the app

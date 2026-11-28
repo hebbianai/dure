@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { agentRelationsOf } from "@/lib/agents/relations/agentRelationFacts";
 import type { DelegateOnceReceiptV1 } from "@/lib/ipc/dureWorkflow";
 import {
 	beginDelegateOnceIntent,
@@ -179,6 +180,40 @@ describe("delegate-once intent", () => {
 				generation: 1,
 			},
 		});
+		// The coordinator is recorded as the Run parent the relation owner
+		// reads, so the worker nests under it.
+		expect(first.agent.runParent).toEqual({
+			sessionId: "coordinator-session",
+			workspaceId: "workspace-1",
+			leadAgentId: coordinator.id,
+		});
+		const relations = agentRelationsOf([coordinator, first.agent]);
+		expect(relations.managerOf(first.agent.id)).toBe(coordinator.id);
+		expect(relations.managersOf(first.agent.id)).toEqual([
+			{
+				child: first.agent.id,
+				manager: coordinator.id,
+				source: "run_parent_session",
+			},
+		]);
+		// Rehosted onto another Session, the coordinator still leads it.
+		const rehosted: Agent = {
+			...coordinator,
+			sessionId: "coordinator-successor",
+			runtimeBinding: managedBindingFixture({
+				sessionId: "coordinator-successor",
+				stopFence,
+			}),
+		};
+		expect(
+			agentRelationsOf([rehosted, first.agent]).managersOf(first.agent.id),
+		).toEqual([
+			{
+				child: first.agent.id,
+				manager: coordinator.id,
+				source: "run_parent_recorded",
+			},
+		]);
 		expect(projectDelegateOnceWorker(intent, receipt, [first.agent])).toEqual({
 			agent: first.agent,
 			inserted: false,

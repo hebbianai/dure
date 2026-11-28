@@ -718,6 +718,14 @@ export function projectDelegateOnceWorker(
 			},
 		},
 		started: true,
+		// The coordinator started this worker from its Session: the Run
+		// parent every relation surface reads (agentRunParent.ts), with the
+		// coordinator as its lead so the link survives a rehost.
+		runParent: {
+			sessionId: intent.coordinator.sessionId,
+			workspaceId: intent.coordinator.workspaceId,
+			leadAgentId: intent.coordinator.agentId,
+		},
 		workflowDispatch: {
 			schemaVersion: 1,
 			taskId: receipt.taskId,
